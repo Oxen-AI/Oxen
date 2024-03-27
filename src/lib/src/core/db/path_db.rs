@@ -1,6 +1,7 @@
 use crate::error::OxenError;
 use serde::{de, Serialize};
 
+use os_path::OsPath;
 use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode};
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -16,9 +17,9 @@ pub fn has_entry<T: ThreadMode, P: AsRef<Path>>(db: &DBWithThreadMode<T>, path: 
 
     // strip trailing / if exists for looking up directories
     let path_str = path.to_str().map(|s| s.trim_end_matches('/'));
-
-    // log::debug!("path_db::has_entry?({:?}) from db {:?}", path, db.path());
     if let Some(key) = path_str {
+        // Check if the path_str has windows \\ in it, all databases use / so we are consistent across OS's
+        let key = key.replace('\\', "/");
         return str_json_db::has_key(db, key);
     }
 
@@ -34,8 +35,10 @@ where
     D: de::DeserializeOwned,
 {
     let path = path.as_ref();
-    // log::debug!("path_db::get_entry({:?}) from db {:?}", path, db.path());
     if let Some(key) = path.to_str() {
+        // de-windows-ify the path
+        let key = key.replace('\\', "/");
+
         return str_json_db::get(db, key);
     }
     Err(OxenError::could_not_convert_path_to_str(path))
@@ -52,6 +55,8 @@ where
 {
     let path = path.as_ref();
     if let Some(key) = path.to_str() {
+        // de-windows-ify the path
+        let key = key.replace('\\', "/");
         str_json_db::put(db, key, entry)
     } else {
         Err(OxenError::could_not_convert_path_to_str(path))
@@ -65,6 +70,8 @@ pub fn delete<T: ThreadMode, P: AsRef<Path>>(
 ) -> Result<(), OxenError> {
     let path = path.as_ref();
     if let Some(key) = path.to_str() {
+        // de-windows-ify the path
+        let key = key.replace('\\', "/");
         str_json_db::delete(db, key)
     } else {
         Err(OxenError::could_not_convert_path_to_str(path))
@@ -85,8 +92,11 @@ pub fn list_paths<T: ThreadMode>(
             Ok((key, _value)) => {
                 match str::from_utf8(&key) {
                     Ok(key) => {
-                        // return full path
-                        paths.push(base_dir.join(String::from(key)));
+                        // return path with native slashes
+                        let os_path = OsPath::from(key);
+                        let new_path = os_path.to_pathbuf();
+
+                        paths.push(base_dir.join(new_path));
                     }
                     _ => {
                         log::error!("list_added_paths() Could not decode key {:?}", key)
@@ -111,7 +121,7 @@ pub fn list_path_entries<T: ThreadMode, D>(
 where
     D: de::DeserializeOwned,
 {
-    log::debug!("path_db::list_path_entries({:?})", db.path());
+    // log::debug!("path_db::list_path_entries({:?})", db.path());
     let iter = db.iterator(IteratorMode::Start);
     let mut paths: Vec<(PathBuf, D)> = vec![];
     for item in iter {

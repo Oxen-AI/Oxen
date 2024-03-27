@@ -85,6 +85,7 @@ polars = { version = "0.36.2", features = [
     "dtype-struct",
 ] }
 polars-sql = "0.36.2"
+os_path = "0.6.4"
 qsv-sniffer = "0.10.2"
 r2d2 = "0.8.10"
 rand = "0.8.5"

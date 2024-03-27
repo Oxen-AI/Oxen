@@ -7,6 +7,7 @@ use crate::model::{LocalRepository, StagedDirStats, StagedEntryStatus, StagedSch
 use crate::{core::db, model::CommitEntry};
 use core::panic;
 
+use os_path::OsPath;
 use rocksdb::{DBWithThreadMode, ThreadMode};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -246,7 +247,12 @@ impl TreeObject {
             TreeObject::Dir { children, .. } => {
                 let result = children.binary_search_by(|probe| {
                     let probe_path = probe.path();
-                    probe_path.cmp(path)
+                    let os_path = OsPath::from(probe_path);
+                    let new_path = os_path.to_pathbuf();
+
+                    log::debug!("tree_db::binary_search_by dir {:?} -> {:?}", new_path, path);
+
+                    new_path.cmp(path)
                 });
 
                 match result {
@@ -255,8 +261,24 @@ impl TreeObject {
                 }
             }
             TreeObject::VNode { children, .. } => {
-                let result = children.binary_search_by(|probe| {
+                let mut new_c: Vec<TreeObjectChild> = vec![];
+                for c in children {
+                    let os_path = OsPath::from(c.path());
+                    let new_path = os_path.to_pathbuf();
+                    let n = TreeObjectChild::File {
+                        path: new_path,
+                        hash: c.hash().to_owned(),
+                    };
+                    new_c.push(n);
+                }
+
+                let result = new_c.binary_search_by(|probe| {
                     let probe_path = probe.path();
+                    // log::debug!(
+                    //     "tree_db::binary_search_by vnode {:?} -> {:?}",
+                    //     probe_path,
+                    //     path
+                    // );
                     probe_path.cmp(path)
                 });
 

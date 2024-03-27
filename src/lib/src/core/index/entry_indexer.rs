@@ -709,7 +709,6 @@ impl EntryIndexer {
         );
 
         let schema_entries = self.read_pulled_schema_entries(&commit, limit)?;
-
         let mut entries: Vec<Entry> = entries.into_iter().map(Entry::from).collect();
         entries.extend(schema_entries.into_iter().map(Entry::from));
 
@@ -749,11 +748,24 @@ impl EntryIndexer {
         let files_db: DBWithThreadMode<MultiThreaded> =
             DBWithThreadMode::open(&opts, dunce::simplified(&files_db))?;
 
-        dir_entries.par_iter().for_each(|(_dir, entries)| {
+        dir_entries.par_iter().for_each(|(dir, entries)| {
+            log::debug!(
+                "unpack_version_files_to_working_dir unpacking dir {:?} with {} entries",
+                dir,
+                entries.len()
+            );
+
             entries.par_iter().for_each(|entry| {
                 let filepath = self.repository.path.join(entry.path());
+                // log::debug!(
+                //     "unpack_version_files_to_working_dir found filepath {:?}",
+                //     filepath
+                // );
                 if versioner::should_unpack_entry(entry, &filepath) {
-                    // log::debug!("pull_entries_for_commit unpack {:?}", entry.path());
+                    // log::debug!(
+                    //     "unpack_version_files_to_working_dir unpack! {:?}",
+                    //     entry.path()
+                    // );
                     let version_path = util::fs::version_path_for_entry(&self.repository, entry);
                     match util::fs::copy_mkdir(version_path, &filepath) {
                         Ok(_) => {}
@@ -761,6 +773,11 @@ impl EntryIndexer {
                             log::error!("pull_entries_for_commit unpack error: {}", err);
                         }
                     }
+                } else {
+                    log::debug!(
+                        "unpack_version_files_to_working_dir do not unpack :( {:?}",
+                        entry.path()
+                    );
                 }
 
                 if let Entry::CommitEntry(file) = entry {
@@ -877,9 +894,12 @@ impl EntryIndexer {
                                     untracked_dirs.contains(&short_path)
                                 );
 
-                                if !commit_entry_reader.has_file(path)
-                                    && !untracked_files.contains(&short_path)
-                                    && !util::fs::is_any_parent_in_set(&short_path, &untracked_dirs)
+                                let one = commit_entry_reader.has_file(path);
+                                let two = untracked_files.contains(&short_path);
+                                let three = util::fs::is_any_parent_in_set(&short_path, &untracked_dirs);
+                                // log::debug!("one: {one} two: {two} three {three}");
+
+                                if !one && !two && !three
                                 {
                                     log::debug!(
                                         "{} commit reader does not have file {:?}",
