@@ -119,7 +119,7 @@ impl Workspace {
 
         log::debug!("index::workspaces::create Initializing oxen repo! 🐂");
 
-        let workspace_repo = Self::init_workspace_repo(base_repo, &workspace_dir)?;
+        let workspace_repo = Self::init_workspace_repo(base_repo, &workspace_dir, commit)?;
 
         // Serialize the workspace config to TOML
         let workspace_config = WorkspaceConfig {
@@ -217,15 +217,30 @@ impl Workspace {
     fn init_workspace_repo(
         repo: &LocalRepository,
         workspace_dir: &Path,
+        commit: &Commit,
     ) -> Result<LocalRepository, OxenError> {
         let oxen_hidden_dir = repo.path.join(OXEN_HIDDEN_DIR);
         let workspace_hidden_dir = workspace_dir.join(OXEN_HIDDEN_DIR);
         log::debug!("init_workspace_repo {workspace_hidden_dir:?}");
         util::fs::create_dir_all(&workspace_hidden_dir)?;
 
+        let dir_hashes_dir = format!(
+            "{}/{}/{}",
+            constants::HISTORY_DIR,
+            commit.id,
+            constants::DIR_HASHES_DIR
+        );
+        let dirs_dir = format!(
+            "{}/{}/{}",
+            constants::HISTORY_DIR,
+            commit.id,
+            constants::DIRS_DIR
+        );
+
         let dirs_to_copy = vec![
             constants::COMMITS_DIR,
-            constants::HISTORY_DIR,
+            &dir_hashes_dir,
+            &dirs_dir,
             constants::REFS_DIR,
             constants::HEAD_FILE,
             constants::OBJECTS_DIR,
@@ -242,6 +257,10 @@ impl Workspace {
                 util::fs::copy(oxen_dir, target_dir)?;
             }
         }
+
+        println!("==================================");
+        println!("debug point 1");
+        println!("==================================");
 
         LocalRepository::new(workspace_dir)
     }
