@@ -810,16 +810,24 @@ pub fn get_size(path: impl AsRef<Path>) -> Result<DataFrameSize, OxenError> {
                 Ok(DataFrameSize { width, height })
             }
             "parquet" => {
+                println!("Here1");
                 let file = File::open(input_path)?;
+                println!("Here2");
                 let mut reader = ParquetReader::new(file);
+                println!("Here3");
                 let height = reader.num_rows()?;
+                println!("Here4");
                 Ok(DataFrameSize { width, height })
             }
             "arrow" => {
+                println!("Here1");
                 let file = File::open(input_path)?;
                 // arrow is fast to .finish() so we can just do it here
+                println!("Here2");
                 let reader = IpcReader::new(file);
+                println!("Here3");
                 let height = reader.finish().unwrap().height();
+                println!("Here4");
                 Ok(DataFrameSize { width, height })
             }
             "json" => {

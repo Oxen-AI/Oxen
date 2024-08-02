@@ -165,6 +165,12 @@ impl RunCmd for DFCmd {
                 .action(clap::ArgAction::Set),
         )
         .arg(
+            Arg::new("size")
+                .long("size")
+                .help("Output size of data frame")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("schema")
                 .long("schema")
                 .help("Print the full list of columns and data types within the schema in a dataframe.")
@@ -289,6 +295,7 @@ impl DFCmd {
             should_randomize: args.get_flag("randomize"),
             should_reverse: args.get_flag("reverse"),
             should_page: args.get_flag("full") || page_specified,
+            show_size: args.get_flag("size"),
             repo_dir,
         }
     }

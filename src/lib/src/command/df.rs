@@ -12,6 +12,13 @@ use crate::util;
 
 /// Interact with DataFrames
 pub fn df<P: AsRef<Path>>(input: P, opts: DFOpts) -> Result<(), OxenError> {
+    
+    if opts.show_size {
+        let size = tabular::get_size(input);
+        println!("{:?}", size);
+        return Ok(())
+    }
+    
     let mut df = tabular::show_path(input, opts.clone())?;
 
     if let Some(write) = opts.write {
