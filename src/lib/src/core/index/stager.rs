@@ -285,6 +285,7 @@ impl Stager {
         let mut candidate_dirs: HashSet<PathBuf> = HashSet::new();
         // Start with candidate dirs from committed and added, not all the dirs
         let mut staged_dirs = self.list_staged_dirs()?;
+
         // If we specified a dir, only get the added dirs that are in that dir
         if dir.is_relative() && dir != self.repository.path {
             staged_dirs.retain(|(path, _)| path.starts_with(dir))
@@ -305,6 +306,7 @@ impl Stager {
             candidate_dirs.insert(self.repository.path.join(dir));
         }
         let mut committed_dirs = entry_reader.list_dirs()?;
+
         if dir.is_relative() && dir != self.repository.path {
             committed_dirs.retain(|path| path.starts_with(dir))
         }
@@ -628,7 +630,7 @@ impl Stager {
         Ok(())
     }
 
-    fn get_file_status<T: ThreadMode>(
+    pub fn get_file_status<T: ThreadMode>(
         full_dir: &Path,
         path: &Path,
         staged_dir_db: &StagedDirEntryDB<T>,

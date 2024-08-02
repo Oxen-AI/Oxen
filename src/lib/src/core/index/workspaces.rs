@@ -1,8 +1,6 @@
 use time::OffsetDateTime;
 
 use crate::api;
-use crate::core::index::CommitEntryReader;
-use crate::core::index::Stager;
 use crate::error::OxenError;
 use crate::model::workspace::Workspace;
 use crate::model::Commit;
@@ -101,6 +99,7 @@ pub fn commit(
         return Err(OxenError::workspace_behind(branch));
     }
 
+
     let status = status_for_workspace(workspace)?;
 
     // log::debug!("got branch status: {:#?}", &status);
@@ -132,9 +131,7 @@ fn status_for_workspace(workspace: &Workspace) -> Result<StagedData, OxenError> 
     let workspace_repo = &workspace.workspace_repo;
     let commit = &workspace.commit;
 
-    let stager = Stager::new(workspace_repo)?;
-    let reader = CommitEntryReader::new(repo, commit)?;
-    let status = stager.status(&reader)?;
+    let status = stager::status_for_workspace(workspace_repo)?;
     status.print_stdout();
 
     Ok(status)
