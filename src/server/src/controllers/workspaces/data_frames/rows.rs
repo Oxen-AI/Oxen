@@ -5,6 +5,7 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use actix_web::{web::Bytes, HttpRequest, HttpResponse};
+use liboxen::core::index::workspaces;
 use liboxen::error::OxenError;
 use liboxen::model::Schema;
 use liboxen::opts::DFOpts;
@@ -49,7 +50,11 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
+    println!("WE GOT HERE NOW");
+
     let row_df = index::workspaces::data_frames::rows::add(&workspace, &file_path, data)?;
+    let _ = workspaces::stager::add_to_dirs_db(&workspace.workspace_repo, &file_path);
+    println!("ITSALLDONE");
     let row_id: Option<String> = index::workspaces::data_frames::rows::get_row_id(&row_df)?;
     let row_index: Option<usize> = index::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 

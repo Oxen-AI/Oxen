@@ -1,11 +1,12 @@
 use ignore::gitignore::Gitignore;
 use indicatif::{ProgressBar, ProgressStyle};
+use once_cell::sync::Lazy;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
-
+use rocksdb::{DBCommon, DBWithThreadMode, MultiThreaded, SingleThreaded};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::command::workspace;
 use crate::constants::{FILES_DIR, MODS_DIR};
@@ -133,7 +134,6 @@ fn compute_staged_data(
     // Start with candidate dirs from committed and added, not all the dirs
     let staged_dirs = list_staged_dirs(&dir_db)?;
 
-
     log::debug!(
         "compute_staged_data Got <added> dirs: {}",
         staged_dirs.len()
@@ -154,7 +154,6 @@ fn compute_staged_data(
         workspace_repository.path
     );
 
-
     let object_reader = ObjectDBReader::new(&workspace_repository)?;
 
     let committer = CommitReader::new(&workspace_repository)?;
@@ -169,6 +168,11 @@ fn compute_staged_data(
             .template("{spinner:.green} {msg} [{elapsed_precise}] [{wide_bar}] {pos}/?")
             .unwrap()
             .progress_chars("🌾🐂➖"),
+    );
+
+    println!(
+        "these are the candidate dirs to look at ps {:?}",
+        candidate_dirs
     );
 
     for dir in candidate_dirs.iter() {
@@ -301,11 +305,19 @@ fn process_dir(
 
     // and files that were in commit as candidates
     for entry in root_commit_dir_reader.list_entries()? {
+        println!("this is the entry {:?}", entry);
         // log::debug!("adding candidate from commit {:?}", entry.path);
         if !should_ignore_path(ignore, &entry.path) {
             candidate_files.insert(entry.path);
         }
     }
+
+    println!("before");
+
+    for candidate in &candidate_files {
+        println!("candidate {:?}", candidate);
+    }
+    println!("after");
     log::debug!(
         "Got {} candidates in directory {:?}",
         candidate_files.len(),
@@ -472,4 +484,70 @@ fn list_merge_conflicts(
 ) -> Result<Vec<MergeConflict>, OxenError> {
     let merger = MergeConflictReader::new(&workspace_repository)?;
     merger.list_conflicts()
+}
+
+static CONNECTION_POOL: Lazy<Mutex<HashMap<PathBuf, Arc<DBWithThreadMode<MultiThreaded>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn add_to_dirs_db(
+    workspace_repository: &LocalRepository,
+    path: &Path,
+) -> Result<PathBuf, OxenError> {
+    println!("WE ARE IN HERE NOW");
+    log::debug!("--- START OXEN ADD {:?} ---", path);
+    let dir_db_path = Stager::dirs_db_path(&workspace_repository.path)?;
+    let dir_db = get_or_create_db_connection(&dir_db_path)?;
+    log::debug!("-----status START-----");
+    // We should be tracking changes to this parent dir too
+    let path_parent = path.parent();
+    if let Some(parent) = path_parent {
+        let relative_parent = util::fs::path_relative_to_dir(parent, &workspace_repository.path)?;
+        log::debug!("add_file got parent {:?}", relative_parent);
+        if !has_entry(&workspace_repository, &relative_parent) {
+            log::debug!("add_file({:?}) adding parent {:?}", path, relative_parent);
+            path_db::put(&dir_db, relative_parent, &StagedEntryStatus::Added)?;
+        }
+    }
+
+    log::debug!("--- END OXEN ADD ({:?}) ---", path);
+
+    Ok(path.to_path_buf())
+}
+
+pub fn has_entry<P: AsRef<Path>>(workspace_repository: &LocalRepository, path: P) -> bool {
+    let path = path.as_ref();
+    if let Ok(relative) = util::fs::path_relative_to_dir(path, &workspace_repository.path) {
+        if let Some(parent) = relative.parent() {
+            if let Ok(staged_dir) = StagedDirEntryReader::new(&workspace_repository, parent) {
+                let filename = relative.file_name().unwrap().to_str().unwrap();
+                return staged_dir.has_entry(filename);
+            } else {
+                log::debug!(
+                    "Stager.has_entry({:?}) could not find parent db {:?}",
+                    path,
+                    parent
+                );
+            }
+        }
+    }
+    false
+}
+
+pub fn get_or_create_db_connection(
+    path: &Path,
+) -> Result<Arc<DBWithThreadMode<MultiThreaded>>, OxenError> {
+    let simplified_path = path.to_path_buf(); // Simplification step omitted for brevity
+    let mut pool = CONNECTION_POOL.lock().unwrap();
+
+    if let Some(connection) = pool.get(&simplified_path) {
+        return Ok(connection.clone());
+    }
+
+    let opts = db::key_val::opts::default();
+
+    let connection = Arc::new(DBWithThreadMode::open(&opts, &simplified_path)?);
+
+    pool.insert(simplified_path.clone(), connection.clone());
+
+    Ok(connection)
 }

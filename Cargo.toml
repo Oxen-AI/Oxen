@@ -80,6 +80,7 @@ mp4 = "0.14.0"
 minus = { version = "5.4.0", features = ["static_output", "search"] }
 nom = "7.1.3"
 num_cpus = "1.16.0"
+once_cell = "1.19.0"
 pluralizer = "0.4.0"
 polars = { version = "0.41.3", features = [
     "lazy",

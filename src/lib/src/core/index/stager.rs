@@ -46,6 +46,7 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 
+use super::workspaces;
 use super::StagedDirEntryReader;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -57,8 +58,8 @@ pub enum FileStatus {
 }
 
 pub struct Stager {
-    dir_db: DBWithThreadMode<MultiThreaded>,
-    schemas_db: DBWithThreadMode<MultiThreaded>,
+    dir_db: Arc<DBWithThreadMode<MultiThreaded>>,
+    schemas_db: Arc<DBWithThreadMode<MultiThreaded>>,
     pub repository: LocalRepository,
     merger: Option<Merger>,
 }
@@ -92,10 +93,11 @@ impl Stager {
         let dir_db_path = Stager::dirs_db_path(&repository.path)?;
         let schemas_db_path = Stager::schemas_db_path(&repository.path)?;
 
-        let opts = db::key_val::opts::default();
+        let dir_db = workspaces::stager::get_or_create_db_connection(&dir_db_path)?;
+        let schemas_db = workspaces::stager::get_or_create_db_connection(&schemas_db_path)?;
         Ok(Stager {
-            dir_db: DBWithThreadMode::open(&opts, dunce::simplified(&dir_db_path))?,
-            schemas_db: DBWithThreadMode::open(&opts, dunce::simplified(&schemas_db_path))?,
+            dir_db: dir_db,
+            schemas_db: schemas_db,
             repository: repository.clone(),
             merger: None,
         })
@@ -105,10 +107,12 @@ impl Stager {
         let dir_db_path = Stager::dirs_db_path(&repository.path)?;
         let schemas_db_path = Stager::schemas_db_path(&repository.path)?;
 
-        let opts = db::key_val::opts::default();
+        let dir_db = workspaces::stager::get_or_create_db_connection(&dir_db_path)?;
+        let schemas_db = workspaces::stager::get_or_create_db_connection(&schemas_db_path)?;
+
         Ok(Stager {
-            dir_db: DBWithThreadMode::open(&opts, dunce::simplified(&dir_db_path))?,
-            schemas_db: DBWithThreadMode::open(&opts, dunce::simplified(&schemas_db_path))?,
+            dir_db: dir_db,
+            schemas_db: schemas_db,
             repository: repository.clone(),
             merger: Some(Merger::new(&repository.clone())?),
         })

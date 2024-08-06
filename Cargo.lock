@@ -62,6 +62,7 @@ dependencies = [
  "mp4",
  "nom",
  "num_cpus",
+ "once_cell",
  "os_path",
  "pluralizer",
  "polars",

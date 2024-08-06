@@ -266,6 +266,8 @@ impl CommitWriter {
         }
 
         // Have to recompute staged data
+
+        /// CHECK THIS FOR PERFORMANCE
         log::debug!("recomputing status for workspace...");
         let staged_data = command::status(&workspace.workspace_repo)?;
 

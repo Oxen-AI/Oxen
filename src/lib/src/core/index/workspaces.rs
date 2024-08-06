@@ -99,7 +99,6 @@ pub fn commit(
         return Err(OxenError::workspace_behind(branch));
     }
 
-
     let status = status_for_workspace(workspace)?;
 
     // log::debug!("got branch status: {:#?}", &status);
