@@ -100,7 +100,7 @@ pub fn commit_with_cfg(
     commit_progress_bar.enable_steady_tick(Duration::from_millis(100));
 
     // Read all the staged entries
-    let (dir_entries, total_changes) =
+    let (dir_entries, _, total_changes) =
         status::read_staged_entries(repo, &staged_db, &commit_progress_bar)?;
     commit_progress_bar.set_message(format!("Committing {} changes", total_changes));
 
