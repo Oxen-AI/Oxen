@@ -78,7 +78,7 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
             paths.insert(path.to_owned());
         }
     }
-    let stats = add_files(repo, &paths)?;
+    let (stats, added_dirs) = add_files(repo, &paths)?;
 
     // Stop the timer, and round the duration to the nearest second
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
@@ -86,9 +86,10 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
 
     // oxen staged?
     println!(
-        "🐂 oxen added {} files ({}) in {}",
+        "🐂 oxen added {} files ({}) and {} dirs in {}",
         stats.total_files,
         bytesize::ByteSize::b(stats.total_bytes),
+        added_dirs,
         humantime::format_duration(duration)
     );
 
@@ -98,7 +99,7 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
 fn add_files(
     repo: &LocalRepository,
     paths: &HashSet<PathBuf>,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<(CumulativeStats, u8), OxenError> {
     // To start, let's see how fast we can simply loop through all the paths
     // and and copy them into an index.
 
@@ -118,11 +119,15 @@ fn add_files(
         total_bytes: 0,
         data_type_counts: HashMap::new(),
     };
+    let mut added_dirs: u8 = 0;
+
     for path in paths {
         log::debug!("path is {path:?}");
 
         if path.is_dir() {
-            total += add_dir(repo, &maybe_head_commit, path.clone())?;
+            let (stats, dirs) = add_dir(repo, &maybe_head_commit, path.clone())?;
+            total += stats;
+            added_dirs += dirs;
         } else if path.is_file() {
             let entry = add_file(repo, &maybe_head_commit, path)?;
             if let Some(entry) = entry {
@@ -139,23 +144,29 @@ fn add_files(
             }
         } else {
             // TODO: Should there be a way to add non-existant dirs? I think it's safer to just require rm for those?
-            log::debug!(
-                "Found nonexistant path {path:?}. Staging for removal. Recursive flag not set"
-            );
+            log::debug!("Found nonexistant path {path:?}. Staging for removal. Recursive flag set");
             let mut opts = RmOpts::from_path(path);
             opts.recursive = true;
-            repositories::rm(repo, &opts)?;
+            match repositories::rm(repo, &opts) {
+                Ok(_) => {}
+                Err(_) => {
+                    return Err(OxenError::basic_str(format!(
+                        "Error: Unable to add file {:?}",
+                        path
+                    )));
+                }
+            }
         }
     }
 
-    Ok(total)
+    Ok((total, added_dirs))
 }
 
 pub fn add_dir(
     repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
     path: PathBuf,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<(CumulativeStats, u8), OxenError> {
     let versions_path = util::fs::oxen_hidden_dir(&repo.path)
         .join(VERSIONS_DIR)
         .join(FILES_DIR);
@@ -173,7 +184,7 @@ pub fn process_add_dir(
     versions_path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     path: PathBuf,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<(CumulativeStats, u8), OxenError> {
     let start = std::time::Instant::now();
 
     let progress_1 = Arc::new(ProgressBar::new_spinner());
@@ -197,6 +208,7 @@ pub fn process_add_dir(
         total_bytes: 0,
         data_type_counts: HashMap::new(),
     };
+    let mut added_dirs: u8 = 0;
 
     let walker = WalkDir::new(&path).into_iter();
     for entry in walker.filter_entry(|e| e.file_type().is_dir() && e.file_name() != OXEN_HIDDEN_DIR)
@@ -215,6 +227,7 @@ pub fn process_add_dir(
         let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
         add_dir_to_staged_db(staged_db, &dir_path, &seen_dirs)?;
+        added_dirs += 1;
 
         let entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
         entries.par_iter().for_each(|dir_entry| {
@@ -261,7 +274,7 @@ pub fn process_add_dir(
     progress_1_clone.finish_and_clear();
     cumulative_stats.total_files = added_file_counter.load(Ordering::Relaxed) as usize;
     cumulative_stats.total_bytes = byte_counter.load(Ordering::Relaxed);
-    Ok(cumulative_stats)
+    Ok((cumulative_stats, added_dirs))
 }
 
 fn maybe_load_directory(
