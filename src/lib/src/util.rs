@@ -4,6 +4,7 @@
 pub mod concurrency;
 pub mod fs;
 pub mod hasher;
+pub mod image;
 pub mod logging;
 pub mod oxen_version;
 pub mod paginate;

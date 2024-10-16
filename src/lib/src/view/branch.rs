@@ -37,9 +37,15 @@ pub struct BranchName {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct BranchNewFromExisting {
+pub struct BranchNewFromBranchName {
     pub new_name: String,
     pub from_name: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct BranchNewFromCommitId {
+    pub new_name: String,
+    pub commit_id: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

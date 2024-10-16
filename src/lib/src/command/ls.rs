@@ -17,7 +17,7 @@ pub async fn ls(
     directory: &Path,
     opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    api::remote::dir::list(
+    api::client::dir::list(
         remote_repo,
         &branch.name,
         directory,
@@ -62,8 +62,8 @@ mod tests {
             util::fs::write(&filepath, "readme....")?;
 
             // Add and commit all the dirs and files
-            command::add(&repo, &repo.path)?;
-            command::commit(&repo, "Adding all the data")?;
+            repositories::add(&repo, &repo.path)?;
+            repositories::commit(&repo, "Adding all the data")?;
 
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
@@ -73,16 +73,16 @@ mod tests {
             let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it real good
-            command::push(&repo).await?;
+            repositories::push(&repo).await?;
 
             // Now list the remote
-            let branch = api::local::branches::current_branch(&repo)?.unwrap();
+            let branch = repositories::branches::current_branch(&repo)?.unwrap();
             let dir = Path::new(".");
             let opts = PaginateOpts {
                 page_num: 1,
                 page_size: 10,
             };
-            let paginated = command::workspace::ls(&remote_repo, &branch, dir, &opts).await?;
+            let paginated = repositories::workspaces::ls(&remote_repo, &branch, dir, &opts).await?;
             assert_eq!(paginated.entries.len(), 10);
             assert_eq!(paginated.page_number, 1);
             assert_eq!(paginated.page_size, 10);
@@ -105,8 +105,8 @@ mod tests {
             util::fs::copy(text_path, repo.path.join("hello.txt"))?;
 
             // Add and commit all the dirs and files
-            command::add(&repo, &repo.path)?;
-            command::commit(&repo, "Adding all the data")?;
+            repositories::add(&repo, &repo.path)?;
+            repositories::commit(&repo, "Adding all the data")?;
 
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
@@ -116,16 +116,16 @@ mod tests {
             let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it real good
-            command::push(&repo).await?;
+            repositories::push(&repo).await?;
 
             // Now list the remote
-            let branch = api::local::branches::current_branch(&repo)?.unwrap();
+            let branch = repositories::branches::current_branch(&repo)?.unwrap();
             let dir = Path::new("");
             let opts = PaginateOpts {
                 page_num: 1,
                 page_size: 10,
             };
-            let paginated = command::workspace::ls(&remote_repo, &branch, dir, &opts).await?;
+            let paginated = repositories::workspaces::ls(&remote_repo, &branch, dir, &opts).await?;
 
             // serialize into an array of DataTypeCount
             let metadata = paginated.metadata.unwrap();
@@ -181,8 +181,8 @@ mod tests {
                 let path = dir.join(format!("file_{}.txt", i));
                 util::fs::write_to_path(&path, format!("lol hi {}", i))?;
             }
-            command::add(&repo, &dir)?;
-            command::commit(&repo, "adding text files")?;
+            repositories::add(&repo, &dir)?;
+            repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
@@ -192,16 +192,16 @@ mod tests {
             let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it real good
-            command::push(&repo).await?;
+            repositories::push(&repo).await?;
 
             // Now list the remote
-            let branch = api::local::branches::current_branch(&repo)?.unwrap();
+            let branch = repositories::branches::current_branch(&repo)?.unwrap();
             let dir = Path::new("");
             let opts = PaginateOpts {
                 page_num: 1,
                 page_size: 10,
             };
-            let paginated = command::workspace::ls(&remote_repo, &branch, dir, &opts).await?;
+            let paginated = repositories::workspaces::ls(&remote_repo, &branch, dir, &opts).await?;
 
             // serialize into an array of DataTypeCount
             let metadata = paginated.metadata.unwrap();

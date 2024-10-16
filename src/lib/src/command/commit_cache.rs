@@ -6,18 +6,17 @@
 
 use std::path::Path;
 
-use crate::api;
-use crate::core::cache;
+use crate::core::v0_10_0::cache;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::LogOpts;
+use crate::repositories;
 
 /// Run the computation cache on all repositories within a directory
 pub async fn compute_cache_on_all_repos(path: &Path, force: bool) -> Result<(), OxenError> {
-    let namespaces = api::local::repositories::list_namespaces(path)?;
+    let namespaces = repositories::list_namespaces(path)?;
     for namespace in namespaces {
         let namespace_path = path.join(namespace);
-        let repos = api::local::repositories::list_repos_in_namespace(&namespace_path);
+        let repos = repositories::list_repos_in_namespace(&namespace_path);
         for repo in repos {
             println!("Compute cache for repo {:?}", repo.path);
             match compute_cache(&repo, None, force).await {
@@ -49,13 +48,9 @@ pub async fn compute_cache(
         repo.path
     );
     let commits = if let Some(revision) = revision {
-        let opts = LogOpts {
-            revision: Some(revision),
-            remote: false,
-        };
-        api::local::commits::list_with_opts(repo, &opts).await?
+        repositories::commits::list_from(repo, &revision)?
     } else {
-        api::local::commits::list_all(repo)?
+        Vec::from_iter(repositories::commits::list_all(repo)?.into_iter())
     };
     for commit in commits {
         println!("Compute cache for commit {:?}", commit);

@@ -1,12 +1,14 @@
 use crate::helpers::check_repo_migration_needed;
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
+use liboxen::config::UserConfig;
 use std::env;
 
-use liboxen::command;
+use liboxen::api;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::opts::RestoreOpts;
+
 use std::path::PathBuf;
 
 use crate::cmd::RunCmd;
@@ -65,7 +67,15 @@ impl RunCmd for WorkspaceRestoreCmd {
         let repository = LocalRepository::from_dir(&repo_dir)?;
 
         check_repo_migration_needed(&repository)?;
-        command::workspace::restore(&repository, opts).await?;
+
+        let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
+        let workspace_id = UserConfig::identifier()?;
+        api::client::workspaces::data_frames::restore(
+            &remote_repo,
+            &workspace_id,
+            opts.path.to_owned(),
+        )
+        .await?;
 
         Ok(())
     }

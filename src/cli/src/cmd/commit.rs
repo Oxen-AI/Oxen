@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 use crate::helpers::check_repo_migration_needed;
@@ -43,7 +43,7 @@ impl RunCmd for CommitCmd {
         check_repo_migration_needed(&repo)?;
 
         println!("Committing with message: {message}");
-        command::commit(&repo, message)?;
+        repositories::commit(&repo, message)?;
 
         Ok(())
     }

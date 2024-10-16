@@ -3,9 +3,6 @@ use liboxen::error::OxenError;
 
 use async_trait::async_trait;
 
-pub mod init;
-pub use init::InitCmd;
-
 pub mod add;
 pub use add::AddCmd;
 
@@ -33,6 +30,9 @@ pub use create_remote::CreateRemoteCmd;
 pub mod db;
 pub use db::DbCmd;
 
+pub mod delete_remote;
+pub use delete_remote::DeleteRemoteCmd;
+
 pub mod df;
 pub use df::DFCmd;
 
@@ -48,14 +48,14 @@ pub use fetch::FetchCmd;
 pub mod info;
 pub use info::InfoCmd;
 
+pub mod init;
+pub use init::InitCmd;
+
 pub mod load;
 pub use load::LoadCmd;
 
 pub mod log;
 pub use log::LogCmd;
-
-pub mod merge;
-pub use merge::MergeCmd;
 
 pub mod migrate;
 pub use migrate::MigrateCmd;
@@ -63,11 +63,26 @@ pub use migrate::MigrateCmd;
 pub mod moo;
 pub use moo::MooCmd;
 
+pub mod merge;
+pub use merge::MergeCmd;
+
+pub mod node;
+pub use node::NodeCmd;
+
+pub mod pack;
+pub use pack::PackCmd;
+
 pub mod pull;
 pub use pull::PullCmd;
 
 pub mod push;
 pub use push::PushCmd;
+
+pub mod remote;
+pub use remote::RemoteCmd;
+
+pub mod restore;
+pub use restore::RestoreCmd;
 
 pub mod read_lines;
 pub use read_lines::ReadLinesCmd;
@@ -75,26 +90,26 @@ pub use read_lines::ReadLinesCmd;
 pub mod rm;
 pub use rm::RmCmd;
 
-pub mod workspace;
-pub use workspace::WorkspaceCmd;
-
-pub mod restore;
-pub use restore::RestoreCmd;
-
-pub mod remote;
-pub use remote::RemoteCmd;
-
 pub mod save;
 pub use save::SaveCmd;
 
 pub mod schemas;
 pub use schemas::SchemasCmd;
 
+pub mod tree;
+pub use tree::TreeCmd;
+
+pub mod unpack;
+pub use unpack::UnpackCmd;
+
 pub mod status;
 pub use status::StatusCmd;
 
 pub mod upload;
 pub use upload::UploadCmd;
+
+pub mod workspace;
+pub use workspace::WorkspaceCmd;
 
 #[async_trait]
 pub trait RunCmd {

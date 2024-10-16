@@ -16,8 +16,8 @@ use crate::core::db::data_frames::workspace_df_db::{
     full_staged_table_schema, schema_without_oxen_cols,
 };
 use crate::core::df::tabular;
-use crate::core::index::workspaces::data_frames::data_frame_row_changes_db;
-use crate::model::schema::Schema;
+use crate::core::v0_10_0::index::workspaces::data_frames::row_changes_db;
+use crate::model::data_frame::schema::Schema;
 use crate::model::staged_row_status::StagedRowStatus;
 use crate::view::data_frames::DataFrameRowChange;
 use crate::{constants::TABLE_NAME, error::OxenError};
@@ -155,6 +155,7 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
         let stmt = sql::Delete::new()
             .delete_from(TABLE_NAME)
             .where_clause(&format!("{} = '{}'", OXEN_ID_COL, uuid));
+        log::debug!("staged_df_db::delete_row() sql: {:?}", stmt);
         conn.execute(&stmt.to_string(), [])?;
     } else {
         log::debug!("staged_df_db::delete_row() updating row to indicate deletion");
@@ -166,6 +167,7 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
                 StagedRowStatus::Removed
             ))
             .where_clause(&format!("{} = '{}'", OXEN_ID_COL, uuid));
+        log::debug!("staged_df_db::delete_row() sql: {:?}", stmt);
         conn.execute(&stmt.to_string(), [])?;
     };
 
@@ -309,11 +311,11 @@ pub fn record_row_change(
 
     maybe_revert_row_changes(&db, row_id.to_owned())?;
 
-    data_frame_row_changes_db::write_data_frame_row_change(&change, &db)
+    row_changes_db::write_data_frame_row_change(&change, &db)
 }
 
 pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError> {
-    match data_frame_row_changes_db::get_data_frame_row_change(db, &row_id) {
+    match row_changes_db::get_data_frame_row_change(db, &row_id) {
         Ok(None) => revert_row_changes(db, row_id),
         Ok(Some(_)) => Ok(()),
         Err(e) => Err(e),
@@ -321,5 +323,5 @@ pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError
 }
 
 pub fn revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError> {
-    data_frame_row_changes_db::delete_data_frame_row_changes(db, &row_id)
+    row_changes_db::delete_data_frame_row_changes(db, &row_id)
 }

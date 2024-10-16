@@ -11,6 +11,20 @@ pub struct CommitResponse {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+pub struct UploadCommitResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub commit: Option<Commit>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct RootCommitResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub commit: Option<Commit>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct CommitStatsResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -55,4 +69,14 @@ pub struct PaginatedCommits {
     pub commits: Vec<Commit>,
     #[serde(flatten)]
     pub pagination: Pagination,
+}
+
+impl PaginatedCommits {
+    pub fn success(commits: Vec<Commit>, pagination: Pagination) -> PaginatedCommits {
+        PaginatedCommits {
+            status: StatusMessage::resource_found(),
+            commits,
+            pagination,
+        }
+    }
 }

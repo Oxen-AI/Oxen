@@ -1,0 +1,8 @@
+# Refactor Steps
+
+1) Migration to compute latest commit and sizes for every node in the tree
+2) Add a version compatibility check in repositories (since migrations take a while to run)
+3) Update APIs to use old version if migration has not been run
+4) Update `oxen add` and `oxen commit` to create the new merkle tree format
+5) Kill post commit actions - just have one final POST commit to server that we can hook into
+

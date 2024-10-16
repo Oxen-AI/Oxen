@@ -28,9 +28,9 @@ pub struct MetadataImage {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct MetadataImageImpl {
-    pub width: usize,
-    pub height: usize,
-    pub color_space: ImgColorSpace, // RGB, RGBA, etc.
+    pub width: u32,
+    pub height: u32,
+    pub color_space: Option<ImgColorSpace>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -40,13 +40,23 @@ pub struct ImgResize {
 }
 
 impl MetadataImage {
-    pub fn new(width: usize, height: usize, color_space: ImgColorSpace) -> Self {
+    pub fn new(width: u32, height: u32) -> Self {
         Self {
             image: MetadataImageImpl {
                 width,
                 height,
-                color_space,
+                color_space: None,
             },
         }
+    }
+}
+
+impl std::fmt::Display for MetadataImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "MetadataImage({}x{})",
+            self.image.width, self.image.height
+        )
     }
 }

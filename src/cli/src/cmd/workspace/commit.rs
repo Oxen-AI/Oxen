@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 
-use liboxen::command;
+use liboxen::api;
+use liboxen::config::UserConfig;
 use liboxen::error::OxenError;
-use liboxen::model::LocalRepository;
+use liboxen::model::{LocalRepository, NewCommitBody};
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 use crate::helpers::check_repo_migration_needed;
@@ -56,7 +58,21 @@ impl RunCmd for WorkspaceCommitCmd {
         check_repo_migration_needed(&repo)?;
 
         println!("Committing to remote with message: {message}");
-        command::workspace::commit(&repo, workspace_id, message).await?;
+        let branch = repositories::branches::current_branch(&repo)?;
+        if branch.is_none() {
+            log::error!("Workspace commit No current branch found");
+            return Err(OxenError::must_be_on_valid_branch());
+        }
+        let branch = branch.unwrap();
+
+        let remote_repo = api::client::repositories::get_default_remote(&repo).await?;
+        let cfg = UserConfig::get()?;
+        let body = NewCommitBody {
+            message: message.to_string(),
+            author: cfg.name,
+            email: cfg.email,
+        };
+        api::client::workspaces::commit(&remote_repo, &branch.name, workspace_id, &body).await?;
 
         Ok(())
     }

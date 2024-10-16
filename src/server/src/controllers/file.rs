@@ -2,10 +2,9 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param};
 
-use liboxen::core::index::object_db_reader::get_object_reader;
 use liboxen::error::OxenError;
 use liboxen::model::metadata::metadata_image::ImgResize;
-use liboxen::model::CommitEntry;
+use liboxen::repositories;
 use liboxen::util;
 
 use actix_files::NamedFile;
@@ -29,39 +28,21 @@ pub async fn get(
         "{} resource {namespace}/{repo_name}/{resource}",
         liboxen::current_function!()
     );
+    let path = resource.path.clone();
+    let entry = repositories::entries::get_file(&repo, &commit, &path)?;
+    let entry = entry.ok_or(OxenError::path_does_not_exist(path.clone()))?;
 
-    // TODO: CLEANUP and refactor so we can use the CderLRUCache in other places that might need it.
-
-    // This logic to use a LRUCache of CommitDirEntryReaders is to avoid opening the database many times for the same commit
-    // When fetching many images, it was taking over 2 seconds to just open the CelebA database
-    // This way, we open it once, and reuse it for the subsequent requests
-
-    // Try to get the parent of the file path, if it exists
-    let mut entry: Option<CommitEntry> = None;
-    let object_reader = get_object_reader(&repo, &commit.id)?;
-    let path = &resource.path;
-    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name()) {
-        let cder = liboxen::core::index::CommitDirEntryReader::new(
-            &repo,
-            &commit.id,
-            parent,
-            object_reader.clone(),
-        )?;
-        entry = cder.get_entry(file_name)?;
-    }
-
-    let entry = entry.ok_or(OxenError::path_does_not_exist(path))?;
-
-    let version_path = util::fs::version_path(&repo, &entry);
+    let version_path = util::fs::version_path_from_hash(&repo, entry.hash.to_string());
 
     log::debug!("version path {version_path:?}",);
 
-    // TODO: refactor out of here and check for type, but seeing if it works to resize the image and cache it to disk if we have a resize query
+    // TODO: refactor out of here and check for type,
+    // but seeing if it works to resize the image and cache it to disk if we have a resize query
     let img_resize = query.into_inner();
     if img_resize.width.is_some() || img_resize.height.is_some() {
         log::debug!("img_resize {:?}", img_resize);
 
-        let resized_path = util::fs::resized_path_for_commit_entry(
+        let resized_path = util::fs::resized_path_for_file_node(
             &repo,
             &entry,
             img_resize.width,
@@ -72,54 +53,6 @@ pub async fn get(
 
         log::debug!("In the resize cache! {:?}", resized_path);
         return Ok(NamedFile::open(resized_path)?.into_response(&req));
-
-        // log::debug!(
-        //     "get_file_for_commit_id {:?}x{:?} for {:?} -> {:?}",
-        //     img_resize.width,
-        //     img_resize.height,
-        //     resource.file_path,
-        //     version_path
-        // );
-
-        // let resized_path = util::fs::resized_path_for_commit_entry(
-        //     &repo,
-        //     &entry,
-        //     img_resize.width,
-        //     img_resize.height,
-        // )?;
-        // log::debug!("get_file_for_commit_id resized_path {:?}", resized_path);
-        // if resized_path.exists() {
-        //     log::debug!("serving cached {:?}", resized_path);
-        //     return Ok(NamedFile::open(resized_path)?);
-        // }
-
-        // log::debug!("get_file_for_commit_id resizing: {:?}", resized_path);
-
-        // let img = image::open(&version_path).unwrap();
-        // let resized_img = if img_resize.width.is_some() && img_resize.height.is_some() {
-        //     img.resize_exact(
-        //         img_resize.width.unwrap(),
-        //         img_resize.height.unwrap(),
-        //         image::imageops::FilterType::Lanczos3,
-        //     )
-        // } else if img_resize.width.is_some() {
-        //     img.resize(
-        //         img_resize.width.unwrap(),
-        //         img_resize.width.unwrap(),
-        //         image::imageops::FilterType::Lanczos3,
-        //     )
-        // } else if img_resize.height.is_some() {
-        //     img.resize(
-        //         img_resize.height.unwrap(),
-        //         img_resize.height.unwrap(),
-        //         image::imageops::FilterType::Lanczos3,
-        //     )
-        // } else {
-        //     img
-        // };
-        // resized_img.save(&resized_path).unwrap();
-        // log::debug!("get_file_for_commit_id serving {:?}", resized_path);
-        // return Ok(NamedFile::open(resized_path)?);
     } else {
         log::debug!("did not hit the resize cache");
     }
@@ -133,9 +66,10 @@ pub async fn get(
     let file = NamedFile::open(version_path)?;
     let mut response = file.into_response(&req);
 
+    let last_commit_id = entry.last_commit_id.to_string();
     response.headers_mut().insert(
         header::HeaderName::from_static("oxen-revision-id"),
-        header::HeaderValue::from_str(&commit.id).unwrap(),
+        header::HeaderValue::from_str(&last_commit_id).unwrap(),
     );
 
     Ok(response)

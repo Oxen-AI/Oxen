@@ -3,11 +3,13 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use time::OffsetDateTime;
 
-use super::{Branch, User};
-use crate::core::index::CommitReader;
+use super::{Branch, MerkleHash, User};
+use crate::core::v0_10_0::index::CommitReader;
 use crate::error::OxenError;
 use crate::view::workspaces::WorkspaceCommit;
 use core::convert::Into;
+
+use std::str::FromStr;
 
 /// NewCommitBody is used to parse the json into a Commit from the API
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -127,6 +129,18 @@ impl Commit {
         }
     }
 
+    pub fn from_new_and_hash(new_commit: &NewCommit, hash: u128) -> Commit {
+        Commit {
+            id: format!("{hash:x}"),
+            parent_ids: new_commit.parent_ids.to_owned(),
+            message: new_commit.message.to_owned(),
+            author: new_commit.author.to_owned(),
+            email: new_commit.email.to_owned(),
+            timestamp: new_commit.timestamp.to_owned(),
+            root_hash: None,
+        }
+    }
+
     pub fn has_ancestor(
         &self,
         parent_id: &str,
@@ -187,6 +201,10 @@ impl Commit {
             .ok_or(OxenError::revision_not_found(
                 branch.commit_id.to_string().into(),
             ))
+    }
+
+    pub fn hash(&self) -> Result<MerkleHash, OxenError> {
+        MerkleHash::from_str(&self.id)
     }
 
     pub fn to_uri_encoded(&self) -> String {

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 /// Would have:
 ///     annotations/train/ -> num_staged: 2, total: 3
 ///     annotations/test/ -> num_staged: 1, total: 1
-///     
+///
 /// Rolled up to:
 ///     annotations/ -> num_staged: 3, total: 4
 
@@ -49,7 +49,11 @@ impl SummarizedStagedDirStats {
     }
 
     pub fn len(&self) -> usize {
-        self.paths.len()
+        let mut total = 0;
+        for stats in self.paths.values() {
+            total += stats.len();
+        }
+        total
     }
 
     pub fn contains_key(&self, path: &Path) -> bool {
@@ -78,6 +82,7 @@ impl SummarizedStagedDirStats {
     }
 
     pub fn add_stats(&mut self, stats: &StagedDirStats) {
+        log::debug!("Adding stats: {:?}", stats);
         if let Some(first_component) = stats.path.components().next() {
             let path: &Path = first_component.as_ref();
             let path = path.to_path_buf();
@@ -87,7 +92,12 @@ impl SummarizedStagedDirStats {
 
             self.paths.entry(path).or_default().push(stats.clone());
         } else {
-            log::debug!("Cannot add stats to path {:?}", stats.path);
+            let path = PathBuf::from("");
+
+            self.num_files_staged += stats.num_files_staged;
+            self.total_files += stats.total_files;
+
+            self.paths.entry(path).or_default().push(stats.clone());
         }
     }
 }
@@ -126,7 +136,7 @@ mod tests {
         summarized.add_stats(&stats_train);
         summarized.add_stats(&stats_test);
 
-        assert_eq!(summarized.len(), 1);
+        assert_eq!(summarized.len(), 3);
         assert_eq!(summarized.num_files_staged, 3);
         assert_eq!(summarized.total_files, 4);
     }

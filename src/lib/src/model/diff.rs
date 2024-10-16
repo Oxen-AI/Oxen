@@ -9,6 +9,7 @@ pub mod diff_commit_entry;
 pub mod diff_entries_counts;
 pub mod diff_entry;
 pub mod diff_entry_status;
+pub mod diff_file_node;
 
 pub mod diff_result;
 pub use diff_result::DiffResult;

@@ -6,10 +6,7 @@ use crate::controllers;
 pub fn branches() -> Scope {
     web::scope("/branches")
         .route("", web::get().to(controllers::branches::index))
-        .route(
-            "",
-            web::post().to(controllers::branches::create_from_or_get),
-        )
+        .route("", web::post().to(controllers::branches::create))
         .route(
             "/{branch_name:.*}/lock",
             web::post().to(controllers::branches::lock),

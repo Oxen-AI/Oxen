@@ -7,7 +7,7 @@ pub mod compare;
 pub mod data_frames;
 pub mod data_type_count;
 pub mod diff;
-pub mod entry;
+pub mod entries;
 pub mod entry_metadata;
 pub mod file_metadata;
 pub mod health;
@@ -15,6 +15,7 @@ pub mod http;
 pub mod json_data_frame;
 pub mod json_data_frame_view;
 pub mod merge;
+pub mod message;
 pub mod mime_type_count;
 pub mod namespace;
 pub mod oxen_response;
@@ -26,6 +27,7 @@ pub mod schema;
 pub mod sql_parse_error;
 pub mod status_message;
 pub mod tabular_diff_view;
+pub mod tree;
 pub mod version;
 pub mod workspaces;
 
@@ -49,18 +51,18 @@ pub use crate::view::repository::{
     ListRepositoryResponse, RepositoryResolveResponse, RepositoryResponse, RepositoryView,
 };
 
-pub use crate::view::entry::{
+pub use crate::view::entries::{
     CommitEntryVersion, EntryResponse, PaginatedDirEntries, PaginatedDirEntriesResponse,
     PaginatedEntries, PaginatedEntryVersions, PaginatedEntryVersionsResponse, RemoteEntryResponse,
 };
 
 pub use crate::view::commit::{
-    CommitResponse, CommitStatsResponse, ListCommitResponse, PaginatedCommits,
+    CommitResponse, CommitStatsResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
 };
 
 pub use crate::view::branch::{
-    BranchLockResponse, BranchNew, BranchNewFromExisting, BranchRemoteMerge, BranchResponse,
-    BranchUpdate, ListBranchesResponse,
+    BranchLockResponse, BranchNew, BranchNewFromBranchName, BranchNewFromCommitId,
+    BranchRemoteMerge, BranchResponse, BranchUpdate, ListBranchesResponse,
 };
 
 pub use crate::view::revision::ParseResourceResponse;
@@ -83,3 +85,5 @@ pub use crate::view::sql_parse_error::SQLParseError;
 
 pub use crate::view::tabular_diff_view::TabularDiffView;
 pub use crate::view::workspaces::WorkspaceResponseView;
+
+pub use crate::view::tree::merkle_hashes::MerkleHashesResponse;

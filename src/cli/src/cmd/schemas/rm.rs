@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use clap::{arg, Arg, Command};
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "rm";
@@ -40,7 +40,7 @@ impl RunCmd for SchemasRmCmd {
         };
 
         let staged = args.get_flag("staged");
-        command::schemas::rm(&repository, schema_ref, staged)?;
+        repositories::data_frames::schemas::rm(&repository, schema_ref, staged)?;
 
         Ok(())
     }

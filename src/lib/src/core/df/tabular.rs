@@ -9,10 +9,14 @@ use crate::core::df::filter::DFLogicalOp;
 use crate::core::df::pretty_print;
 use crate::core::df::sql;
 use crate::error::OxenError;
-use crate::model::schema::DataType;
+use crate::io::chunk_reader::ChunkReader;
+use crate::model::data_frame::schema::DataType;
+use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::Commit;
 use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::opts::{CountLinesOpts, DFOpts, PaginateOpts};
+use crate::repositories;
 use crate::util::fs;
 use crate::util::hasher;
 
@@ -341,6 +345,7 @@ fn lit_from_any(value: &AnyValue) -> Expr {
         AnyValue::Int64(val) => lit(*val),
         AnyValue::Int32(val) => lit(*val),
         AnyValue::String(val) => lit(*val),
+        AnyValue::StringOwned(val) => lit(val.to_string()),
         val => panic!("Unknown data type for [{}] to create literal", val),
     }
 }
@@ -568,6 +573,7 @@ pub fn any_val_to_bytes(value: &AnyValue) -> Vec<u8> {
         AnyValue::Float32(val) => val.to_le_bytes().to_vec(),
         AnyValue::Float64(val) => val.to_le_bytes().to_vec(),
         AnyValue::String(val) => val.as_bytes().to_vec(),
+        AnyValue::StringOwned(val) => val.as_bytes().to_vec(),
         AnyValue::Boolean(val) => vec![if *val { 1 } else { 0 }],
         // TODO: handle rows with lists...
         // AnyValue::List(val) => {
@@ -701,6 +707,10 @@ pub fn df_hash_rows_on_cols(
 ) -> Result<DataFrame, OxenError> {
     let num_rows = df.height() as i64;
 
+    log::debug!("df_hash_rows_on_cols df is {:?}", df);
+    log::debug!("df_hash_rows_on_cols hash_fields is {:?}", hash_fields);
+    log::debug!("df_hash_rows_on_cols out_col_name is {:?}", out_col_name);
+
     // Create a vector to store columns to be hashed
     let mut col_names = vec![];
     let schema = df.schema();
@@ -733,11 +743,11 @@ pub fn df_hash_rows_on_cols(
 
                         let mut hashes = vec![];
                         for i in 0..num_rows {
-                            // log::debug!("row: {:?}", i);
+                            log::debug!("row: {:?}", i);
                             let mut buffer: Vec<u8> = vec![];
                             for series in s_a.iter() {
                                 let elem = series.get(i).unwrap();
-                                // log::debug!("column: {:?} elem: {:?}", j, elem);
+                                log::debug!("\telem: {:?}", elem);
                                 let mut elem_bytes = any_val_to_bytes(&elem);
                                 buffer.append(&mut elem_bytes);
                             }
@@ -787,38 +797,101 @@ pub fn read_df(path: impl AsRef<Path>, opts: DFOpts) -> Result<DataFrame, OxenEr
     }
 
     let extension = path.extension().and_then(OsStr::to_str);
-    let err = format!("Unknown file type read_df {path:?} -> {extension:?}");
+    let err = format!("Could not load data frame with path: {path:?} and extension: {extension:?}");
+
+    if let Some(extension) = extension {
+        read_df_with_extension(path, extension, &opts)
+    } else {
+        Err(OxenError::basic_str(err))
+    }
+}
+
+pub fn read_df_with_extension(
+    path: impl AsRef<Path>,
+    extension: impl AsRef<str>,
+    opts: &DFOpts,
+) -> Result<DataFrame, OxenError> {
+    let path = path.as_ref();
+    let extension = extension.as_ref();
+    if !path.exists() {
+        return Err(OxenError::entry_does_not_exist(path));
+    }
 
     let df = match extension {
-        Some(extension) => match extension {
-            "ndjson" => read_df_jsonl(path),
-            "jsonl" => read_df_jsonl(path),
-            "json" => read_df_json(path),
-            "csv" | "data" => {
-                let delimiter = sniff_db_csv_delimiter(path, &opts)?;
-                read_df_csv(path, delimiter)
+        "ndjson" => read_df_jsonl(path),
+        "jsonl" => read_df_jsonl(path),
+        "json" => read_df_json(path),
+        "csv" | "data" => {
+            let delimiter = sniff_db_csv_delimiter(path, opts)?;
+            read_df_csv(path, delimiter)
+        }
+        "tsv" => read_df_csv(path, b'\t'),
+        "parquet" => read_df_parquet(path),
+        "arrow" => {
+            if opts.sql.is_some() {
+                return Err(OxenError::basic_str(
+                    "Error: SQL queries are not supported for .arrow files",
+                ));
             }
-            "tsv" => read_df_csv(path, b'\t'),
-            "parquet" => read_df_parquet(path),
-            "arrow" => {
-                if opts.sql.is_some() {
-                    return Err(OxenError::basic_str(
-                        "Error: SQL queries are not supported for .arrow files",
-                    ));
-                }
-                read_df_arrow(path)
-            }
-            _ => Err(OxenError::basic_str(err)),
-        },
-        None => Err(OxenError::basic_str(err)),
+            read_df_arrow(path)
+        }
+        _ => {
+            let err = format!(
+                "Could not load data frame with path: {path:?} and extension: {extension:?}"
+            );
+            Err(OxenError::basic_str(err))
+        }
     }?;
 
     // log::debug!("Read finished");
     if opts.has_transform() {
-        let df = transform_new(df, opts)?;
+        let df = transform_new(df, opts.clone())?;
         Ok(df.collect()?)
     } else {
         Ok(df.collect()?)
+    }
+}
+
+pub fn maybe_read_df_with_extension(
+    repo: &LocalRepository,
+    version_path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    commit_id: &str,
+    opts: &DFOpts,
+) -> Result<DataFrame, OxenError> {
+    let version_path = version_path.as_ref();
+    if !version_path.exists() {
+        return Err(OxenError::entry_does_not_exist(path));
+    }
+
+    let extension = version_path.extension().and_then(OsStr::to_str);
+
+    if let Some(extension) = extension {
+        read_df_with_extension(path, extension, opts)
+    } else {
+        let commit = repositories::commits::get_by_id(repo, commit_id)?;
+        if let Some(commit) = commit {
+            try_to_read_extension_from_node(repo, version_path, path, &commit, opts)
+        } else {
+            let err = format!("Could not find commit: {commit_id}");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
+fn try_to_read_extension_from_node(
+    repo: &LocalRepository,
+    version_path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    commit: &Commit,
+    opts: &DFOpts,
+) -> Result<DataFrame, OxenError> {
+    let node = repositories::tree::get_file_by_path(repo, commit, &path)?;
+    if let Some(file_node) = node {
+        read_df_with_extension(&version_path, file_node.extension, opts)
+    } else {
+        let err = format!("Could not find file node {:?}", path.as_ref());
+        Err(OxenError::basic_str(err))
     }
 }
 
@@ -827,7 +900,7 @@ pub fn scan_df(
     opts: &DFOpts,
     total_rows: usize,
 ) -> Result<LazyFrame, OxenError> {
-    log::debug!("Scanning df with total_rows: {}", total_rows);
+    log::debug!("Scanning df {:?}", path.as_ref());
     let input_path = path.as_ref();
     let extension = input_path.extension().and_then(OsStr::to_str);
     let err = format!("Unknown file type scan_df {input_path:?} {extension:?}");
@@ -1101,6 +1174,74 @@ pub fn polars_schema_to_flat_str(schema: &Schema) -> String {
     }
 
     result
+}
+
+pub fn show_node(
+    repo: LocalRepository,
+    node: &MerkleTreeNode,
+    opts: DFOpts,
+) -> Result<DataFrame, OxenError> {
+    let file_node = node.file()?;
+    log::debug!("Opening chunked reader");
+
+    let df = if file_node.name.ends_with("parquet") {
+        let chunk_reader = ChunkReader::new(repo, file_node)?;
+        let parquet_reader = ParquetReader::new(chunk_reader);
+        log::debug!("Reading chunked parquet");
+
+        match parquet_reader.finish() {
+            Ok(df) => {
+                log::debug!("Finished reading chunked parquet");
+                Ok(df)
+            }
+            err => Err(OxenError::basic_str(format!(
+                "Could not read chunked parquet: {:?}",
+                err
+            ))),
+        }?
+    } else if file_node.name.ends_with("arrow") {
+        let chunk_reader = ChunkReader::new(repo, file_node)?;
+        let parquet_reader = IpcReader::new(chunk_reader);
+        log::debug!("Reading chunked arrow");
+
+        match parquet_reader.finish() {
+            Ok(df) => {
+                log::debug!("Finished reading chunked arrow");
+                Ok(df)
+            }
+            err => Err(OxenError::basic_str(format!(
+                "Could not read chunked arrow: {:?}",
+                err
+            ))),
+        }?
+    } else {
+        let chunk_reader = ChunkReader::new(repo, file_node)?;
+        let json_reader = JsonLineReader::new(chunk_reader);
+
+        match json_reader.finish() {
+            Ok(df) => {
+                log::debug!("Finished reading line delimited json");
+                Ok(df)
+            }
+            err => Err(OxenError::basic_str(format!(
+                "Could not read chunked json: {:?}",
+                err
+            ))),
+        }?
+    };
+
+    let df: PolarsResult<DataFrame> = if opts.has_transform() {
+        let df = transform(df, opts)?;
+        let pretty_df = pretty_print::df_to_str(&df);
+        println!("{pretty_df}");
+        Ok(df)
+    } else {
+        let pretty_df = pretty_print::df_to_str(&df);
+        println!("{pretty_df}");
+        Ok(df)
+    };
+
+    Ok(df?)
 }
 
 #[cfg(test)]

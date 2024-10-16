@@ -15,5 +15,6 @@ pub mod not_found;
 pub mod repositories;
 pub mod revisions;
 pub mod schemas;
+pub mod tree;
 pub mod version;
 pub mod workspaces;

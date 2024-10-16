@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use clap::{Arg, Command};
 
-use liboxen::command;
 use liboxen::error::OxenError;
+use liboxen::model::data_frame::schema::Schema;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "list";
@@ -32,9 +35,13 @@ impl RunCmd for SchemasListCmd {
 
         let repository = LocalRepository::from_current_dir()?;
         let schemas = if staged {
-            command::schemas::list_staged(&repository)?
+            repositories::data_frames::schemas::list_staged(&repository)?
         } else {
-            command::schemas::list(&repository, None)?
+            let mut schemas = HashMap::new();
+            if let Some(commit) = repositories::commits::head_commit_maybe(&repository)? {
+                schemas = repositories::data_frames::schemas::list(&repository, &commit)?
+            }
+            schemas
         };
 
         if schemas.is_empty() && staged {
@@ -42,7 +49,7 @@ impl RunCmd for SchemasListCmd {
         } else if schemas.is_empty() {
             eprintln!("{}", OxenError::no_schemas_committed());
         } else {
-            let result = liboxen::model::schema::Schema::schemas_to_string(schemas);
+            let result = Schema::schemas_to_string(schemas);
             println!("{result}");
         }
 

@@ -2,23 +2,21 @@ use crate::app_data::OxenAppData;
 use crate::helpers;
 use crate::queues::{InMemoryTaskQueue, RedisTaskQueue, TaskQueue};
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 use liboxen::util;
 
-use env_logger::Env;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 pub fn init_test_env() {
-    let env = Env::default();
-    if env_logger::try_init_from_env(env).is_ok() {
-        log::debug!("Logger initialized");
-    }
+    util::logging::init_logging();
 
-    std::env::set_var("TEST", "true");
+    unsafe {
+        std::env::set_var("TEST", "true");
+    }
 
     init_queue();
 }
@@ -37,6 +35,7 @@ pub fn init_queue() -> TaskQueue {
 }
 
 pub fn get_sync_dir() -> Result<PathBuf, OxenError> {
+    init_test_env();
     let sync_dir = PathBuf::from(format!("data/test/runs/{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&sync_dir)?;
     Ok(sync_dir)
@@ -46,10 +45,9 @@ pub fn create_local_repo(
     namespace: &str,
     name: &str,
 ) -> Result<LocalRepository, OxenError> {
-    init_test_env();
     let repo_dir = sync_dir.join(namespace).join(name);
     std::fs::create_dir_all(&repo_dir)?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
     Ok(repo)
 }
 

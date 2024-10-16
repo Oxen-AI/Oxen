@@ -40,6 +40,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::stats())
                 .service(services::tabular())
                 .service(services::transfer())
+                .service(services::tree())
                 .service(services::versions())
                 .service(services::workspace()),
         );

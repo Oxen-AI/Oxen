@@ -13,19 +13,14 @@ use super::StatusMessage;
 use crate::constants;
 use crate::core::df::tabular;
 use crate::error::OxenError;
+use crate::model::data_frame::DataFrameSchemaSize;
 use crate::model::Commit;
 use crate::model::DataFrameSize;
 use crate::opts::df_opts::DFOptsView;
 
-use crate::view::entry::ResourceVersion;
+use crate::view::entries::ResourceVersion;
 use crate::view::Pagination;
 use crate::{model::Schema, opts::DFOpts};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonDataFrameSource {
-    pub schema: Schema,
-    pub size: DataFrameSize,
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JsonDataFrameView {
@@ -39,7 +34,7 @@ pub struct JsonDataFrameView {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JsonDataFrameViews {
-    pub source: JsonDataFrameSource,
+    pub source: DataFrameSchemaSize,
     pub view: JsonDataFrameView,
 }
 
@@ -107,27 +102,6 @@ pub struct DerivedDFResource {
     pub resource_id: String,
     pub path: String,
     pub resource_type: DFResourceType,
-}
-
-impl JsonDataFrameSource {
-    pub fn from_df_size(data_frame_size: &DataFrameSize, schema: &Schema) -> JsonDataFrameSource {
-        JsonDataFrameSource {
-            schema: schema.to_owned(),
-            size: DataFrameSize {
-                height: data_frame_size.height,
-                width: data_frame_size.width,
-            },
-        }
-    }
-    pub fn from_df(df: &DataFrame, schema: &Schema) -> JsonDataFrameSource {
-        JsonDataFrameSource {
-            schema: schema.to_owned(),
-            size: DataFrameSize {
-                height: df.height(),
-                width: df.width(),
-            },
-        }
-    }
 }
 
 impl JsonDataFrameView {
@@ -303,7 +277,7 @@ impl JsonDataFrameView {
 
 impl JsonDataFrameViews {
     pub fn from_df_and_opts(df: DataFrame, og_schema: Schema, opts: &DFOpts) -> JsonDataFrameViews {
-        let source = JsonDataFrameSource::from_df(&df, &og_schema);
+        let source = DataFrameSchemaSize::from_df(&df, &og_schema);
         let view = JsonDataFrameView::from_df_opts(df, og_schema, opts);
         JsonDataFrameViews { source, view }
     }
@@ -316,7 +290,7 @@ impl JsonDataFrameViews {
         og_height: usize,
         opts: &DFOpts,
     ) -> JsonDataFrameViews {
-        let source = JsonDataFrameSource::from_df(&df, &og_schema);
+        let source = DataFrameSchemaSize::from_df(&df, &og_schema);
         let view = JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts);
         JsonDataFrameViews { source, view }
     }

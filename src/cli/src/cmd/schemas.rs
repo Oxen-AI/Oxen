@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use clap::{arg, Arg, Command};
 use std::collections::HashMap;
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "schemas";
@@ -12,14 +12,15 @@ pub const NAME: &str = "schemas";
 pub mod add;
 pub use add::SchemasAddCmd;
 
-pub mod name;
-pub use name::SchemasNameCmd;
-
 pub mod list;
 pub use list::SchemasListCmd;
 
 pub mod rm;
 pub use rm::SchemasRmCmd;
+
+pub mod show;
+pub use show::SchemasShowCmd;
+
 pub struct SchemasCmd;
 
 #[async_trait]
@@ -74,7 +75,8 @@ impl RunCmd for SchemasCmd {
             let repository = LocalRepository::from_current_dir()?;
             let staged = args.get_flag("staged");
             let verbose = !args.get_flag("flatten"); // default to verbose
-            let val = command::schemas::show(&repository, schema_ref, staged, verbose)?;
+            let val =
+                repositories::data_frames::schemas::show(&repository, schema_ref, staged, verbose)?;
             println!("{val}");
         } else {
             // Fall back to list schemas
@@ -95,8 +97,8 @@ impl SchemasCmd {
         let commands: Vec<Box<dyn RunCmd>> = vec![
             Box::new(SchemasAddCmd),
             Box::new(SchemasListCmd),
-            Box::new(SchemasNameCmd),
             Box::new(SchemasRmCmd),
+            Box::new(SchemasShowCmd),
         ];
         let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
         for cmd in commands {

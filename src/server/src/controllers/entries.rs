@@ -6,10 +6,9 @@ use liboxen::constants::AVG_CHUNK_SIZE;
 use liboxen::error::OxenError;
 use liboxen::util::fs::replace_file_name_keep_extension;
 use liboxen::util::paginate;
-use liboxen::view::entry::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
+use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::view::StatusMessage;
-use liboxen::{api, util};
-use liboxen::{constants, current_function};
+use liboxen::{constants, current_function, repositories, util};
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use flate2::read::GzDecoder;
@@ -63,11 +62,19 @@ pub async fn download_data_from_version_paths(
             continue;
         }
 
-        log::debug!("download_data_from_version_paths pulling {}", content_file);
+        // log::debug!("download_data_from_version_paths pulling {}", content_file);
 
         // We read from version file as determined by the latest logic (data.extension)
         // but still want to write the tar archive with the original filename so that it
         // unpacks to the location old clients expect.
+
+        // This is annoying but the older client passes in the full path to the version file with the extension
+        // ie .oxen/versions/files/71/7783cda74ceeced8d45fae3155382c/data.jpg
+        // but the new client passes in the path without the extension
+        // ie .oxen/versions/files/71/7783cda74ceeced8d45fae3155382c/data
+        // So we need to support both formats.
+
+        // In an ideal world we would just pass in the hash and not the full path to save on bandwidth as well
         let mut path_to_read = repo.path.join(content_file);
         path_to_read = replace_file_name_keep_extension(
             &path_to_read,
@@ -131,7 +138,7 @@ pub async fn list_tabular(
     let repo_name = path_param(&req, "repo_name")?;
     let commit_or_branch = path_param(&req, "commit_or_branch")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let commit = api::local::revisions::get(&repo, &commit_or_branch)?.ok_or_else(|| {
+    let commit = repositories::revisions::get(&repo, &commit_or_branch)?.ok_or_else(|| {
         OxenError::revision_not_found(format!("Commit {} not found", commit_or_branch).into())
     })?;
 
@@ -145,7 +152,7 @@ pub async fn list_tabular(
         page_size,
     );
 
-    let entries = api::local::entries::list_tabular_files_in_repo(&repo, &commit)?;
+    let entries = repositories::entries::list_tabular_files_in_repo(&repo, &commit)?;
     let (paginated_entries, pagination) = paginate(entries, page, page_size);
 
     Ok(HttpResponse::Ok().json(PaginatedMetadataEntriesResponse {

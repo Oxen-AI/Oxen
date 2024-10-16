@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use clap::{Arg, Command};
 use liboxen::error::OxenError;
 
-use liboxen::command;
 use liboxen::model::LocalRepository;
 use liboxen::opts::AddOpts;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 use crate::helpers::check_repo_migration_needed;
@@ -56,7 +56,7 @@ impl RunCmd for AddCmd {
         check_repo_migration_needed(&repository)?;
 
         for path in &opts.paths {
-            command::add(&repository, path)?;
+            repositories::add(&repository, path)?;
         }
 
         Ok(())

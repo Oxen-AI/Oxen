@@ -6,17 +6,18 @@ use crate::command;
 use crate::constants;
 
 use crate::constants::DEFAULT_REMOTE_NAME;
-use crate::core::index::{RefWriter, Stager};
+use crate::core::refs::RefWriter;
+
+use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::schema::Field;
+use crate::model::data_frame::schema::Field;
 use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::{LocalRepository, RemoteRepository};
-
 use crate::opts::RmOpts;
+use crate::repositories;
 use crate::util;
 
-use env_logger::Env;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use std::fs::File;
@@ -56,10 +57,8 @@ pub fn repo_remote_url_from(name: &str) -> String {
 }
 
 pub fn init_test_env() {
-    let env = Env::default();
-    if env_logger::try_init_from_env(env).is_ok() {
-        log::debug!("Logger initialized");
-    }
+    // check if logger is already initialized
+    util::logging::init_logging();
 
     unsafe {
         std::env::set_var("TEST", "true");
@@ -80,7 +79,7 @@ fn create_prefixed_dir(
     Ok(full_dir)
 }
 
-fn create_repo_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub fn create_repo_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     create_prefixed_dir(base_dir, "repo")
 }
 
@@ -94,7 +93,56 @@ pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteReposito
         repo.dirname(),
         test_host(),
     );
-    api::remote::repositories::create_from_local(repo, repo_new).await
+    api::client::repositories::create_from_local(repo, repo_new).await
+}
+
+pub fn add_n_files_m_dirs(
+    repo: &LocalRepository,
+    num_files: u64,
+    num_dirs: u64,
+) -> Result<(), OxenError> {
+    /*
+    README.md
+    files.csv
+    files/
+      file1.txt
+      file2.txt
+      ..
+      fileN.txt
+    */
+
+    let readme_file = repo.path.join("README.md");
+    util::fs::write_to_path(&readme_file, format!("Repo with {} files", num_files))?;
+
+    repositories::add(repo, &readme_file)?;
+
+    // Write files.csv
+    let files_csv = repo.path.join("files.csv");
+    let mut file = File::create(&files_csv)?;
+    file.write_all(b"file,label\n")?;
+    for i in 0..num_files {
+        let label = if i % 2 == 0 { "cat" } else { "dog" };
+        file.write_all(format!("file{}.txt,{}\n", i, label).as_bytes())?;
+    }
+    file.flush()?;
+
+    // Write files
+    let files_dir = repo.path.join("files");
+    util::fs::create_dir_all(&files_dir)?;
+    for i in 0..num_files {
+        // Create num_dirs directories
+        let dir_num = i % num_dirs;
+        let dir_path = files_dir.join(format!("dir_{}", dir_num));
+        util::fs::create_dir_all(&dir_path)?;
+
+        let file_file = dir_path.join(format!("file{}.txt", i));
+        util::fs::write_to_path(&file_file, format!("File {}", i))?;
+    }
+
+    repositories::add(repo, &files_csv)?;
+    repositories::add(repo, &files_dir)?;
+
+    Ok(())
 }
 
 /// # Run a unit test on a test repo directory
@@ -115,9 +163,11 @@ where
     T: FnOnce(&Path) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_empty_dir_test start");
     let repo_dir = create_empty_dir(test_run_dir())?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_empty_dir_test running test");
     let result = std::panic::catch_unwind(|| match test(&repo_dir) {
         Ok(_) => {}
         Err(err) => {
@@ -140,9 +190,11 @@ where
     Fut: Future<Output = Result<PathBuf, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_empty_dir_test_async start");
     let repo_dir = create_empty_dir(test_run_dir())?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_empty_dir_test_async running test");
     let result = match test(repo_dir).await {
         Ok(repo_dir) => {
             // Remove repo dir
@@ -163,25 +215,54 @@ where
 
 pub fn run_empty_local_repo_test<T>(test: T) -> Result<(), OxenError>
 where
-    T: FnOnce(LocalRepository) -> Result<(), OxenError>,
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_empty_local_repo_test start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
-    let result = match test(repo) {
-        Ok(_) => true,
+    log::info!(">>>>> run_empty_local_repo_test running test");
+    let result = std::panic::catch_unwind(|| match test(repo) {
+        Ok(_) => {}
         Err(err) => {
-            eprintln!("Error running test. Err: {err}");
-            false
+            panic!("Error running test. Err: {}", err);
         }
-    };
+    });
 
     // Remove repo dir
     util::fs::remove_dir_all(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result);
+    assert!(result.is_ok());
+    Ok(())
+}
+
+pub fn run_empty_local_repo_test_w_version<T>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+{
+    init_test_env();
+    log::info!("<<<<< run_empty_local_repo_test start");
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+
+    log::info!(">>>>> run_empty_local_repo_test running test");
+    let result = std::panic::catch_unwind(|| match test(repo) {
+        Ok(_) => {}
+        Err(err) => {
+            panic!("Error running test. Err: {}", err);
+        }
+    });
+
+    // Remove repo dir
+    // util::fs::remove_dir_all(&repo_dir)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result.is_ok());
     Ok(())
 }
 
@@ -191,8 +272,41 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_empty_local_repo_test_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
+
+    log::info!(">>>>> run_empty_local_repo_test_async running test");
+    let result = match test(repo).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err}");
+            false
+        }
+    };
+
+    // Remove repo dir
+    // util::fs::remove_dir_all(&repo_dir)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result);
+    Ok(())
+}
+
+pub async fn run_one_commit_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    log::debug!("run_empty_local_repo_test_async start");
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = repositories::init(&repo_dir)?;
+
+    let txt = generate_random_string(20);
+    let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
+    repositories::add(&repo, &file_path)?;
+    repositories::commit(&repo, "Init commit")?;
 
     let result = match test(repo).await {
         Ok(_) => true,
@@ -211,22 +325,40 @@ where
 }
 
 /// Test syncing between local and remote, where both exist, and both are empty
-pub async fn run_empty_sync_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_one_commit_sync_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(&LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_one_commit_sync_repo_test start");
     let repo_dir = create_repo_dir(test_run_dir())?;
 
-    let local_repo = command::init(&repo_dir)?;
+    let mut local_repo = repositories::init(&repo_dir)?;
+
+    let txt = generate_random_string(20);
+    let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
+    repositories::add(&local_repo, &file_path)?;
+    repositories::commit(&local_repo, "Init commit")?;
+
     let remote_repo = create_remote_repo(&local_repo).await?;
 
+    // Set remote
+    command::config::set_remote(
+        &mut local_repo,
+        DEFAULT_REMOTE_NAME,
+        &remote_repo.remote.url,
+    )?;
+
+    // Push
+    repositories::push(&local_repo).await?;
+
     // Run test to see if it panic'd
+    log::info!(">>>>> run_one_commit_sync_repo_test running test");
     let result = match test(&local_repo, remote_repo).await {
         Ok(remote_repo) => {
             // Cleanup remote repo
-            api::remote::repositories::delete(&remote_repo).await?;
+            api::client::repositories::delete(&remote_repo).await?;
             true
         }
         Err(err) => {
@@ -250,9 +382,10 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_many_local_commits_empty_sync_remote_test start");
     let repo_dir = create_repo_dir(test_run_dir())?;
 
-    let mut local_repo = command::init(&repo_dir)?;
+    let mut local_repo = repositories::init(&repo_dir)?;
     let remote_repo = create_remote_repo(&local_repo).await?;
 
     // Set remote
@@ -264,19 +397,20 @@ where
 
     let local_repo_dir = local_repo.path.clone();
 
-    for i in 1..25 {
+    for i in 1..26 {
         // Get random string
         let txt = generate_random_string(20);
         let file_path = add_txt_file_to_dir(&local_repo_dir, &txt)?;
-        command::add(&local_repo, &file_path)?;
-        command::commit(&local_repo, &format!("Adding file_{}", i))?;
+        repositories::add(&local_repo, &file_path)?;
+        repositories::commit(&local_repo, &format!("Adding file_{}", i))?;
     }
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_many_local_commits_empty_sync_remote_test running test");
     let result = match test(local_repo, remote_repo).await {
         Ok(remote_repo) => {
             // Cleanup remote repo
-            api::remote::repositories::delete(&remote_repo).await?;
+            api::client::repositories::delete(&remote_repo).await?;
             true
         }
         Err(err) => {
@@ -296,8 +430,9 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_sync_test_no_commits start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let local_repo = command::init(&repo_dir)?;
+    let local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
     populate_dir_with_training_data(&repo_dir)?;
@@ -306,6 +441,7 @@ where
     println!("Got remote repo: {remote_repo:?}");
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_sync_test_no_commits running test");
     let result = match test(local_repo, remote_repo).await {
         Ok(_remote_repo) => true,
         Err(err) => {
@@ -326,39 +462,39 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_fully_sync_remote start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let mut local_repo = command::init(&repo_dir)?;
+    let mut local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
     populate_dir_with_training_data(&repo_dir)?;
     // Make a few commits before we sync
-    command::add(&local_repo, local_repo.path.join("train"))?;
-    command::commit(&local_repo, "Adding train/")?;
+    repositories::add(&local_repo, local_repo.path.join("train"))?;
+    repositories::commit(&local_repo, "Adding train/")?;
 
-    command::add(&local_repo, local_repo.path.join("test"))?;
-    command::commit(&local_repo, "Adding test/")?;
+    repositories::add(&local_repo, local_repo.path.join("test"))?;
+    repositories::commit(&local_repo, "Adding test/")?;
 
-    command::add(&local_repo, local_repo.path.join("annotations"))?;
-    command::commit(&local_repo, "Adding annotations/")?;
+    repositories::add(&local_repo, local_repo.path.join("annotations"))?;
+    repositories::commit(&local_repo, "Adding annotations/")?;
 
-    command::add(&local_repo, local_repo.path.join("nlp"))?;
-    command::commit(&local_repo, "Adding nlp/")?;
+    repositories::add(&local_repo, local_repo.path.join("nlp"))?;
+    repositories::commit(&local_repo, "Adding nlp/")?;
 
     // Remove the test dir to make a more complex history
     let rm_opts = RmOpts {
         path: PathBuf::from("test"),
         recursive: true,
         staged: false,
-        remote: false,
     };
 
-    command::rm(&local_repo, &rm_opts).await?;
-    command::commit(&local_repo, "Removing test/")?;
+    repositories::rm(&local_repo, &rm_opts)?;
+    repositories::commit(&local_repo, "Removing test/")?;
 
     // Add all the files
-    command::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path)?;
     // Commit all the data locally
-    command::commit(&local_repo, "Adding rest of data")?;
+    repositories::commit(&local_repo, "Adding rest of data")?;
 
     // Create remote
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -366,10 +502,12 @@ where
     // Add remote
     let remote_url = repo_remote_url_from(&local_repo.dirname());
     command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote_url)?;
+
     // Push data
-    command::push(&local_repo).await?;
+    repositories::push(&local_repo).await?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_fully_sync_remote running test");
     let result = match test(local_repo, remote_repo).await {
         Ok(_remote_repo) => true,
         Err(err) => {
@@ -389,15 +527,16 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_select_data_sync_remote start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let mut local_repo = command::init(&repo_dir)?;
+    let mut local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
     populate_select_training_data(&repo_dir, data)?;
 
     // Make a few commits before we sync
-    command::add(&local_repo, local_repo.path.join(data))?;
-    command::commit(&local_repo, &format!("Adding {data}"))?;
+    repositories::add(&local_repo, local_repo.path.join(data))?;
+    repositories::commit(&local_repo, &format!("Adding {data}"))?;
 
     // Create remote
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -406,9 +545,10 @@ where
     let remote_url = repo_remote_url_from(&local_repo.dirname());
     command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote_url)?;
     // Push data
-    command::push(&local_repo).await?;
+    repositories::push(&local_repo).await?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_select_data_sync_remote running test");
     let result = match test(local_repo, remote_repo).await {
         Ok(_remote_repo) => true,
         Err(err) => {
@@ -432,8 +572,9 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_subset_of_data_fully_sync_remote start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let mut local_repo = command::init(&repo_dir)?;
+    let mut local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
     populate_select_training_data(&repo_dir, data)?;
@@ -445,9 +586,10 @@ where
     let remote_url = repo_remote_url_from(&local_repo.dirname());
     command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote_url)?;
     // Push data
-    command::push(&local_repo).await?;
+    repositories::push(&local_repo).await?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_subset_of_data_fully_sync_remote running test");
     let result = match test(local_repo, remote_repo).await {
         Ok(_remote_repo) => true,
         Err(err) => {
@@ -468,16 +610,18 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_no_commit_remote_repo_test start");
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let namespace = constants::DEFAULT_NAMESPACE;
     let repo_new = RepoNew::from_namespace_name_host(namespace, name, test_host());
-    let repo = api::remote::repositories::create_empty(repo_new).await?;
+    let repo = api::client::repositories::create_empty(repo_new).await?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_no_commit_remote_repo_test running test");
     let result = match test(repo).await {
         Ok(repo) => {
             // Cleanup remote repo
-            api::remote::repositories::delete(&repo).await?;
+            api::client::repositories::delete(&repo).await?;
             true
         }
         Err(err) => {
@@ -498,19 +642,74 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_empty_remote_repo_test start");
     let empty_dir = create_empty_dir(test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let local_repo = command::init(&path)?;
+    let local_repo = repositories::init(&path)?;
     let remote_repo = create_remote_repo(&local_repo).await?;
 
     println!("REMOTE REPO: {remote_repo:?}");
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_empty_remote_repo_test running test");
     let result = match test(local_repo, remote_repo).await {
         Ok(repo) => {
             // Cleanup remote repo
-            api::remote::repositories::delete(&repo).await?;
+            api::client::repositories::delete(&repo).await?;
+            true
+        }
+        Err(err) => {
+            eprintln!("Error running test. Err: {err}");
+            false
+        }
+    };
+
+    // Cleanup Local
+    util::fs::remove_dir_all(path)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result);
+    Ok(())
+}
+
+/// Test interacting with a remote repo that has nothing synced
+pub async fn run_readme_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    init_test_env();
+    log::info!("<<<<< run_empty_remote_repo_test start");
+    let empty_dir = create_empty_dir(test_run_dir())?;
+    let name = format!("repo_{}", uuid::Uuid::new_v4());
+    let path = empty_dir.join(name);
+    let mut local_repo = repositories::init(&path)?;
+
+    // Add a README file
+    util::fs::write_to_path(local_repo.path.join("README.md"), "Hello World")?;
+    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::commit(&local_repo, "Adding README")?;
+
+    // Set the proper remote
+    let remote_repo = create_remote_repo(&local_repo).await?;
+    command::config::set_remote(
+        &mut local_repo,
+        constants::DEFAULT_REMOTE_NAME,
+        remote_repo.url(),
+    )?;
+
+    // Push
+    repositories::push(&local_repo).await?;
+
+    println!("REMOTE REPO: {remote_repo:?}");
+
+    // Run test to see if it panic'd
+    log::info!(">>>>> run_empty_remote_repo_test running test");
+    let result = match test(local_repo, remote_repo).await {
+        Ok(repo) => {
+            // Cleanup remote repo
+            api::client::repositories::delete(&repo).await?;
             true
         }
         Err(err) => {
@@ -534,15 +733,16 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_remote_repo_test_all_data_pushed start");
     let empty_dir = create_empty_dir(test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = command::init(&path)?;
+    let mut local_repo = repositories::init(&path)?;
 
     // Write all the files
     populate_dir_with_training_data(&local_repo.path)?;
     add_all_data_to_repo(&local_repo)?;
-    command::commit(&local_repo, "Adding all data")?;
+    repositories::commit(&local_repo, "Adding all data")?;
 
     // Set the proper remote
     let remote = repo_remote_url_from(&local_repo.dirname());
@@ -551,9 +751,10 @@ where
     // Create remote repo
     let repo = create_remote_repo(&local_repo).await?;
 
-    command::push(&local_repo).await?;
+    repositories::push(&local_repo).await?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_remote_repo_test_all_data_pushed running test");
     let result = match test(repo).await {
         Ok(_repo) => {
             // TODO: Cleanup remote repo
@@ -581,15 +782,18 @@ where
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_remote_repo_test_bounding_box_csv_pushed start");
     let empty_dir = create_empty_dir(test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = command::init(&path)?;
+    let mut local_repo = repositories::init(&path)?;
 
     // Write all the files
     create_bounding_box_csv(&local_repo.path)?;
-    command::add(&local_repo, &local_repo.path)?;
-    command::commit(&local_repo, "Adding bounding box csv")?;
+    repositories::add(&local_repo, &local_repo.path)?;
+    log::debug!("about to commit bounding box csv");
+    repositories::commit(&local_repo, "Adding bounding box csv")?;
+    log::debug!("successfully committed bounding box csv");
 
     // Set the proper remote
     let remote = repo_remote_url_from(&local_repo.dirname());
@@ -598,9 +802,10 @@ where
     // Create remote repo
     let repo = create_remote_repo(&local_repo).await?;
 
-    command::push(&local_repo).await?;
+    repositories::push(&local_repo).await?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_remote_repo_test_bounding_box_csv_pushed running test");
     let result = match test(repo).await {
         Ok(_repo) => {
             // TODO: Cleanup remote repo
@@ -628,13 +833,15 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_no_commits_async running test");
     let result = match test(repo).await {
         Ok(_) => true,
         Err(err) => {
@@ -644,7 +851,41 @@ where
     };
 
     // Remove repo dir
-    util::fs::remove_dir_all(&repo_dir)?;
+    // util::fs::remove_dir_all(&repo_dir)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result);
+    Ok(())
+}
+
+pub async fn run_training_data_repo_test_no_commits_async_with_version<T, Fut>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+
+    // Write all the files
+    populate_dir_with_training_data(&repo_dir)?;
+
+    // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_no_commits_async running test");
+    let result = match test(repo).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err}");
+            false
+        }
+    };
+
+    // Remove repo dir
+    // util::fs::remove_dir_all(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);
@@ -660,13 +901,15 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_select_data_repo_test_no_commits_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
     populate_select_training_data(&repo_dir, data)?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_select_data_repo_test_no_commits_async running test");
     let result = match test(repo).await {
         Ok(_) => true,
         Err(err) => {
@@ -692,20 +935,22 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_select_data_repo_test_committed_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
     populate_select_training_data(&repo_dir, data)?;
 
     // Add all the files
-    command::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path)?;
     log::debug!("about to commit whole repo");
     // commit
-    command::commit(&repo, "Adding all data")?;
+    repositories::commit(&repo, "Adding all data")?;
     log::debug!("committed whole repo");
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_select_data_repo_test_committed_async running test");
     let result = match test(repo).await {
         Ok(_) => true,
         Err(err) => {
@@ -728,10 +973,12 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_empty_data_repo_test_no_commits_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_empty_data_repo_test_no_commits_async running test");
     let result = match test(repo).await {
         Ok(_) => true,
         Err(err) => {
@@ -754,13 +1001,15 @@ where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_no_commits start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_no_commits running test");
     let result = std::panic::catch_unwind(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
@@ -781,13 +1030,15 @@ where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_select_data_repo_test_no_commits start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write the select files
     populate_select_training_data(&repo_dir, data)?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_select_data_repo_test_no_commits running test");
     let result = std::panic::catch_unwind(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
@@ -812,26 +1063,58 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_fully_committed_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
     // Add all the files
-    command::add(&repo, &repo.path)?;
-
-    // Make it easy to find these schemas during testing
-    command::schemas::set_name(&repo, "b821946753334c083124fd563377d795", "bounding_box")?;
-    command::schemas::set_name(
-        &repo,
-        "34a3b58f5471d7ae9580ebcf2582be2f",
-        "text_classification",
-    )?;
-
+    repositories::add(&repo, &repo.path)?;
     log::debug!("about to commit this repo");
-    command::commit(&repo, "adding all data baby")?;
+    repositories::commit(&repo, "adding all data baby")?;
     log::debug!("successfully committed the repo");
     // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_fully_committed_async running test");
+    let result = match test(repo).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err}");
+            false
+        }
+    };
+
+    // Remove repo dir
+    util::fs::remove_dir_all(&repo_dir)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result);
+    Ok(())
+}
+
+/// Run a test on a repo with a bunch of files
+pub async fn run_training_data_repo_test_fully_committed_async_min_version<T, Fut>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_fully_committed_async_min_version start");
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+
+    // Write all the files
+    populate_dir_with_training_data(&repo_dir)?;
+    // Add all the files
+    repositories::add(&repo, &repo.path)?;
+    log::debug!("about to commit this repo");
+    repositories::commit(&repo, "adding all data baby")?;
+    log::debug!("successfully committed the repo");
+    // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_fully_committed_async running test");
     let result = match test(repo).await {
         Ok(_) => true,
         Err(err) => {
@@ -877,25 +1160,18 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    log::info!("<<<<< run_bounding_box_csv_repo_test_fully_committed_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
     create_bounding_box_csv(&repo.path)?;
     // Add all the files
-    command::add(&repo, &repo.path)?;
-
-    // Make it easy to find these schemas during testing
-    command::schemas::set_name(&repo, "b821946753334c083124fd563377d795", "bounding_box")?;
-    command::schemas::set_name(
-        &repo,
-        "34a3b58f5471d7ae9580ebcf2582be2f",
-        "text_classification",
-    )?;
-
-    command::commit(&repo, "adding all data baby")?;
+    repositories::add(&repo, &repo.path)?;
+    repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_bounding_box_csv_repo_test_fully_committed_async running test");
     let result = match test(repo).await {
         Ok(_) => true,
         Err(err) => {
@@ -918,24 +1194,17 @@ where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_bounding_box_csv_repo_test_fully_committed start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Add all the files
     create_bounding_box_csv(&repo.path)?;
-    command::add(&repo, &repo.path)?;
-
-    // Make it easy to find these schemas during testing
-    command::schemas::set_name(&repo, "b821946753334c083124fd563377d795", "bounding_box")?;
-    command::schemas::set_name(
-        &repo,
-        "34a3b58f5471d7ae9580ebcf2582be2f",
-        "text_classification",
-    )?;
-
-    command::commit(&repo, "adding all data baby")?;
+    repositories::add(&repo, &repo.path)?;
+    repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_bounding_box_csv_repo_test_fully_committed running test");
     let result = match test(repo) {
         Ok(_) => true,
         Err(err) => {
@@ -952,13 +1221,14 @@ where
     Ok(())
 }
 
-pub fn run_compare_data_repo_test_fully_commited<T>(test: T) -> Result<(), OxenError>
+pub fn run_compare_data_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_compare_data_repo_test_fully_committed start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
 
     // Has 6 match observations in both keys, 5 diffs,
     // 2 key sets left only, 1 keyset right only.
@@ -997,9 +1267,10 @@ where
 71,241,M,1,no",
     )?;
 
-    command::add(&repo, &repo.path)?;
-    command::commit(&repo, "adding both csvs for compare")?;
+    repositories::add(&repo, &repo.path)?;
+    repositories::commit(&repo, "adding both csvs for compare")?;
 
+    log::info!(">>>>> run_compare_data_repo_test_fully_committed running test");
     let result = match test(repo) {
         Ok(_) => true,
         Err(err) => {
@@ -1020,23 +1291,30 @@ where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_fully_committed start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
 
     // Add all the files
-    command::add(&repo, &repo.path)?;
-    // Make it easy to find these schemas during testing
-    command::schemas::set_name(&repo, "b821946753334c083124fd563377d795", "bounding_box")?;
-    command::schemas::set_name(
-        &repo,
-        "34a3b58f5471d7ae9580ebcf2582be2f",
-        "text_classification",
-    )?;
+    repositories::add(&repo, &repo.path)?;
 
-    command::commit(&repo, "adding all data baby")?;
+    // Get the status and print it
+    let status = repositories::status(&repo)?;
+    println!("setup status: {status:?}");
+    status.print();
+
+    // Commit the data
+    let commit = repositories::commit(&repo, "adding all data baby")?;
+
+    // Read the tree for debug
+    let tree = repositories::tree::get_by_commit(&repo, &commit)?;
+    println!("setup tree after commit:");
+    tree.print();
+
     // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_fully_committed running test");
     let result = std::panic::catch_unwind(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
@@ -1045,7 +1323,7 @@ where
     });
 
     // Remove repo dir
-    util::fs::remove_dir_all(&repo_dir)?;
+    // util::fs::remove_dir_all(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
     match result {
@@ -1057,40 +1335,35 @@ where
     Ok(())
 }
 
-fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
-    command::add(repo, repo.path.join("train"))?;
-    command::add(repo, repo.path.join("test"))?;
-    command::add(repo, repo.path.join("annotations"))?;
-    command::add(repo, repo.path.join("large_files"))?;
-    command::add(repo, repo.path.join("nlp"))?;
-    command::add(repo, repo.path.join("labels.txt"))?;
-    command::add(repo, repo.path.join("README.md"))?;
-
-    // Make it easy to find these schemas during testing
-    command::schemas::set_name(repo, "b821946753334c083124fd563377d795", "bounding_box")?;
-    command::schemas::set_name(
-        repo,
-        "34a3b58f5471d7ae9580ebcf2582be2f",
-        "text_classification",
-    )?;
-
-    Ok(())
-}
-
-pub fn run_empty_stager_test<T>(test: T) -> Result<(), OxenError>
+/// Run a test on a repo with a bunch of files
+pub fn run_training_data_repo_test_fully_committed_w_version<T>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
 where
-    T: FnOnce(Stager, LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_fully_committed start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    log::debug!("BEFORE COMMAND::INIT");
-    let repo = command::init(&repo_dir)?;
-    log::debug!("AFTER COMMAND::INIT");
-    let stager = Stager::new(&repo)?;
-    log::debug!("AFTER CREATE STAGER");
+    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+    // Write all the files
+    populate_dir_with_training_data(&repo_dir)?;
+
+    // Add all the files
+    repositories::add(&repo, &repo.path)?;
+
+    // Get the status and print it
+    let status = repositories::status(&repo)?;
+    println!("setup status: {status:?}");
+    status.print();
+
+    // Commit the data
+    repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
-    let result = std::panic::catch_unwind(|| match test(stager, repo) {
+    log::info!(">>>>> run_training_data_repo_test_fully_committed running test");
+    let result = std::panic::catch_unwind(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
             panic!("Error running test. Err: {}", err);
@@ -1098,10 +1371,22 @@ where
     });
 
     // Remove repo dir
-    util::fs::remove_dir_all(&repo_dir)?;
+    // util::fs::remove_dir_all(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result.is_ok());
+    Ok(())
+}
+
+fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
+    repositories::add(repo, repo.path.join("train"))?;
+    repositories::add(repo, repo.path.join("test"))?;
+    repositories::add(repo, repo.path.join("annotations"))?;
+    repositories::add(repo, repo.path.join("large_files"))?;
+    repositories::add(repo, repo.path.join("nlp"))?;
+    repositories::add(repo, repo.path.join("labels.txt"))?;
+    repositories::add(repo, repo.path.join("README.md"))?;
+
     Ok(())
 }
 
@@ -1110,11 +1395,20 @@ where
     T: FnOnce(RefWriter) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
+    log::info!("<<<<< run_referencer_test start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = command::init(&repo_dir)?;
+    let repo = repositories::init(&repo_dir)?;
+
+    // add and commit a file
+    let new_file = repo.path.join("new_file.txt");
+    util::fs::write(&new_file, "I am a new file")?;
+    repositories::add(&repo, new_file)?;
+    repositories::commit(&repo, "Added a new file")?;
+
     let referencer = RefWriter::new(&repo)?;
 
     // Run test to see if it panic'd
+    log::info!(">>>>> run_referencer_test running test");
     let result = std::panic::catch_unwind(|| match test(referencer) {
         Ok(_) => {}
         Err(err) => {
@@ -1226,6 +1520,15 @@ pub fn populate_labels(repo_dir: &Path) -> Result<(), OxenError> {
         dog
         cat
     ",
+    )?;
+
+    Ok(())
+}
+
+pub fn populate_prompts(repo_dir: &Path) -> Result<(), OxenError> {
+    write_txt_file_to_path(
+        repo_dir.join("prompts.jsonl"),
+        "{\"prompt\": \"What is the meaning of life?\", \"label\": \"42\"}\n{\"prompt\": \"What is the best data version control system?\", \"label\": \"Oxen.ai\"}\n",
     )?;
 
     Ok(())
@@ -1437,6 +1740,7 @@ pub fn populate_dir_with_training_data(repo_dir: &Path) -> Result<(), OxenError>
     //     annotations.txt
     //   test/
     //     annotations.txt
+    // prompts.jsonl
     // labels.txt
     // LICENSE
     // README.md
@@ -1446,6 +1750,9 @@ pub fn populate_dir_with_training_data(repo_dir: &Path) -> Result<(), OxenError>
 
     // labels.txt
     populate_labels(repo_dir)?;
+
+    // prompts.jsonl
+    populate_prompts(repo_dir)?;
 
     // large_files/test.csv
     populate_large_files(repo_dir)?;
@@ -1567,7 +1874,7 @@ pub fn schema_bounding_box() -> Schema {
         Field::new("width", "f32"),
         Field::new("height", "f32"),
     ];
-    Schema::new("bounding_box", fields)
+    Schema::new(fields)
 }
 
 pub fn add_random_bbox_to_file<P: AsRef<Path>>(path: P) -> Result<PathBuf, OxenError> {

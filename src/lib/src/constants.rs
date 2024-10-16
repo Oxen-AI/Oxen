@@ -1,6 +1,8 @@
 //! Constants used throughout the codebase
 //!
 
+use crate::core::versions::MinOxenVersion;
+
 /// Rust library version
 pub const OXEN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -15,6 +17,8 @@ pub const TMP_DIR: &str = ".cache";
 pub const CONFIG_DIR: &str = ".config";
 /// .oxenignore is the name of the file that contains the ignore patterns
 pub const OXEN_IGNORE_FILE: &str = ".oxenignore";
+/// Root path for repositories
+pub const ROOT_PATH: &str = "/";
 /// Config file for the repository
 pub const REPO_CONFIG_FILENAME: &str = "config.toml";
 /// HEAD file holds onto where the head commit is (commit_id or branch name)
@@ -47,6 +51,8 @@ pub const DIRS_DIR: &str = "dirs";
 pub const DIR_HASHES_DIR: &str = "dir_hashes";
 /// prefix for the commit merkle tree db
 pub const TREE_DIR: &str = "tree";
+/// prefix for the commit merkle tree node dbs
+pub const NODES_DIR: &str = "nodes";
 /// prefix for the cached stats dirs
 pub const CACHE_DIR: &str = "cache";
 /// prefix for cached compare dfs
@@ -92,6 +98,8 @@ pub const INDICES_DIR: &str = "indices";
 pub const FIELDS_DIR: &str = "fields";
 /// versions/ is where all the versions are stored so that we can use to quickly swap between versions of the file
 pub const VERSIONS_DIR: &str = "versions";
+/// chunks/ is where individual file chunks are stored
+pub const CHUNKS_DIR: &str = "chunks";
 /// objects/ stores pointers to data files and sub-tree structures for efficient commit representations
 pub const OBJECTS_DIR: &str = "objects";
 /// Storage of file node representations in objects dir
@@ -169,9 +177,15 @@ pub const EVAL_DURATION_COL: &str = "_oxen_eval_duration";
 pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 4;
 // Retry and back off of requests N times
 /// Retry and back off of requests N times
+#[cfg(test)]
+pub const NUM_HTTP_RETRIES: u64 = 1;
+#[cfg(not(test))]
 pub const NUM_HTTP_RETRIES: u64 = 10;
 /// Number of workers
 pub const DEFAULT_NUM_WORKERS: usize = 8;
+
+/// Default vnode size
+pub const DEFAULT_VNODE_SIZE: u64 = 10_000;
 
 /// Pagination page size of 10
 pub const DEFAULT_PAGE_SIZE: usize = 100;
@@ -192,7 +206,7 @@ pub const BINARY: &str = "binary";
 pub const DIR: &str = "dir";
 
 /// Minimum allowable oxen version to push or pull data
-pub const MIN_CLI_VERSION: &str = "0.10.0";
+pub const MIN_OXEN_VERSION: MinOxenVersion = MinOxenVersion::V0_19_0;
 
 /// Filepath used to track repo and server-level migration status
 pub const LAST_MIGRATION_FILE: &str = "last_migration.txt";

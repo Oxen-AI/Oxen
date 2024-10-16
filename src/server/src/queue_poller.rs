@@ -1,5 +1,5 @@
-use liboxen::core::cache::cacher_status::CacherStatus;
-use liboxen::core::cache::commit_cacher;
+use liboxen::core::v0_10_0::cache::cacher_status::CacherStatus;
+use liboxen::core::v0_10_0::cache::commit_cacher;
 use std::time::Duration;
 use tokio::time::sleep;
 

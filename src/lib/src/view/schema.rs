@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::entry::ResourceVersion;
+use super::entries::ResourceVersion;
 use crate::model::{Commit, Schema};
 
 use super::StatusMessage;

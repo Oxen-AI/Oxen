@@ -5,10 +5,9 @@ use minus::Pager;
 use std::fmt::Write;
 use time::format_description;
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::opts::LogOpts;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "log";
@@ -28,26 +27,52 @@ impl RunCmd for LogCmd {
     }
 
     fn args(&self) -> Command {
-        Command::new(NAME).about("See log of commits").arg(
-            Arg::new("revision")
-                .long("revision")
-                .help("The commit or branch id you want to get history from. Defaults to main.")
-                .action(clap::ArgAction::Set),
-        )
+        Command::new(NAME)
+            .about("See log of commits")
+            .arg(
+                Arg::new("revision")
+                    .long("revision")
+                    .help("The commit or branch id you want to get history from. Defaults to main.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("number")
+                    .long("number")
+                    .short('n')
+                    .help("Number of commits to show")
+                    .default_value("20"),
+            )
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
         // Look up from the current dir for .oxen directory
         let repo = LocalRepository::from_current_dir()?;
 
+        let num_commits = args
+            .get_one::<String>("number")
+            .expect("Must supply number")
+            .parse::<usize>()
+            .expect("number must be a valid integer.");
         let revision = args.get_one::<String>("revision").map(String::from);
+        self.log_commits(&repo, revision, num_commits).await?;
 
-        let opts = LogOpts {
-            revision,
-            remote: false,
+        Ok(())
+    }
+}
+
+impl LogCmd {
+    pub async fn log_commits(
+        &self,
+        repo: &LocalRepository,
+        revision: Option<String>,
+        num_commits: usize,
+    ) -> Result<(), OxenError> {
+        let revision = match revision {
+            Some(revision) => revision,
+            None => repositories::commits::head_commit(repo)?.id,
         };
-
-        let commits = command::log_commits(&repo, &opts).await?;
+        let commits = repositories::commits::list_from(repo, &revision)?;
+        let commits = commits.iter().take(num_commits);
 
         // Fri, 21 Oct 2022 16:08:39 -0700
         let format = format_description::parse(

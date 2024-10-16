@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::api;
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "checkout";
@@ -74,17 +73,17 @@ impl RunCmd for CheckoutCmd {
 
 impl CheckoutCmd {
     pub async fn checkout(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-        command::checkout(repo, name).await?;
+        repositories::checkout(repo, name).await?;
         Ok(())
     }
 
     pub fn checkout_theirs(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
-        command::checkout_theirs(repo, path)?;
+        repositories::checkout::checkout_theirs(repo, path)?;
         Ok(())
     }
 
     pub fn checkout_ours(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
-        command::checkout_ours(repo, path)?;
+        repositories::checkout::checkout_ours(repo, path)?;
         Ok(())
     }
 
@@ -93,7 +92,7 @@ impl CheckoutCmd {
         repo: &LocalRepository,
         name: &str,
     ) -> Result<(), OxenError> {
-        api::local::branches::create_checkout(repo, name)?;
+        repositories::branches::create_checkout(repo, name)?;
         Ok(())
     }
 }

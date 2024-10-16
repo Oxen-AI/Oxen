@@ -23,6 +23,10 @@ pub fn commits() -> Scope {
         )
         .route("/all", web::get().to(controllers::commits::list_all))
         .route(
+            "/missing",
+            web::post().to(controllers::commits::list_missing),
+        )
+        .route(
             "/{commit_id}/latest_synced",
             web::get().to(controllers::commits::latest_synced),
         )
@@ -58,5 +62,9 @@ pub fn commits() -> Scope {
         .route(
             "/{commit_or_branch:.*}/commit_db",
             web::get().to(controllers::commits::download_commit_entries_db),
+        )
+        .route(
+            "/{base_head}/download_dir_hashes_db",
+            web::get().to(controllers::commits::download_dir_hashes_db),
         )
 }

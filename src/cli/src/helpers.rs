@@ -25,7 +25,7 @@ pub fn get_host_or_default() -> Result<String, OxenError> {
 
 pub fn get_host_from_repo(repo: &LocalRepository) -> Result<String, OxenError> {
     if let Some(remote) = repo.remote() {
-        let host = api::remote::client::get_host_from_url(remote.url)?;
+        let host = api::client::get_host_from_url(remote.url)?;
         return Ok(host);
     }
     get_host_or_default()
@@ -33,7 +33,7 @@ pub fn get_host_from_repo(repo: &LocalRepository) -> Result<String, OxenError> {
 
 pub async fn check_remote_version(host: impl AsRef<str>) -> Result<(), OxenError> {
     // Do the version check in the dispatch because it's only really the CLI that needs to do it
-    match api::remote::version::get_remote_version(host.as_ref()).await {
+    match api::client::version::get_remote_version(host.as_ref()).await {
         Ok(remote_version) => {
             let local_version: &str = constants::OXEN_VERSION;
 
@@ -43,14 +43,14 @@ pub async fn check_remote_version(host: impl AsRef<str>) -> Result<(), OxenError
             }
         }
         Err(err) => {
-            eprintln!("Err checking remote version: {err}")
+            eprintln!("Err checking remote version:\n{err}")
         }
     }
     Ok(())
 }
 
 pub async fn check_remote_version_blocking(host: impl AsRef<str>) -> Result<(), OxenError> {
-    match api::remote::version::get_min_cli_version(host.as_ref()).await {
+    match api::client::version::get_min_oxen_version(host.as_ref()).await {
         Ok(remote_version) => {
             let local_version: &str = constants::OXEN_VERSION;
             let min_oxen_version = OxenVersion::from_str(&remote_version)?;

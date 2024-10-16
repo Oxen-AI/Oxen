@@ -20,8 +20,8 @@ impl RunCmd for WorkspaceListCmd {
 
     async fn run(&self, _args: &ArgMatches) -> Result<(), OxenError> {
         let repository = LocalRepository::from_current_dir()?;
-        let remote_repo = api::remote::repositories::get_default_remote(&repository).await?;
-        let workspaces = api::remote::workspaces::list(&remote_repo).await?;
+        let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
+        let workspaces = api::client::workspaces::list(&remote_repo).await?;
         for workspace in workspaces {
             println!(
                 "{}\t{}\t{}",

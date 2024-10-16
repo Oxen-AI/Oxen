@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 
@@ -40,7 +40,8 @@ impl RunCmd for WorkspaceDfCmd {
                         return Err(OxenError::basic_str("Must supply a DataFrame to process."));
                     };
                     let repository = LocalRepository::from_current_dir()?;
-                    match command::workspace::df::index(&repository, workspace_id, path).await {
+                    match repositories::workspaces::df::index(&repository, workspace_id, path).await
+                    {
                         Ok(_) => return Ok(()),
                         Err(e) => return Err(e),
                     }

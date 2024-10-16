@@ -21,3 +21,13 @@ impl MetadataText {
         }
     }
 }
+
+impl std::fmt::Display for MetadataText {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "MetadataText({} lines, {} chars)",
+            self.text.num_lines, self.text.num_chars
+        )
+    }
+}

@@ -2,13 +2,11 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
-use liboxen::core::cache::commit_cacher;
-
 use liboxen::error::OxenError;
 use liboxen::model::NewCommitBody;
+use liboxen::repositories;
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
 use liboxen::view::{CommitResponse, StatusMessage, WorkspaceResponseView};
-use liboxen::{api, core::index};
 
 use actix_web::{HttpRequest, HttpResponse};
 
@@ -34,14 +32,14 @@ pub async fn get_or_create(
         }
     };
 
-    let Some(branch) = api::local::branches::get_by_name(&repo, &data.branch_name)? else {
+    let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Branch not found")));
     };
 
     // Return workspace if it already exists
     let workspace_id = data.workspace_id.clone();
     log::debug!("get_or_create workspace_id {:?}", workspace_id);
-    if let Ok(workspace) = index::workspaces::get(&repo, &workspace_id) {
+    if let Ok(workspace) = repositories::workspaces::get(&repo, &workspace_id) {
         return Ok(HttpResponse::Ok().json(WorkspaceResponseView {
             status: StatusMessage::resource_created(),
             workspace: WorkspaceResponse {
@@ -51,10 +49,10 @@ pub async fn get_or_create(
         }));
     }
 
-    let commit = api::local::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
 
-    // Get or create the workspace
-    index::workspaces::create(&repo, &commit, &workspace_id, true)?;
+    // Create the workspace
+    repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
 
     Ok(HttpResponse::Ok().json(WorkspaceResponseView {
         status: StatusMessage::resource_created(),
@@ -72,7 +70,7 @@ pub async fn list(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     log::debug!("workspaces::list got repo: {:?}", repo.path);
-    let workspaces = index::workspaces::list(&repo)?;
+    let workspaces = repositories::workspaces::list(&repo)?;
     let workspace_views = workspaces
         .iter()
         .map(|workspace| WorkspaceResponse {
@@ -94,9 +92,9 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let workspace_id = path_param(&req, "workspace_id")?;
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let workspace = index::workspaces::get(&repo, &workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, &workspace_id)?;
 
-    index::workspaces::delete(&workspace)?;
+    repositories::workspaces::delete(&workspace)?;
 
     Ok(HttpResponse::Ok().json(WorkspaceResponseView {
         status: StatusMessage::resource_created(),
@@ -133,41 +131,14 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         }
     };
 
-    let workspace = index::workspaces::get(&repo, &workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, &workspace_id)?;
 
-    match index::workspaces::commit(&workspace, &data, &branch_name) {
+    match repositories::workspaces::commit(&workspace, &data, &branch_name) {
         Ok(commit) => {
             log::debug!("workspace::commit ✅ success! commit {:?}", commit);
-
-            // Clone the commit so we can move it into the thread
-            let ret_commit = commit.clone();
-
-            // Start computing data about the commit in the background thread
-            // std::thread::spawn(move || {
-            log::debug!("Processing commit {:?} on repo {:?}", commit, repo.path);
-            let force = false;
-            match commit_cacher::run_all(&repo, &commit, force) {
-                Ok(_) => {
-                    log::debug!(
-                        "Success processing commit {:?} on repo {:?}",
-                        commit,
-                        repo.path
-                    );
-                }
-                Err(err) => {
-                    log::error!(
-                        "Could not process commit {:?} on repo {:?}: {}",
-                        commit,
-                        repo.path,
-                        err
-                    );
-                }
-            }
-            // });
-
             Ok(HttpResponse::Ok().json(CommitResponse {
                 status: StatusMessage::resource_created(),
-                commit: ret_commit,
+                commit,
             }))
         }
         Err(OxenError::WorkspaceBehind(branch)) => Err(OxenHttpError::WorkspaceBehind(branch)),

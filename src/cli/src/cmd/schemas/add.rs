@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
+use std::path::Path;
 
-use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "add";
@@ -43,7 +44,7 @@ impl RunCmd for SchemasAddCmd {
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
         // Path
-        let path = args.get_one::<String>("PATH");
+        let path = args.get_one::<String>("PATH").map(Path::new);
 
         // Flags
         let column = args.get_one::<String>("column");
@@ -106,7 +107,7 @@ impl SchemasAddCmd {
     fn schema_add_column_metadata(
         &self,
         repository: &LocalRepository,
-        schema_ref: impl AsRef<str>,
+        path: impl AsRef<Path>,
         column: impl AsRef<str>,
         metadata: impl AsRef<str>,
     ) -> Result<(), OxenError> {
@@ -119,9 +120,9 @@ impl SchemasAddCmd {
             ))
         })?;
 
-        for (path, schema) in
-            command::schemas::add_column_metadata(repository, schema_ref, column, &metadata)?
-        {
+        for (path, schema) in repositories::data_frames::schemas::add_column_metadata(
+            repository, path, column, &metadata,
+        )? {
             println!("{:?}\n{}", path, schema.verbose_str());
         }
 
@@ -131,7 +132,7 @@ impl SchemasAddCmd {
     fn schema_add_metadata(
         &self,
         repository: &LocalRepository,
-        schema_ref: impl AsRef<str>,
+        path: impl AsRef<Path>,
         metadata: impl AsRef<str>,
     ) -> Result<(), OxenError> {
         let metadata: serde_json::Value = serde_json::from_str(metadata.as_ref()).map_err(|e| {
@@ -143,7 +144,7 @@ impl SchemasAddCmd {
         })?;
 
         for (path, schema) in
-            command::schemas::add_schema_metadata(repository, schema_ref, &metadata)?
+            repositories::data_frames::schemas::add_schema_metadata(repository, path, &metadata)?
         {
             println!("{:?}\n{}", path, schema.verbose_str());
         }

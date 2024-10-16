@@ -1,10 +1,13 @@
-use crate::api;
-use crate::core::index::CommitReader;
+//! TODO: this is depreciated as of v0.19.0 and should be removed
+//!
+
+use crate::core::v0_10_0::index::CommitReader;
+use crate::model::data_frame::schema::{DataType, Field};
 use crate::model::metadata::to_duckdb_sql::ToDuckDBSql;
-use crate::model::schema::{DataType, Field};
 use crate::model::LocalRepository;
 use crate::model::Schema;
 use crate::model::{Commit, CommitEntry};
+use crate::repositories;
 use crate::util;
 
 use duckdb::types::ToSql;
@@ -39,7 +42,7 @@ impl DirMetadataItem {
             Field::new("extension", DataType::String.to_string().as_str()),
             Field::new("is_dir", DataType::Boolean.to_string().as_str()),
         ];
-        Schema::new("metadata", fields)
+        Schema::new(fields)
     }
 
     pub fn from_dir(dir: &Path, commit: &Commit) -> Self {
@@ -82,7 +85,7 @@ impl DirMetadataItem {
         let data_type = util::fs::datatype_from_mimetype(&path, &mime_type);
 
         // TODO: Handle unwraps more gracefully
-        let size = api::local::metadata::get_file_size(&path).unwrap_or(0);
+        let size = repositories::metadata::get_file_size(&path).unwrap_or(0);
         let dir = entry
             .path
             .parent()
@@ -130,5 +133,11 @@ impl ToDuckDBSql for DirMetadataItem {
             &self.extension,
             &self.is_dir,
         ]
+    }
+}
+
+impl std::fmt::Display for DirMetadataItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "DirMetadataItem({})", self.path)
     }
 }

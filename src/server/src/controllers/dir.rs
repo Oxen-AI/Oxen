@@ -1,42 +1,45 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param, PageNumQuery};
+use crate::params::{app_data, parse_resource, path_param, PageNumVersionQuery};
 
+use liboxen::core::versions::MinOxenVersion;
+use liboxen::opts::PaginateOpts;
 use liboxen::view::PaginatedDirEntriesResponse;
-use liboxen::{api, constants};
+use liboxen::{constants, repositories};
 
 use actix_web::{web, HttpRequest, HttpResponse};
 
 pub async fn get(
     req: HttpRequest,
-    query: web::Query<PageNumQuery>,
+    query: web::Query<PageNumVersionQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
-    let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
 
     let page: usize = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size: usize = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
+    let api_version = MinOxenVersion::or_latest(query.api_version.clone())?;
 
     log::debug!(
         "{} resource {namespace}/{repo_name}/{resource}",
         liboxen::current_function!()
     );
 
-    let (paginated_entries, dir) = api::local::entries::list_directory(
+    let paginated_entries = repositories::entries::list_directory_w_version(
         &repo,
-        &commit,
         &resource.path,
         resource.version.to_str().unwrap_or_default(),
-        page,
-        page_size,
+        &PaginateOpts {
+            page_num: page,
+            page_size,
+        },
+        api_version,
     )?;
 
-    // let dir = api::local::entries::get_meta_entry(&repo, &resource.commit, &resource.file_path)?;
-    let view = PaginatedDirEntriesResponse::ok_from(dir, paginated_entries);
+    let view = PaginatedDirEntriesResponse::ok_from(paginated_entries);
     Ok(HttpResponse::Ok().json(view))
 }
 
@@ -45,8 +48,8 @@ mod tests {
     use actix_web::{web, App};
     use std::path::Path;
 
-    use liboxen::command;
     use liboxen::error::OxenError;
+    use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::PaginatedDirEntries;
 
@@ -70,10 +73,10 @@ mod tests {
         // add the full dir
         let train_dir = repo.path.join(Path::new("train"));
         let num_entries = util::fs::rcount_files_in_dir(&train_dir);
-        command::add(&repo, &train_dir)?;
+        repositories::add(&repo, &train_dir)?;
 
         // commit the changes
-        let commit = command::commit(&repo, "adding training dir")?;
+        let commit = repositories::commit(&repo, "adding training dir")?;
 
         // Use the api list the files from the commit
         let uri = format!("/oxen/{}/{}/dir/{}/train/", namespace, name, commit.id);

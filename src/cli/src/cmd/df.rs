@@ -5,6 +5,7 @@ use clap::{arg, Arg, ArgMatches, Command};
 
 use liboxen::command;
 use liboxen::error::OxenError;
+use liboxen::model::LocalRepository;
 use liboxen::util::fs;
 
 use crate::cmd::RunCmd;
@@ -21,7 +22,7 @@ impl RunCmd for DFCmd {
         // Setups the CLI args for the command
         Command::new(NAME)
         .about("View and transform data frames. Supported types: csv, tsv, ndjson, jsonl, parquet.")
-        .arg(arg!(<DF_SPEC> ... "The DataFrame you want to process. If in the schema subcommand the schema ref."))
+        .arg(arg!(<PATH> ... "The DataFrame you want to process. If in the schema subcommand the schema ref."))
         .arg_required_else_help(true)
         .arg(
             Arg::new("write")
@@ -146,6 +147,12 @@ impl RunCmd for DFCmd {
                 .action(clap::ArgAction::Set),
         )
         .arg(
+            Arg::new("revision")
+                .long("revision")
+                .help("What version of the data frame to use. Ex: oxen df <path> --revision <commit_id>")
+                .action(clap::ArgAction::Set),
+        )
+        .arg(
             Arg::new("randomize")
                 .long("randomize")
                 .help("Randomize the order of the table")
@@ -205,11 +212,14 @@ impl RunCmd for DFCmd {
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
         let opts = DFCmd::parse_df_args(args);
-        let Some(path) = args.get_one::<String>("DF_SPEC") else {
+        let Some(path) = args.get_one::<String>("PATH") else {
             return Err(OxenError::basic_str("Must supply a DataFrame to process."));
         };
 
-        if args.get_flag("schema") || args.get_flag("schema-flat") {
+        if let Some(revision) = args.get_one::<String>("revision") {
+            let repo = LocalRepository::from_current_dir()?;
+            command::df::df_revision(&repo, path, revision, opts)?;
+        } else if args.get_flag("schema") || args.get_flag("schema-flat") {
             let flatten = args.get_flag("schema-flat");
             let result = command::df::schema(path, flatten, opts)?;
             println!("{result}");

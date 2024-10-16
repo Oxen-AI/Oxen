@@ -5,15 +5,13 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use actix_web::{web::Bytes, HttpRequest, HttpResponse};
-use liboxen::core::index::workspaces::data_frames::rows::UpdateResult;
-use liboxen::error::OxenError;
+use liboxen::model::data_frame::update_result::UpdateResult;
+use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::model::Schema;
 use liboxen::opts::DFOpts;
-use liboxen::view::json_data_frame_view::{
-    BatchUpdateResponse, JsonDataFrameRowResponse, JsonDataFrameSource,
-};
+use liboxen::repositories;
+use liboxen::view::json_data_frame_view::{BatchUpdateResponse, JsonDataFrameRowResponse};
 use liboxen::view::{JsonDataFrameView, JsonDataFrameViews, StatusMessage};
-use liboxen::{api, core::index};
 
 pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
@@ -43,25 +41,27 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     log::debug!("create row with data {:?}", data);
 
     // Get the workspace
-    let workspace = index::workspaces::get(&repo, &workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, &workspace_id)?;
 
     // Make sure the data frame is indexed
-    let is_editable = index::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
+    let is_editable = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
     if !is_editable {
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let row_df = index::workspaces::data_frames::rows::add(&workspace, &file_path, data)?;
-    let row_id: Option<String> = index::workspaces::data_frames::rows::get_row_id(&row_df)?;
-    let row_index: Option<usize> = index::workspaces::data_frames::rows::get_row_idx(&row_df)?;
+    let row_df =
+        repositories::workspaces::data_frames::rows::add(&repo, &workspace, &file_path, data)?;
+    let row_id: Option<String> = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
+    let row_index: Option<usize> =
+        repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(&row_df.schema().clone());
-    let row_df_source = JsonDataFrameSource::from_df(&row_df, &row_schema);
+    let row_df_source = DataFrameSchemaSize::from_df(&row_df, &row_schema);
     let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts);
 
-    let diff = index::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
+    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
     let response = JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -91,15 +91,16 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let file_path = path_param(&req, "path")?;
     let row_id = path_param(&req, "row_id")?;
 
-    let workspace = index::workspaces::get(&repo, workspace_id)?;
-    let row_df = index::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
+    let workspace = repositories::workspaces::get(&repo, workspace_id)?;
+    let row_df =
+        repositories::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
 
-    let row_id = index::workspaces::data_frames::rows::get_row_id(&row_df)?;
-    let row_index = index::workspaces::data_frames::rows::get_row_idx(&row_df)?;
+    let row_id = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
+    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(&row_df.schema().clone());
-    let row_df_source = JsonDataFrameSource::from_df(&row_df, &row_schema);
+    let row_df_source = DataFrameSchemaSize::from_df(&row_df, &row_schema);
     let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts);
 
     let response = JsonDataFrameRowResponse {
@@ -146,7 +147,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     };
 
     // Assumes the workspace is already created
-    let workspace = index::workspaces::get(&repo, &workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, &workspace_id)?;
     log::debug!(
         "update row repo {}/{} -> {}/{:?}",
         namespace,
@@ -155,19 +156,20 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         file_path
     );
 
-    let modified_row =
-        index::workspaces::data_frames::rows::update(&workspace, &file_path, &row_id, data)?;
+    let modified_row = repositories::workspaces::data_frames::rows::update(
+        &repo, &workspace, &file_path, &row_id, data,
+    )?;
 
-    let row_index = index::workspaces::data_frames::rows::get_row_idx(&modified_row)?;
-    let row_id = index::workspaces::data_frames::rows::get_row_id(&modified_row)?;
+    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&modified_row)?;
+    let row_id = repositories::workspaces::data_frames::rows::get_row_id(&modified_row)?;
 
-    let diff = index::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
+    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
     log::debug!("Modified row in controller is {:?}", modified_row);
     let schema = Schema::from_polars(&modified_row.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
-            source: JsonDataFrameSource::from_df(&modified_row, &schema),
+            source: DataFrameSchemaSize::from_df(&modified_row, &schema),
             view: JsonDataFrameView::from_df_opts(modified_row, schema, &DFOpts::empty()),
         },
         diff: Some(diff),
@@ -191,15 +193,17 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
-    let workspace = index::workspaces::get(&repo, workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, workspace_id)?;
 
-    let df = index::workspaces::data_frames::rows::delete(&workspace, &file_path, &row_id)?;
-    let diff = index::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
+    let df = repositories::workspaces::data_frames::rows::delete(
+        &repo, &workspace, &file_path, &row_id,
+    )?;
+    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
     let schema = Schema::from_polars(&df.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
-            source: JsonDataFrameSource::from_df(&df, &schema),
+            source: DataFrameSchemaSize::from_df(&df, &schema),
             view: JsonDataFrameView::from_df_opts(df, schema, &DFOpts::empty()),
         },
         diff: Some(diff),
@@ -223,23 +227,22 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
-    let workspace = index::workspaces::get(&repo, workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, workspace_id)?;
 
-    let entry = api::local::entries::get_commit_entry(&repo, &workspace.commit, &file_path)?
-        .ok_or(OxenError::entry_does_not_exist(file_path.clone()))?;
+    let restored_row = repositories::workspaces::data_frames::rows::restore(
+        &repo, &workspace, &file_path, &row_id,
+    )?;
 
-    let restored_row = index::workspaces::data_frames::rows::restore(&workspace, &entry, row_id)?;
+    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&restored_row)?;
+    let row_id = repositories::workspaces::data_frames::rows::get_row_id(&restored_row)?;
 
-    let row_index = index::workspaces::data_frames::rows::get_row_idx(&restored_row)?;
-    let row_id = index::workspaces::data_frames::rows::get_row_id(&restored_row)?;
-
-    let diff = index::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
+    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
     log::debug!("Restored row in controller is {:?}", restored_row);
     let schema = Schema::from_polars(&restored_row.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
-            source: JsonDataFrameSource::from_df(&restored_row, &schema),
+            source: DataFrameSchemaSize::from_df(&restored_row, &schema),
             view: JsonDataFrameView::from_df_opts(restored_row, schema, &DFOpts::empty()),
         },
         diff: Some(diff),
@@ -275,7 +278,7 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
         &json_value
     };
 
-    let workspace = index::workspaces::get(&repo, &workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, &workspace_id)?;
     log::debug!(
         "update row repo {}/{} -> {}/{:?}",
         namespace,
@@ -284,8 +287,9 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
         file_path
     );
 
-    let modified_rows =
-        index::workspaces::data_frames::rows::batch_update(&workspace, &file_path, data)?;
+    let modified_rows = repositories::workspaces::data_frames::rows::batch_update(
+        &repo, &workspace, &file_path, data,
+    )?;
 
     let mut responses = Vec::new();
 

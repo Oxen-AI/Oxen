@@ -1,10 +1,12 @@
 use polars::prelude::DataFrame;
 use serde::{Deserialize, Serialize};
 
-use crate::core::cache::cachers;
 use crate::core::df::tabular;
-use crate::core::index::CommitReader;
+use crate::core::v0_10_0::cache::cachers;
+use crate::core::v0_10_0::index::CommitReader;
 use crate::error::OxenError;
+use crate::model::merkle_tree::node::FileNode;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{CommitEntry, DataFrameSize, LocalRepository};
 use crate::opts::DFOpts;
 use crate::util;
@@ -39,6 +41,117 @@ impl TabularDiffSummary {
 }
 
 impl TabularDiffWrapper {
+    pub fn from_file_nodes(
+        base_entry: &Option<FileNode>,
+        head_entry: &Option<FileNode>,
+    ) -> Result<TabularDiffWrapper, OxenError> {
+        match (base_entry, head_entry) {
+            (Some(base_entry), Some(head_entry)) => {
+                let base_size = match &base_entry.metadata {
+                    Some(GenericMetadata::MetadataTabular(df_meta)) => DataFrameSize {
+                        height: df_meta.tabular.height,
+                        width: df_meta.tabular.width,
+                    },
+                    _ => return Err(OxenError::basic_str("Invalid metadata type")),
+                };
+
+                let head_size = match &head_entry.metadata {
+                    Some(GenericMetadata::MetadataTabular(df_meta)) => DataFrameSize {
+                        height: df_meta.tabular.height,
+                        width: df_meta.tabular.width,
+                    },
+                    _ => return Err(OxenError::basic_str("Invalid metadata type")),
+                };
+
+                // TODO - this can be made less naive
+                let schema_has_changed = base_size.width != head_size.width;
+
+                let num_added_rows = if base_size.height < head_size.height {
+                    head_size.height - base_size.height
+                } else {
+                    0
+                };
+
+                let num_removed_rows = if base_size.height > head_size.height {
+                    base_size.height - head_size.height
+                } else {
+                    0
+                };
+
+                let num_added_cols = if base_size.width < head_size.width {
+                    head_size.width - base_size.width
+                } else {
+                    0
+                };
+
+                let num_removed_cols = if base_size.width > head_size.width {
+                    base_size.width - head_size.width
+                } else {
+                    0
+                };
+
+                Ok(TabularDiffWrapper {
+                    tabular: TabularDiffSummaryImpl {
+                        num_added_rows,
+                        num_added_cols,
+                        num_removed_rows,
+                        num_removed_cols,
+                        schema_has_changed,
+                    },
+                })
+            }
+            (Some(base_entry), None) => {
+                let base_size = match &base_entry.metadata {
+                    Some(GenericMetadata::MetadataTabular(df_meta)) => DataFrameSize {
+                        height: df_meta.tabular.height,
+                        width: df_meta.tabular.width,
+                    },
+                    _ => return Err(OxenError::basic_str("Invalid metadata type")),
+                };
+
+                Ok(TabularDiffWrapper {
+                    tabular: TabularDiffSummaryImpl {
+                        num_added_rows: 0,
+                        num_added_cols: 0,
+                        num_removed_rows: base_size.height,
+                        num_removed_cols: base_size.width,
+                        schema_has_changed: false,
+                    },
+                })
+            }
+
+            (None, Some(head_entry)) => {
+                let head_size = match &head_entry.metadata {
+                    Some(GenericMetadata::MetadataTabular(df_meta)) => DataFrameSize {
+                        height: df_meta.tabular.height,
+                        width: df_meta.tabular.width,
+                    },
+                    _ => return Err(OxenError::basic_str("Invalid metadata type")),
+                };
+
+                Ok(TabularDiffWrapper {
+                    tabular: TabularDiffSummaryImpl {
+                        num_added_rows: head_size.height,
+                        num_added_cols: head_size.width,
+                        num_removed_rows: 0,
+                        num_removed_cols: 0,
+                        schema_has_changed: false,
+                    },
+                })
+            }
+
+            (None, None) => Ok(TabularDiffWrapper {
+                tabular: TabularDiffSummaryImpl {
+                    num_added_rows: 0,
+                    num_added_cols: 0,
+                    num_removed_rows: 0,
+                    num_removed_cols: 0,
+                    schema_has_changed: false,
+                },
+            }),
+        }
+    }
+
     pub fn from_commit_entries(
         repo: &LocalRepository,
         base_entry: &Option<CommitEntry>,
@@ -184,7 +297,30 @@ impl TabularDiffWrapper {
         }
     }
 
-    pub fn maybe_get_df(repo: &LocalRepository, entry: &Option<CommitEntry>) -> Option<DataFrame> {
+    pub fn maybe_get_df_from_file_node(
+        repo: &LocalRepository,
+        node: &Option<FileNode>,
+    ) -> Option<DataFrame> {
+        match node {
+            Some(node) => {
+                let version_path = util::fs::version_path_from_hash(repo, node.hash.to_string());
+                match tabular::read_df_with_extension(
+                    version_path,
+                    node.extension.clone(),
+                    &DFOpts::empty(),
+                ) {
+                    Ok(df) => Some(df),
+                    Err(_) => None,
+                }
+            }
+            None => None,
+        }
+    }
+
+    pub fn maybe_get_df_from_commit_entry(
+        repo: &LocalRepository,
+        entry: &Option<CommitEntry>,
+    ) -> Option<DataFrame> {
         match entry {
             Some(entry) => {
                 let version_path = util::fs::version_path(repo, entry);

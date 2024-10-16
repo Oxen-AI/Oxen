@@ -10,11 +10,11 @@
 //! use liboxen::command;
 //!
 //! // Instantiate a new repo
-//! let repo = command::init("test_repo")?;
+//! let repo = repositories::init("test_repo")?;
 //! // Add a file to the repo
-//! command::add(&repo, "file.txt")?;
+//! repositories::add(&repo, "file.txt")?;
 //! // Commit the file
-//! command::commit(&repo, "Added file.txt")?;
+//! repositories::commit(&repo, "Added file.txt")?;
 //!
 //! ```
 //!
@@ -27,14 +27,14 @@
 //! // Create LocalRepository from existing repo
 //! let repo = LocalRepository::new("test_repo")?;
 //! // Add a file to the repo
-//! command::add(&repo, "file.txt")?;
+//! repositories::add(&repo, "file.txt")?;
 //! // Commit the file
-//! command::commit(&repo, "Added file.txt")?;
+//! repositories::commit(&repo, "Added file.txt")?;
 //! // Set remote
 //! let namespace = "ox";
 //! let repo_name = "test_repo";
 //! let host = "0.0.0.0:3000";
-//! let remote_repo = api::remote::repositories::create(
+//! let remote_repo = api::client::repositories::create(
 //!     repo, namespace, repo_name, host
 //! ).await?;
 //! let remote_url = remote_repo.url();
@@ -42,7 +42,7 @@
 //! let remote_name = "origin";
 //! command::config::set_remote(&mut repo, remote_name, &remote_url)?;
 //! // Push to remote
-//! command::push(&repo).await?;
+//! repositories::push(&repo).await?;
 //! ```
 //!
 //! Clone data from remote url
@@ -53,7 +53,7 @@
 //! let url = "http://0.0.0.0:3000/ox/test_repo";
 //! let repo_dir = "test_repo";
 //! let opts = CloneOpts::new(url, &repo_dir);
-//! let repo = command::clone(&opts).await?;
+//! let repo = repositories::clone(&opts).await?;
 //! ```
 
 extern crate approx;
@@ -69,9 +69,13 @@ pub mod config;
 pub mod constants;
 pub mod core;
 pub mod error;
-pub mod message;
+pub mod io;
+pub mod migrations;
 pub mod model;
+pub mod namespaces;
 pub mod opts;
+pub mod repositories;
+pub mod resource;
 pub mod test;
 pub mod util;
 pub mod view;

@@ -3,9 +3,8 @@ use clap::{Arg, Command};
 use liboxen::api;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use std::env;
 
-use liboxen::command;
+use liboxen::repositories;
 
 use crate::helpers::{
     check_remote_version, check_remote_version_blocking, check_repo_migration_needed,
@@ -59,24 +58,23 @@ impl RunCmd for PushCmd {
 
         // Call into liboxen to push or delete
         if args.get_flag("delete") {
-            let repo_dir = env::current_dir().unwrap();
-            let repository = LocalRepository::from_dir(&repo_dir)?;
+            let repository = LocalRepository::from_current_dir()?;
 
             let host = get_host_from_repo(&repository)?;
             check_remote_version(host).await?;
 
-            api::remote::branches::delete_remote(&repository, remote, branch).await?;
+            api::client::branches::delete_remote(&repository, remote, branch).await?;
+            println!("Deleted remote branch: {remote}/{branch}");
             Ok(())
         } else {
-            let repo_dir = env::current_dir().unwrap();
-            let repository = LocalRepository::from_dir(&repo_dir)?;
+            let repository = LocalRepository::from_current_dir()?;
             let host = get_host_from_repo(&repository)?;
 
             check_repo_migration_needed(&repository)?;
             check_remote_version_blocking(host.clone()).await?;
             check_remote_version(host).await?;
 
-            command::push_remote_branch(&repository, remote, branch).await?;
+            repositories::push::push_remote_branch(&repository, remote, branch).await?;
             Ok(())
         }
     }

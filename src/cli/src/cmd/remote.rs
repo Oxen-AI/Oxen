@@ -40,7 +40,7 @@ impl RemoteCmd {
     pub fn list_remotes(&self) -> Result<(), OxenError> {
         let repo = LocalRepository::from_current_dir()?;
 
-        for remote in repo.remotes.iter() {
+        for remote in repo.remotes().iter() {
             println!("{}", remote.name);
         }
 
@@ -50,7 +50,7 @@ impl RemoteCmd {
     pub fn list_remotes_verbose(&self) -> Result<(), OxenError> {
         let repo = LocalRepository::from_current_dir()?;
 
-        for remote in repo.remotes.iter() {
+        for remote in repo.remotes().iter() {
             println!("{}\t{}", remote.name, remote.url);
         }
 

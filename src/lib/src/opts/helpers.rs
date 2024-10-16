@@ -10,7 +10,7 @@ pub async fn remote_commit_id(
 ) -> Result<String, OxenError> {
     let Some(revision) = revision else {
         // Fallback to main branch
-        let main_branch = api::remote::branches::get_by_name(repo, DEFAULT_BRANCH_NAME).await?;
+        let main_branch = api::client::branches::get_by_name(repo, DEFAULT_BRANCH_NAME).await?;
         if main_branch.is_none() {
             return Err(OxenError::basic_str("No main branch found on remote."));
         }
@@ -18,7 +18,7 @@ pub async fn remote_commit_id(
     };
 
     // First see if the commit exists
-    if api::remote::commits::get_by_id(repo, &revision)
+    if api::client::commits::get_by_id(repo, &revision)
         .await?
         .is_some()
     {
@@ -26,7 +26,7 @@ pub async fn remote_commit_id(
     }
 
     // If not, see if the branch exists
-    if let Some(branch) = api::remote::branches::get_by_name(repo, &revision).await? {
+    if let Some(branch) = api::client::branches::get_by_name(repo, &revision).await? {
         return Ok(branch.commit_id);
     }
 

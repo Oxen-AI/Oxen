@@ -1,5 +1,6 @@
 use crate::api;
-use crate::view::repository::RepositoryDataTypesView;
+use crate::core::versions::MinOxenVersion;
+use crate::view::repository::{RepositoryCreationView, RepositoryDataTypesView};
 use crate::view::RepositoryView;
 use crate::{error::OxenError, model::Remote};
 use http::Uri;
@@ -10,6 +11,8 @@ pub struct RemoteRepository {
     pub namespace: String,
     pub name: String,
     pub remote: Remote,
+    pub min_version: Option<String>,
+    pub is_empty: bool,
 }
 
 impl RemoteRepository {
@@ -21,6 +24,8 @@ impl RemoteRepository {
             namespace: repository.namespace.clone(),
             name: repository.name.clone(),
             remote: remote.clone(),
+            min_version: repository.min_version.clone(),
+            is_empty: repository.is_empty,
         }
     }
 
@@ -29,6 +34,30 @@ impl RemoteRepository {
             namespace: repository.namespace.clone(),
             name: repository.name.clone(),
             remote: remote.clone(),
+            min_version: repository.min_version.clone(),
+            is_empty: repository.is_empty,
+        }
+    }
+
+    pub fn from_creation_view(
+        repository: &RepositoryCreationView,
+        remote: &Remote,
+    ) -> RemoteRepository {
+        RemoteRepository {
+            namespace: repository.namespace.clone(),
+            name: repository.name.clone(),
+            remote: remote.clone(),
+            min_version: repository.min_version.clone(),
+            is_empty: true,
+        }
+    }
+
+    pub fn min_version(&self) -> MinOxenVersion {
+        match MinOxenVersion::or_earliest(self.min_version.clone()) {
+            Ok(version) => version,
+            Err(err) => {
+                panic!("Invalid repo version\n{}", err)
+            }
         }
     }
 

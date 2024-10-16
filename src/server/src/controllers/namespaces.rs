@@ -1,7 +1,7 @@
 use crate::errors::OxenHttpError;
 use crate::params::app_data;
 
-use liboxen::api;
+use liboxen::namespaces;
 use liboxen::view::{ListNamespacesResponse, NamespaceResponse, NamespaceView, StatusMessage};
 
 use actix_web::{HttpRequest, HttpResponse, Result};
@@ -9,7 +9,7 @@ use actix_web::{HttpRequest, HttpResponse, Result};
 pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespaces: Vec<NamespaceView> = api::local::namespaces::list(&app_data.path)
+    let namespaces: Vec<NamespaceView> = namespaces::list(&app_data.path)
         .into_iter()
         .map(|namespace| NamespaceView { namespace })
         .collect();
@@ -27,7 +27,7 @@ pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let namespace: Option<&str> = req.match_info().get("namespace");
 
     if let Some(namespace) = namespace {
-        match api::local::namespaces::get(&app_data.path, namespace) {
+        match namespaces::get(&app_data.path, namespace) {
             Ok(Some(namespace)) => Ok(HttpResponse::Ok().json(NamespaceResponse {
                 status: StatusMessage::resource_found(),
                 namespace,

@@ -1,13 +1,10 @@
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
-use liboxen::api;
-use liboxen::command;
-use liboxen::error;
 use liboxen::error::OxenError;
 use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::LocalRepository;
-use liboxen::util;
+use liboxen::repositories;
 use std::path::PathBuf;
 
 use crate::helpers::check_repo_migration_needed;
@@ -23,7 +20,7 @@ impl RunCmd for StatusCmd {
     }
     fn args(&self) -> Command {
         Command::new(NAME)
-            .about("See at what files are ready to be added or committed")
+            .about("View the repository status, including staged, untracked, modified, and removed files")
             .arg(
                 Arg::new("skip")
                     .long("skip")
@@ -73,29 +70,25 @@ impl RunCmd for StatusCmd {
             is_remote,
         };
 
-        let repo_dir = util::fs::get_repo_root_from_current_dir()
-            .ok_or(OxenError::basic_str(error::NO_REPO_FOUND))?;
-
-        let repository = LocalRepository::from_dir(&repo_dir)?;
+        let repository = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repository)?;
 
         let directory = directory.unwrap_or(repository.path.clone());
-        let repo_status = command::status_from_dir(&repository, &directory)?;
+        let repo_status = repositories::status_from_dir(&repository, &directory)?;
 
-        if let Some(current_branch) = api::local::branches::current_branch(&repository)? {
+        if let Some(current_branch) = repositories::branches::current_branch(&repository)? {
             println!(
                 "On branch {} -> {}\n",
                 current_branch.name, current_branch.commit_id
             );
-        } else {
-            let head = api::local::commits::head_commit(&repository)?;
+        } else if let Some(head) = repositories::commits::head_commit_maybe(&repository)? {
             println!(
                 "You are in 'detached HEAD' state.\nHEAD is now at {} {}\n",
                 head.id, head.message
             );
         }
 
-        repo_status.print_stdout_with_params(&opts);
+        repo_status.print_with_params(&opts);
 
         Ok(())
     }

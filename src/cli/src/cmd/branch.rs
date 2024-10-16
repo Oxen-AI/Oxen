@@ -5,6 +5,7 @@ use colored::Colorize;
 use liboxen::api;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 use crate::helpers::{check_remote_version, check_remote_version_blocking, get_host_from_repo};
@@ -111,7 +112,7 @@ impl BranchCmd {
     pub async fn list_all_branches(&self, repo: &LocalRepository) -> Result<(), OxenError> {
         self.list_branches(repo)?;
 
-        for remote in repo.remotes.iter() {
+        for remote in repo.remotes().iter() {
             self.list_remote_branches(repo, &remote.name).await?;
         }
 
@@ -119,10 +120,11 @@ impl BranchCmd {
     }
 
     pub fn list_branches(&self, repo: &LocalRepository) -> Result<(), OxenError> {
-        let branches = api::local::branches::list(repo)?;
+        let branches = repositories::branches::list(repo)?;
+        let current_branch = repositories::branches::current_branch(repo)?;
 
         for branch in branches.iter() {
-            if branch.is_head {
+            if current_branch.is_some() && current_branch.as_ref().unwrap().name == branch.name {
                 let branch_str = format!("* {}", branch.name).green();
                 println!("{branch_str}")
             } else {
@@ -134,24 +136,24 @@ impl BranchCmd {
     }
 
     pub fn show_current_branch(&self, repo: &LocalRepository) -> Result<(), OxenError> {
-        if let Some(current_branch) = api::local::branches::current_branch(repo)? {
+        if let Some(current_branch) = repositories::branches::current_branch(repo)? {
             println!("{}", current_branch.name);
         }
         Ok(())
     }
 
     pub fn create_branch(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-        api::local::branches::create_from_head(repo, name)?;
+        repositories::branches::create_from_head(repo, name)?;
         Ok(())
     }
 
     pub fn delete_branch(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-        api::local::branches::delete(repo, name)?;
+        repositories::branches::delete(repo, name)?;
         Ok(())
     }
 
     pub fn force_delete_branch(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-        api::local::branches::force_delete(repo, name)?;
+        repositories::branches::force_delete(repo, name)?;
         Ok(())
     }
 
@@ -160,7 +162,7 @@ impl BranchCmd {
         repo: &LocalRepository,
         name: &str,
     ) -> Result<(), OxenError> {
-        api::local::branches::rename_current_branch(repo, name)?;
+        repositories::branches::rename_current_branch(repo, name)?;
         Ok(())
     }
 
@@ -176,11 +178,11 @@ impl BranchCmd {
         let remote = repo
             .get_remote(remote_name)
             .ok_or(OxenError::remote_not_set(remote_name))?;
-        let remote_repo = api::remote::repositories::get_by_remote(&remote)
+        let remote_repo = api::client::repositories::get_by_remote(&remote)
             .await?
             .ok_or(OxenError::remote_not_found(remote.clone()))?;
 
-        let branches = api::remote::branches::list(&remote_repo).await?;
+        let branches = api::client::branches::list(&remote_repo).await?;
         for branch in branches.iter() {
             println!("{}\t{}", &remote.name, branch.name);
         }
@@ -196,7 +198,7 @@ impl BranchCmd {
         let host = get_host_from_repo(repo)?;
         check_remote_version(host).await?;
 
-        api::remote::branches::delete_remote(repo, remote_name, branch_name).await?;
+        api::client::branches::delete_remote(repo, remote_name, branch_name).await?;
         Ok(())
     }
 }

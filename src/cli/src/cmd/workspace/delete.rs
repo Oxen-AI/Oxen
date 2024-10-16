@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
-use liboxen::command;
+use liboxen::api;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 
@@ -32,7 +32,8 @@ impl RunCmd for WorkspaceDeleteCmd {
             return Err(OxenError::basic_str("Must supply workspace_id"));
         };
 
-        command::workspace::delete(&repo, &workspace_id).await?;
+        let remote_repo = api::client::repositories::get_default_remote(&repo).await?;
+        api::client::workspaces::delete(&remote_repo, &workspace_id).await?;
 
         Ok(())
     }

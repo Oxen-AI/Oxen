@@ -144,12 +144,10 @@ If you would like to see the API with `curl` on the command line you can run the
     {
       "name": "add-training-data",
       "commit_id": "7d6258e0-5956-4695-aa13-6844b3c73e6d",
-      "is_head": false
     },
     {
       "name": "main",
       "commit_id": "11f6c5d5-f683-42b2-9d6e-a82172509eed",
-      "is_head": true
     }
   ]
 }

@@ -77,7 +77,12 @@ where
 {
     let key = key.as_ref();
 
-    log::debug!("str_val_db::put {:?} -> db: {:?}", key, db.path());
+    log::debug!(
+        "str_val_db::put {:?} -> {:?} db: {:?}",
+        key,
+        entry,
+        db.path()
+    );
 
     match entry.encode::<u8>() {
         Ok(val) => {

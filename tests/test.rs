@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use liboxen::command;
 use liboxen::error::OxenError;
+use liboxen::repositories;
 use liboxen::test;
 
 #[test]
@@ -17,7 +17,7 @@ fn test_oxen_ignore_file() -> Result<(), OxenError> {
         let oxenignore_file = repo.path.join(".oxenignore");
         test::write_txt_file_to_path(oxenignore_file, ignore_filename)?;
 
-        let status = command::status(&repo)?;
+        let status = repositories::status(&repo)?;
         // Only untracked file should be .oxenignore
         assert_eq!(status.untracked_files.len(), 1);
         assert_eq!(
@@ -42,7 +42,7 @@ fn test_oxen_ignore_dir() -> Result<(), OxenError> {
         let oxenignore_file = repo.path.join(".oxenignore");
         test::write_txt_file_to_path(oxenignore_file, "ignoreme.txt")?;
 
-        let status = command::status(&repo)?;
+        let status = repositories::status(&repo)?;
         // Only untracked file should be .oxenignore
         assert_eq!(status.untracked_files.len(), 1);
         assert_eq!(

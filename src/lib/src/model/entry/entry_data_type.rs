@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
@@ -56,5 +57,18 @@ impl fmt::Display for EntryDataType {
             EntryDataType::Tabular => write!(f, "tabular"),
             EntryDataType::Binary => write!(f, "binary"),
         }
+    }
+}
+
+// impl Ord and PartialOrd for EntryDataType
+impl Ord for EntryDataType {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+    }
+}
+
+impl PartialOrd for EntryDataType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }

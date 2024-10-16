@@ -4,8 +4,8 @@ use crate::params::{app_data, parse_base_head, path_param, resolve_base_head_bra
 
 use actix_web::{HttpRequest, HttpResponse};
 
-use liboxen::core::index::{CommitReader, Merger};
 use liboxen::error::OxenError;
+use liboxen::repositories;
 use liboxen::view::merge::{MergeConflictFile, MergeSuccessResponse, Mergeable, MergeableResponse};
 use liboxen::view::StatusMessage;
 
@@ -25,21 +25,18 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let head = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
 
     // Check if mergeable
-    let merger = Merger::new(&repository)?;
-    let is_mergeable = !merger.has_conflicts(&base, &head)?;
-
-    // Get merge conflicts
-    let commit_reader = CommitReader::new(&repository)?;
-    let conflicts = merger
-        .list_conflicts_between_branches(&commit_reader, &base, &head)?
-        .iter()
-        .map(|p| MergeConflictFile {
-            path: p.to_string_lossy().to_string(),
+    let conflicts =
+        repositories::merge::list_conflicts_between_branches(&repository, &base, &head)?;
+    let conflicts: Vec<MergeConflictFile> = conflicts
+        .into_iter()
+        .map(|path| MergeConflictFile {
+            path: path.to_string_lossy().to_string(),
         })
         .collect();
+    let is_mergeable = conflicts.is_empty();
 
     // Get commits
-    let commits = merger.list_commits_between_branches(&commit_reader, &base, &head)?;
+    let commits = repositories::merge::list_commits_between_branches(&repository, &base, &head)?;
 
     // Create response object
     let response = MergeableResponse {
@@ -70,8 +67,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let head = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
 
     // Check if mergeable
-    let merger = Merger::new(&repository)?;
-    match merger.merge_into_base(&head, &base) {
+    match repositories::merge::merge_into_base(&repository, &head, &base) {
         Ok(Some(_merge_commit)) => {
             let response = MergeSuccessResponse {
                 status: StatusMessage::resource_found(),

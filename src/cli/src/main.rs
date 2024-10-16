@@ -2,14 +2,15 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 use clap::Command;
-use env_logger::Env;
+use liboxen::util;
+// use env_logger::Env;
 
 pub mod cmd;
 pub mod helpers;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    env_logger::init_from_env(Env::default());
+    util::logging::init_logging();
 
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![
         Box::new(cmd::AddCmd),
@@ -21,6 +22,7 @@ async fn main() -> ExitCode {
         Box::new(cmd::ConfigCmd),
         Box::new(cmd::CreateRemoteCmd),
         Box::new(cmd::DbCmd),
+        Box::new(cmd::DeleteRemoteCmd),
         Box::new(cmd::DFCmd),
         Box::new(cmd::DiffCmd),
         Box::new(cmd::DownloadCmd),
@@ -32,6 +34,8 @@ async fn main() -> ExitCode {
         Box::new(cmd::MergeCmd),
         Box::new(cmd::MigrateCmd),
         Box::new(cmd::MooCmd),
+        Box::new(cmd::NodeCmd),
+        Box::new(cmd::PackCmd),
         Box::new(cmd::PullCmd),
         Box::new(cmd::PushCmd),
         Box::new(cmd::RestoreCmd),
@@ -41,7 +45,9 @@ async fn main() -> ExitCode {
         Box::new(cmd::SaveCmd),
         Box::new(cmd::SchemasCmd),
         Box::new(cmd::StatusCmd),
+        Box::new(cmd::TreeCmd),
         Box::new(cmd::UploadCmd),
+        Box::new(cmd::UnpackCmd),
         Box::new(cmd::WorkspaceCmd),
     ];
 

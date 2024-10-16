@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::constants::{DEFAULT_HOST, FILE_ROW_NUM_COL_NAME, ROW_HASH_COL_NAME, ROW_NUM_COL_NAME};
 use crate::core::df::filter::{self, DFFilterExp};
 use crate::error::OxenError;
-use crate::model::schema::Field;
+use crate::model::data_frame::schema::Field;
 use crate::model::Schema;
 
 #[derive(Debug)]

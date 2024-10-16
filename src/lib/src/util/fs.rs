@@ -17,13 +17,17 @@ use std::path::PathBuf;
 
 use crate::constants;
 use crate::constants::CACHE_DIR;
+use crate::constants::CHUNKS_DIR;
 use crate::constants::CONTENT_IS_VALID;
 use crate::constants::DATA_ARROW_FILE;
 use crate::constants::HISTORY_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
+use crate::constants::TREE_DIR;
 use crate::constants::VERSION_FILE_NAME;
+use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
+use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
 use crate::model::Schema;
@@ -32,7 +36,8 @@ use crate::opts::CountLinesOpts;
 use crate::view::health::DiskUsage;
 use image::ImageFormat;
 
-use crate::{api, util};
+use crate::repositories;
+use crate::util;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -79,8 +84,8 @@ pub fn version_path_for_commit_id(
     commit_id: &str,
     filepath: &Path,
 ) -> Result<PathBuf, OxenError> {
-    match api::local::commits::get_by_id(repo, commit_id)? {
-        Some(commit) => match api::local::entries::get_commit_entry(repo, &commit, filepath)? {
+    match repositories::commits::get_by_id(repo, commit_id)? {
+        Some(commit) => match repositories::entries::get_commit_entry(repo, &commit, filepath)? {
             Some(entry) => {
                 let path = version_path(repo, &entry);
                 let arrow_path = path.parent().unwrap().join(DATA_ARROW_FILE);
@@ -96,30 +101,14 @@ pub fn version_path_for_commit_id(
     }
 }
 
-pub fn resized_path_for_commit_id(
+pub fn resized_path_for_file_node(
     repo: &LocalRepository,
-    commit_id: &str,
-    filepath: &Path,
+    file_node: &FileNode,
     width: Option<u32>,
     height: Option<u32>,
 ) -> Result<PathBuf, OxenError> {
-    match api::local::commits::get_by_id(repo, commit_id)? {
-        Some(commit) => match api::local::entries::get_commit_entry(repo, &commit, filepath)? {
-            Some(entry) => resized_path_for_commit_entry(repo, &entry, width, height),
-            None => Err(OxenError::path_does_not_exist(filepath)),
-        },
-        None => Err(OxenError::revision_not_found(commit_id.into())),
-    }
-}
-
-pub fn resized_path_for_commit_entry(
-    repo: &LocalRepository,
-    entry: &CommitEntry,
-    width: Option<u32>,
-    height: Option<u32>,
-) -> Result<PathBuf, OxenError> {
-    let path = version_path(repo, entry);
-    let extension = path.extension().unwrap().to_str().unwrap();
+    let path = version_path_from_hash(repo, file_node.hash.to_string());
+    let extension = file_node.extension.clone();
     let width = width.map(|w| w.to_string());
     let height = height.map(|w| w.to_string());
     let resized_path = path.parent().unwrap().join(format!(
@@ -138,8 +127,7 @@ pub fn resized_path_for_staged_entry(
     height: Option<u32>,
 ) -> Result<PathBuf, OxenError> {
     let img_hash = util::hasher::hash_file_contents(img_path)?;
-    let img_version_path =
-        version_path_from_hash_and_file(branch_repo.path, img_hash, img_path.to_path_buf());
+    let img_version_path = version_path_from_hash_and_file(branch_repo.path, img_hash, img_path);
     let extension = img_version_path.extension().unwrap().to_str().unwrap();
     let width = width.map(|w| w.to_string());
     let height = height.map(|w| w.to_string());
@@ -174,8 +162,62 @@ pub fn version_file_size(repo: &LocalRepository, entry: &CommitEntry) -> Result<
     // }
 }
 
+pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
+    oxen_hidden_dir(&repo.path)
+        .join(TREE_DIR)
+        .join(CHUNKS_DIR)
+        .join(hash.as_ref())
+        .join("data")
+}
+
 pub fn version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
-    version_path_from_hash_and_file(&repo.path, entry.hash.clone(), entry.filename())
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => version_path_from_hash_and_file_v0_10_0(
+            &repo.path,
+            entry.hash.clone(),
+            entry.filename(),
+        ),
+        MinOxenVersion::V0_19_0 => {
+            version_path_from_hash_and_file(&repo.path, entry.hash.clone(), entry.filename())
+        }
+    }
+}
+
+pub fn version_path_from_hash_and_filename(
+    repo: &LocalRepository,
+    hash: impl AsRef<str>,
+    filename: impl AsRef<Path>,
+) -> PathBuf {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => {
+            version_path_from_hash_and_file_v0_10_0(&repo.path, hash, filename)
+        }
+        MinOxenVersion::V0_19_0 => version_path_from_hash_and_file(&repo.path, hash, filename),
+    }
+}
+
+pub fn version_path_from_node(
+    repo: &LocalRepository,
+    file_hash: impl AsRef<str>,
+    path: impl AsRef<Path>,
+) -> PathBuf {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => {
+            version_path_from_hash_and_file_v0_10_0(&repo.path, file_hash, path)
+        }
+        MinOxenVersion::V0_19_0 => version_path_from_hash_and_file(&repo.path, file_hash, path),
+    }
+}
+
+pub fn version_path_from_hash(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => {
+            version_path_from_hash_and_file_v0_10_0(&repo.path, hash, PathBuf::new())
+        }
+        MinOxenVersion::V0_19_0 => {
+            version_path_from_hash_and_file(&repo.path, hash, PathBuf::new())
+        }
+    }
 }
 
 pub fn version_path_for_entry(repo: &LocalRepository, entry: &Entry) -> PathBuf {
@@ -205,17 +247,47 @@ pub fn df_version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
     version_dir.join(DATA_ARROW_FILE)
 }
 
+pub fn version_path_from_hash_and_file_v0_10_0(
+    dst: impl AsRef<Path>,
+    hash: impl AsRef<str>,
+    filename: impl AsRef<Path>,
+) -> PathBuf {
+    let hash = hash.as_ref();
+    let filename = filename.as_ref();
+    let version_dir = version_dir_from_hash(dst, hash);
+    // log::debug!(
+    //     "version_path_from_hash_and_file version_dir {:?}",
+    //     version_dir
+    // );
+    let extension = extension_from_path(filename);
+    version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension))
+}
+
 pub fn version_path_from_hash_and_file(
     dst: impl AsRef<Path>,
-    hash: String,
-    filename: PathBuf,
+    hash: impl AsRef<str>,
+    filename: impl AsRef<Path>,
 ) -> PathBuf {
+    let hash = hash.as_ref();
+    let filename = filename.as_ref();
     let version_dir = version_dir_from_hash(dst, hash);
-    let extension = extension_from_path(&filename);
+    // log::debug!(
+    //     "version_path_from_hash_and_file version_dir {:?}",
+    //     version_dir
+    // );
+    let extension = extension_from_path(filename);
     if extension.is_empty() {
         version_dir.join(VERSION_FILE_NAME)
     } else {
-        version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension))
+        // backwards compatibility
+        let path = version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension));
+        if path.exists() {
+            // Older files have the extension in the filename
+            path
+        } else {
+            // Newer files do not have the extension in the filename
+            version_dir.join(VERSION_FILE_NAME)
+        }
     }
 }
 
@@ -238,7 +310,8 @@ pub fn extension_from_path(path: &Path) -> String {
     }
 }
 
-pub fn version_dir_from_hash(dst: impl AsRef<Path>, hash: String) -> PathBuf {
+pub fn version_dir_from_hash(dst: impl AsRef<Path>, hash: impl AsRef<str>) -> PathBuf {
+    let hash = hash.as_ref();
     let topdir = &hash[..2];
     let subdir = &hash[2..];
     oxen_hidden_dir(dst.as_ref())
@@ -372,7 +445,15 @@ pub fn read_lines_file(file: &File) -> Vec<String> {
     lines
 }
 
-pub fn read_first_line<P: AsRef<Path>>(path: P) -> Result<String, OxenError> {
+pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, OxenError> {
+    let mut file = File::open(path.as_ref())?;
+    let mut buffer = vec![0; n];
+    let bytes_read = file.read(&mut buffer)?;
+    buffer.truncate(bytes_read);
+    Ok(buffer)
+}
+
+pub fn read_first_line(path: impl AsRef<Path>) -> Result<String, OxenError> {
     let file = File::open(path.as_ref())?;
     read_first_line_from_file(&file)
 }
@@ -503,26 +584,6 @@ pub fn rlist_paths_in_dir(dir: &Path) -> Vec<PathBuf> {
                 files.push(path);
             }
             Err(err) => eprintln!("rlist_paths_in_dir Could not iterate over dir... {err}"),
-        }
-    }
-    files
-}
-
-pub fn rlist_files_in_dir(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = vec![];
-    if !dir.is_dir() {
-        return files;
-    }
-
-    for entry in WalkDir::new(dir) {
-        match entry {
-            Ok(val) => {
-                let path = val.path();
-                if path.is_file() {
-                    files.push(path);
-                }
-            }
-            Err(err) => eprintln!("rlist_files_in_dir Could not iterate over dir... {err}"),
         }
     }
     files
@@ -821,16 +882,63 @@ pub fn is_audio(path: &Path) -> bool {
 }
 
 pub fn is_utf8(path: &Path) -> bool {
-    if let Ok(line) = read_first_line(path) {
-        from_utf8(line.as_bytes()).is_ok()
+    if let Ok(bytes) = read_first_n_bytes(path, 1024) {
+        from_utf8(&bytes).is_ok()
     } else {
         false
     }
 }
 
+pub fn data_type_from_extension(path: &Path) -> EntryDataType {
+    let ext = path.extension().unwrap_or_default().to_string_lossy();
+    match ext.as_ref() {
+        "json" => EntryDataType::Tabular,
+        "csv" => EntryDataType::Tabular,
+        "tsv" => EntryDataType::Tabular,
+        "parquet" => EntryDataType::Tabular,
+        "arrow" => EntryDataType::Tabular,
+        "ndjson" => EntryDataType::Tabular,
+        "jsonl" => EntryDataType::Tabular,
+
+        "md" => EntryDataType::Text,
+        "txt" => EntryDataType::Text,
+        "html" => EntryDataType::Text,
+        "xml" => EntryDataType::Text,
+        "yaml" => EntryDataType::Text,
+        "yml" => EntryDataType::Text,
+        "toml" => EntryDataType::Text,
+
+        "png" => EntryDataType::Image,
+        "jpg" => EntryDataType::Image,
+        "jpeg" => EntryDataType::Image,
+        "gif" => EntryDataType::Image,
+        "bmp" => EntryDataType::Image,
+        "tiff" => EntryDataType::Image,
+        "heic" => EntryDataType::Image,
+        "heif" => EntryDataType::Image,
+        "webp" => EntryDataType::Image,
+
+        "mp4" => EntryDataType::Video,
+        "avi" => EntryDataType::Video,
+        "mov" => EntryDataType::Video,
+
+        "mp3" => EntryDataType::Audio,
+        "wav" => EntryDataType::Audio,
+        "aac" => EntryDataType::Audio,
+        "ogg" => EntryDataType::Audio,
+        "flac" => EntryDataType::Audio,
+        "opus" => EntryDataType::Audio,
+
+        _ => EntryDataType::Binary,
+    }
+}
+
 pub fn file_mime_type(path: &Path) -> String {
     match infer::get_from_path(path) {
-        Ok(Some(kind)) => String::from(kind.mime_type()),
+        Ok(Some(kind)) => {
+            log::debug!("file_mime_type {:?} {}", path, kind.mime_type());
+            String::from(kind.mime_type())
+        }
         _ => {
             if is_markdown(path) {
                 String::from("text/markdown")
@@ -887,6 +995,11 @@ pub fn datatype_from_mimetype(path: &Path, mime_type: &str) -> EntryDataType {
         "audio/x-ape" => EntryDataType::Audio,
 
         mime_type => {
+            log::debug!(
+                "datatype_from_mimetype trying to infer {:?} {}",
+                path,
+                mime_type
+            );
             // Catch text and dataframe types from file extension
             if is_tabular(path) {
                 EntryDataType::Tabular
@@ -1064,6 +1177,45 @@ pub fn p_count_files_in_dir_w_progress(dir: &Path, pb: Option<ProgressBar>) -> u
     count
 }
 
+pub fn count_files_in_dir_with_progress(dir: impl AsRef<Path>) -> usize {
+    let dir = dir.as_ref();
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb.set_message("🐂 Counting files...".to_string());
+
+    // TODO: Can we count in parallel by parallel walking dir?
+    let mut count: usize = 0;
+    if dir.is_dir() {
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => {
+                            let path = entry.path();
+                            if !is_in_oxen_hidden_dir(&path) && path.is_file() {
+                                count += 1;
+                                pb.set_message(format!(
+                                    "🐂 dir {:?} has {} files...",
+                                    dir.file_name(),
+                                    count
+                                ))
+                            }
+                        }
+                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                    }
+                }
+            }
+            Err(err) => log::warn!("error reading dir: {}", err),
+        }
+    }
+    count
+}
+
 pub fn count_items_in_dir(dir: &Path) -> usize {
     let mut count: usize = 0;
     if dir.is_dir() {
@@ -1107,6 +1259,28 @@ pub fn rcount_files_in_dir(dir: &Path) -> usize {
         }
     }
     count
+}
+
+pub fn rlist_files_in_dir(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = vec![];
+    if !dir.is_dir() {
+        return files;
+    }
+
+    for entry in WalkDir::new(dir) {
+        match entry {
+            Ok(val) => {
+                let path = val.path();
+                // if it's not the hidden oxen dir and is not a directory
+                if !is_in_oxen_hidden_dir(&path) && !path.is_dir() {
+                    // log::debug!("Found file {count}: {:?}", path);
+                    files.push(path);
+                }
+            }
+            Err(err) => eprintln!("rcount_files_in_dir Could not iterate over dir... {err}"),
+        }
+    }
+    files
 }
 
 pub fn is_in_oxen_hidden_dir(path: &Path) -> bool {
@@ -1204,6 +1378,17 @@ pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bo
     false
 }
 
+pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
+    match File::open(path.as_ref()) {
+        Ok(file) => Ok(file),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "Failed to open file: {:?}\n{:?}",
+            path.as_ref(),
+            err
+        ))),
+    }
+}
+
 fn detect_image_format(path: &Path) -> Result<ImageFormat, OxenError> {
     let mut file = File::open(path)?;
     let mut buffer = [0; 10];
@@ -1269,6 +1454,30 @@ pub fn resize_cache_image(
     resized_img.save(resize_path).unwrap();
     log::debug!("saved {:?}", resize_path);
     Ok(())
+}
+
+pub fn to_unix_str(path: impl AsRef<Path>) -> String {
+    path.as_ref()
+        .to_str()
+        .unwrap_or_default()
+        .replace('\\', "/")
+}
+
+pub fn is_glob_path(path: impl AsRef<Path>) -> bool {
+    let glob_chars = ['*', '?', '[', ']'];
+    glob_chars
+        .iter()
+        .any(|c| path.as_ref().to_str().unwrap_or_default().contains(*c))
+}
+
+pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
+    if src.is_dir() {
+        log::debug!("Calling remove_dir_all: {src:?}");
+        remove_dir_all(src)
+    } else {
+        log::debug!("Calling remove_file: {src:?}");
+        remove_file(src)
+    }
 }
 
 #[cfg(test)]
@@ -1379,7 +1588,7 @@ mod tests {
                 Path::new(constants::FILES_DIR)
                     .join("59")
                     .join(Path::new("E029D4812AEBF0"))
-                    .join(Path::new(&format!("{}.txt", VERSION_FILE_NAME)))
+                    .join(Path::new(VERSION_FILE_NAME))
             );
 
             Ok(())
@@ -1484,5 +1693,13 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn to_unix_str() {
+        assert_eq!(
+            util::fs::to_unix_str(Path::new("data\\test\\file.txt")),
+            "data/test/file.txt"
+        );
     }
 }

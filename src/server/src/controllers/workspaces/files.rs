@@ -4,9 +4,9 @@ use crate::params::{app_data, path_param};
 
 use actix_files::NamedFile;
 
-use liboxen::core::index;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::Workspace;
+use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::{FilePathsResponse, StatusMessage};
 
@@ -27,7 +27,7 @@ pub async fn get(
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let workspace = index::workspaces::get(&repo, workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, workspace_id)?;
     let path = path_param(&req, "path")?;
 
     // The path in a workspace context is just the working path of the workspace repo
@@ -60,7 +60,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let directory = PathBuf::from(path_param(&req, "path")?);
 
-    let workspace = index::workspaces::get(&repo, &workspace_id)?;
+    let workspace = repositories::workspaces::get(&repo, &workspace_id)?;
 
     log::debug!("add_file directory {:?}", directory);
 
@@ -69,7 +69,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 
     for file in files.iter() {
         log::debug!("add_file file {:?}", file);
-        let path = index::workspaces::files::add(&workspace, file)?;
+        let path = repositories::workspaces::files::add(&workspace, file)?;
         log::debug!("add_file ✅ success! staged file {:?}", path);
         ret_files.push(path);
     }
@@ -87,14 +87,14 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
-    let workspace = index::workspaces::get(&repo, user_id)?;
+    let workspace = repositories::workspaces::get(&repo, user_id)?;
 
     // This may not be in the commit if it's added, so have to parse tabular-ness from the path.
     if util::fs::is_tabular(&path) {
-        index::workspaces::data_frames::restore(&workspace, &path)?;
+        repositories::workspaces::data_frames::restore(&repo, &workspace, &path)?;
         Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
-    } else if index::workspaces::files::has_file(&workspace, &path)? {
-        index::workspaces::files::delete_file(&workspace, &path)?;
+    } else if repositories::workspaces::files::exists(&workspace, &path)? {
+        repositories::workspaces::files::delete(&workspace, &path)?;
         Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
     } else {
         Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
@@ -162,7 +162,7 @@ async fn save_parts(
                     f = web::block(move || f.write_all(&chunk).map(|_| f)).await??;
                 }
 
-                match index::workspaces::files::add(workspace, &filepath_cpy) {
+                match repositories::workspaces::files::add(workspace, &filepath_cpy) {
                     Ok(path) => {
                         log::debug!(
                             "workspace::files::save_parts added file to workspace: {:?}",

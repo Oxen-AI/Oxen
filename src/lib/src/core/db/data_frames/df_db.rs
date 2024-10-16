@@ -7,8 +7,9 @@ use crate::constants::{
 
 use crate::core::df::tabular;
 use crate::error::OxenError;
-use crate::model::schema::Field;
-use crate::model::Schema;
+
+use crate::model::data_frame::schema::Field;
+use crate::model::data_frame::schema::Schema;
 use crate::opts::DFOpts;
 use crate::{model, util};
 use arrow_json::writer::JsonArray;
@@ -37,12 +38,10 @@ pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, Oxen
 /// Create a table in a duckdb database based on an oxen schema.
 pub fn create_table_if_not_exists(
     conn: &duckdb::Connection,
+    name: impl AsRef<str>,
     schema: &Schema,
 ) -> Result<String, OxenError> {
-    match &schema.name {
-        Some(table_name) => p_create_table_if_not_exists(conn, table_name, &schema.fields),
-        None => Err(OxenError::basic_str("Schema name is required")),
-    }
+    p_create_table_if_not_exists(conn, name, &schema.fields)
 }
 
 /// Drop a table in a duckdb database.
@@ -106,11 +105,11 @@ pub fn get_schema(
         let (column_name, data_type) = row?;
         fields.push(Field::new(
             &column_name,
-            model::schema::DataType::from_sql(data_type).as_str(),
+            model::data_frame::schema::DataType::from_sql(data_type).as_str(),
         ));
     }
 
-    Ok(Schema::new(table_name, fields))
+    Ok(Schema::new(fields))
 }
 
 // Get the schema from the table excluding specified columns - useful for virtual cols like .oxen.diff.status
@@ -138,11 +137,11 @@ pub fn get_schema_excluding_cols(
         let (column_name, data_type) = row?;
         fields.push(Field::new(
             &column_name,
-            model::schema::DataType::from_sql(data_type).as_str(),
+            model::data_frame::schema::DataType::from_sql(data_type).as_str(),
         ));
     }
 
-    Ok(Schema::new(table_name, fields))
+    Ok(Schema::new(fields))
 }
 
 /// Query number of rows in a table.
@@ -358,9 +357,12 @@ pub fn index_file(path: &Path, conn: &duckdb::Connection) -> Result<(), OxenErro
 
 // TODO: We will eventually want to parse the actual type, not just the extension.
 // For now, just treat the extension as law
-pub fn index_file_with_id(path: &Path, conn: &duckdb::Connection) -> Result<(), OxenError> {
+pub fn index_file_with_id(
+    path: &Path,
+    conn: &duckdb::Connection,
+    extension: &str,
+) -> Result<(), OxenError> {
     log::debug!("df_db:index_file() at path {:?} into path {:?}", path, conn);
-    let extension: &str = &util::fs::extension_from_path(path);
     let path_str = path.to_string_lossy().to_string();
     let counter = "counter";
     // Drop sequence if exists
@@ -550,9 +552,10 @@ mod tests {
             let conn = get_connection(db_file)?;
             // bounding_box -> min_x, min_y, width, height
             let schema = test::schema_bounding_box();
-            create_table_if_not_exists(&conn, &schema)?;
+            let table_name = "bounding_box";
+            create_table_if_not_exists(&conn, table_name, &schema)?;
 
-            let num_entries = count(&conn, schema.name.unwrap())?;
+            let num_entries = count(&conn, table_name)?;
             assert_eq!(num_entries, 0);
 
             Ok(())
@@ -566,10 +569,10 @@ mod tests {
             let conn = get_connection(db_file)?;
             // bounding_box -> min_x, min_y, width, height
             let schema = test::schema_bounding_box();
-            create_table_if_not_exists(&conn, &schema)?;
+            let table_name = "bounding_box";
+            create_table_if_not_exists(&conn, table_name, &schema)?;
 
-            let name = &schema.name.clone().unwrap();
-            let found_schema = get_schema(&conn, name)?;
+            let found_schema = get_schema(&conn, table_name)?;
             assert_eq!(found_schema, schema);
 
             Ok(())

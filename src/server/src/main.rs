@@ -2,6 +2,7 @@ use dotenv::dotenv;
 use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::model::User;
+use liboxen::util;
 
 pub mod app_data;
 pub mod auth;
@@ -25,10 +26,8 @@ use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
 
 use clap::{Arg, Command};
-use env_logger::Env;
 
 use std::env;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
@@ -49,20 +48,7 @@ async fn main() -> std::io::Result<()> {
         Err(e) => log::debug!("Failed to load .env file: {}", e),
     }
 
-    env_logger::Builder::from_env(Env::default().default_filter_or("info,debug"))
-        .format(|buf, record| {
-            writeln!(
-                buf,
-                "{} [{}] - {}: {}",
-                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
-                record.level(),
-                record.target(),
-                record.args()
-            )
-        })
-        .init();
-
-    // env_logger::init_from_env(Env::default().default_filter_or("info,debug"));
+    util::logging::init_logging();
 
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => dir,

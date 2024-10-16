@@ -1,4 +1,4 @@
-//! DataFrame helpers
+//! Functions to manipulate DataFrames
 //!
 
 pub mod filter;

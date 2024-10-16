@@ -1,21 +1,21 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::index::object_db_reader::get_object_reader;
-use crate::core::index::{CommitDirEntryReader, CommitEntryReader, ObjectDBReader};
+use crate::core::v0_10_0::index::object_db_reader::get_object_reader;
+use crate::core::v0_10_0::index::{CommitDirEntryReader, CommitEntryReader, ObjectDBReader};
 use crate::error::OxenError;
 use crate::model::diff::dir_diff_summary::DirDiffSummaryImpl;
 use crate::model::diff::AddRemoveModifyCounts;
+use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::{Commit, EntryDataType, MetadataEntry, ParsedResource};
 use crate::opts::DFOpts;
 use crate::view::TabularDiffView;
 use crate::{
-    api,
     model::{CommitEntry, LocalRepository},
-    util,
+    repositories, util,
 };
 
 use super::diff_entry_status::DiffEntryStatus;
@@ -49,11 +49,11 @@ pub struct DiffEntry {
 
 impl DiffEntry {
     pub fn has_changes(&self) -> bool {
-        // TODO: do a deeper check than size, but this is good for MVP
+        // TODO: size is an old check, because we didn't have hashes on dirs before
         match (&self.head_entry, &self.base_entry) {
             (Some(head), Some(base)) => {
                 log::debug!("got metadata entries for diff {:?} and {:?}", head, base);
-                head.size != base.size
+                head.hash != base.hash || head.size != base.size
             }
             _ => {
                 log::debug!("did not get metadata entries for diff");
@@ -166,6 +166,146 @@ impl DiffEntry {
         })
     }
 
+    pub fn from_dir_nodes(
+        repo: &LocalRepository,
+        dir_path: impl AsRef<Path>,
+        base_dir: Option<DirNode>,
+        base_commit: &Commit,
+        head_dir: Option<DirNode>,
+        head_commit: &Commit,
+        status: DiffEntryStatus,
+    ) -> Result<DiffEntry, OxenError> {
+        let dir_path = dir_path.as_ref().to_path_buf();
+        // Need to check whether we have the head or base entry to check data about the file
+        let current_dir = if let Some(dir) = &head_dir {
+            dir.clone()
+        } else {
+            base_dir.clone().unwrap()
+        };
+        let base_resource = DiffEntry::resource_from_dir_node(base_dir.clone(), &dir_path);
+        let head_resource = DiffEntry::resource_from_dir_node(head_dir.clone(), &dir_path);
+
+        let mut base_meta_entry = MetadataEntry::from_dir_node(repo, base_dir.clone(), base_commit);
+        let mut head_meta_entry = MetadataEntry::from_dir_node(repo, head_dir.clone(), head_commit);
+
+        if base_dir.is_some() {
+            base_meta_entry
+                .as_mut()
+                .unwrap()
+                .resource
+                .clone_from(&base_resource);
+        }
+
+        if head_dir.is_some() {
+            head_meta_entry
+                .as_mut()
+                .unwrap()
+                .resource
+                .clone_from(&head_resource);
+        }
+
+        Ok(DiffEntry {
+            status: status.to_string(),
+            data_type: EntryDataType::Dir,
+            filename: dir_path.as_os_str().to_str().unwrap().to_string(),
+            is_dir: true,
+            size: current_dir.num_bytes,
+            head_resource,
+            base_resource,
+            head_entry: head_meta_entry,
+            base_entry: base_meta_entry,
+            diff_summary: DiffEntry::diff_summary_from_dir_nodes(&base_dir, &head_dir)?,
+            diff: None, // TODO: other full diffs...
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_file_nodes(
+        repo: &LocalRepository,
+        file_path: impl AsRef<Path>,
+        base_entry: Option<FileNode>,
+        base_commit: &Commit, // pass in commit objects for speed so we don't have to lookup later
+        head_entry: Option<FileNode>,
+        head_commit: &Commit,
+        status: DiffEntryStatus,
+        should_do_full_diff: bool,
+        df_opts: Option<DFOpts>, // only for tabular
+    ) -> Result<DiffEntry, OxenError> {
+        let file_path = file_path.as_ref().to_path_buf();
+        // Need to check whether we have the head or base entry to check data about the file
+        let (current_entry, data_type) = if let Some(entry) = &head_entry {
+            (entry.clone(), entry.data_type.clone())
+        } else {
+            let base_entry = base_entry.clone().unwrap();
+            (base_entry.clone(), base_entry.data_type.clone())
+        };
+        let base_resource = DiffEntry::resource_from_file_node(base_entry.clone(), &file_path);
+        let head_resource = DiffEntry::resource_from_file_node(head_entry.clone(), &file_path);
+
+        let mut base_meta_entry =
+            MetadataEntry::from_file_node(repo, base_entry.clone(), base_commit);
+        let mut head_meta_entry =
+            MetadataEntry::from_file_node(repo, head_entry.clone(), head_commit);
+
+        if base_entry.is_some() {
+            base_meta_entry
+                .as_mut()
+                .unwrap()
+                .resource
+                .clone_from(&base_resource);
+        }
+
+        if head_entry.is_some() {
+            head_meta_entry
+                .as_mut()
+                .unwrap()
+                .resource
+                .clone_from(&head_resource);
+        }
+
+        if let Some(df_opts) = df_opts {
+            if data_type == EntryDataType::Tabular && should_do_full_diff {
+                log::debug!("doing full diff for tabular");
+                let diff =
+                    TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts);
+                return Ok(DiffEntry {
+                    status: status.to_string(),
+                    data_type: data_type.clone(),
+                    filename: file_path.as_os_str().to_str().unwrap().to_string(),
+                    is_dir: false,
+                    size: current_entry.num_bytes,
+                    head_resource,
+                    base_resource,
+                    head_entry: head_meta_entry,
+                    base_entry: base_meta_entry,
+                    diff_summary: Some(GenericDiffSummary::TabularDiffWrapper(
+                        diff.clone().tabular.summary.to_wrapper(),
+                    )),
+                    diff: Some(GenericDiff::TabularDiff(diff)),
+                });
+            }
+        }
+
+        log::debug!("fall through .... not doing full diff for tabular");
+        Ok(DiffEntry {
+            status: status.to_string(),
+            data_type: data_type.clone(),
+            filename: file_path.as_os_str().to_str().unwrap().to_string(),
+            is_dir: false,
+            size: current_entry.num_bytes,
+            head_resource,
+            base_resource,
+            head_entry: head_meta_entry,
+            base_entry: base_meta_entry,
+            diff_summary: DiffEntry::diff_summary_from_file_nodes(
+                data_type,
+                &base_entry,
+                &head_entry,
+            )?,
+            diff: None, // TODO: other full diffs...
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn from_commit_entry(
         repo: &LocalRepository,
@@ -255,7 +395,7 @@ impl DiffEntry {
             base_resource,
             head_entry: head_meta_entry,
             base_entry: base_meta_entry,
-            diff_summary: DiffEntry::diff_summary_from_file(
+            diff_summary: DiffEntry::diff_summary_from_commit_entries(
                 repo,
                 data_type,
                 &base_entry,
@@ -275,6 +415,34 @@ impl DiffEntry {
         })
     }
 
+    fn resource_from_file_node(
+        node: Option<FileNode>,
+        file_path: impl AsRef<Path>,
+    ) -> Option<ParsedResource> {
+        let path = file_path.as_ref().to_path_buf();
+        node.map(|node| ParsedResource {
+            commit: None,
+            branch: None,
+            version: PathBuf::from(node.last_commit_id.to_string()),
+            path: path.clone(),
+            resource: PathBuf::from(node.last_commit_id.to_string()).join(path),
+        })
+    }
+
+    fn resource_from_dir_node(
+        node: Option<DirNode>,
+        dir_path: impl AsRef<Path>,
+    ) -> Option<ParsedResource> {
+        let path = dir_path.as_ref().to_path_buf();
+        node.map(|node| ParsedResource {
+            commit: None,
+            branch: None,
+            version: PathBuf::from(node.last_commit_id.to_string()),
+            path: path.clone(),
+            resource: PathBuf::from(node.last_commit_id.to_string()).join(path),
+        })
+    }
+
     fn resource_from_dir(dir: Option<&PathBuf>, commit: &Commit) -> Option<ParsedResource> {
         dir.map(|dir| ParsedResource {
             commit: Some(commit.to_owned()),
@@ -291,7 +459,7 @@ impl DiffEntry {
         commit: &Commit,
     ) -> Option<MetadataEntry> {
         if let Some(dir) = dir {
-            match api::local::entries::get_meta_entry(repo, commit, dir) {
+            match repositories::entries::get_meta_entry(repo, commit, dir) {
                 Ok(entry) => Some(entry),
                 Err(_) => None,
             }
@@ -509,7 +677,7 @@ impl DiffEntry {
         })))
     }
 
-    fn diff_summary_from_file(
+    fn diff_summary_from_commit_entries(
         repo: &LocalRepository,
         data_type: EntryDataType,
         base_entry: &Option<CommitEntry>,
@@ -522,5 +690,28 @@ impl DiffEntry {
             ))),
             _ => Ok(None),
         }
+    }
+
+    fn diff_summary_from_file_nodes(
+        data_type: EntryDataType,
+        base_entry: &Option<FileNode>,
+        head_entry: &Option<FileNode>,
+    ) -> Result<Option<GenericDiffSummary>, OxenError> {
+        // TODO match on type, and create the appropriate summary
+        match data_type {
+            EntryDataType::Tabular => Ok(Some(GenericDiffSummary::TabularDiffWrapper(
+                TabularDiffWrapper::from_file_nodes(base_entry, head_entry)?,
+            ))),
+            _ => Ok(None),
+        }
+    }
+
+    fn diff_summary_from_dir_nodes(
+        base_entry: &Option<DirNode>,
+        head_entry: &Option<DirNode>,
+    ) -> Result<Option<GenericDiffSummary>, OxenError> {
+        Ok(Some(GenericDiffSummary::DirDiffSummary(
+            DirDiffSummary::from_dir_nodes(base_entry, head_entry)?,
+        )))
     }
 }

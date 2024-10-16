@@ -22,9 +22,6 @@ pub use list::WorkspaceListCmd;
 pub mod restore;
 pub use restore::WorkspaceRestoreCmd;
 
-pub mod rm;
-pub use rm::WorkspaceRmCmd;
-
 pub mod status;
 pub use status::WorkspaceStatusCmd;
 
@@ -89,7 +86,6 @@ impl WorkspaceCmd {
             Box::new(WorkspaceDiffCmd),
             Box::new(WorkspaceDeleteCmd),
             Box::new(WorkspaceListCmd),
-            Box::new(WorkspaceRmCmd),
             Box::new(WorkspaceStatusCmd),
         ];
         let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();

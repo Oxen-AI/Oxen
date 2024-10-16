@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
-use liboxen::{command, error::OxenError, model::LocalRepository, opts::AddOpts};
+use liboxen::{api, error::OxenError, model::LocalRepository, opts::AddOpts};
 
 use crate::cmd::{add::add_args, RunCmd};
 pub const NAME: &str = "add";
@@ -44,8 +44,16 @@ impl RunCmd for WorkspaceAddCmd {
         };
 
         let repository = LocalRepository::from_current_dir()?;
+        let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
         for path in opts.paths.iter() {
-            command::workspace::add(&repository, workspace_id, path, &opts).await?;
+            api::client::workspaces::files::add(
+                &repository,
+                &remote_repo,
+                workspace_id,
+                path,
+                &opts,
+            )
+            .await?;
         }
 
         Ok(())

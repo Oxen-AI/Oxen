@@ -8,6 +8,9 @@ use crate::cmd::RunCmd;
 
 pub const NAME: &str = "db";
 
+pub mod count;
+pub use count::DbCountCmd;
+
 pub mod get;
 pub use get::DbGetCmd;
 
@@ -60,7 +63,11 @@ impl RunCmd for DbCmd {
 
 impl DbCmd {
     fn get_subcommands(&self) -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> = vec![Box::new(DbListCmd), Box::new(DbGetCmd)];
+        let commands: Vec<Box<dyn RunCmd>> = vec![
+            Box::new(DbListCmd),
+            Box::new(DbGetCmd),
+            Box::new(DbCountCmd),
+        ];
         let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);

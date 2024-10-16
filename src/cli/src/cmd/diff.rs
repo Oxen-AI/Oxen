@@ -4,13 +4,13 @@ use colored::ColoredString;
 use colored::Colorize;
 use std::path::PathBuf;
 
-use liboxen::command;
 use liboxen::core::df::pretty_print;
 use liboxen::core::df::tabular;
 use liboxen::error::OxenError;
 use liboxen::model::diff::tabular_diff::TabularDiffMods;
 use liboxen::model::diff::{ChangeType, DiffResult, TextDiff};
 use liboxen::opts::DiffOpts;
+use liboxen::repositories;
 use liboxen::util;
 
 use crate::cmd::RunCmd;
@@ -66,7 +66,7 @@ impl RunCmd for DiffCmd {
         let mut diff_result =
             if opts.revision_1.is_none() && opts.revision_2.is_none() && opts.path_2.is_some() {
                 // If we do not have revisions set, just compare the files on disk
-                command::diff(
+                repositories::diffs::diff(
                     opts.path_1,
                     opts.path_2,
                     opts.keys,
@@ -79,7 +79,7 @@ impl RunCmd for DiffCmd {
                 // If we have revisions set, pass in the repo_dir to be able
                 // to compare the files at those revisions within the .oxen repo
                 let repo_dir = util::fs::get_repo_root_from_current_dir().unwrap();
-                command::diff(
+                repositories::diffs::diff(
                     opts.path_1,
                     opts.path_2,
                     opts.keys,

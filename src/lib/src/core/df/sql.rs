@@ -1,5 +1,5 @@
 use crate::constants::{CACHE_DIR, HISTORY_DIR};
-use crate::core::index::CommitReader;
+use crate::core::v0_10_0::index::CommitReader;
 use crate::model::LocalRepository;
 use crate::util::fs;
 use crate::{core::db::data_frames::df_db, error::OxenError};

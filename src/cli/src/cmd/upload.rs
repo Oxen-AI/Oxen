@@ -2,11 +2,12 @@ use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
 use liboxen::api;
-use liboxen::command;
 use liboxen::constants::DEFAULT_HOST;
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
 use liboxen::opts::UploadOpts;
+use liboxen::repositories;
+
 use std::path::PathBuf;
 
 use crate::helpers::check_remote_version_blocking;
@@ -103,7 +104,7 @@ impl RunCmd for UploadCmd {
         // Check if the first path is a valid remote repo
         let name = paths[0].to_string_lossy();
         if let Some(remote_repo) =
-            api::remote::repositories::get_by_name_host_and_remote(&name, &opts.host, &opts.remote)
+            api::client::repositories::get_by_name_host_and_remote(&name, &opts.host, &opts.remote)
                 .await?
         {
             // Remove the repo name from the list of paths
@@ -113,7 +114,7 @@ impl RunCmd for UploadCmd {
                 ..opts
             };
 
-            command::workspace::upload(&remote_repo, &opts).await?;
+            repositories::workspaces::upload(&remote_repo, &opts).await?;
         } else {
             eprintln!("Repository does not exist {}", name);
         }

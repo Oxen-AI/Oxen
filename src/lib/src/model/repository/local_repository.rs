@@ -1,6 +1,7 @@
-use crate::config::RemoteConfig;
-use crate::constants;
+use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
+use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::core::versions::MinOxenVersion;
 use crate::error;
 use crate::error::OxenError;
 use crate::model::{Remote, RemoteRepository};
@@ -15,16 +16,37 @@ pub struct LocalRepository {
     pub path: PathBuf,
     // Optional remotes to sync the data to
     remote_name: Option<String>, // name of the current remote ("origin" by default)
-    pub remotes: Vec<Remote>,    // List of possible remotes
+    min_version: Option<String>, // write the version if it is past v0.18.4
+    remotes: Vec<Remote>,        // List of possible remotes
+    vnode_size: Option<u64>,
 }
 
 impl LocalRepository {
-    // Create a brand new repository with new ID
-    pub fn new(path: &Path) -> Result<LocalRepository, OxenError> {
+    /// Instantiate a new repository at a given path
+    /// Note: Does not create the repository on disk, just instantiates the struct
+    pub fn new(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
         Ok(LocalRepository {
-            path: path.to_path_buf(),
+            path: path.as_ref().to_path_buf(),
+            // No remotes are set yet
             remotes: vec![],
             remote_name: None,
+            // New with a path should default to our current MIN_OXEN_VERSION
+            min_version: Some(MIN_OXEN_VERSION.to_string()),
+            vnode_size: None,
+        })
+    }
+
+    /// Load an older version of a repository with older oxen core logic
+    pub fn new_from_version(
+        path: impl AsRef<Path>,
+        min_version: impl AsRef<str>,
+    ) -> Result<LocalRepository, OxenError> {
+        Ok(LocalRepository {
+            path: path.as_ref().to_path_buf(),
+            remotes: vec![],
+            remote_name: None,
+            min_version: Some(min_version.as_ref().to_string()),
+            vnode_size: None,
         })
     }
 
@@ -33,6 +55,8 @@ impl LocalRepository {
             path: std::env::current_dir()?.join(view.name),
             remotes: vec![],
             remote_name: None,
+            min_version: None,
+            vnode_size: None,
         })
     }
 
@@ -41,6 +65,8 @@ impl LocalRepository {
             path: path.to_owned(),
             remotes: vec![repo.remote],
             remote_name: Some(String::from(constants::DEFAULT_REMOTE_NAME)),
+            min_version: None,
+            vnode_size: None,
         })
     }
 
@@ -49,11 +75,14 @@ impl LocalRepository {
         if !config_path.exists() {
             return Err(OxenError::local_repo_not_found());
         }
-        let remote_cfg = RemoteConfig::from_file(&config_path)?;
+        let cfg = RepositoryConfig::from_file(&config_path)?;
+        let vnode_size = cfg.vnode_size();
         let repo = LocalRepository {
             path: dir.to_path_buf(),
-            remotes: remote_cfg.remotes,
-            remote_name: remote_cfg.remote_name,
+            remotes: cfg.remotes,
+            remote_name: cfg.remote_name,
+            min_version: cfg.min_version,
+            vnode_size: Some(vnode_size),
         };
         Ok(repo)
     }
@@ -65,14 +94,41 @@ impl LocalRepository {
         LocalRepository::from_dir(&repo_dir)
     }
 
+    pub fn min_version(&self) -> MinOxenVersion {
+        match MinOxenVersion::or_earliest(self.min_version.clone()) {
+            Ok(version) => version,
+            Err(err) => {
+                panic!("Invalid repo version\n{}", err)
+            }
+        }
+    }
+
+    pub fn set_min_version(&mut self, version: MinOxenVersion) {
+        self.min_version = Some(version.to_string());
+    }
+
+    pub fn remotes(&self) -> &Vec<Remote> {
+        &self.remotes
+    }
+
     pub fn dirname(&self) -> String {
         String::from(self.path.file_name().unwrap().to_str().unwrap())
     }
 
+    pub fn vnode_size(&self) -> u64 {
+        self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)
+    }
+
+    pub fn set_vnode_size(&mut self, size: u64) {
+        self.vnode_size = Some(size);
+    }
+
     pub fn save(&self, path: &Path) -> Result<(), OxenError> {
-        let cfg = RemoteConfig {
+        let cfg = RepositoryConfig {
             remote_name: self.remote_name.clone(),
             remotes: self.remotes.clone(),
+            min_version: self.min_version.clone(),
+            vnode_size: Some(self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)),
         };
         let toml = toml::to_string(&cfg)?;
         util::fs::write_to_path(path, toml)?;

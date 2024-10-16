@@ -8,14 +8,15 @@ use crate::core::db;
 use crate::core::db::data_frames::workspace_df_db::{
     full_staged_table_schema, schema_without_oxen_cols,
 };
-use crate::core::index::workspaces::data_frames::data_frame_column_changes_db;
-use crate::model::schema::DataType;
+use crate::core::v0_10_0::index::workspaces::data_frames::column_changes_db;
+use crate::model::data_frame::schema::DataType;
 use crate::model::Schema;
 use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 use crate::view::data_frames::{ColumnChange, DataFrameColumnChange};
 use crate::{constants::TABLE_NAME, error::OxenError};
 
 use super::df_db;
+
 pub fn add_column(
     conn: &duckdb::Connection,
     new_column: &NewColumn,
@@ -69,10 +70,7 @@ pub fn record_column_change(
     if operation == "deleted" {
         if let Some(column) = &column_before {
             if let Some(previous_change) =
-                data_frame_column_changes_db::get_data_frame_column_change(
-                    &db,
-                    &column.column_name,
-                )?
+                column_changes_db::get_data_frame_column_change(&db, &column.column_name)?
             {
                 if previous_change.operation == "added" {
                     // If we're deleting a previously added column, just remove the change
@@ -93,23 +91,24 @@ pub fn record_column_change(
     let _ = maybe_revert_column_changes(&db, column_before);
     let _ = maybe_revert_column_changes(&db, column_after);
 
-    data_frame_column_changes_db::write_data_frame_column_change(&change, &db)
+    column_changes_db::write_data_frame_column_change(&change, &db)
 }
 
 pub fn maybe_revert_column_changes(db: &DB, column: Option<ColumnChange>) -> Result<(), OxenError> {
     if let Some(column) = column {
-        data_frame_column_changes_db::get_data_frame_column_change(db, &column.column_name)
-            .and_then(|change_opt| match change_opt {
+        column_changes_db::get_data_frame_column_change(db, &column.column_name).and_then(
+            |change_opt| match change_opt {
                 Some(_) => revert_column_changes(db, &column.column_name.to_owned()),
                 None => Ok(()),
-            })
+            },
+        )
     } else {
         Ok(())
     }
 }
 
 pub fn revert_column_changes(db: &DB, column_name: &str) -> Result<(), OxenError> {
-    data_frame_column_changes_db::delete_data_frame_column_changes(db, column_name)
+    column_changes_db::delete_data_frame_column_changes(db, column_name)
 }
 
 pub fn polar_insert_column(

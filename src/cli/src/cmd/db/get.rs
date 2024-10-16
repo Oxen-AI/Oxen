@@ -18,6 +18,13 @@ impl RunCmd for DbGetCmd {
             .about("Get a value from the database given a key.")
             .arg(Arg::new("PATH").help("The path of the database."))
             .arg(Arg::new("KEY").help("The key to get the value for."))
+            .arg(
+                Arg::new("dtype")
+                    .short('d')
+                    .long("dtype")
+                    .help("The data type of the key.")
+                    .default_value("str"),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -30,7 +37,8 @@ impl RunCmd for DbGetCmd {
             return Err(OxenError::basic_str(error));
         };
 
-        let value = command::db::get(path, key)?;
+        let dtype = args.get_one::<String>("dtype").map(|x| x.as_str());
+        let value = command::db::get(path, key, dtype)?;
         println!("{}", value);
 
         Ok(())

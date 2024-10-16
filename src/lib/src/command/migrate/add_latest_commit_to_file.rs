@@ -3,7 +3,7 @@ use std::path::Path;
 use super::Migrate;
 
 use crate::core::cache::cachers;
-use crate::core::index::{CommitEntryReader, CommitReader, ObjectDBReader};
+use crate::core::v0_10_0::index::{CommitEntryReader, CommitReader, ObjectDBReader};
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 
@@ -91,7 +91,7 @@ pub fn add_latest_commit_to_file_up(repo: &LocalRepository) -> Result<(), OxenEr
             let entry_reader = CommitEntryReader::new(repo, current_commit)?;
             entry_reader.list_entries()?
         };
-        
+
         log::debug!("Updating {} entries", entries.len());
     }
 

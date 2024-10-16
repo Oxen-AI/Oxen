@@ -95,8 +95,8 @@ impl RunCmd for CreateRemoteCmd {
             repo_new.host = Some(host);
             repo_new.is_public = Some(is_public);
             repo_new.scheme = Some(scheme);
-            let remote_repo = api::remote::repositories::create_empty(repo_new).await?;
-            println!("🎉 Remote successfully created for '{}/{}' if this is a brand new repository:\n\n  oxen clone {}\n\nTo push an existing local repository to a new remote:\n\n  oxen config --set-remote origin {}\n",
+            let remote_repo = api::client::repositories::create_empty(repo_new).await?;
+            println!("🎉 Remote successfully created for '{}/{}'\n\nIf this is a brand new repository:\n\n  oxen clone {}\n\nTo push an existing local repository to a new remote:\n\n  oxen config --set-remote origin {}\n",
                 namespace, name, remote_repo.remote.url, remote_repo.remote.url
             );
         } else {
@@ -156,9 +156,8 @@ Happy Mooooooving of data 🐂
             repo.is_public = Some(is_public);
             repo.scheme = Some(scheme);
 
-            let remote_repo = api::remote::repositories::create(repo).await?;
-            println!(
-                "Created {}/{}\n\nClone to repository to your local:\n\n  oxen clone {}\n",
+            let remote_repo = api::client::repositories::create(repo).await?;
+            println!("🎉 Remote successfully created for '{}/{}'\n\nClone your repository with:\n\n  oxen clone {}\n",
                 namespace, name, remote_repo.remote.url
             );
         }

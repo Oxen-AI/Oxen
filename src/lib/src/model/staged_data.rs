@@ -4,7 +4,8 @@ use std::fmt;
 use std::path::PathBuf;
 
 use crate::model::{
-    MergeConflict, StagedEntry, StagedEntryStatus, StagedSchema, SummarizedStagedDirStats,
+    merge_conflict::EntryMergeConflict, StagedEntry, StagedEntryStatus, StagedSchema,
+    SummarizedStagedDirStats,
 };
 
 pub const MSG_CLEAN_REPO: &str = "nothing to commit, working tree clean\n";
@@ -62,10 +63,10 @@ pub struct StagedData {
     pub staged_schemas: HashMap<PathBuf, StagedSchema>, // All the staged entrisumes will be in here
     pub untracked_dirs: Vec<(PathBuf, usize)>,
     pub untracked_files: Vec<PathBuf>,
-    pub modified_files: Vec<PathBuf>,
+    pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
-    pub removed_files: Vec<PathBuf>,
-    pub merge_conflicts: Vec<MergeConflict>,
+    pub removed_files: HashSet<PathBuf>,
+    pub merge_conflicts: Vec<EntryMergeConflict>,
 }
 
 impl StagedData {
@@ -76,8 +77,8 @@ impl StagedData {
             staged_schemas: HashMap::new(),
             untracked_dirs: vec![],
             untracked_files: vec![],
-            modified_files: vec![],
-            removed_files: vec![],
+            modified_files: HashSet::new(),
+            removed_files: HashSet::new(),
             moved_files: vec![],
             merge_conflicts: vec![],
         }
@@ -85,6 +86,7 @@ impl StagedData {
 
     pub fn is_clean(&self) -> bool {
         self.staged_files.is_empty()
+            && self.staged_dirs.is_empty()
             && self.staged_schemas.is_empty()
             && self.untracked_files.is_empty()
             && self.untracked_dirs.is_empty()
@@ -146,7 +148,7 @@ impl StagedData {
         outputs
     }
 
-    pub fn print_stdout(&self) {
+    pub fn print(&self) {
         let opts = StagedDataOpts::default();
         let outputs = self.__collect_outputs(&opts);
 
@@ -155,7 +157,7 @@ impl StagedData {
         }
     }
 
-    pub fn print_stdout_with_params(&self, opts: &StagedDataOpts) {
+    pub fn print_with_params(&self, opts: &StagedDataOpts) {
         let outputs = self.__collect_outputs(opts);
         for output in outputs {
             print!("{output}")
@@ -211,7 +213,7 @@ impl StagedData {
         for (path, staged_dirs) in self.staged_dirs.paths.iter() {
             let mut dir_row: Vec<ColoredString> = vec![];
             for staged_dir in staged_dirs.iter() {
-                if staged_dir.num_files_staged == 0 {
+                if *path == PathBuf::from("") {
                     continue;
                 }
 
@@ -224,6 +226,9 @@ impl StagedData {
                     }
                     StagedEntryStatus::Removed => {
                         dir_row.push("  removed: ".green());
+                    }
+                    StagedEntryStatus::Unmodified => {
+                        // dir_row.push("  unmodified: ".green());
                     }
                 }
 
@@ -302,6 +307,9 @@ impl StagedData {
                         format!("{}\n", path.to_str().unwrap()).green().bold(),
                     ]
                 }
+                StagedEntryStatus::Unmodified => {
+                    vec![]
+                }
             },
             outputs,
             opts,
@@ -349,11 +357,7 @@ impl StagedData {
         self.__collapse_outputs(
             &files_vec,
             |(path, staged_schema)| {
-                let schema_ref = if let Some(name) = &staged_schema.schema.name {
-                    name
-                } else {
-                    &staged_schema.schema.hash
-                };
+                let schema_ref = &staged_schema.schema.hash;
 
                 match staged_schema.status {
                     StagedEntryStatus::Removed => {
@@ -380,11 +384,15 @@ impl StagedData {
                                 .bold(),
                         ]
                     }
+                    StagedEntryStatus::Unmodified => {
+                        vec![]
+                    }
                 }
             },
             outputs,
             opts,
         );
+        outputs.push("\n".normal());
     }
 
     fn __collect_modified_files(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
@@ -401,7 +409,7 @@ impl StagedData {
             outputs.push(format!("  {MSG_OXEN_ADD_FILE_EXAMPLE}").normal());
         }
 
-        let mut files = self.modified_files.clone();
+        let mut files: Vec<PathBuf> = self.modified_files.iter().cloned().collect();
         files.sort();
 
         self.__collapse_outputs(
@@ -427,7 +435,7 @@ impl StagedData {
         outputs.push("Removed Files\n".to_string().normal());
         outputs.push(MSG_OXEN_RM_FILE_EXAMPLE.to_string().normal());
 
-        let mut files = self.removed_files.clone();
+        let mut files: Vec<PathBuf> = self.removed_files.iter().cloned().collect();
         files.sort();
 
         self.__collapse_outputs(
@@ -742,7 +750,7 @@ mod tests {
     #[test]
     fn test_staged_data_remove_file() {
         let mut staged_data = StagedData::empty();
-        staged_data.removed_files.push(PathBuf::from("README.md"));
+        staged_data.removed_files.insert(PathBuf::from("README.md"));
 
         let opts = StagedDataOpts::default();
         let outputs = staged_data.__collect_outputs(&opts);

@@ -23,3 +23,13 @@ impl MetadataVideo {
         }
     }
 }
+
+impl std::fmt::Display for MetadataVideo {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "MetadataVideo({}x{} {}s)",
+            self.video.width, self.video.height, self.video.num_seconds
+        )
+    }
+}

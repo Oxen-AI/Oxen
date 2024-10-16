@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 
-use liboxen::command;
+use liboxen::api;
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
@@ -39,11 +39,21 @@ impl RunCmd for BranchUnlockCmd {
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
-        let remote = args.get_one::<String>("remote").expect("required");
+        let remote_name = args.get_one::<String>("remote").expect("required");
         let branch = args.get_one::<String>("branch").expect("required");
 
         let repository = LocalRepository::from_current_dir()?;
-        command::unlock(&repository, remote, branch).await?;
+
+        // Get the remote repo
+        let remote = repository
+            .get_remote(remote_name)
+            .ok_or(OxenError::remote_not_set(remote_name))?;
+        let remote_repo = api::client::repositories::get_by_remote(&remote)
+            .await?
+            .ok_or(OxenError::remote_not_found(remote.clone()))?;
+
+        // Unlock the branch
+        api::client::branches::unlock(&remote_repo, branch).await?;
 
         Ok(())
     }

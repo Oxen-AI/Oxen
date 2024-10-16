@@ -4,8 +4,8 @@ use liboxen::api;
 use liboxen::error::OxenError;
 use std::path::PathBuf;
 
-use liboxen::command;
 use liboxen::opts::DownloadOpts;
+use liboxen::repositories;
 
 use crate::helpers::check_remote_version_blocking;
 use liboxen::constants::{DEFAULT_HOST, DEFAULT_REMOTE_NAME};
@@ -88,14 +88,14 @@ impl RunCmd for DownloadCmd {
         // Check if the first path is a valid remote repo
         let name = paths[0].to_string_lossy();
         if let Some(remote_repo) =
-            api::remote::repositories::get_by_name_host_and_remote(&name, &opts.host, &opts.remote)
+            api::client::repositories::get_by_name_host_and_remote(&name, &opts.host, &opts.remote)
                 .await?
         {
             // Download from the remote without having to have a local repo directory
             let remote_paths = paths[1..].to_vec();
             let commit_id = opts.remote_commit_id(&remote_repo).await?;
             for path in remote_paths {
-                command::download(&remote_repo, &path, &opts.dst, &commit_id).await?;
+                repositories::download(&remote_repo, &path, &opts.dst, &commit_id).await?;
             }
         } else {
             eprintln!("Repository does not exist {}", name);

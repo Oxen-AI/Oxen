@@ -1,14 +1,11 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::util;
-use std::env;
 use std::path::PathBuf;
 
-use liboxen::command;
 use liboxen::opts::InfoOpts;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "info";
@@ -54,18 +51,15 @@ impl RunCmd for InfoCmd {
         let output_as_json = args.get_flag("json");
 
         let opts = InfoOpts {
-            path,
+            path: path.clone(),
             revision,
             verbose,
             output_as_json,
         };
 
         // Look up from the current dir for .oxen directory
-        let current_dir = env::current_dir().unwrap();
-        let repo_dir = util::fs::get_repo_root(&current_dir)
-            .ok_or(OxenError::basic_str(error::NO_REPO_FOUND))?;
-        let repository = LocalRepository::from_dir(&repo_dir)?;
-        let metadata = command::info(&repository, opts.to_owned())?;
+        let repository = LocalRepository::from_current_dir()?;
+        let metadata = repositories::metadata::get_cli(&repository, &path, &path)?;
 
         if opts.output_as_json {
             let json = serde_json::to_string(&metadata)?;

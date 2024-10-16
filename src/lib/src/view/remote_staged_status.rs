@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    entry::ResourceVersion, json_data_frame_view::DerivedDFResource, JsonDataFrame,
+    entries::ResourceVersion, json_data_frame_view::DerivedDFResource, JsonDataFrame,
     JsonDataFrameViews, PaginatedDirEntries, StatusMessage,
 };
 
@@ -110,7 +113,10 @@ impl RemoteStagedStatus {
         RemoteStagedStatus::iter_to_meta_entry(repo, entries.keys())
     }
 
-    fn modified_to_meta_entry(repo: &LocalRepository, entries: &[PathBuf]) -> Vec<MetadataEntry> {
+    fn modified_to_meta_entry(
+        repo: &LocalRepository,
+        entries: &HashSet<PathBuf>,
+    ) -> Vec<MetadataEntry> {
         RemoteStagedStatus::iter_to_meta_entry(repo, entries.iter())
     }
 
@@ -129,6 +135,7 @@ impl RemoteStagedStatus {
 
                 MetadataEntry {
                     filename: path_str,
+                    hash: "".to_string(),
                     is_dir: false,
                     size: len,
                     latest_commit: None,
@@ -152,6 +159,7 @@ impl RemoteStagedStatus {
         let (paginated, pagination) = util::paginate(entries, page_number, page_size);
 
         PaginatedDirEntries {
+            dir: None,
             entries: paginated,
             page_number: pagination.page_number,
             page_size: pagination.page_size,

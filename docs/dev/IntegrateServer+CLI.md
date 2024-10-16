@@ -65,10 +65,10 @@ Assuming you have a server running on the default host and port, the test for li
 #[test]
 fn test_list_remote_branches() -> Result<(), OxenError> {
     test::run_empty_remote_repo_test(|remote_repo| {
-        api::remote::branches::create_from_or_get(remote_repo, "branch-1", "main")?;
-        api::remote::branches::create_from_or_get(remote_repo, "branch-2", "main")?;
+        api::client::branches::create(remote_repo, "branch-1", "main")?;
+        api::client::branches::create(remote_repo, "branch-2", "main")?;
 
-        let branches = api::remote::branches::list(remote_repo)?;
+        let branches = api::client::branches::list(remote_repo)?;
         assert_eq!(branches.len(), 3);
 
         assert!(branches.iter().any(|b| b.name == "branch-1"));

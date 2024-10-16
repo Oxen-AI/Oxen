@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::DIFF_STATUS_COL;
 use crate::error::OxenError;
-use crate::message::{MessageLevel, OxenMessage};
+use crate::model::data_frame::schema::Field;
 use crate::model::diff::tabular_diff::{TabularDiffDupes, TabularSchemaDiff};
 use crate::model::diff::text_diff::TextDiff;
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
-use crate::model::schema::Field;
 use crate::model::{Commit, DiffEntry, Schema};
+use crate::view::message::{MessageLevel, OxenMessage};
 use crate::view::Pagination;
 
 use super::schema::SchemaWithPath;

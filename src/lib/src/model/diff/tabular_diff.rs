@@ -1,6 +1,6 @@
 use crate::{
     error::OxenError,
-    model::schema::{Field, Schema},
+    model::data_frame::schema::{Field, Schema},
 };
 use polars::frame::DataFrame;
 use serde::{Deserialize, Serialize};

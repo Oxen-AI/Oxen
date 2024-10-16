@@ -72,6 +72,7 @@ pub enum OxenError {
     // Versioning
     MigrationRequired(StringError),
     OxenUpdateRequired(StringError),
+    InvalidVersion(StringError),
 
     // Entry
     CommitEntryNotFound(StringError),
@@ -100,13 +101,14 @@ pub enum OxenError {
     IO(io::Error),
     Authentication(StringError),
     ArrowError(ArrowError),
+    BinCodeError(bincode::Error),
     TomlSer(toml::ser::Error),
     TomlDe(toml::de::Error),
     URI(http::uri::InvalidUri),
     URL(url::ParseError),
     JSON(serde_json::Error),
     HTTP(reqwest::Error),
-    Encoding(std::str::Utf8Error),
+    UTF8Error(std::str::Utf8Error),
     DB(rocksdb::Error),
     DUCKDB(duckdb::Error),
     ENV(std::env::VarError),
@@ -134,6 +136,10 @@ impl OxenError {
 
     pub fn migration_required(s: impl AsRef<str>) -> Self {
         OxenError::MigrationRequired(StringError::from(s.as_ref()))
+    }
+
+    pub fn invalid_version(s: impl AsRef<str>) -> Self {
+        OxenError::InvalidVersion(StringError::from(s.as_ref()))
     }
 
     pub fn oxen_update_required(s: impl AsRef<str>) -> Self {
@@ -277,8 +283,8 @@ impl OxenError {
         OxenError::basic_str(err)
     }
 
-    pub fn schema_does_not_exist(schema_ref: impl AsRef<str>) -> OxenError {
-        let err = format!("Schema does not exist {:?}", schema_ref.as_ref());
+    pub fn schema_does_not_exist(path: impl AsRef<Path>) -> OxenError {
+        let err = format!("Schema does not exist {:?}", path.as_ref());
         OxenError::basic_str(err)
     }
 
@@ -541,7 +547,13 @@ impl From<serde_json::Error> for OxenError {
 
 impl From<std::str::Utf8Error> for OxenError {
     fn from(error: std::str::Utf8Error) -> Self {
-        OxenError::Encoding(error)
+        OxenError::UTF8Error(error)
+    }
+}
+
+impl From<bincode::Error> for OxenError {
+    fn from(error: bincode::Error) -> Self {
+        OxenError::BinCodeError(error)
     }
 }
 

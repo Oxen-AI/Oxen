@@ -130,11 +130,11 @@ jobs:
         run: brew install pkg-config ffmpeg imagemagick
 
       # https://youtrack.jetbrains.com/issue/RUST-12079/Failure-to-show-stack-trace-when-running-cargo-tests
-      - name: Install LLVM Linker
-        run: |
-          brew install llvm
-          echo '[target.aarch64-apple-darwin]' >> ~/.cargo/config
-          echo 'rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]' >> ~/.cargo/config
+      # - name: Install LLVM Linker
+      #   run: |
+      #     brew install llvm
+      #     echo '[target.aarch64-apple-darwin]' >> ~/.cargo/config
+      #     echo 'rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]' >> ~/.cargo/config
 
       - name: Install and start Redis
         run: |
@@ -169,7 +169,7 @@ jobs:
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
           ./target/debug/oxen-server start &
-          cargo test -- --test-threads=1
+          cargo test -- --test-threads=4
 
   test_windows:
     name: Test Suite Windows

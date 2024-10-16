@@ -134,8 +134,13 @@ where
                 (Ok(key), Ok(value)) => {
                     let key = String::from(key);
                     let entry: Result<D, serde_json::error::Error> = serde_json::from_str(value);
-                    if let Ok(entry) = entry {
-                        results.push((key, entry));
+                    match entry {
+                        Ok(entry) => {
+                            results.push((key, entry));
+                        }
+                        Err(err) => {
+                            log::warn!("str_json_db::list() Could not deserialize entry '{}' -> '{}'\n{:?}", key, value, err);
+                        }
                     }
                 }
                 (Ok(key), _) => {

@@ -23,3 +23,13 @@ impl MetadataAudio {
         }
     }
 }
+
+impl std::fmt::Display for MetadataAudio {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "MetadataAudio({} channels, {} Hz, {} seconds)",
+            self.audio.num_channels, self.audio.sample_rate, self.audio.num_seconds
+        )
+    }
+}

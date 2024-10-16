@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{entry::ResourceVersion, StatusMessage};
+use super::entries::ResourceVersion;
+use super::StatusMessage;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FileMetadata {

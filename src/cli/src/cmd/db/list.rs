@@ -22,6 +22,12 @@ impl RunCmd for DbListCmd {
         Command::new(NAME)
             .about("List the full key value database.")
             .arg(Arg::new("PATH").help("The path of the database."))
+            .arg(
+                Arg::new("limit")
+                    .short('l')
+                    .long("limit")
+                    .help("The maximum number of entries to list"),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -30,11 +36,11 @@ impl RunCmd for DbListCmd {
             return Err(OxenError::basic_str("Must supply path"));
         };
 
-        let result = command::db::list(PathBuf::from(path))?;
+        let limit = args
+            .get_one::<String>("limit")
+            .map(|x| x.parse::<usize>().expect("limit must be valid size"));
 
-        for (key, value) in result {
-            println!("{key}\t{value}");
-        }
+        command::db::list(PathBuf::from(path), limit)?;
 
         Ok(())
     }

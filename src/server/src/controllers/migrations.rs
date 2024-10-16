@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse};
 use liboxen::{
-    api,
+    migrations,
     view::{ListRepositoryResponse, StatusMessage},
 };
 
@@ -15,7 +15,7 @@ pub async fn list_unmigrated(req: HttpRequest) -> Result<HttpResponse, OxenHttpE
     let migration_tstamp = path_param(&req, "migration_tstamp")?;
 
     let unmigrated_repos =
-        api::local::migrations::list_unmigrated(&app_data.path, migration_tstamp.to_string())?;
+        migrations::list_unmigrated(&app_data.path, migration_tstamp.to_string())?;
 
     let view = ListRepositoryResponse {
         status: StatusMessage::resource_found(),

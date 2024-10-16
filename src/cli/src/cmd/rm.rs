@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
 use crate::helpers::check_repo_migration_needed;
-use liboxen::command;
+
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::opts::RmOpts;
-use std::env;
+use liboxen::repositories;
 use std::path::PathBuf;
 
 use crate::cmd::RunCmd;
@@ -54,16 +54,14 @@ impl RunCmd for RmCmd {
             path: paths.first().unwrap().to_path_buf(),
             staged: args.get_flag("staged"),
             recursive: args.get_flag("recursive"),
-            remote: false,
         };
 
-        let repo_dir = env::current_dir().unwrap();
-        let repository = LocalRepository::from_dir(&repo_dir)?;
+        let repository = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repository)?;
 
         for path in paths {
             let path_opts = RmOpts::from_path_opts(&path, &opts);
-            command::rm(&repository, &path_opts).await?;
+            repositories::rm(&repository, &path_opts)?;
         }
 
         Ok(())
