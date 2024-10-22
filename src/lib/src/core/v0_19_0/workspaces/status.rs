@@ -27,7 +27,7 @@ pub fn status(workspace: &Workspace, directory: impl AsRef<Path>) -> Result<Stag
         DBWithThreadMode::open_for_read_only(&opts, dunce::simplified(&db_path), true)?;
 
     let read_progress = ProgressBar::new_spinner();
-    let (dir_entries, _) = core::v0_19_0::status::read_staged_entries_below_path(
+    let (dir_entries, dir_status, _) = core::v0_19_0::status::read_staged_entries_below_path(
         &workspace.workspace_repo,
         &db,
         dir,
@@ -35,5 +35,5 @@ pub fn status(workspace: &Workspace, directory: impl AsRef<Path>) -> Result<Stag
     )?;
 
     let mut staged_data = StagedData::empty();
-    core::v0_19_0::status::status_from_dir_entries(&mut staged_data, dir_entries)
+    core::v0_19_0::status::status_from_dir_entries(&mut staged_data, dir_entries, dir_status)
 }

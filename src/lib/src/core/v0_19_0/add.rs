@@ -139,12 +139,18 @@ fn add_files(
             }
         } else {
             // TODO: Should there be a way to add non-existant dirs? I think it's safer to just require rm for those?
-            log::debug!(
-                "Found nonexistant path {path:?}. Staging for removal. Recursive flag not set"
-            );
+            log::debug!("Found nonexistant path {path:?}. Staging for removal. Recursive flag set");
             let mut opts = RmOpts::from_path(path);
             opts.recursive = true;
-            repositories::rm(repo, &opts)?;
+            match repositories::rm(repo, &opts) {
+                Ok(_) => {}
+                Err(_) => {
+                    return Err(OxenError::basic_str(format!(
+                        "Error: Unable to add file {:?}",
+                        path
+                    )));
+                }
+            }
         }
     }
 

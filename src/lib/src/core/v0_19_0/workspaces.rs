@@ -66,7 +66,7 @@ pub fn commit(
     let commit_progress_bar = ProgressBar::new_spinner();
 
     // Read all the staged entries
-    let (dir_entries, _) = core::v0_19_0::status::read_staged_entries(
+    let (dir_entries, _, _) = core::v0_19_0::status::read_staged_entries(
         &workspace.workspace_repo,
         &staged_db,
         &commit_progress_bar,
