@@ -340,6 +340,7 @@ fn remove(
         total_bytes: 0,
         data_type_counts: HashMap::new(),
     };
+    let mut total_dirs: u8 = 0;
 
     for path in paths {
         // Get parent node
@@ -368,7 +369,10 @@ fn remove(
                     return Err(OxenError::basic_str(error));
                 }
 
-                total += remove_dir(repo, &head_commit, &path)?;
+                let (stats, removed_dirs) = remove_dir(repo, &head_commit, &path)?;
+
+                total += stats;
+                total_dirs += removed_dirs;
                 // Remove dir from working directory
                 let full_path = repo.path.join(path);
                 log::debug!("REMOVING DIR: {full_path:?}");
@@ -402,9 +406,10 @@ fn remove(
 
     // TODO: Add function to CumulativeStats to output that print statement
     println!(
-        "🐂 oxen removed {} files ({}) in {}",
+        "🐂 oxen removed {} files ({}) and {} dirs in {}",
         total.total_files,
         bytesize::ByteSize::b(total.total_bytes),
+        total_dirs,
         humantime::format_duration(duration)
     );
 
@@ -443,7 +448,7 @@ pub fn remove_dir(
     repo: &LocalRepository,
     commit: &Commit,
     path: &Path,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<(CumulativeStats, u8), OxenError> {
     let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
     let staged_db: DBWithThreadMode<MultiThreaded> =
@@ -466,7 +471,7 @@ fn process_remove_dir(
     path: &Path,
     dir_node: &MerkleTreeNode,
     staged_db: &DBWithThreadMode<MultiThreaded>,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<(CumulativeStats, u8), OxenError> {
     log::debug!("Process Remove Dir");
 
     let progress_1 = Arc::new(ProgressBar::new_spinner());
@@ -481,7 +486,14 @@ fn process_remove_dir(
 
     // recursive helper function
     log::debug!("Begin r_process_remove_dir");
-    let cumulative_stats = r_process_remove_dir(&repo, path, dir_node, staged_db);
+    let (cumulative_stats, total_dirs) =
+        match r_process_remove_dir(&repo, path, dir_node, staged_db) {
+            Ok((stats, dirs)) => (stats, dirs),
+            Err(err) => {
+                let error = format!("Error removing files: {:?}", err);
+                return Err(OxenError::basic_str(error));
+            }
+        };
 
     // Add all the parent dirs to the staged db
     let mut parent_path = path.to_path_buf();
@@ -511,7 +523,7 @@ fn process_remove_dir(
 
     progress_1_clone.finish_and_clear();
 
-    cumulative_stats
+    Ok((cumulative_stats, total_dirs))
 }
 
 // Recursively remove all files and directories starting from a particular directory
@@ -524,12 +536,13 @@ fn r_process_remove_dir(
     path: &Path,
     node: &MerkleTreeNode,
     staged_db: &DBWithThreadMode<MultiThreaded>,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<(CumulativeStats, u8), OxenError> {
     let mut total = CumulativeStats {
         total_files: 0,
         total_bytes: 0,
         data_type_counts: HashMap::new(),
     };
+    let mut total_dirs: u8 = 0;
 
     // Iterate through children, removing files
     for child in &node.children {
@@ -538,12 +551,17 @@ fn r_process_remove_dir(
                 log::debug!("Recursive process_remove_dir found dir: {dir_node}");
                 // Update path, and move to the next level of recurstion
                 let new_path = path.join(&dir_node.name);
-                total += r_process_remove_dir(_repo, &new_path, child, staged_db)?;
+                let (stats, removed_dirs) =
+                    r_process_remove_dir(_repo, &new_path, child, staged_db)?;
+                total += stats;
+                total_dirs += removed_dirs;
             }
             EMerkleTreeNode::VNode(_) => {
                 log::debug!("Recursive process_remove_dir found vnode");
                 // Move to the next level of recursion
-                total += r_process_remove_dir(_repo, path, child, staged_db)?;
+                let (stats, removed_dirs) = r_process_remove_dir(_repo, path, child, staged_db)?;
+                total += stats;
+                total_dirs += removed_dirs;
             }
             EMerkleTreeNode::File(file_node) => {
                 log::debug!("Recursive process_remove_dir found file: {file_node}");
@@ -598,6 +616,8 @@ fn r_process_remove_dir(
 
             let relative_path_str = path.to_str().unwrap();
             staged_db.put(relative_path_str, &buf).unwrap();
+
+            total_dirs += 1;
         }
 
         // if node is a VNode, do nothing
@@ -612,5 +632,5 @@ fn r_process_remove_dir(
         }
     }
 
-    Ok(total)
+    Ok((total, total_dirs))
 }

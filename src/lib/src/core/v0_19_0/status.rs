@@ -85,23 +85,24 @@ pub fn status_from_dir(
         return Ok(staged_data);
     };
 
-    let (dir_entries, _) = read_staged_entries_below_path(repo, &staged_db, &dir, &read_progress)?;
+    let (dir_entries, dir_status, _) =
+        read_staged_entries_below_path(repo, &staged_db, &dir, &read_progress)?;
     // log::debug!("status_from_dir dir_entries: {:?}", dir_entries);
     read_progress.finish_and_clear();
 
-    status_from_dir_entries(&mut staged_data, dir_entries)
+    status_from_dir_entries(&mut staged_data, dir_entries, dir_status)
 }
 
 pub fn status_from_dir_entries(
     staged_data: &mut StagedData,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+    dir_status: HashMap<PathBuf, StagedEntryStatus>,
 ) -> Result<StagedData, OxenError> {
     let mut summarized_dir_stats = SummarizedStagedDirStats {
         num_files_staged: 0,
         total_files: 0,
         paths: HashMap::new(),
     };
-
     log::debug!("dir_entries.len(): {:?}", dir_entries.len());
     for (dir, entries) in dir_entries {
         log::debug!(
@@ -113,7 +114,7 @@ pub fn status_from_dir_entries(
             path: dir.clone(),
             num_files_staged: 0,
             total_files: 0,
-            status: StagedEntryStatus::Added,
+            status: dir_status.get(&dir.clone()).unwrap().clone(),
         };
         for entry in &entries {
             match &entry.node.node {
@@ -235,7 +236,14 @@ pub fn read_staged_entries(
     repo: &LocalRepository,
     db: &DBWithThreadMode<SingleThreaded>,
     read_progress: &ProgressBar,
-) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, u64), OxenError> {
+) -> Result<
+    (
+        HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+        HashMap<PathBuf, StagedEntryStatus>,
+        u64,
+    ),
+    OxenError,
+> {
     read_staged_entries_below_path(repo, db, Path::new(""), read_progress)
 }
 
@@ -244,11 +252,19 @@ pub fn read_staged_entries_below_path(
     db: &DBWithThreadMode<SingleThreaded>,
     start_path: impl AsRef<Path>,
     read_progress: &ProgressBar,
-) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, u64), OxenError> {
+) -> Result<
+    (
+        HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+        HashMap<PathBuf, StagedEntryStatus>,
+        u64,
+    ),
+    OxenError,
+> {
     let start_path = util::fs::path_relative_to_dir(start_path.as_ref(), &repo.path)?;
     let mut total_entries = 0;
     let iter = db.iterator(IteratorMode::Start);
     let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
+    let mut dir_status: HashMap<PathBuf, StagedEntryStatus> = HashMap::new();
     for item in iter {
         match item {
             // key = file path, value = EntryMetaData
@@ -261,12 +277,12 @@ pub fn read_staged_entries_below_path(
                 }
                 let entry: StagedMerkleTreeNode = rmp_serde::from_slice(&value).unwrap();
                 log::debug!("read_staged_entries key {key} entry: {entry} path: {path:?}");
-                let full_path = repo.path.join(path);
 
-                if full_path.is_dir() {
-                    // add the dir as a key in dir_entries
+                // if the entry is a dir, add it as a key in dir_entries, and add its status to dir_status
+                if let EMerkleTreeNode::Directory(_) = &entry.node.node {
                     log::debug!("read_staged_entries adding dir {:?}", path);
                     dir_entries.entry(path.to_path_buf()).or_default();
+                    dir_status.insert(path.to_path_buf(), entry.status.clone());
                 }
 
                 // add the file or dir as an entry under its parent dir
@@ -302,7 +318,7 @@ pub fn read_staged_entries_below_path(
         }
     }
 
-    Ok((dir_entries, total_entries))
+    Ok((dir_entries, dir_status, total_entries))
 }
 
 fn find_changes(
