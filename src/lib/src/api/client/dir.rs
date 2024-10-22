@@ -245,4 +245,40 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_list_dir_has_populates_resource_path() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
+            let first_commit = repositories::commits::head_commit(&local_repo)?;
+
+            // Make sure we have one entry
+            let root_path = Path::new("");
+            let root_entries =
+                api::client::dir::list(&remote_repo, DEFAULT_BRANCH_NAME, root_path, 1, 10).await?;
+            assert_eq!(root_entries.entries.len(), 1);
+
+            for entry in &root_entries.entries {
+                println!("entry: {:?}", entry);
+            }
+
+            let readme_entry = root_entries
+                .entries
+                .iter()
+                .find(|e| e.filename == "README.md")
+                .unwrap();
+            assert_eq!(
+                readme_entry.latest_commit.as_ref().unwrap().id,
+                first_commit.id
+            );
+
+            assert!(readme_entry.resource.as_ref().unwrap().branch.is_some());
+            assert_eq!(
+                readme_entry.resource.as_ref().unwrap().path,
+                Path::new("README.md")
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
 }

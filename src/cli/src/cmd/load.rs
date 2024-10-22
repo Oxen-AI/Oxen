@@ -3,7 +3,7 @@ use clap::{Arg, Command};
 use liboxen::error::OxenError;
 use std::path::Path;
 
-use liboxen::command;
+use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "load";
@@ -44,7 +44,7 @@ impl RunCmd for LoadCmd {
         let dest_path = Path::new(dest_path_str);
 
         // Call into liboxen
-        command::load(src_path, dest_path, no_working_dir)?;
+        repositories::load(src_path, dest_path, no_working_dir).await?;
         Ok(())
     }
 }

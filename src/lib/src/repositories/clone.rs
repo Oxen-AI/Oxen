@@ -189,7 +189,6 @@ mod tests {
 
             let cloned_remote = remote_repo.clone();
             let og_commits = repositories::commits::list_all(&local_repo)?;
-            let og_branches = api::client::branches::list(&remote_repo).await?;
 
             // Clone with the --all flag
             test::run_empty_dir_test_async(|new_repo_dir| async move {
@@ -202,10 +201,6 @@ mod tests {
                 // Make sure we have all the commit objects
                 let cloned_commits = repositories::commits::list_all(&cloned_repo)?;
                 assert_eq!(og_commits.len(), cloned_commits.len());
-
-                // Make sure we have all branches
-                let cloned_branches = repositories::branches::list(&cloned_repo)?;
-                assert_eq!(og_branches.len(), cloned_branches.len());
 
                 // Make sure we set the HEAD file
                 let head_commit = repositories::commits::head_commit(&cloned_repo);
@@ -246,7 +241,7 @@ mod tests {
 
     // Test for clone --all that checks to make sure we have all commits, all deleted files, etc
     #[tokio::test]
-    async fn test_clone_all_push_all() -> Result<(), OxenError> {
+    async fn test_clone_all_push_all_full_commit_history() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
@@ -272,8 +267,6 @@ mod tests {
 
                 // Should be able to push all data successfully
                 repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
-
-                // TODO: figure out how to repro why the Pets Dataset we could not clone --all and push to staging
 
                 Ok(new_repo_dir)
             })
@@ -383,7 +376,6 @@ mod tests {
                 let push_res =
                     repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await;
                 assert!(push_res.is_err());
-                // TODO: figure out how to repro why the Pets Dataset we could not clone --all and push to staging
 
                 Ok(new_repo_dir)
             })

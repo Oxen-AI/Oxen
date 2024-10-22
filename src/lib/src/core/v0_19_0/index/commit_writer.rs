@@ -12,6 +12,8 @@ use time::OffsetDateTime;
 
 use crate::config::UserConfig;
 use crate::constants::DEFAULT_BRANCH_NAME;
+use crate::constants::MERGE_HEAD_FILE;
+use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
 use crate::core::db::key_val::str_val_db;
@@ -31,6 +33,7 @@ use crate::model::User;
 use crate::model::{Commit, LocalRepository, StagedEntryStatus};
 
 use crate::{repositories, util};
+use std::str::FromStr;
 
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::{CommitNode, DirNode};
@@ -69,9 +72,10 @@ pub fn commit_with_user(
     message: impl AsRef<str>,
     user: &User,
 ) -> Result<Commit, OxenError> {
-    let mut cfg = UserConfig::get()?;
-    cfg.name = user.name.clone();
-    cfg.email = user.email.clone();
+    let cfg = UserConfig {
+        name: user.name.clone(),
+        email: user.email.clone(),
+    };
     commit_with_cfg(repo, message, &cfg, None)
 }
 
@@ -110,7 +114,7 @@ pub fn commit_with_cfg(
     // let mut dir_tree = entries_to_dir_tree(&dir_entries)?;
     // dir_tree.print();
 
-    // log::debug!("🫧======================🫧");
+    // println!("🫧======================🫧");
 
     let new_commit = NewCommitBody {
         message: message.to_string(),
@@ -152,6 +156,7 @@ pub fn commit_with_cfg(
     ref_writer.set_head_commit_id(&commit_id)?;
 
     // Print that we finished
+
     println!(
         "🐂 commit {} in {}",
         commit.id,
@@ -160,6 +165,7 @@ pub fn commit_with_cfg(
         ))
     );
 
+    
     Ok(commit)
 }
 
@@ -196,15 +202,11 @@ pub fn commit_dir_entries_with_parents(
     // Sort children and split into VNodes
     let vnode_entries = split_into_vnodes(repo, &dir_entries, &existing_nodes, new_commit)?;
 
-    // Compute the commit hash
     let timestamp = OffsetDateTime::now_utc();
-    let new_commit = NewCommit {
-        parent_ids: parent_commits,
-        message: message.to_string(),
-        author: new_commit.author.clone(),
-        email: new_commit.email.clone(),
-        timestamp,
-    };
+
+    let new_commit = create_commit_data(repo, message, timestamp, parent_commits, new_commit)?;
+
+    // Compute the commit hash
     let commit_id = compute_commit_id(&new_commit)?;
 
     let mut parent_hashes = Vec::new();
@@ -297,18 +299,23 @@ pub fn commit_dir_entries_new(
 
     // Compute the commit hash
     let timestamp = OffsetDateTime::now_utc();
-    let new_commit = NewCommit {
-        parent_ids: parent_ids.iter().map(|id| id.to_string()).collect(),
-        message: message.to_string(),
-        author: new_commit.author.clone(),
-        email: new_commit.email.clone(),
+    let new_commit = create_commit_data(
+        repo,
+        message,
         timestamp,
-    };
+        parent_ids.iter().map(|id| id.to_string()).collect(),
+        new_commit,
+    )?;
+
     let commit_id = compute_commit_id(&new_commit)?;
 
     let node = CommitNode {
         hash: commit_id,
-        parent_ids,
+        parent_ids: new_commit
+            .parent_ids
+            .iter()
+            .map(|id: &String| MerkleHash::from_str(id).unwrap())
+            .collect(),
         message: message.to_string(),
         author: new_commit.author.clone(),
         email: new_commit.email.clone(),
@@ -365,9 +372,9 @@ pub fn commit_dir_entries(
     repo: &LocalRepository,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
-    staged_db_path: &Path,
     commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
+
     log::debug!("commit_dir_entries got {} entries", dir_entries.len());
     for (path, entries) in &dir_entries {
         log::debug!(
@@ -466,9 +473,6 @@ pub fn commit_dir_entries(
     // Remove all the directories that are staged for removal
     cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
 
-    // Clear the staged db
-    util::fs::remove_dir_all(staged_db_path)?;
-
     Ok(node.to_commit())
 }
 
@@ -481,6 +485,7 @@ fn cleanup_rm_dirs(
             if let EMerkleTreeNode::Directory(dir_node) = &entry.node.node {
                 if entry.status == StagedEntryStatus::Removed {
                     let dir_path = path.join(&dir_node.name);
+                    log::debug!("dir path for cleanup: {dir_path:?}");
                     let key = dir_path.to_str().unwrap();
                     dir_hash_db.delete(key)?;
                 }
@@ -659,7 +664,11 @@ fn split_into_vnodes(
 
             let mut has_new_entries = false;
             for entry in vnode.entries.iter() {
-                vnode_hasher.update(&entry.node.hash.to_le_bytes());
+                if let EMerkleTreeNode::File(file_node) = &entry.node.node {
+                    vnode_hasher.update(&file_node.combined_hash.to_le_bytes());
+                } else {
+                    vnode_hasher.update(&entry.node.hash.to_le_bytes());
+                }
                 if entry.status != StagedEntryStatus::Unmodified {
                     has_new_entries = true;
                 }
@@ -748,6 +757,8 @@ fn write_commit_entries(
         &mut total_written,
     )?;
 
+    log::debug!("R CREATE OVER LOL");
+
     Ok(())
 }
 
@@ -786,11 +797,11 @@ fn r_create_dir_node(
             *total_written += 1;
         }
 
-        log::debug!(
-            "Processing vnode {} with {} entries",
-            vnode.id,
-            vnode.entries.len()
-        );
+        // log::debug!(
+        //     "Processing vnode {} with {} entries",
+        //     vnode.id,
+        //     vnode.entries.len()
+        // );
 
         // Maybe because we don't need to overwrite vnode dbs that already exist,
         // but still need to recurse and create the children
@@ -805,12 +816,12 @@ fn r_create_dir_node(
             maybe_dir_db.as_ref().map(|db| db.node_id),
         )?;
         for entry in vnode.entries.iter() {
-            log::debug!("Processing entry {} in vnode {}", entry.node, vnode.id);
+            // log::debug!("Processing entry {} in vnode {}", entry.node, vnode.id);
             match &entry.node.node {
                 EMerkleTreeNode::Directory(node) => {
                     // If the dir has updates, we need a new dir db
                     let dir_path = entry.node.maybe_path().unwrap();
-                    log::debug!("Processing dir node {:?}", dir_path);
+                    // log::debug!("Processing dir node {:?}", dir_path);
                     let dir_node = if entries.contains_key(&dir_path) {
                         let dir_node = compute_dir_node(
                             repo,
@@ -853,15 +864,15 @@ fn r_create_dir_node(
                         )?;
                         dir_node
                     } else {
-                        log::debug!("r_create_dir_node skipping {:?}", dir_path);
+                        // log::debug!("r_create_dir_node skipping {:?}", dir_path);
                         // Look up the old dir node and reference it
                         let Some(old_dir_node) =
                             CommitMerkleTree::read_node(repo, &node.hash, false)?
                         else {
-                            log::debug!(
-                                "r_create_dir_node could not read old dir node {:?}",
-                                node.hash
-                            );
+                            // log::debug!(
+                            //     "r_create_dir_node could not read old dir node {:?}",
+                            //     node.hash
+                            // );
                             continue;
                         };
                         let dir_node = old_dir_node.dir()?;
@@ -874,11 +885,11 @@ fn r_create_dir_node(
                     };
 
                     // Write the dir hash to the dir_hashes db or delete it if it has children
-                    log::debug!(
-                        "dir entry has {} children {:?} ",
-                        entry.node.children.len(),
-                        dir_path
-                    );
+                    // log::debug!(
+                    //     "dir entry has {} children {:?} ",
+                    //     entry.node.children.len(),
+                    //     dir_path
+                    // );
                     // if entry.node.children.is_empty() {
                     //     str_val_db::delete(dir_hash_db, dir_path.to_str().unwrap())?;
                     // } else {
@@ -894,12 +905,12 @@ fn r_create_dir_node(
                     let file_path = PathBuf::from(&file_node.name);
                     let file_name = file_path.file_name().unwrap().to_str().unwrap();
 
-                    log::debug!(
-                        "Processing file {:?} in vnode {} in commit {}",
-                        path,
-                        vnode.id,
-                        commit_id
-                    );
+                    // log::debug!(
+                    //     "Processing file {:?} in vnode {} in commit {}",
+                    //     path,
+                    //     vnode.id,
+                    //     commit_id
+                    // );
 
                     // Just single file chunk for now
                     let chunks = vec![file_node.hash.to_u128()];
@@ -912,12 +923,12 @@ fn r_create_dir_node(
                     file_node.name = file_name.to_string();
 
                     // if let Some(vnode_db) = &mut maybe_vnode_db {
-                    log::debug!(
-                        "Adding file {} to vnode {} in commit {}",
-                        file_name,
-                        vnode.id,
-                        commit_id
-                    );
+                    // log::debug!(
+                    //     "Adding file {} to vnode {} in commit {}",
+                    //     file_name,
+                    //     vnode.id,
+                    //     commit_id
+                    // );
                     vnode_db.add_child(&file_node)?;
                     *total_written += 1;
                     // }
@@ -1013,8 +1024,8 @@ fn compute_dir_node(
                             file_node.name,
                             file_node.hash
                         );
-                        hasher.update(&file_node.name.as_bytes());
-                        hasher.update(&file_node.hash.to_le_bytes());
+                        hasher.update(file_node.name.as_bytes());
+                        hasher.update(&file_node.combined_hash.to_le_bytes());
 
                         match entry.status {
                             StagedEntryStatus::Added => {
@@ -1073,6 +1084,59 @@ fn compute_dir_node(
         data_type_sizes,
     };
     Ok(node)
+}
+
+fn create_merge_commit(
+    repo: &LocalRepository,
+    message: &str,
+    timestamp: OffsetDateTime,
+    new_commit: &NewCommitBody,
+) -> Result<NewCommit, OxenError> {
+    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+    let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
+    let orig_head_path = hidden_dir.join(ORIG_HEAD_FILE);
+
+    // Read parent commit ids
+    let merge_commit_id = util::fs::read_from_path(&merge_head_path)?;
+    let head_commit_id = util::fs::read_from_path(&orig_head_path)?;
+
+    // Cleanup
+    util::fs::remove_file(merge_head_path)?;
+    util::fs::remove_file(orig_head_path)?;
+
+    Ok(NewCommit {
+        parent_ids: vec![merge_commit_id, head_commit_id],
+        message: String::from(message),
+        author: new_commit.author.clone(),
+        email: new_commit.email.clone(),
+        timestamp,
+    })
+}
+
+fn is_merge_commit(repo: &LocalRepository) -> bool {
+    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+    let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
+    merge_head_path.exists()
+}
+
+fn create_commit_data(
+    repo: &LocalRepository,
+    message: &str,
+    timestamp: OffsetDateTime,
+    parent_commits: Vec<String>,
+    new_commit: &NewCommitBody,
+) -> Result<NewCommit, OxenError> {
+    if is_merge_commit(repo) {
+        create_merge_commit(repo, message, timestamp, new_commit)
+    } else {
+        Ok(NewCommit {
+            parent_ids: parent_commits,
+            message: message.to_string(),
+            author: new_commit.author.clone(),
+            email: new_commit.email.clone(),
+            timestamp,
+        })
+    }
 }
 
 #[cfg(test)]

@@ -325,20 +325,36 @@ where
 }
 
 /// Test syncing between local and remote, where both exist, and both are empty
-pub async fn run_empty_sync_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_one_commit_sync_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(&LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_sync_repo_test start");
+    log::info!("<<<<< run_one_commit_sync_repo_test start");
     let repo_dir = create_repo_dir(test_run_dir())?;
 
-    let local_repo = repositories::init(&repo_dir)?;
+    let mut local_repo = repositories::init(&repo_dir)?;
+
+    let txt = generate_random_string(20);
+    let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
+    repositories::add(&local_repo, &file_path)?;
+    repositories::commit(&local_repo, "Init commit")?;
+
     let remote_repo = create_remote_repo(&local_repo).await?;
 
+    // Set remote
+    command::config::set_remote(
+        &mut local_repo,
+        DEFAULT_REMOTE_NAME,
+        &remote_repo.remote.url,
+    )?;
+
+    // Push
+    repositories::push(&local_repo).await?;
+
     // Run test to see if it panic'd
-    log::info!(">>>>> run_empty_sync_repo_test running test");
+    log::info!(">>>>> run_one_commit_sync_repo_test running test");
     let result = match test(&local_repo, remote_repo).await {
         Ok(remote_repo) => {
             // Cleanup remote repo
@@ -671,7 +687,7 @@ where
     let mut local_repo = repositories::init(&path)?;
 
     // Add a README file
-    util::fs::write_to_path(&local_repo.path.join("README.md"), "Hello World")?;
+    util::fs::write_to_path(local_repo.path.join("README.md"), "Hello World")?;
     repositories::add(&local_repo, &local_repo.path)?;
     repositories::commit(&local_repo, "Adding README")?;
 
@@ -680,7 +696,7 @@ where
     command::config::set_remote(
         &mut local_repo,
         constants::DEFAULT_REMOTE_NAME,
-        &remote_repo.url(),
+        remote_repo.url(),
     )?;
 
     // Push
@@ -820,6 +836,40 @@ where
     log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
+
+    // Write all the files
+    populate_dir_with_training_data(&repo_dir)?;
+
+    // Run test to see if it panic'd
+    log::info!(">>>>> run_training_data_repo_test_no_commits_async running test");
+    let result = match test(repo).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err}");
+            false
+        }
+    };
+
+    // Remove repo dir
+    // util::fs::remove_dir_all(&repo_dir)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result);
+    Ok(())
+}
+
+pub async fn run_training_data_repo_test_no_commits_async_with_version<T, Fut>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = repositories::init::init_with_version(&repo_dir, version)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
@@ -1276,7 +1326,12 @@ where
     // util::fs::remove_dir_all(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result.is_ok());
+    match result {
+        Ok(_) => {}
+        Err(err) => {
+            panic!("Error running test. Err: {:?}", err);
+        }
+    }
     Ok(())
 }
 

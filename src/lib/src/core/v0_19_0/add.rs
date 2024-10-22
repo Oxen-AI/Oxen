@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::constants::{FILES_DIR, OXEN_HIDDEN_DIR, STAGED_DIR, VERSIONS_DIR};
 use crate::core::db;
 use crate::core::v0_19_0::structs::StagedMerkleTreeNode;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::opts::RmOpts;
 use crate::{error::OxenError, model::LocalRepository};
@@ -46,6 +47,13 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
     // Collect paths that match the glob pattern either:
     // 1. In the repo working directory (untracked or modified files)
     // 2. In the commit entry db (removed files)
+
+    // Cannot add if shallow
+    if repo.is_shallow_clone() {
+        return Err(OxenError::basic_str(
+            "Cannot run `oxen add` on a shallow clone",
+        ));
+    }
 
     // Start a timer
     let start = std::time::Instant::now();
@@ -226,6 +234,7 @@ pub fn process_add_dir(
 
             let seen_dirs_clone = Arc::clone(&seen_dirs);
             match process_add_file(
+                &repo,
                 &repo_path,
                 versions_path,
                 staged_db,
@@ -311,6 +320,7 @@ pub fn add_file(
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     process_add_file(
+        repo,
         &repo_path,
         &versions_path,
         &staged_db,
@@ -321,6 +331,7 @@ pub fn add_file(
 }
 
 pub fn process_add_file(
+    repo: &LocalRepository,
     repo_path: &Path,
     versions_path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
@@ -345,13 +356,14 @@ pub fn process_add_file(
     // Check if the file is already in the head commit
     let file_path = relative_path.file_name().unwrap();
     let maybe_file_node = get_file_node(maybe_dir_node, file_path)?;
-
+    let mut oxen_metadata: Option<GenericMetadata> = None;
     // This is ugly - but makes sure we don't have to rehash the file if it hasn't changed
-    let (status, hash, num_bytes, mtime) = if let Some(file_node) = maybe_file_node {
+    let (mut status, hash, num_bytes, mtime) = if let Some(file_node) = &maybe_file_node {
         // first check if the file timestamp is different
         let metadata = std::fs::metadata(path)?;
         let mtime = FileTime::from_last_modification_time(&metadata);
-        if has_different_modification_time(&file_node, &mtime) {
+        oxen_metadata = file_node.metadata.clone();
+        if has_different_modification_time(file_node, &mtime) {
             let hash = util::hasher::get_hash_given_metadata(&full_path, &metadata)?;
             if file_node.hash.to_u128() != hash {
                 (
@@ -388,6 +400,18 @@ pub fn process_add_file(
         )
     };
 
+    if let Some(_file_node) = &maybe_file_node {
+        let conflicts = repositories::merge::list_conflicts(repo)?;
+        for conflict in conflicts {
+            let conflict_path = repo.path.join(&conflict.merge_entry.path);
+            log::debug!("comparing conflict_path {:?} to {:?}", conflict_path, path);
+            if conflict_path == path {
+                status = StagedEntryStatus::Modified; // Mark as modified if there's a conflict
+                repositories::merge::mark_conflict_as_resolved(repo, &conflict.merge_entry.path)?;
+            }
+        }
+    }
+
     // Don't have to add the file to the staged db if it hasn't changed
     if status == StagedEntryStatus::Unmodified {
         log::debug!("file has not changed - skipping add");
@@ -397,7 +421,13 @@ pub fn process_add_file(
     // Get the data type of the file
     let mime_type = util::fs::file_mime_type(path);
     let data_type = util::fs::datatype_from_mimetype(path, &mime_type);
-    let metadata = repositories::metadata::get_file_metadata(&full_path, &data_type)?;
+    let metadata = match &oxen_metadata {
+        Some(oxen_metadata) => {
+            let df_metadata = repositories::metadata::get_file_metadata(&full_path, &data_type)?;
+            maybe_construct_generic_metadata_for_tabular(df_metadata, oxen_metadata.clone())
+        }
+        None => repositories::metadata::get_file_metadata(&full_path, &data_type)?,
+    };
 
     // Add the file to the versions db
     // Take first 2 chars of hash as dir prefix and last N chars as the dir suffix
@@ -419,8 +449,20 @@ pub fn process_add_file(
         .unwrap_or_default()
         .to_string_lossy();
     let relative_path_str = relative_path.to_str().unwrap();
+    let (hash, metadata_hash, combined_hash) = if let Some(metadata) = &metadata {
+        let metadata_hash = util::hasher::get_metadata_hash(&Some(metadata.clone()))?;
+        let metadata_hash = MerkleHash::new(metadata_hash);
+        let combined_hash =
+            util::hasher::get_combined_hash(Some(metadata_hash.to_u128()), hash.to_u128())?;
+        let combined_hash = MerkleHash::new(combined_hash);
+        (hash, Some(metadata_hash), combined_hash)
+    } else {
+        (hash, None, hash)
+    };
     let file_node = FileNode {
         hash,
+        metadata_hash,
+        combined_hash,
         name: relative_path_str.to_string(),
         data_type,
         num_bytes,
@@ -432,6 +474,32 @@ pub fn process_add_file(
         ..Default::default()
     };
     p_add_file_node_to_staged_db(staged_db, relative_path_str, status, &file_node, seen_dirs)
+}
+
+pub fn maybe_construct_generic_metadata_for_tabular(
+    df_metadata: Option<GenericMetadata>,
+    oxen_metadata: GenericMetadata,
+) -> Option<GenericMetadata> {
+    if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {
+        if let GenericMetadata::MetadataTabular(ref oxen_metadata) = oxen_metadata {
+            // Combine the two by using oxen_metadata as the source of truth for metadata,
+            // but keeping df_metadata's fields
+
+            for field in &mut df_metadata.tabular.schema.fields {
+                if let Some(oxen_field) = oxen_metadata
+                    .tabular
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|oxen_field| oxen_field.name == field.name)
+                {
+                    field.metadata = oxen_field.metadata.clone();
+                }
+            }
+            return Some(GenericMetadata::MetadataTabular(df_metadata));
+        }
+    }
+    df_metadata
 }
 
 /// Used to add a file node to the staged db in a workspace
@@ -453,15 +521,21 @@ pub fn p_add_file_node_to_staged_db(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let relative_path = relative_path.as_ref();
-    log::debug!("writing to staged db: {:?}", staged_db.path());
-    log::debug!("writing file: {}", file_node);
-    let entry = StagedMerkleTreeNode {
+    log::debug!(
+        "writing {:?} to staged db: {:?}",
+        relative_path,
+        staged_db.path()
+    );
+    let staged_file_node = StagedMerkleTreeNode {
         status,
         node: MerkleTreeNode::from_file(file_node.clone()),
     };
+    log::debug!("writing file: {}", staged_file_node);
 
     let mut buf = Vec::new();
-    entry.serialize(&mut Serializer::new(&mut buf)).unwrap();
+    staged_file_node
+        .serialize(&mut Serializer::new(&mut buf))
+        .unwrap();
 
     let relative_path_str = relative_path.to_str().unwrap();
     staged_db.put(relative_path_str, &buf).unwrap();
@@ -478,7 +552,7 @@ pub fn p_add_file_node_to_staged_db(
         }
     }
 
-    Ok(Some(entry))
+    Ok(Some(staged_file_node))
 }
 
 fn add_dir_to_staged_db(

@@ -589,26 +589,6 @@ pub fn rlist_paths_in_dir(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-pub fn rlist_files_in_dir(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = vec![];
-    if !dir.is_dir() {
-        return files;
-    }
-
-    for entry in WalkDir::new(dir) {
-        match entry {
-            Ok(val) => {
-                let path = val.path();
-                if path.is_file() {
-                    files.push(path);
-                }
-            }
-            Err(err) => eprintln!("rlist_files_in_dir Could not iterate over dir... {err}"),
-        }
-    }
-    files
-}
-
 /// Recursively lists directories in a repo that are not .oxen directories
 pub fn rlist_dirs_in_repo(repo: &LocalRepository) -> Vec<PathBuf> {
     let dir = &repo.path;
@@ -1279,6 +1259,28 @@ pub fn rcount_files_in_dir(dir: &Path) -> usize {
         }
     }
     count
+}
+
+pub fn rlist_files_in_dir(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = vec![];
+    if !dir.is_dir() {
+        return files;
+    }
+
+    for entry in WalkDir::new(dir) {
+        match entry {
+            Ok(val) => {
+                let path = val.path();
+                // if it's not the hidden oxen dir and is not a directory
+                if !is_in_oxen_hidden_dir(&path) && !path.is_dir() {
+                    // log::debug!("Found file {count}: {:?}", path);
+                    files.push(path);
+                }
+            }
+            Err(err) => eprintln!("rcount_files_in_dir Could not iterate over dir... {err}"),
+        }
+    }
+    files
 }
 
 pub fn is_in_oxen_hidden_dir(path: &Path) -> bool {

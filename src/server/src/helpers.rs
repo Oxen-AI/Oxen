@@ -19,6 +19,7 @@ pub fn get_repo(
     )
 }
 
+#[allow(dependency_on_unit_never_type_fallback)]
 pub fn get_redis_connection() -> Result<r2d2::Pool<redis::Client>, OxenError> {
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| DEFAULT_REDIS_URL.to_string());
     let redis_client = redis::Client::open(redis_url)?;

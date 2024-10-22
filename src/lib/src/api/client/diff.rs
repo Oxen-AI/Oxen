@@ -283,7 +283,6 @@ mod tests {
             repositories::add(&repo, &repo_filepath)?;
             repositories::commit(&repo, "Modifying the csv")?;
 
-
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;

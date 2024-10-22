@@ -214,8 +214,13 @@ impl JsonDataFrameView {
                     } else {
                         let cols = columns
                             .iter()
-                            .map(|name| Series::new(PlSmallStr::from_str(name), Vec::<&str>::new()))
-                            .collect::<Vec<Series>>();
+                            .map(|name| {
+                                Column::Series(Series::new(
+                                    PlSmallStr::from_str(name),
+                                    Vec::<&str>::new(),
+                                ))
+                            })
+                            .collect::<Vec<Column>>();
                         DataFrame::new(cols).unwrap()
                     }
                 }
@@ -329,13 +334,13 @@ fn sanitize_df_for_serialization(df: &mut DataFrame) -> Result<(), OxenError> {
     Ok(())
 }
 
-fn cast_binary_to_string_with_fallback(series: &Series, out: &str) -> Series {
+fn cast_binary_to_string_with_fallback(series: &Column, out: &str) -> Column {
     let res = series.cast(&DataType::String);
     if let Ok(series) = res {
         series
     } else {
         let mut vec = vec![out];
         vec.resize(series.len(), out);
-        Series::new(series.name().clone(), vec)
+        Column::new(series.name().clone(), vec)
     }
 }

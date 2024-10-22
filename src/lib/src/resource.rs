@@ -97,13 +97,18 @@ pub fn parse_resource_from_path_v0_19_0(
             }
         }
 
+        // Manual path construction to ensure correctness across operating systems
         let mut branch_path = PathBuf::new();
+        let mut branch_name = String::new();
         for component in components.iter() {
+            println!("component: {component:?}");
             let component_path: &Path = component.as_ref();
+            let component_name: &String = &component_path.to_str().unwrap().to_string();
             branch_path = branch_path.join(component_path);
+            branch_name = branch_name + "/" + component_name;
         }
-
-        let branch_name = branch_path.to_str().unwrap();
+        let branch_name = &branch_name[1..];
+        
         log::debug!(
             "parse_resource_from_path_v0_19_0 looking for branch [{}]",
             branch_name

@@ -284,6 +284,7 @@ mod tests {
     use liboxen::util;
 
     use liboxen::view::http::STATUS_SUCCESS;
+    use liboxen::view::repository::RepositoryCreationResponse;
     use liboxen::view::{ListRepositoryResponse, NamespaceView, RepositoryResponse};
     use time::OffsetDateTime;
 
@@ -382,12 +383,11 @@ mod tests {
         let req = test::request(&sync_dir, queue, "/api/repos");
 
         let resp = controllers::repositories::create(req, data).await.unwrap();
-        println!("repo create response: {resp:?}");
         assert_eq!(resp.status(), http::StatusCode::OK);
         let body = to_bytes(resp.into_body()).await.unwrap();
         let text = std::str::from_utf8(&body).unwrap();
 
-        let repo_response: RepositoryResponse = serde_json::from_str(text)?;
+        let repo_response: RepositoryCreationResponse = serde_json::from_str(text)?;
         assert_eq!(repo_response.status, STATUS_SUCCESS);
         assert_eq!(repo_response.repository.name, repo_new.name);
 

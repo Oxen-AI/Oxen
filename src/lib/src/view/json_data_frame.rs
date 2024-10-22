@@ -130,8 +130,13 @@ impl JsonDataFrame {
                     } else {
                         let cols = columns
                             .iter()
-                            .map(|name| Series::new(PlSmallStr::from_str(name), Vec::<&str>::new()))
-                            .collect::<Vec<Series>>();
+                            .map(|name| {
+                                Column::Series(Series::new(
+                                    PlSmallStr::from_str(name),
+                                    Vec::<&str>::new(),
+                                ))
+                            })
+                            .collect::<Vec<Column>>();
                         DataFrame::new(cols).unwrap()
                     }
                 }

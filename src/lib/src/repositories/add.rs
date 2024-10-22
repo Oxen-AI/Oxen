@@ -57,7 +57,6 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
-    use crate::command;
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
@@ -173,7 +172,7 @@ mod tests {
             repositories::commit(&repo, "adding person category")?;
 
             // Try to merge in the changes
-            command::merge(&repo, branch_name)?;
+            repositories::merge::merge(&repo, branch_name)?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.merge_conflicts.len(), 1);
@@ -207,18 +206,9 @@ mod tests {
             status.print();
 
             // Should add all the sub dirs
-            // nlp/
-            //   classification/
-            //     annotations/
-            assert_eq!(
-                status
-                    .staged_dirs
-                    .paths
-                    .get(Path::new("nlp"))
-                    .unwrap()
-                    .len(),
-                3
-            );
+            // nlp/classification/annotations/
+            assert_eq!(status.staged_dirs.len(), 1);
+
             // Should add sub files
             // nlp/classification/annotations/train.tsv
             // nlp/classification/annotations/test.tsv
@@ -264,18 +254,8 @@ mod tests {
             status.print();
 
             // Should add all the sub dirs
-            // nlp/
-            //   classification/
-            //     annotations/
-            assert_eq!(
-                status
-                    .staged_dirs
-                    .paths
-                    .get(Path::new("nlp"))
-                    .unwrap()
-                    .len(),
-                3
-            );
+            // nlp/classification/annotations/
+            assert_eq!(status.staged_dirs.len(), 1);
             // Should add sub files
             // nlp/classification/annotations/train.tsv
             // nlp/classification/annotations/test.tsv
@@ -289,8 +269,14 @@ mod tests {
             std::fs::remove_dir_all(repo_nlp_dir)?;
 
             let status = repositories::status(&repo)?;
-            assert_eq!(status.removed_files.len(), 2);
+            status.print();
+
+            // status.removed_files currently is files and dirs,
+            // we roll up the dirs into the parent dir, so len should be 1
+            // TODO: https://app.asana.com/0/1204211285259102/1208493904390183/f
+            assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
+
             // Add the removed nlp dir with a wildcard
             repositories::add(&repo, "nlp/*")?;
 
@@ -313,18 +299,9 @@ mod tests {
             status.print();
 
             // Should add all the sub dirs
-            // nlp/
-            //   classification/
-            //     annotations/
-            assert_eq!(
-                status
-                    .staged_dirs
-                    .paths
-                    .get(Path::new("nlp"))
-                    .unwrap()
-                    .len(),
-                3
-            );
+            // nlp/classification/annotations/
+            assert_eq!(status.staged_dirs.len(), 1);
+
             // Should add sub files
             // nlp/classification/annotations/train.tsv
             // nlp/classification/annotations/test.tsv
@@ -367,6 +344,11 @@ mod tests {
                 1
             );
 
+            assert!(!status.is_clean());
+
+            // Empty dir should not be untracked
+            assert_eq!(status.untracked_dirs.len(), 0);
+
             Ok(())
         })
     }
@@ -405,7 +387,7 @@ mod tests {
             // And there is one tracked directory
             let staged_dirs = status.staged_dirs;
 
-            assert_eq!(staged_dirs.len(), 2);
+            assert_eq!(staged_dirs.len(), 1);
 
             Ok(())
         })
@@ -435,7 +417,7 @@ mod tests {
             let dirs = status.staged_dirs;
 
             // There are 3 staged directories
-            assert_eq!(dirs.len(), 4);
+            assert_eq!(dirs.len(), 3);
 
             Ok(())
         })
@@ -463,5 +445,39 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    #[tokio::test]
+    async fn test_command_add_after_modified_file_in_subdirectory() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+            // Track & commit all the data
+            let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
+            repositories::add(&repo, &repo.path)?;
+            repositories::commit(&repo, "Adding one shot")?;
+
+            let branch_name = "feature/modify-data";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
+            let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
+            let status = repositories::status(&repo)?;
+            status.print();
+            assert_eq!(status.modified_files.len(), 1);
+            assert!(status
+                .modified_files
+                .contains(&PathBuf::from("annotations/train/one_shot.csv")));
+
+            repositories::add(&repo, &one_shot_path)?;
+            let status = repositories::status(&repo)?;
+            status.print();
+            assert_eq!(status.staged_files.len(), 1);
+            assert_eq!(status.modified_files.len(), 0);
+            assert!(status
+                .staged_files
+                .contains_key(&PathBuf::from("annotations/train/one_shot.csv")));
+
+            Ok(())
+        })
+        .await
     }
 }

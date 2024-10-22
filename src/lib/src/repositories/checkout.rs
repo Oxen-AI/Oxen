@@ -9,7 +9,7 @@ use crate::core::df::tabular;
 use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository};
 use crate::opts::{DFOpts, RestoreOpts};
-use crate::{command, repositories, util};
+use crate::{repositories, util};
 
 /// # Checkout a branch or commit id
 /// This switches HEAD to point to the branch name or commit id,
@@ -59,7 +59,7 @@ pub fn checkout_theirs(repo: &LocalRepository, path: impl AsRef<Path>) -> Result
         .find(|c| c.merge_entry.path == path.as_ref())
     {
         // Lookup the file for the merge commit entry and copy it over
-        command::restore(
+        repositories::restore::restore(
             repo,
             RestoreOpts::from_path_ref(path, conflict.merge_entry.commit_id.clone()),
         )
@@ -84,7 +84,7 @@ pub fn checkout_ours(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(
         .find(|c| c.merge_entry.path == path.as_ref())
     {
         // Lookup the file for the base commit entry and copy it over
-        command::restore(
+        repositories::restore(
             repo,
             RestoreOpts::from_path_ref(path, conflict.base_entry.commit_id.clone()),
         )
@@ -114,13 +114,25 @@ pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Resu
                 &conflict.base_entry.hash,
                 &conflict.base_entry.filename,
             );
-            let df_base = tabular::read_df(df_base_path, DFOpts::empty())?;
+            let df_base = tabular::maybe_read_df_with_extension(
+                repo,
+                &df_base_path,
+                &conflict.base_entry.path,
+                &conflict.base_entry.commit_id,
+                &DFOpts::empty(),
+            )?;
             let df_merge_path = util::fs::version_path_from_hash_and_filename(
                 repo,
                 &conflict.merge_entry.hash,
                 &conflict.merge_entry.filename,
             );
-            let df_merge = tabular::read_df(df_merge_path, DFOpts::empty())?;
+            let df_merge = tabular::maybe_read_df_with_extension(
+                repo,
+                df_merge_path,
+                &conflict.merge_entry.path,
+                &conflict.merge_entry.commit_id,
+                &DFOpts::empty(),
+            )?;
 
             log::debug!("GOT DF HEAD {}", df_base);
             log::debug!("GOT DF MERGE {}", df_merge);
@@ -479,6 +491,7 @@ mod tests {
             assert_eq!(status.modified_files.len(), 1);
             repositories::add(&repo, &one_shot_path)?;
             let status = repositories::status(&repo)?;
+            status.print();
             assert_eq!(status.modified_files.len(), 0);
             assert_eq!(status.staged_files.len(), 1);
 
@@ -640,7 +653,7 @@ mod tests {
     #[tokio::test]
     async fn test_checkout_local_does_not_remove_untracked_files() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_empty_sync_repo_test(|_, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo to User A

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::constants::{MERGE_HEAD_FILE, ORIG_HEAD_FILE};
 use crate::core::db;
 use crate::core::merge;
@@ -44,6 +46,27 @@ pub fn write_conflicts_to_disk(
 
         db.put(key_bytes, val_json.as_bytes())?;
     }
+
+    Ok(())
+}
+
+pub fn mark_conflict_as_resolved_in_db(
+    repo: &LocalRepository,
+    path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let db_path = merge::db_path(repo);
+    let opts = db::key_val::opts::default();
+    let db = DB::open(&opts, dunce::simplified(&db_path))?;
+
+    log::debug!(
+        "mark_conflict_as_resolved_in_db path: {:?} db: {:?}",
+        path.as_ref(),
+        db_path
+    );
+
+    let key = path.as_ref().to_str().unwrap();
+    let key_bytes = key.as_bytes();
+    db.delete(key_bytes)?;
 
     Ok(())
 }

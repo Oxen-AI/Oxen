@@ -131,7 +131,8 @@ mod tests {
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(0, status.staged_files.len());
-            assert_eq!(num_files, status.removed_files.len());
+            // One removed dir (rolled up)
+            assert_eq!(1, status.removed_files.len());
 
             // This should restore all the files from the HEAD commit
             let opts = RestoreOpts::from_path(&rm_dir);
@@ -286,8 +287,16 @@ mod tests {
 
             println!("status: {:?}", status);
 
-            // root dir + images + cats + level 1 * 3 + level 2 * 2 + level 3 * 1
-            assert_eq!(status.staged_dirs.len(), 9);
+            /*
+            added: images/cats/subdir1_level_1 with 3 files
+            added: images/cats/subdir2_level_1 with 3 files
+            added: images/cats/subdir2_level_1/subdir2_level_2 with 3 files
+            added: images/cats/subdir3_level_1 with 3 files
+            added: images/cats/subdir1_level_1/subdir1_level_2/subdir1_level_3 with 3 files
+            added: images/cats/subdir1_level_1/subdir1_level_2 with 3 files
+            added: images/cats with 3 files
+            */
+            assert_eq!(status.staged_dirs.len(), 7);
 
             // 3 * (cats + level 1 * 3 + level 2 * 2 + level 3 * 1)
             assert_eq!(status.staged_files.len(), 21);
@@ -453,18 +462,9 @@ mod tests {
             status.print();
 
             // Should add all the sub dirs
-            // nlp/
-            //   classification/
-            //     annotations/
-            assert_eq!(
-                status
-                    .staged_dirs
-                    .paths
-                    .get(Path::new("nlp"))
-                    .unwrap()
-                    .len(),
-                3
-            );
+            // nlp/classification/annotations/
+            assert_eq!(status.staged_dirs.len(), 1);
+
             // Should add sub files
             // nlp/classification/annotations/train.tsv
             // nlp/classification/annotations/test.tsv
@@ -478,7 +478,11 @@ mod tests {
             std::fs::remove_dir_all(repo_nlp_dir)?;
 
             let status = repositories::status(&repo)?;
-            assert_eq!(status.removed_files.len(), 2);
+
+            // status.removed_files currently is files and dirs,
+            // we roll up the dirs into the parent dir, so len should be 1
+            // TODO: https://app.asana.com/0/1204211285259102/1208493904390183/f
+            assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
 
             println!("BEFORE ADD");
@@ -495,12 +499,9 @@ mod tests {
             println!("status: {:?}", status);
             status.print();
 
-            // There are 4 dirs
-            // nlp/classification/annotations/
-            // nlp/classification
+            // There is one rolled up dir
             // nlp
-            // "" (root dir)
-            assert_eq!(status.staged_dirs.len(), 4);
+            assert_eq!(status.staged_dirs.len(), 1);
             // 2 files
             // nlp/classification/annotations/test.tsv
             // nlp/classification/annotations/train.tsv
@@ -620,8 +621,8 @@ mod tests {
 
             let status = repositories::status(&repo)?;
             status.print();
-            // 2: train & the root dir
-            assert_eq!(status.staged_dirs.len(), 2);
+            // 2: train
+            assert_eq!(status.staged_dirs.len(), 1);
 
             let opts = RmOpts {
                 path: path.to_path_buf(),
@@ -637,16 +638,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rm_staged_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+    async fn test_rm_staged_annotations_train_dir() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Stage the data
-            let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path))?;
+            let path = Path::new("annotations").join("train");
+            repositories::add(&repo, repo.path.join(&path))?;
 
             let status = repositories::status(&repo)?;
             status.print();
-            // 2: train & the root dir
-            assert_eq!(status.staged_dirs.len(), 2);
+            // 1: annotations/train
+            assert_eq!(status.staged_dirs.len(), 1);
 
             let opts = RmOpts {
                 path: path.to_path_buf(),
@@ -657,8 +658,38 @@ mod tests {
 
             let status = repositories::status(&repo)?;
             status.print();
-            // 1: The root dir will still be present
+
+            assert_eq!(status.staged_dirs.len(), 0);
+            assert_eq!(status.staged_files.len(), 0);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_rm_staged_train_dir() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+            // Stage the data
+            let path = Path::new("train");
+            repositories::add(&repo, repo.path.join(path))?;
+
+            let status = repositories::status(&repo)?;
+            status.print();
+            // 1: train
             assert_eq!(status.staged_dirs.len(), 1);
+
+            let opts = RmOpts {
+                path: path.to_path_buf(),
+                staged: true,
+                recursive: true, // make sure to pass in recursive
+            };
+            repositories::rm(&repo, &opts)?;
+
+            let status = repositories::status(&repo)?;
+            status.print();
+
+            assert_eq!(status.staged_dirs.len(), 0);
             assert_eq!(status.staged_files.len(), 0);
 
             Ok(())
@@ -674,8 +705,8 @@ mod tests {
             repositories::add(&repo, repo.path.join(path))?;
 
             let status = repositories::status(&repo)?;
-            // 2: train & the root dir
-            assert_eq!(status.staged_dirs.len(), 2);
+            // 1: train dir
+            assert_eq!(status.staged_dirs.len(), 1);
 
             let opts = RmOpts {
                 path: path.to_path_buf(),
@@ -687,8 +718,8 @@ mod tests {
 
             let status = repositories::status(&repo)?;
             status.print();
-            // 1: The root dir will still be present
-            assert_eq!(status.staged_dirs.len(), 1);
+
+            assert_eq!(status.staged_dirs.len(), 0);
             assert_eq!(status.staged_files.len(), 0);
 
             Ok(())

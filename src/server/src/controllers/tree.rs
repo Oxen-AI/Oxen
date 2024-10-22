@@ -140,10 +140,21 @@ pub async fn download_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, name)?;
+    let buffer = compress_tree(&repository)?;
+
+    Ok(HttpResponse::Ok().body(buffer))
+}
+
+pub async fn download_tree_from(
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let repository = get_repo(&app_data.path, namespace, name)?;
     let hash_str = path_param(&req, "hash")?;
     let hash = MerkleHash::from_str(&hash_str)?;
-
-    let buffer = compress_tree(&repository, &hash)?;
+    let buffer = compress_tree_from(&repository, &hash)?;
 
     Ok(HttpResponse::Ok().body(buffer))
 }
@@ -245,8 +256,25 @@ fn compress_node(repository: &LocalRepository, hash: &MerkleHash) -> Result<Vec<
     Ok(buffer)
 }
 
-fn compress_tree(repository: &LocalRepository, hash: &MerkleHash) -> Result<Vec<u8>, OxenError> {
-    log::debug!("Compressing entire tree {}", hash);
+fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
+    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let mut tar = tar::Builder::new(enc);
+    compress_full_tree(repository, &mut tar)?;
+    tar.finish()?;
+
+    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
+    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+
+    log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
+
+    Ok(buffer)
+}
+
+fn compress_tree_from(
+    repository: &LocalRepository,
+    hash: &MerkleHash,
+) -> Result<Vec<u8>, OxenError> {
+    log::debug!("Compressing tree from {}", hash);
     let enc = GzEncoder::new(Vec::new(), Compression::default());
     let mut tar = tar::Builder::new(enc);
     r_compress_tree(repository, hash, &mut tar)?;
@@ -254,13 +282,37 @@ fn compress_tree(repository: &LocalRepository, hash: &MerkleHash) -> Result<Vec<
 
     let buffer: Vec<u8> = tar.into_inner()?.finish()?;
     let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+
     log::debug!(
-        "Compressed tree {} size is {}",
+        "Compressed tree from {} size is {}",
         hash,
         ByteSize::b(total_size)
     );
 
     Ok(buffer)
+}
+
+fn compress_full_tree(
+    repository: &LocalRepository,
+    tar: &mut tar::Builder<GzEncoder<Vec<u8>>>,
+) -> Result<(), OxenError> {
+    // This will be the subdir within the tarball,
+    // so when we untar it, all the subdirs will be extracted to
+    // tree/nodes/...
+    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
+    let nodes_dir = repository
+        .path
+        .join(OXEN_HIDDEN_DIR)
+        .join(TREE_DIR)
+        .join(NODES_DIR);
+
+    log::debug!("Compressing tree in dir {:?}", nodes_dir);
+
+    if nodes_dir.exists() {
+        tar.append_dir_all(&tar_subdir, nodes_dir)?;
+    }
+
+    Ok(())
 }
 
 fn r_compress_tree(

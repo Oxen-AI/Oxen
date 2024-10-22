@@ -18,9 +18,10 @@ use polars::datatypes::AnyValue;
 use polars::lazy::dsl::coalesce;
 use polars::lazy::dsl::{all, as_struct, col, GetOutput};
 use polars::lazy::frame::IntoLazy;
-use polars::prelude::NamedFrom;
+use polars::prelude::ChunkCompareEq;
+use polars::prelude::PlSmallStr;
 use polars::prelude::SchemaExt;
-use polars::prelude::{ChunkCompare, PlSmallStr};
+use polars::prelude::{Column, NamedFrom};
 use polars::prelude::{DataFrame, DataFrameJoinOps};
 use polars::series::Series;
 
@@ -61,6 +62,13 @@ pub fn diff(
         schema_diff.clone(),
     );
 
+    log::debug!("df_1 is {:?}", df_1);
+    log::debug!("df_2 is {:?}", df_2);
+    log::debug!("keys are {:?}", keys);
+    log::debug!("targets are {:?}", targets);
+    log::debug!("display are {:?}", display);
+    log::debug!("output_columns are {:?}", output_columns);
+
     let joined_df = join_hashed_dfs(
         df_1,
         df_2,
@@ -69,14 +77,21 @@ pub fn diff(
         schema_diff.clone(),
     )?;
 
-    let joined_df = add_diff_status_column(joined_df, keys.clone(), targets.clone())?;
+    log::debug!("joined_df is {:?}", joined_df);
 
+    let joined_df = add_diff_status_column(joined_df, keys.clone(), targets.clone())?;
+    log::debug!("joined_df after add_diff_status_column is {:?}", joined_df);
+    let unchanged_vec = vec![DIFF_STATUS_UNCHANGED; joined_df.height()];
+    let unchanged_series = Column::Series(Series::new(
+        PlSmallStr::from_str(DIFF_STATUS_UNCHANGED),
+        unchanged_vec,
+    ));
     let mut joined_df = joined_df.filter(
         &joined_df
             .column(DIFF_STATUS_COL)?
-            .not_equal(DIFF_STATUS_UNCHANGED)?,
+            .not_equal(&unchanged_series)?,
     )?;
-
+    log::debug!("joined_df after filter is {:?}", joined_df);
     // Once we've joined and calculated group membership based on .left and .right nullity, coalesce keys
     for key in keys.clone() {
         joined_df = joined_df
@@ -88,7 +103,7 @@ pub fn diff(
             .alias(key)])
             .collect()?;
     }
-
+    log::debug!("joined_df after coalesce is {:?}", joined_df);
     let modifications = calculate_compare_mods(&joined_df)?;
 
     // Sort by all keys with primitive dtypes
@@ -270,7 +285,11 @@ fn join_hashed_dfs(
     targets: Vec<&str>,
     schema_diff: SchemaDiff,
 ) -> Result<DataFrame, OxenError> {
+    log::debug!("left_df: {:?}", left_df);
+    log::debug!("right_df: {:?}", right_df);
+
     let mut joined_df = left_df.full_join(right_df, [KEYS_HASH_COL], [KEYS_HASH_COL])?;
+    log::debug!("joined_df: {:?}", joined_df);
 
     let mut cols_to_rename = targets.clone();
     for key in keys.iter() {
@@ -377,30 +396,10 @@ fn add_diff_status_column(
                                 has_targets,
                             ));
                         }
-                        Ok(Some(Series::new(PlSmallStr::from_str(""), results)))
-
-                        /*let out: StringChunked = s_a
-                            .iter()
-                            .map(|row| {
-                                let key_left = row.get(0).ok();
-                                let key_right = row.get(1).ok();
-                                let target_hash_left = row.get(2).ok();
-                                let target_hash_right = row.get(3).ok();
-
-
-
-                                test_function(
-                                    key_left,
-                                    key_right,
-                                    target_hash_left,
-                                    target_hash_right,
-                                    has_targets,
-                                )
-                            })
-                            .collect();
-
-                        Ok(Some(out.into_series()))
-                        */
+                        Ok(Some(Column::Series(Series::new(
+                            PlSmallStr::from_str(""),
+                            results,
+                        ))))
                     },
                     GetOutput::from_type(polars::prelude::DataType::String),
                 )

@@ -602,6 +602,109 @@ pub async fn download_objects_db_to_repo(
     Ok(())
 }
 
+pub async fn download_dir_hashes_from_commit(
+    remote_repo: &RemoteRepository,
+    commit_id: &str,
+    path: impl AsRef<Path>,
+) -> Result<PathBuf, OxenError> {
+    let uri = format!("/commits/{commit_id}/download_dir_hashes_db");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    log::debug!(
+        "calling download_dir_hashes_from_commit for commit {}",
+        commit_id
+    );
+    download_dir_hashes_from_url(url, path).await
+}
+
+pub async fn download_base_head_dir_hashes(
+    remote_repo: &RemoteRepository,
+    base_commit_id: &str,
+    head_commit_id: &str,
+    path: impl AsRef<Path>,
+) -> Result<PathBuf, OxenError> {
+    let uri = format!("/commits/{base_commit_id}..{head_commit_id}/download_dir_hashes_db");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    log::debug!(
+        "calling download_base_head_dir_hashes for commits {}..{}",
+        base_commit_id,
+        head_commit_id
+    );
+    download_dir_hashes_from_url(url, path).await
+}
+
+pub async fn download_dir_hashes_from_url(
+    url: impl AsRef<str>,
+    path: impl AsRef<Path>,
+) -> Result<PathBuf, OxenError> {
+    let url = url.as_ref();
+    log::debug!("{} downloading from {}", current_function!(), url);
+    let client = client::new_for_url(url)?;
+    match client.get(url).send().await {
+        Ok(res) => {
+            let path = path.as_ref();
+            let reader = res
+                .bytes_stream()
+                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .into_async_read();
+            let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
+            let archive = Archive::new(decoder);
+
+            let full_unpacked_path = path;
+
+            // TODO: This is to avoid a race condition caused by another process initializing the
+            // dirs db while the tarball is being unpacked, leading to an error.
+
+            // Find out what is causing this, then revert this to unpack directly in the final path
+            let tmp_path = path.join("tmp").join("commits_db");
+
+            // create the temp path if it doesn't exist
+            if !tmp_path.exists() {
+                util::fs::create_dir_all(&tmp_path)?;
+            }
+
+            let archive_result = archive.unpack(&tmp_path).await;
+            log::debug!("archive_result for url {} is {:?}", url, archive_result);
+            archive_result?;
+
+            if !full_unpacked_path.exists() {
+                log::debug!("{} creating {:?}", current_function!(), full_unpacked_path);
+                if let Some(parent) = full_unpacked_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                } else {
+                    log::error!(
+                        "{} no parent found for {:?}",
+                        current_function!(),
+                        full_unpacked_path
+                    );
+                }
+            }
+
+            // Move the tmp path to the full path
+            let tmp_path = tmp_path.join(HISTORY_DIR);
+            log::debug!("copying all tmp {:?} to {:?}", tmp_path, full_unpacked_path);
+
+            for entry in std::fs::read_dir(&tmp_path)? {
+                let entry = entry?;
+                let target = full_unpacked_path.join(HISTORY_DIR).join(entry.file_name());
+                if !target.exists() {
+                    log::debug!("copying {:?} to {:?}", entry.path(), target);
+                    util::fs::rename(entry.path(), &target)?;
+                } else {
+                    log::debug!("skipping copying {:?} to {:?}", entry.path(), target);
+                }
+            }
+
+            log::debug!("{} writing to {:?}", current_function!(), path);
+
+            Ok(path.to_path_buf())
+        }
+        Err(err) => {
+            let error = format!("Error fetching commit db: {}", err);
+            Err(OxenError::basic_str(error))
+        }
+    }
+}
+
 pub async fn download_dir_hashes_db_to_path(
     remote_repo: &RemoteRepository,
     commit_id: &str,

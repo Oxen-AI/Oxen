@@ -101,7 +101,6 @@ mod tests {
 
     use crate::api;
     use crate::command;
-    use crate::config::UserConfig;
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -256,11 +255,13 @@ mod tests {
             let main_branch = "main";
 
             let main_path = "images/folder";
-            let identifier = UserConfig::identifier()?;
+            let workspace =
+                api::client::workspaces::create(&remote_repo, main_branch, "test_workspace")
+                    .await?;
+            let identifier = workspace.id;
 
             api::client::branches::create_from_branch(&remote_repo, new_branch, main_branch)
                 .await?;
-            // assert_eq!(branch.name, branch_name);
 
             // Advance head on main branch, leave behind-main behind
             let path = test::test_img_file();

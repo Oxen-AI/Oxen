@@ -347,8 +347,8 @@ mod tests {
                 page_size,
             )
             .await?;
-            assert_eq!(entries.modified_files.entries.len(), 1);
-            assert_eq!(entries.modified_files.total_entries, 1);
+            assert_eq!(entries.added_files.entries.len(), 1);
+            assert_eq!(entries.added_files.total_entries, 1);
 
             Ok(remote_repo)
         })
@@ -614,6 +614,7 @@ mod tests {
                     repositories::workspaces::df(&cloned_repo, workspace_id, &path, opts).await?;
                 let uuid = match df.column(OXEN_ID_COL).unwrap().get(0).unwrap() {
                     AnyValue::String(s) => s.to_string(),
+                    AnyValue::StringOwned(s) => s.to_string(),
                     _ => panic!("Expected string"),
                 };
 

@@ -15,7 +15,7 @@ pub fn list_entry_versions_for_commit(
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
     log::debug!("list_entry_versions_for_commit {} -> {:?}", commit_id, path);
-    let mut branch_commits = repositories::commits::list_from(local_repo, &commit_id)?;
+    let mut branch_commits = repositories::commits::list_from(local_repo, commit_id)?;
 
     // Sort on timestamp oldest to newest
     branch_commits.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
@@ -82,7 +82,7 @@ pub async fn checkout_commit_id(
     fetch::maybe_fetch_missing_entries(repo, &commit).await?;
 
     // Set working repo to commit
-    set_working_repo_to_commit(repo, &commit).await?;
+    set_working_repo_to_commit(repo, &commit, true).await?;
 
     Ok(())
 }
@@ -90,15 +90,18 @@ pub async fn checkout_commit_id(
 pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     commit: &Commit,
+    force: bool,
 ) -> Result<(), OxenError> {
     log::debug!("set_working_repo_to_commit {}", commit);
-    if let Some(head_commit) = commits::head_commit_maybe(repo)? {
-        if head_commit.id == commit.id {
-            log::debug!(
-                "set_working_repo_to_commit, do nothing... head commit == commit_id {}",
-                commit.id
-            );
-            return Ok(());
+    if !force {
+        if let Some(head_commit) = commits::head_commit_maybe(repo)? {
+            if head_commit.id == commit.id {
+                log::debug!(
+                    "set_working_repo_to_commit, do nothing... head commit == commit_id {}",
+                    commit.id
+                );
+                return Ok(());
+            }
         }
     }
 

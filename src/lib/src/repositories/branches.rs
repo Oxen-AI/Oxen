@@ -408,6 +408,21 @@ pub fn list_entry_versions_on_branch(
     }
 }
 
+pub async fn set_working_repo_to_commit(
+    repo: &LocalRepository,
+    commit: &Commit,
+    force: bool,
+) -> Result<(), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => {
+            panic!("set_working_repo_to_commit not implemented for oxen v0.10.0")
+        }
+        MinOxenVersion::V0_19_0 => {
+            core::v0_19_0::branches::set_working_repo_to_commit(repo, commit, force).await
+        }
+    }
+}
+
 fn branch_name_no_slashes(name: &str) -> String {
     // Replace all slashes with dashes
 
@@ -599,7 +614,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_delete_branch() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Get the original branches
             let og_branches = repositories::branches::list(&repo)?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();

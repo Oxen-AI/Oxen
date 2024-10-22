@@ -6,7 +6,6 @@ use crate::params::{app_data, path_param, PageNumQuery};
 
 use actix_web::{web, HttpRequest, HttpResponse};
 
-use liboxen::core::v0_10_0::index::{Merger, SchemaReader};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::util::{self, paginate};
@@ -77,7 +76,8 @@ fn create_from_branch(
     repo: &LocalRepository,
     data: &BranchNewFromBranchName,
 ) -> Result<HttpResponse, OxenHttpError> {
-    let maybe_new_branch = repositories::branches::get_by_name(repo, &data.new_name)?;
+    let maybe_new_branch: Option<liboxen::model::Branch> =
+        repositories::branches::get_by_name(repo, &data.new_name)?;
     if let Some(branch) = maybe_new_branch {
         let view = BranchResponse {
             status: StatusMessage::resource_found(),
@@ -173,9 +173,12 @@ pub async fn maybe_create_merge(
         incoming_commit_id
     );
 
-    let merger = Merger::new(&repository)?;
-    let maybe_merge_commit =
-        merger.merge_commit_into_base_on_branch(&incoming_commit, &current_commit, &branch)?;
+    let maybe_merge_commit = repositories::merge::merge_commit_into_base_on_branch(
+        &repository,
+        &incoming_commit,
+        &current_commit,
+        &branch,
+    )?;
 
     // Return what will become the new head of the repo after push is complete.
     if let Some(merge_commit) = maybe_merge_commit {
@@ -298,8 +301,8 @@ pub async fn list_entry_versions(
     for (commit, entry) in commits_with_versions {
         // For each version, get the schema hash if one exists.
         let maybe_schema_hash = if util::fs::is_tabular(&entry.path) {
-            let schema_reader = SchemaReader::new(&repo, &commit.id)?;
-            let maybe_schema = schema_reader.get_schema_for_file(&entry.path)?;
+            let maybe_schema =
+                repositories::data_frames::schemas::get_by_path(&repo, &commit, &entry.path)?;
             match maybe_schema {
                 Some(schema) => Some(schema.hash),
                 None => {
@@ -361,7 +364,11 @@ mod tests {
         let queue = test::init_queue();
         let namespace = "Testing-Namespace";
         let name = "Testing-Branches-1";
-        test::create_local_repo(&sync_dir, namespace, name)?;
+        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file)?;
+        repositories::commit(&repo, "First commit")?;
         let uri = format!("/oxen/{namespace}/{name}/branches");
         let req = test::repo_request(&sync_dir, queue, &uri, namespace, name);
 
@@ -388,6 +395,10 @@ mod tests {
         let namespace = "Testing-Namespace";
         let name = "Testing-Branches-1";
         let repo = test::create_local_repo(&sync_dir, namespace, name)?;
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file)?;
+        repositories::commit(&repo, "First commit")?;
         repositories::branches::create_from_head(&repo, "branch-1")?;
         repositories::branches::create_from_head(&repo, "branch-2")?;
 
@@ -415,6 +426,10 @@ mod tests {
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Branches-1";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file)?;
+        repositories::commit(&repo, "First commit")?;
         let branch_name = "branch-1";
         repositories::branches::create_from_head(&repo, branch_name)?;
 
@@ -448,7 +463,11 @@ mod tests {
         let queue = test::init_queue();
         let namespace = "Testing-Namespace";
         let name = "Testing-Branches-Create";
-        test::create_local_repo(&sync_dir, namespace, name)?;
+        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file)?;
+        repositories::commit(&repo, "First commit")?;
 
         let new_name = "My-Branch-Name";
 
@@ -483,6 +502,10 @@ mod tests {
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Branches-1";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file)?;
+        repositories::commit(&repo, "First commit")?;
         let branch_name = "branch-1";
         repositories::branches::create_from_head(&repo, branch_name)?;
 

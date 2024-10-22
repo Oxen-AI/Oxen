@@ -20,7 +20,7 @@ impl NodeMergeConflictReader {
 
         let opts = db::key_val::opts::default();
         if !db_path.exists() {
-            std::fs::create_dir_all(&db_path)?;
+            util::fs::create_dir_all(&db_path)?;
             // open it then lose scope to close it
             let _db = DB::open(&opts, dunce::simplified(&db_path))?;
         }

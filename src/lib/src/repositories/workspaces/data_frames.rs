@@ -1,6 +1,9 @@
 use polars::frame::DataFrame;
 
-use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR, TABLE_NAME};
+use sql_query_builder::Select;
+
+use crate::constants::TABLE_NAME;
+use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::core;
 use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
 use crate::core::db::data_frames::{df_db, workspace_df_db};
@@ -9,7 +12,6 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
-use sql_query_builder::Select;
 
 use crate::model::diff::tabular_diff::{
     TabularDiffDupes, TabularDiffMods, TabularDiffParameters, TabularDiffSchemas,
@@ -192,7 +194,13 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
 }
 
 pub fn duckdb_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
+    let path = path.as_ref();
+    log::debug!(
+        "duckdb_path path: {:?} workspace: {:?}",
+        path,
+        workspace.dir()
+    );
+    let path_hash = util::hasher::hash_str(path.to_string_lossy());
     workspace
         .dir()
         .join(OXEN_HIDDEN_DIR)

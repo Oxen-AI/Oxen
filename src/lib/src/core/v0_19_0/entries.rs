@@ -112,6 +112,7 @@ pub fn list_directory(
     log::debug!("list_directory dir_entry {:?}", dir_entry);
     let entries: Vec<MetadataEntry> =
         dir_entries(repo, &dir, directory, parsed_resource, &mut found_commits)?;
+    log::debug!("list_directory got {} entries", entries.len());
 
     let (entries, pagination) = util::paginate(entries, page, page_size);
     let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
@@ -139,15 +140,23 @@ pub fn get_meta_entry(
         .ok_or(OxenError::parsed_resource_not_found(
             parsed_resource.clone(),
         ))?;
+    log::debug!("get_meta_entry path: {:?} commit: {}", path, commit);
     let node = repositories::tree::get_dir_without_children(repo, &commit, path)?;
+    log::debug!("get_meta_entry node: {:?}", node);
 
     if let Some(node) = node {
+        log::debug!(
+            "get_meta_entry dir path found: {:?}",
+            path.to_str().unwrap()
+        );
         let metadata =
             dir_node_to_metadata_entry(repo, &node, parsed_resource, &mut HashMap::new(), false)?;
         Ok(metadata.unwrap())
     } else {
+        log::debug!("get_meta_entry file path: {:?}", path.to_str().unwrap());
         let file_node = get_file_merkle_tree_node(repo, &commit, path)?;
         if let Some(file_node) = file_node {
+            log::debug!("get_meta_entry file node found: {:?}", file_node);
             let metadata = file_node_to_metadata_entry(
                 repo,
                 &file_node,
@@ -156,6 +165,10 @@ pub fn get_meta_entry(
             )?;
             Ok(metadata.unwrap())
         } else {
+            log::debug!(
+                "get_meta_entry path not found: {:?}",
+                path.to_str().unwrap()
+            );
             Err(OxenError::resource_not_found(path.to_str().unwrap()))
         }
     }
@@ -184,6 +197,7 @@ pub fn dir_entries(
         found_commits,
         &mut entries,
     )?;
+    log::debug!("dir_entries got {} entries", entries.len());
     Ok(entries)
 }
 
@@ -203,8 +217,9 @@ fn dir_node_to_metadata_entry(
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(dir_node.last_commit_id)
     {
-        let commit = repositories::commits::get_by_hash(repo, &dir_node.last_commit_id)?
-            .ok_or(OxenError::resource_not_found(dir_node.name.clone()))?;
+        let commit = repositories::commits::get_by_hash(repo, &dir_node.last_commit_id)?.ok_or(
+            OxenError::commit_id_does_not_exist(dir_node.last_commit_id.to_string()),
+        )?;
         e.insert(commit);
     }
 
@@ -245,12 +260,34 @@ fn file_node_to_metadata_entry(
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(file_node.last_commit_id)
     {
-        let commit = repositories::commits::get_by_hash(repo, &file_node.last_commit_id)?
-            .ok_or(OxenError::resource_not_found(file_node.name.clone()))?;
+        let commit = repositories::commits::get_by_hash(repo, &file_node.last_commit_id)?.ok_or(
+            OxenError::commit_id_does_not_exist(file_node.last_commit_id.to_string()),
+        )?;
         e.insert(commit);
     }
 
     let commit = found_commits.get(&file_node.last_commit_id).unwrap();
+    let data_type = &file_node.data_type;
+
+    let mut parsed_resource = parsed_resource.clone();
+    // HACK for not knowing if we have the full path or just the dir path
+    // so we just add the file name to the end of the path if it's not already there
+    let mut file_path = parsed_resource.path.clone();
+    if !file_path.ends_with(&file_node.name) {
+        file_path = file_path.join(&file_node.name);
+        parsed_resource.resource = parsed_resource.resource.join(&file_node.name);
+        parsed_resource.path = parsed_resource.path.join(&file_node.name);
+    }
+
+    let is_indexed = if *data_type == EntryDataType::Tabular {
+        Some(
+            repositories::workspaces::data_frames::is_queryable_data_frame_indexed(
+                repo, &file_path, commit,
+            )?,
+        )
+    } else {
+        None
+    };
 
     Ok(Some(MetadataEntry {
         filename: file_node.name.clone(),
@@ -263,7 +300,7 @@ fn file_node_to_metadata_entry(
         mime_type: file_node.mime_type.clone(),
         extension: file_node.extension.clone(),
         metadata: file_node.metadata.clone(),
-        is_queryable: None,
+        is_queryable: is_indexed,
     }))
 }
 
@@ -287,6 +324,11 @@ fn p_dir_entries(
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
+                log::debug!(
+                    "p_dir_entries got vnode {:?} search_directory {:?}",
+                    current_directory,
+                    search_directory
+                );
                 p_dir_entries(
                     repo,
                     child,
@@ -305,6 +347,10 @@ fn p_dir_entries(
                     child_dir.name
                 );
                 if current_directory == search_directory && !child_dir.name.is_empty() {
+                    log::debug!(
+                        "p_dir_entries adding dir entry current_directory {:?}",
+                        current_directory
+                    );
                     let metadata = dir_node_to_metadata_entry(
                         repo,
                         child,
@@ -312,6 +358,7 @@ fn p_dir_entries(
                         found_commits,
                         true,
                     )?;
+                    log::debug!("p_dir_entries added dir entry {:?}", metadata);
                     entries.push(metadata.unwrap());
                 }
                 let current_directory = current_directory.join(&child_dir.name);
@@ -334,8 +381,18 @@ fn p_dir_entries(
                 );
 
                 if current_directory == search_directory {
+                    log::debug!(
+                        "p_dir_entries adding file entry current_directory {:?} file_name {:?}",
+                        current_directory,
+                        child_file.name
+                    );
                     let metadata =
                         file_node_to_metadata_entry(repo, child, parsed_resource, found_commits)?;
+                    log::debug!(
+                        "p_dir_entries added file entry {:?} file_name {:?}",
+                        metadata,
+                        child_file.name
+                    );
                     entries.push(metadata.unwrap());
                 }
             }

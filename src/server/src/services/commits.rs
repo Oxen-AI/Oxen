@@ -63,4 +63,8 @@ pub fn commits() -> Scope {
             "/{commit_or_branch:.*}/commit_db",
             web::get().to(controllers::commits::download_commit_entries_db),
         )
+        .route(
+            "/{base_head}/download_dir_hashes_db",
+            web::get().to(controllers::commits::download_dir_hashes_db),
+        )
 }

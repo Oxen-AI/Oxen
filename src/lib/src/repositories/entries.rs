@@ -80,11 +80,12 @@ pub fn list_directory_w_version(
         }
         MinOxenVersion::V0_19_0 => {
             let revision = revision.as_ref().to_string();
+            let branch = repositories::branches::get_by_name(repo, &revision)?;
             let commit = repositories::revisions::get(repo, &revision)?;
             let parsed_resource = ParsedResource {
                 path: directory.as_ref().to_path_buf(),
-                commit: commit.clone(),
-                branch: None,
+                commit,
+                branch,
                 version: PathBuf::from(&revision),
                 resource: PathBuf::from(&revision).join(&directory),
             };
@@ -406,7 +407,6 @@ mod tests {
 
     use uuid::Uuid;
 
-    use crate::core::v0_10_0::index;
     use crate::error::OxenError;
     use crate::opts::PaginateOpts;
     use crate::repositories;
@@ -1101,7 +1101,7 @@ mod tests {
             // Now index df2
             let workspace_id = Uuid::new_v4().to_string();
             let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, false)?;
-            index::workspaces::data_frames::index(&workspace, &entry2.path)?;
+            repositories::workspaces::data_frames::index(&repo, &workspace, &entry2.path)?;
 
             // Now get the metadata entries for the two dataframes
             let meta1 = repositories::entries::get_meta_entry(&repo, &commit, &path_1)?;

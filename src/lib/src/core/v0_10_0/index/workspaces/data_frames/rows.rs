@@ -1,7 +1,7 @@
 use polars::datatypes::AnyValue;
 use polars::frame::DataFrame;
-use polars::prelude::NamedFrom;
-use polars::prelude::PlSmallStr;
+
+use polars::prelude::{NamedFrom, PlSmallStr};
 use polars::series::Series;
 use rocksdb::DB;
 use serde_json::Value;
@@ -187,8 +187,8 @@ pub fn restore_row_in_db(
 }
 
 pub fn get_row_idx(row_df: &DataFrame) -> Result<Option<usize>, OxenError> {
-    let oxen_row_id_col = PlSmallStr::from_str(OXEN_ROW_ID_COL);
-    if row_df.height() == 1 && row_df.get_column_names().contains(&&oxen_row_id_col) {
+    let row_id_col = PlSmallStr::from_str(OXEN_ROW_ID_COL);
+    if row_df.height() == 1 && row_df.get_column_names().contains(&&row_id_col) {
         let row_df_anyval = row_df.column(OXEN_ROW_ID_COL).unwrap().get(0)?;
         match row_df_anyval {
             AnyValue::UInt16(val) => Ok(Some(val as usize)),

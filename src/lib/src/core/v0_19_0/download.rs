@@ -20,23 +20,23 @@ pub async fn download_dir(
     entry: &MetadataEntry,
     local_path: &Path,
 ) -> Result<(), OxenError> {
+    log::debug!("downloading dir {:?}", entry.filename);
     // Initialize temp repo to download node into
     // TODO: Where should this repo be?
     let tmp_repo = LocalRepository::new(local_path)?;
 
     // Find and download dir node and its children from remote repo
     let hash = MerkleHash::from_str(&entry.hash)?;
-    let dir_node =
-        api::client::tree::download_node_with_children(&tmp_repo, remote_repo, &hash).await?;
+    let dir_node = api::client::tree::download_tree_from(&tmp_repo, remote_repo, &hash).await?;
 
     // Create local directory to pull entries into
-    let directory = PathBuf::from(local_path);
+    let directory = PathBuf::from("");
     let pull_progress = PullProgress::new();
 
     // Recursively pull entries
     r_download_entries(
         remote_repo,
-        &directory,
+        &tmp_repo.path.join(&entry.filename),
         &dir_node,
         &directory,
         &pull_progress,
@@ -53,7 +53,10 @@ async fn r_download_entries(
     directory: &Path,
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
+    log::debug!("downloading entries for {:?}", directory);
     for child in &node.children {
+        log::debug!("downloading entry {:?}", child.hash);
+
         let mut new_directory = directory.to_path_buf();
         if let EMerkleTreeNode::Directory(dir_node) = &child.node {
             new_directory.push(&dir_node.name);
@@ -69,31 +72,32 @@ async fn r_download_entries(
             ))
             .await?;
         }
-    }
 
-    if let EMerkleTreeNode::VNode(_) = &node.node {
-        let mut entries: Vec<Entry> = vec![];
+        if let EMerkleTreeNode::VNode(_) = &node.node {
+            let mut entries: Vec<Entry> = vec![];
 
-        for child in &node.children {
-            if let EMerkleTreeNode::File(file_node) = &child.node {
-                entries.push(Entry::CommitEntry(CommitEntry {
-                    commit_id: file_node.last_commit_id.to_string(),
-                    path: directory.join(&file_node.name),
-                    hash: child.hash.to_string(),
-                    num_bytes: file_node.num_bytes,
-                    last_modified_seconds: file_node.last_modified_seconds,
-                    last_modified_nanoseconds: file_node.last_modified_nanoseconds,
-                }));
+            for child in &node.children {
+                if let EMerkleTreeNode::File(file_node) = &child.node {
+                    entries.push(Entry::CommitEntry(CommitEntry {
+                        commit_id: file_node.last_commit_id.to_string(),
+                        path: directory.join(&file_node.name),
+                        hash: child.hash.to_string(),
+                        num_bytes: file_node.num_bytes,
+                        last_modified_seconds: file_node.last_modified_seconds,
+                        last_modified_nanoseconds: file_node.last_modified_nanoseconds,
+                    }));
+                }
             }
-        }
 
-        core::v0_10_0::index::puller::pull_entries_to_working_dir(
-            remote_repo,
-            &entries,
-            local_repo_path,
-            pull_progress,
-        )
-        .await?;
+            log::debug!("downloading {} entries to working dir", entries.len());
+            core::v0_10_0::index::puller::pull_entries_to_working_dir(
+                remote_repo,
+                &entries,
+                local_repo_path,
+                pull_progress,
+            )
+            .await?;
+        }
     }
 
     Ok(())

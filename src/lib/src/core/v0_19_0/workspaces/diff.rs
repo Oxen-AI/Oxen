@@ -15,7 +15,11 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
     let commit = &workspace.commit;
     let path = path.as_ref();
     // Get commit for the branch head
-    log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
+    log::debug!(
+        "diff_workspace_df {:?} got repo at path {:?}",
+        path,
+        repo.path
+    );
 
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
         .ok_or(OxenError::entry_does_not_exist(path))?;

@@ -22,6 +22,7 @@ env_logger = "0.11.3"
 flate2 = "1.0.23"
 futures = "0.3.21"
 futures-util = "0.3.21"
+hashbrown = "0.15.0"
 hex = "0.4.3"
 image = "0.25.2"
 jsonwebtoken = "9.3.0"
@@ -29,7 +30,7 @@ liboxen = { path = "../lib" }
 log = "0.4.17"
 lru = "0.12.0"
 os_path = "0.8.0"
-polars = { version = "0.43.1", features = [
+polars = { git = "https://github.com/pola-rs/polars", rev = "f55658b17d0b27c71a84511b578604ccf9d01cd2", features = [
     "lazy",
     "parquet",
     "json",
@@ -43,7 +44,6 @@ redis = { version = "0.27.2", features = ["r2d2"] }
 rocksdb = { version = "0.22.0", default-features = false, features = [
     "lz4",
     "snappy",
-    "zstd",
     "zlib",
     "multi-threaded-cf",
 ] }

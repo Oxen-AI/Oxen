@@ -584,7 +584,7 @@ pub async fn try_download_data_from_version_paths(
                 }
             }
 
-            // log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
+            log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
             match file.unpack(&full_path).await {
                 Ok(_) => {
                     log::debug!("Successfully unpacked {:?} into dst {:?}", entry_path, dst);
@@ -598,7 +598,7 @@ pub async fn try_download_data_from_version_paths(
             let metadata = util::fs::metadata(&full_path)?;
             size += metadata.len();
             idx += 1;
-            // log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
+            log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
 
         Ok(size)
@@ -736,6 +736,20 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv")
                 .exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_root_entry_metadata() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
+            let entry =
+                api::client::entries::get_entry(&remote_repo, Path::new(""), DEFAULT_BRANCH_NAME)
+                    .await;
+            println!("entry: {:?}", entry);
+            assert!(entry.is_ok());
 
             Ok(remote_repo)
         })

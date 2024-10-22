@@ -56,6 +56,13 @@ pub fn has_conflicts(
     }
 }
 
+pub fn mark_conflict_as_resolved(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("mark_conflict_as_resolved not supported for oxen v0.10"),
+        MinOxenVersion::V0_19_0 => core::v0_19_0::merge::mark_conflict_as_resolved(repo, path),
+    }
+}
+
 pub fn can_merge_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
@@ -262,10 +269,14 @@ pub fn lowest_common_ancestor_from_commits(
 #[cfg(test)]
 mod tests {
 
+    use std::path::Path;
+
+    use crate::core::df::tabular;
     use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 
     use crate::error::OxenError;
     use crate::model::{Commit, LocalRepository};
+    use crate::opts::DFOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -758,6 +769,158 @@ mod tests {
                 &human_commit,
             )?;
             assert_eq!(conflicts.len(), 1);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs(
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Add a more rows on this branch
+            let branch_name = "ox-add-rows";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            let bbox_filename = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            let bbox_file = repo.path.join(&bbox_filename);
+            let bbox_file =
+                test::append_line_txt_file(bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
+            let their_branch_contents = util::fs::read_from_path(&bbox_file)?;
+
+            repositories::add(&repo, &bbox_file)?;
+            repositories::commit(&repo, "Adding new annotation as an Ox on a branch.")?;
+
+            // Add a more rows on the main branch
+            repositories::checkout(&repo, og_branch.name).await?;
+
+            let bbox_file =
+                test::append_line_txt_file(bbox_file, "train/dog_4.jpg,dog,52.0,62.5,256,429")?;
+
+            repositories::add(&repo, &bbox_file)?;
+            repositories::commit(&repo, "Adding new annotation on main branch")?;
+
+            // Try to merge in the changes
+            repositories::merge::merge(&repo, branch_name)?;
+
+            // We should have a conflict....
+            println!("status plz");
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.merge_conflicts.len(), 1);
+
+            println!("checkout theirs plz");
+
+            // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
+            repositories::checkout::checkout_theirs(&repo, &bbox_filename)?;
+
+            let file_contents = util::fs::read_from_path(&bbox_file)?;
+            assert_eq!(file_contents, their_branch_contents);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq(
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            let bbox_filename = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            let bbox_file = repo.path.join(&bbox_filename);
+
+            // Add a more rows on this branch
+            let branch_name = "ox-add-rows";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Add in a line in this branch
+            let row_from_branch = "train/cat_3.jpg,cat,41.0,31.5,410,427";
+            let bbox_file = test::append_line_txt_file(bbox_file, row_from_branch)?;
+
+            // Add the changes
+            repositories::add(&repo, &bbox_file)?;
+            repositories::commit(&repo, "Adding new annotation as an Ox on a branch.")?;
+
+            // Add a more rows on the main branch
+            repositories::checkout(&repo, og_branch.name).await?;
+
+            let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
+            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
+
+            repositories::add(&repo, &bbox_file)?;
+            repositories::commit(&repo, "Adding new annotation on main branch")?;
+
+            // Try to merge in the changes
+            repositories::merge::merge(&repo, branch_name)?;
+
+            // We should have a conflict....
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.merge_conflicts.len(), 1);
+
+            // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
+            repositories::checkout::checkout_combine(&repo, bbox_filename)?;
+            let df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+
+            // This doesn't guarantee order, but let's make sure we have 7 annotations now
+            assert_eq!(df.height(), 8);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_command_merge_dataframe_conflict_error_added_col() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            let bbox_filename = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            let bbox_file = repo.path.join(&bbox_filename);
+
+            // Add a more columns on this branch
+            let branch_name = "ox-add-column";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Add in a column in this branch
+            let mut opts = DFOpts::empty();
+            opts.add_col = Some(String::from("random_col:unknown:str"));
+            let mut df = tabular::read_df(&bbox_file, opts)?;
+            println!("WRITE DF IN BRANCH {df:?}");
+            tabular::write_df(&mut df, &bbox_file)?;
+
+            // Add the changes
+            repositories::add(&repo, &bbox_file)?;
+            repositories::commit(&repo, "Adding new column as an Ox on a branch.")?;
+
+            // Add a more rows on the main branch
+            repositories::checkout(&repo, og_branch.name).await?;
+
+            let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
+            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
+
+            repositories::add(&repo, bbox_file)?;
+            repositories::commit(&repo, "Adding new row on main branch")?;
+
+            // Try to merge in the changes
+            repositories::merge::merge(&repo, branch_name)?;
+
+            // We should have a conflict....
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.merge_conflicts.len(), 1);
+
+            // Run repositories::checkout::checkout_theirs() and make sure we cannot
+            let result = repositories::checkout::checkout_combine(&repo, bbox_filename);
+            println!("{result:?}");
+            assert!(result.is_err());
 
             Ok(())
         })

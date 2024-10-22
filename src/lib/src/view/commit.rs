@@ -11,6 +11,13 @@ pub struct CommitResponse {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+pub struct UploadCommitResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub commit: Option<Commit>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct RootCommitResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

@@ -19,7 +19,8 @@ pub fn save_data_frame_row_changes(
     db.put(key, val_json.as_bytes())?;
 
     log::debug!(
-        "save_data_frame_row_changes() saved change: {:?}",
+        "save_data_frame_row_changes() row_id: {} saved change: {:?}",
+        key,
         data_frame_row_change
     );
 

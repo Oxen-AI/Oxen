@@ -11,6 +11,7 @@ use crate::error::OxenError;
 use crate::model::merge_conflict::NodeMergeConflict;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{Branch, Commit, LocalRepository};
+use crate::opts::RmOpts;
 use crate::repositories;
 use crate::repositories::merge::MergeCommits;
 use crate::util;
@@ -37,8 +38,17 @@ pub fn has_conflicts(
 }
 
 pub fn list_conflicts(repo: &LocalRepository) -> Result<Vec<NodeMergeConflict>, OxenError> {
-    let reader = NodeMergeConflictReader::new(repo)?;
-    reader.list_conflicts()
+    match NodeMergeConflictReader::new(repo) {
+        Ok(reader) => reader.list_conflicts(),
+        Err(e) => {
+            log::debug!("Error creating NodeMergeConflictReader: {e}");
+            Ok(Vec::new())
+        }
+    }
+}
+
+pub fn mark_conflict_as_resolved(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
+    node_merge_conflict_writer::mark_conflict_as_resolved_in_db(repo, path)
 }
 
 /// Check if there are conflicts between the merge commit and the base commit
@@ -533,7 +543,10 @@ fn create_merge_commit_on_branch(
     // The author in this case is the pusher - the author of the merge commit
 
     let commit = commit_writer::commit_with_parent_ids(repo, &commit_msg, parent_ids)?;
-    rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]))?;
+    let mut opts = RmOpts::from_path(PathBuf::from("/"));
+    opts.staged = true;
+    opts.recursive = true;
+    rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]), &opts)?;
 
     Ok(commit)
 }

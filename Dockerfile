@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly as builder
+FROM rust:1.81.0 as builder
 
 USER root
 RUN apt-get update

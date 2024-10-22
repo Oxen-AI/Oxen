@@ -18,10 +18,14 @@ pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     }
 }
 
-pub async fn pull_shallow(repo: &LocalRepository) -> Result<(), OxenError> {
+pub async fn pull_remote_branch_shallow(
+    repo: &LocalRepository,
+    remote: impl AsRef<str>,
+    branch: impl AsRef<str>,
+) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => core::v0_10_0::pull::pull_shallow(repo).await,
-        MinOxenVersion::V0_19_0 => core::v0_19_0::pull::pull_shallow(repo).await,
+        MinOxenVersion::V0_19_0 => core::v0_19_0::pull::pull_shallow(repo, remote, branch).await,
     }
 }
 
@@ -35,13 +39,14 @@ pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
 /// Pull a specific remote and branch
 pub async fn pull_remote_branch(
     repo: &LocalRepository,
-    remote: &str,
-    branch: &str,
+    remote: impl AsRef<str>,
+    branch: impl AsRef<str>,
     all: bool,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
-            core::v0_10_0::pull::pull_remote_branch(repo, remote, branch, all).await
+            core::v0_10_0::pull::pull_remote_branch(repo, remote.as_ref(), branch.as_ref(), all)
+                .await
         }
         MinOxenVersion::V0_19_0 => {
             core::v0_19_0::pull::pull_remote_branch(repo, remote, branch, all).await
@@ -57,6 +62,7 @@ mod tests {
     use crate::command;
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::constants::OXEN_HIDDEN_DIR;
     use crate::core;
     use crate::core::df::tabular;
@@ -576,7 +582,11 @@ mod tests {
                 let cloned_repo = repositories::clone(&opts).await?;
 
                 // Make sure we have all the files from the branch
-                let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
+                let cloned_files = util::fs::rlist_files_in_dir(&cloned_repo.path);
+                for file in cloned_files.iter() {
+                    println!("Cloned file: {}", file.display());
+                }
+                let cloned_num_files = cloned_files.len();
                 assert_eq!(cloned_num_files, 5);
 
                 // Switch to main branch and pull
@@ -857,7 +867,7 @@ mod tests {
     #[tokio::test]
     async fn test_pull_does_not_remove_local_files() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_empty_sync_repo_test(|_, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo to User A
@@ -920,7 +930,7 @@ mod tests {
     #[tokio::test]
     async fn test_pull_does_not_remove_untracked_files() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_empty_sync_repo_test(|_, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo to User A
@@ -1315,13 +1325,14 @@ mod tests {
                 let user_a_shallow =
                     repositories::shallow_clone_url(&remote_repo.remote.url, &user_a_repo_dir_copy)
                         .await?;
+                let remote_repo_inner_copy = remote_repo.clone();
 
-                // Deep copy pushes two new commits to advance the remote
+                // Deep clone pushes two new commits to advance the remote
                 test::run_empty_dir_test_async(|user_b_repo_dir| async move {
                     let user_b_repo_dir_copy = user_b_repo_dir.join("repoo");
 
                     let user_b_repo = repositories::deep_clone_url(
-                        &remote_repo.remote.url,
+                        &remote_repo_inner_copy.remote.url,
                         &user_b_repo_dir_copy,
                     )
                     .await?;
@@ -1344,21 +1355,28 @@ mod tests {
                 .await?;
 
                 // Pull on the shallow copy
-                repositories::pull_shallow(&user_a_shallow).await?;
+                repositories::pull_remote_branch_shallow(
+                    &user_a_shallow,
+                    DEFAULT_REMOTE_NAME,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
 
                 // Get all commits on the remote
-                let remote_commits = repositories::commits::list(&user_a_shallow)?;
+                let remote_commits = api::client::commits::list_all(&remote_repo).await?;
 
                 let mut synced_commits = 0;
                 log::debug!("total n remote commits {}", remote_commits.len());
                 for commit in remote_commits {
-                    if core::commit_sync_status::commit_is_synced(&user_a_shallow, &commit) {
+                    if repositories::commits::get_by_id(&user_a_shallow, &commit.id)?.is_some() {
+                        log::debug!("synced commit {}", commit);
                         synced_commits += 1;
                     }
                 }
 
-                // Only one commit should be fully sycned - the one we just downloaded
-                assert_eq!(synced_commits, 1);
+                // Two commits should be exist locally - the one we just downloaded,
+                // and the original clone
+                assert_eq!(synced_commits, 2);
 
                 Ok(user_a_repo_dir_copy)
             })
@@ -1406,8 +1424,15 @@ mod tests {
                 })
                 .await?;
 
-                // Pull on the shallow copy
-                repositories::pull_shallow(&user_a_repo).await?;
+                // Pull again
+                let all = false;
+                repositories::pull_remote_branch(
+                    &user_a_repo,
+                    DEFAULT_REMOTE_NAME,
+                    DEFAULT_BRANCH_NAME,
+                    all,
+                )
+                .await?;
 
                 // Get all commits on the remote
                 let remote_commits = repositories::commits::list(&user_a_repo)?;

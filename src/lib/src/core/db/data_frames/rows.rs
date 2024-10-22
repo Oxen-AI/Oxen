@@ -34,18 +34,18 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
         return Err(OxenError::incompatible_schemas(table_schema.clone()));
     }
 
-    let added_column = Series::new(
+    let added_column = Column::Series(Series::new(
         PlSmallStr::from_str(DIFF_STATUS_COL),
         vec![StagedRowStatus::Added.to_string(); df.height()],
-    );
+    ));
     let df = df.hstack(&[added_column])?;
 
     // Handle initialization for completely null {} create objects coming over from the hub
     let df = if df.height() == 0 {
-        let added_column = Series::new(
+        let added_column = Column::Series(Series::new(
             PlSmallStr::from_str(DIFF_STATUS_COL),
             vec![StagedRowStatus::Added.to_string()],
-        );
+        ));
         DataFrame::new(vec![added_column])?
     } else {
         df
@@ -83,6 +83,11 @@ pub fn modify_row(
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
+        log::error!(
+            "modify_row incompatible_schemas {:?}\n{:?}",
+            table_schema,
+            df_cols
+        );
         return Err(OxenError::incompatible_schemas(table_schema));
     }
 
@@ -91,7 +96,6 @@ pub fn modify_row(
         .select("*")
         .from(TABLE_NAME)
         .where_clause(&format!("\"{}\" = '{}'", OXEN_ID_COL, uuid));
-
     let maybe_db_data = df_db::select(conn, &select_hash, true, None, None)?;
 
     let mut new_row = maybe_db_data.clone().to_owned();
@@ -116,9 +120,7 @@ pub fn modify_row(
         PlSmallStr::from_str(DIFF_HASH_COL),
         vec![insert_hash],
     ))?;
-
     let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &new_row, &out_schema)?;
-
     if result.height() == 0 {
         return Err(OxenError::resource_not_found(uuid));
     }

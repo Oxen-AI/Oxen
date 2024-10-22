@@ -136,7 +136,7 @@ mod tests {
         summarized.add_stats(&stats_train);
         summarized.add_stats(&stats_test);
 
-        assert_eq!(summarized.len(), 1);
+        assert_eq!(summarized.len(), 3);
         assert_eq!(summarized.num_files_staged, 3);
         assert_eq!(summarized.total_files, 4);
     }

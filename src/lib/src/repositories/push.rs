@@ -1597,7 +1597,7 @@ mod tests {
                     log::debug!("b head before is {:?}", head);
 
                     let maybe_b_entry = pre_b.get_by_path(
-                        &PathBuf::from("annotations")
+                        PathBuf::from("annotations")
                             .join("train")
                             .join("annotations.txt"),
                     )?;
@@ -1610,7 +1610,7 @@ mod tests {
                     let head = repositories::commits::head_commit(&user_b_repo)?;
                     let post_b = repositories::tree::get_by_commit(&user_b_repo, &head)?;
                     let maybe_b_entry = post_b.get_by_path(
-                        &PathBuf::from("annotations")
+                        PathBuf::from("annotations")
                             .join("train")
                             .join("annotations.txt"),
                     )?;

@@ -32,6 +32,12 @@ pub async fn push_remote_branch(
     // start a timer
     let start = std::time::Instant::now();
 
+    if repo.is_shallow_clone() {
+        return Err(OxenError::basic_str(
+            "oxen push does not support shallow clones",
+        ));
+    }
+
     let remote = remote.as_ref();
     let branch_name = branch_name.as_ref();
 
@@ -150,7 +156,7 @@ async fn r_push_node(
 
     // Check if the node exists on the remote
     let has_node = api::client::tree::has_node(remote_repo, node.hash).await?;
-    log::debug!("has_node: {:?}", has_node);
+    log::debug!("has_node: {:?} [{}]", has_node, node);
 
     // If not exists, create it
     if !has_node {

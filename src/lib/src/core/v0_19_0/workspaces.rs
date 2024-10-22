@@ -27,8 +27,12 @@ pub fn init_workspace_repo(
     log::debug!("init_workspace_repo {workspace_hidden_dir:?}");
     util::fs::create_dir_all(&workspace_hidden_dir)?;
 
-    let dirs_to_copy = vec![constants::HISTORY_DIR];
+    // Copy the config file
+    let config_file = oxen_hidden_dir.join(constants::REPO_CONFIG_FILENAME);
+    let target_config_file = workspace_hidden_dir.join(constants::REPO_CONFIG_FILENAME);
+    util::fs::copy(config_file, target_config_file)?;
 
+    let dirs_to_copy = vec![constants::HISTORY_DIR];
     for dir in dirs_to_copy {
         let oxen_dir = oxen_hidden_dir.join(dir);
         let target_dir = workspace_hidden_dir.join(dir);
@@ -50,31 +54,35 @@ pub fn commit(
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
+
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
     log::debug!(
         "0.19.0::workspaces::commit staged db path: {:?}",
         staged_db_path
     );
     let opts = db::key_val::opts::default();
-    let staged_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&staged_db_path))?;
 
-    let commit_progress_bar = ProgressBar::new_spinner();
+    // Ensure connection to staged_db is dropped before clearing it
+    let commit = {
+        let staged_db: DBWithThreadMode<SingleThreaded> =
+            DBWithThreadMode::open(&opts, dunce::simplified(&staged_db_path))?;
 
-    // Read all the staged entries
-    let (dir_entries, _) = core::v0_19_0::status::read_staged_entries(
-        &workspace.workspace_repo,
-        &staged_db,
-        &commit_progress_bar,
-    )?;
+        let commit_progress_bar = ProgressBar::new_spinner();
 
-    let commit = core::v0_19_0::index::commit_writer::commit_dir_entries(
-        &workspace.base_repo,
-        dir_entries,
-        new_commit,
-        &staged_db_path,
-        &commit_progress_bar,
-    )?;
+        // Read all the staged entries
+        let (dir_entries, _) = core::v0_19_0::status::read_staged_entries(
+            &workspace.workspace_repo,
+            &staged_db,
+            &commit_progress_bar,
+        )?;
+
+        core::v0_19_0::index::commit_writer::commit_dir_entries(
+            &workspace.base_repo,
+            dir_entries,
+            new_commit,
+            &commit_progress_bar,
+        )?
+    };
 
     // Update the branch
     let ref_writer = RefWriter::new(&workspace.base_repo)?;

@@ -35,6 +35,7 @@ pub mod download;
 pub mod entries;
 pub mod fetch;
 pub mod init;
+pub mod load;
 pub mod merge;
 pub mod metadata;
 pub mod pull;
@@ -42,6 +43,7 @@ pub mod push;
 pub mod restore;
 pub mod revisions;
 pub mod rm;
+pub mod save;
 pub mod status;
 pub mod tree;
 pub mod workspaces;
@@ -53,9 +55,12 @@ pub use commits::commit;
 pub use download::download;
 pub use fetch::fetch;
 pub use init::init;
-pub use pull::{pull, pull_all, pull_remote_branch, pull_shallow};
+pub use load::load;
+pub use pull::{pull, pull_all, pull_remote_branch, pull_remote_branch_shallow};
 pub use push::push;
+pub use restore::restore;
 pub use rm::rm;
+pub use save::save;
 pub use status::status;
 pub use status::status_from_dir;
 
@@ -119,10 +124,15 @@ fn get_repo_stats_v0_19_0(repo: &LocalRepository) -> RepoStats {
 
     match revisions::get(repo, DEFAULT_BRANCH_NAME) {
         Ok(Some(commit)) => {
-            let dir = CommitMerkleTree::dir_without_children(repo, &commit, Path::new(""))
-                .unwrap()
-                .unwrap();
-            log::debug!("dir: {:?}", dir);
+            let Ok(Some(dir)) =
+                CommitMerkleTree::dir_without_children(repo, &commit, Path::new(""))
+            else {
+                log::error!("Error getting root dir for main branch commit");
+                return RepoStats {
+                    data_size: 0,
+                    data_types: HashMap::new(),
+                };
+            };
             if let EMerkleTreeNode::Directory(dir_node) = dir.node {
                 data_size = dir_node.num_bytes;
                 for data_type_count in dir_node.data_types() {
@@ -343,7 +353,7 @@ pub fn create(root_dir: &Path, new_repo: RepoNew) -> Result<LocalRepository, Oxe
             let full_path = repo_dir.join(path);
             let parent_dir = full_path.parent().unwrap();
             if !parent_dir.exists() {
-                std::fs::create_dir_all(parent_dir)?;
+                util::fs::create_dir_all(parent_dir)?;
             }
             util::fs::write(&full_path, contents)?;
             add(&local_repo, &full_path)?;

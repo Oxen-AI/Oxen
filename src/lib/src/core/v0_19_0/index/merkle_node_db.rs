@@ -300,11 +300,11 @@ impl MerkleNodeDB {
         let node_path = path.join(NODE_FILE);
         let children_path = path.join(CHILDREN_FILE);
 
-        log::debug!(
-            "Opening merkle node db read_only {} at {}",
-            read_only,
-            path.display()
-        );
+        // log::debug!(
+        //     "Opening merkle node db read_only {} at {}",
+        //     read_only,
+        //     path.display()
+        // );
         let (lookup, node_file, children_file): (
             Option<MerkleNodeLookup>,
             Option<File>,
@@ -312,7 +312,7 @@ impl MerkleNodeDB {
         ) = if read_only {
             let mut node_file = util::fs::open_file(node_path)?;
             let children_file = util::fs::open_file(children_path)?;
-            log::debug!("Opened merkle node db read_only at {}", path.display());
+            // log::debug!("Opened merkle node db read_only at {}", path.display());
             (
                 Some(MerkleNodeLookup::load(&mut node_file)?),
                 Some(node_file),
@@ -383,7 +383,7 @@ impl MerkleNodeDB {
         let Some(node_file) = self.node_file.as_mut() else {
             return Err(OxenError::basic_str("Must call open before writing"));
         };
-        log::debug!("write_node node: {}", node);
+        // log::debug!("write_node node: {}", node);
 
         // Write data type
         node_file.write_all(&node.dtype().to_u8().to_le_bytes())?;
@@ -400,7 +400,7 @@ impl MerkleNodeDB {
         node.serialize(&mut Serializer::new(&mut buf)).unwrap();
         let data_len = buf.len() as u32;
         node_file.write_all(&data_len.to_le_bytes())?;
-        log::debug!("write_node Wrote data length {}", data_len);
+        // log::debug!("write_node Wrote data length {}", data_len);
 
         // Write data
         node_file.write_all(&buf)?;
@@ -408,11 +408,11 @@ impl MerkleNodeDB {
         self.dtype = node.dtype();
         self.node_id = node.hash();
         self.parent_id = parent_id;
-        log::debug!(
-            "write_node wrote id {} dtype: {:?}",
-            node.hash(),
-            node.dtype()
-        );
+        // log::debug!(
+        //     "write_node wrote id {} dtype: {:?}",
+        //     node.hash(),
+        //     node.dtype()
+        // );
         Ok(())
     }
 

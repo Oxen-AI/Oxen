@@ -163,15 +163,16 @@ impl CommitMerkleTree {
         hash: &MerkleHash,
         recurse: bool,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        log::debug!("Read node hash [{}]", hash);
+        // log::debug!("Read node hash [{}]", hash);
         if !MerkleNodeDB::exists(repo, hash) {
-            log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
 
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
         let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
         CommitMerkleTree::read_children_from_node(repo, &mut node_db, &mut node, recurse)?;
+        // log::debug!("read_node done: {:?} recurse: {}", node.hash, recurse);
         Ok(Some(node))
     }
 
@@ -180,12 +181,12 @@ impl CommitMerkleTree {
         hash: &MerkleHash,
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        log::debug!("Read depth {} node hash [{}]", depth, hash);
+        // log::debug!("Read depth {} node hash [{}]", depth, hash);
         if !MerkleNodeDB::exists(repo, hash) {
-            log::debug!(
-                "read_depth merkle node db does not exist for hash: {}",
-                hash
-            );
+            // log::debug!(
+            //     "read_depth merkle node db does not exist for hash: {}",
+            //     hash
+            // );
             return Ok(None);
         }
 
@@ -193,6 +194,7 @@ impl CommitMerkleTree {
         let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
 
         CommitMerkleTree::read_children_until_depth(repo, &mut node_db, &mut node, depth)?;
+        // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
         Ok(Some(node))
     }
 
@@ -222,6 +224,7 @@ impl CommitMerkleTree {
                 }
             }
         }
+        // log::debug!("read dir_hashes: {:?}", dir_hashes);
         Ok(dir_hashes)
     }
 
@@ -231,14 +234,14 @@ impl CommitMerkleTree {
         paths: &[PathBuf],
     ) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        log::debug!(
-            "load_nodes dir_hashes from commit: {} count: {}",
-            commit,
-            dir_hashes.len()
-        );
-        for (path, hash) in &dir_hashes {
-            log::debug!("load_nodes dir_hashes path: {:?} hash: {:?}", path, hash);
-        }
+        // log::debug!(
+        //     "load_nodes dir_hashes from commit: {} count: {}",
+        //     commit,
+        //     dir_hashes.len()
+        // );
+        // for (path, hash) in &dir_hashes {
+        //     log::debug!("load_nodes dir_hashes path: {:?} hash: {:?}", path, hash);
+        // }
 
         let mut nodes = HashMap::new();
         for path in paths.iter() {
@@ -246,7 +249,7 @@ impl CommitMerkleTree {
             let Some(hash) = dir_hashes.get(path) else {
                 continue;
             };
-            log::debug!("Loading node for path: {:?} hash: {}", path, hash);
+            // log::debug!("Loading node for path: {:?} hash: {}", path, hash);
             let Some(node) = CommitMerkleTree::read_depth(repo, hash, 2)? else {
                 return Err(OxenError::basic_str(format!(
                     "Merkle tree hash not found for parent: {:?}",
@@ -259,11 +262,11 @@ impl CommitMerkleTree {
     }
 
     pub fn has_dir(&self, path: impl AsRef<Path>) -> bool {
-        log::debug!("has_dir path: {:?}", path.as_ref());
-        log::debug!("has_dir dir_hashes: {:?}", self.dir_hashes);
+        // log::debug!("has_dir path: {:?}", path.as_ref());
+        // log::debug!("has_dir dir_hashes: {:?}", self.dir_hashes);
         let path = path.as_ref();
-        println!("Path for has_dir: {path:?}");
-        println!("Dir hashes: {:?}", self.dir_hashes);
+        // println!("Path for has_dir: {path:?}");
+        // println!("Dir hashes: {:?}", self.dir_hashes);
         self.dir_hashes.contains_key(path)
     }
 
@@ -436,12 +439,12 @@ impl CommitMerkleTree {
         let parent_path = path.parent().unwrap();
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
-        log::debug!(
-            "read_file path {:?} parent_path {:?} file_name {:?}",
-            path,
-            parent_path,
-            file_name
-        );
+        // log::debug!(
+        //     "read_file path {:?} parent_path {:?} file_name {:?}",
+        //     path,
+        //     parent_path,
+        //     file_name
+        // );
 
         // Look up the directory hash
         let node_hash: Option<MerkleHash> = dir_hashes.get(parent_path).cloned();
@@ -459,10 +462,10 @@ impl CommitMerkleTree {
                 parent_path
             )));
         };
-        log::debug!(
-            "read_file got {} dir_node children",
-            dir_node.children.len()
-        );
+        // log::debug!(
+        //     "read_file got {} dir_node children",
+        //     dir_node.children.len()
+        // );
 
         dir_node.get_by_path(file_name)
     }
@@ -474,12 +477,12 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<(), OxenError> {
         let dtype = node.node.dtype();
-        log::debug!(
-            "read_children_until_depth {} tree_db_dir: {:?} dtype {:?}",
-            depth,
-            node_db.path(),
-            dtype
-        );
+        // log::debug!(
+        //     "read_children_until_depth {} tree_db_dir: {:?} dtype {:?}",
+        //     depth,
+        //     node_db.path(),
+        //     dtype
+        // );
 
         if dtype != MerkleTreeNodeType::Commit
             && dtype != MerkleTreeNodeType::Dir
@@ -489,20 +492,20 @@ impl CommitMerkleTree {
         }
 
         let children: Vec<(MerkleHash, MerkleTreeNode)> = node_db.map()?;
-        log::debug!(
-            "read_children_until_depth {} Got {} children",
-            depth,
-            children.len()
-        );
+        // log::debug!(
+        //     "read_children_until_depth {} Got {} children",
+        //     depth,
+        //     children.len()
+        // );
 
-        for (key, child) in children {
+        for (_key, child) in children {
             let mut child = child.to_owned();
-            log::debug!(
-                "read_children_until_depth {} child: {} -> {}",
-                depth,
-                key,
-                child
-            );
+            // log::debug!(
+            //     "read_children_until_depth {} child: {} -> {}",
+            //     depth,
+            //     key,
+            //     child
+            // );
             match &child.node.dtype() {
                 // Directories, VNodes, and Files have children
                 MerkleTreeNodeType::Commit
@@ -556,18 +559,20 @@ impl CommitMerkleTree {
         }
 
         let children: Vec<(MerkleHash, MerkleTreeNode)> = node_db.map()?;
-        log::debug!("read_children_from_node Got {} children", children.len());
+        // log::debug!("read_children_from_node Got {} children", children.len());
 
         for (_key, child) in children {
             let mut child = child.to_owned();
-            //log::debug!("read_children_from_node child: {} -> {}", key, child);
+            // log::debug!("read_children_from_node child: {} -> {}", key, child);
             match &child.node.dtype() {
                 // Directories, VNodes, and Files have children
                 MerkleTreeNodeType::Commit
                 | MerkleTreeNodeType::Dir
                 | MerkleTreeNodeType::VNode => {
                     if recurse {
+                        // log::debug!("read_children_from_node recurse: {:?}", child.hash);
                         let mut node_db = MerkleNodeDB::open_read_only(repo, &child.hash)?;
+                        // log::debug!("read_children_from_node opened node_db: {:?}", child.hash);
                         CommitMerkleTree::read_children_from_node(
                             repo,
                             &mut node_db,
@@ -585,6 +590,8 @@ impl CommitMerkleTree {
                 }
             }
         }
+
+        // log::debug!("read_children_from_node done: {:?}", node.hash);
 
         Ok(())
     }

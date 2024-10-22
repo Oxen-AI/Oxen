@@ -45,20 +45,14 @@ pub async fn create_compare(
 
     let client = client::new_for_url(&url)?;
 
-    // let params =
-
-    if let Ok(res) = client.post(&url).json(&json!(req_body)).send().await {
-        let body = client::parse_json_body(&url, res).await?;
-        let response: Result<CompareTabularResponse, serde_json::Error> =
-            serde_json::from_str(&body);
-        match response {
-            Ok(tabular_compare) => Ok(tabular_compare.dfs),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "create_compare() Could not deserialize response [{err}]\n{body}"
-            ))),
-        }
-    } else {
-        Err(OxenError::basic_str("create_compare() Request failed"))
+    let res = client.post(&url).json(&json!(req_body)).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<CompareTabularResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(tabular_compare) => Ok(tabular_compare.dfs),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "create_compare() Could not deserialize response [{err}]\n{body}"
+        ))),
     }
 }
 
@@ -284,6 +278,7 @@ mod tests {
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
             let df = derived_df.to_df();
+            println!("df: {:?}", df);
 
             assert_eq!(df.height(), 3);
 

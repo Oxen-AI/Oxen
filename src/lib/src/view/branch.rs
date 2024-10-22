@@ -10,6 +10,14 @@ pub struct BranchResponse {
     pub branch: Branch,
 }
 
+#[derive(Deserialize, Serialize, Debug)]
+pub struct BranchWithCacherStatusResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub branch: Branch,
+    pub is_cacher_pending: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BranchLockResponse {
     #[serde(flatten)]

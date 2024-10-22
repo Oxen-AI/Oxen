@@ -49,6 +49,11 @@ impl MerkleTreeNode {
         matches!(self.node, EMerkleTreeNode::File(_))
     }
 
+    /// Check if it is a directory
+    pub fn is_dir(&self) -> bool {
+        matches!(self.node, EMerkleTreeNode::Directory(_))
+    }
+
     /// Recursively count the total number of vnodes in the tree
     pub fn total_vnodes(&self) -> usize {
         let mut count = 0;
@@ -257,44 +262,44 @@ impl MerkleTreeNode {
         traversed_path: &Path,
         path: &Path,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        log::debug!(
-            "get_by_path_helper {} traversed_path: {:?} path: {:?}",
-            self,
-            traversed_path,
-            path
-        );
+        // log::debug!(
+        //     "get_by_path_helper {} traversed_path: {:?} path: {:?}",
+        //     self,
+        //     traversed_path,
+        //     path
+        // );
         if traversed_path.components().count() > path.components().count() {
-            log::debug!(
-                "get_by_path_helper {} returning None traversed_path {:?} is longer than path {:?}",
-                self,
-                traversed_path,
-                path
-            );
+            // log::debug!(
+            //     "get_by_path_helper {} returning None traversed_path {:?} is longer than path {:?}",
+            //     self,
+            //     traversed_path,
+            //     path
+            // );
             return Ok(None);
         }
 
         if let EMerkleTreeNode::File(_) = &self.node {
             let file_node = self.file()?;
             let file_path = traversed_path.join(file_node.name);
-            log::debug!(
-                "get_by_path_helper {} is file! [{:?}] {:?} {:?}",
-                self,
-                self.node.dtype(),
-                file_path,
-                path
-            );
+            // log::debug!(
+            //     "get_by_path_helper {} is file! [{:?}] {:?} {:?}",
+            //     self,
+            //     self.node.dtype(),
+            //     file_path,
+            //     path
+            // );
             if file_path == path {
                 return Ok(Some(self.clone()));
             }
         }
 
         if let EMerkleTreeNode::Directory(_) = &self.node {
-            log::debug!(
-                "get_by_path_helper {} is dir! {:?} {:?}",
-                self,
-                traversed_path,
-                path
-            );
+            // log::debug!(
+            //     "get_by_path_helper {} is dir! {:?} {:?}",
+            //     self,
+            //     traversed_path,
+            //     path
+            // );
             if traversed_path == path {
                 return Ok(Some(self.clone()));
             }
@@ -308,49 +313,49 @@ impl MerkleTreeNode {
                 .unwrap_or("")
                 .to_string();
             match self.children.binary_search_by(|child| {
-                log::debug!(
-                    "get_by_path_helper {} binary_search_by child: {}",
-                    self,
-                    child
-                );
+                // log::debug!(
+                //     "get_by_path_helper {} binary_search_by child: {}",
+                //     self,
+                //     child
+                // );
                 let child_name = match &child.node {
                     EMerkleTreeNode::Directory(dir) => Some(dir.name.to_owned()),
                     EMerkleTreeNode::File(file) => Some(file.name.to_owned()),
                     _ => None,
                 };
-                log::debug!(
-                    "get_by_path_helper {} binary_search_by child_name: {:?} target_name: {:?}",
-                    self,
-                    child_name,
-                    target_name
-                );
+                // log::debug!(
+                //     "get_by_path_helper {} binary_search_by child_name: {:?} target_name: {:?}",
+                //     self,
+                //     child_name,
+                //     target_name
+                // );
                 child_name.unwrap_or("".to_string()).cmp(&target_name)
             }) {
                 Ok(index) => {
                     let child = &self.children[index];
-                    log::debug!(
-                        "get_by_path_helper {} found index: {} child: {}",
-                        self,
-                        index,
-                        child
-                    );
+                    // log::debug!(
+                    //     "get_by_path_helper {} found index: {} child: {}",
+                    //     self,
+                    //     index,
+                    //     child
+                    // );
                     if let EMerkleTreeNode::Directory(dir_node) = &child.node {
-                        log::debug!(
-                            "get_by_path_helper {} traversing dir child: {}",
-                            self,
-                            dir_node
-                        );
+                        // log::debug!(
+                        //     "get_by_path_helper {} traversing dir child: {}",
+                        //     self,
+                        //     dir_node
+                        // );
                         if let Some(node) =
                             child.get_by_path_helper(&traversed_path.join(&dir_node.name), path)?
                         {
                             return Ok(Some(node));
                         }
                     } else {
-                        log::debug!(
-                            "get_by_path_helper {} traversing other child: {}",
-                            self,
-                            child
-                        );
+                        // log::debug!(
+                        //     "get_by_path_helper {} traversing other child: {}",
+                        //     self,
+                        //     child
+                        // );
                         if let Some(node) = child.get_by_path_helper(traversed_path, path)? {
                             return Ok(Some(node));
                         }
@@ -369,13 +374,13 @@ impl MerkleTreeNode {
             }
         }
 
-        log::debug!(
-            "get_by_path_helper {} traversing children {}",
-            self,
-            self.children.len()
-        );
+        // log::debug!(
+        //     "get_by_path_helper {} traversing children {}",
+        //     self,
+        //     self.children.len()
+        // );
         for child in &self.children {
-            log::debug!("get_by_path_helper {} traversing child: {}", self, child);
+            // log::debug!("get_by_path_helper {} traversing child: {}", self, child);
             if let EMerkleTreeNode::Directory(dir_node) = &child.node {
                 if let Some(node) =
                     child.get_by_path_helper(&traversed_path.join(&dir_node.name), path)?
@@ -386,11 +391,11 @@ impl MerkleTreeNode {
                 return Ok(Some(node));
             }
         }
-        log::debug!(
-            "get_by_path_helper {} returning None for path: {:?}",
-            self,
-            path
-        );
+        // log::debug!(
+        //     "get_by_path_helper {} returning None for path: {:?}",
+        //     self,
+        //     path
+        // );
         Ok(None)
     }
 

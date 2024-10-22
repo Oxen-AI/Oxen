@@ -36,7 +36,11 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    log::debug!("add_row() got db_path: {:?}", db_path);
+    log::debug!(
+        "add_row() path: {:?} got db_path: {:?}",
+        row_changes_path,
+        db_path
+    );
     let conn = df_db::get_connection(db_path)?;
 
     let df = tabular::parse_json_to_df(data)?;

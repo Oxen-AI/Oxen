@@ -124,7 +124,11 @@ pub async fn download_node_with_children(
     let uri = format!("/tree/nodes/{node_hash_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading node {} from {}", node_hash_str, url);
+    log::debug!(
+        "downloading node with children {} from {}",
+        node_hash_str,
+        url
+    );
 
     node_download_request(local_repo, &url).await?;
 
@@ -138,26 +142,43 @@ pub async fn download_node_with_children(
     Ok(node)
 }
 
-/// Download a tree from the remote repository merkle tree by hash
+/// Downloads the full merkle tree from the remote repository
 pub async fn download_tree(
+    local_repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+) -> Result<(), OxenError> {
+    let uri = "/tree/download".to_string();
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    log::debug!("downloading tree from {}", url);
+
+    node_download_request(local_repo, &url).await?;
+
+    log::debug!("unpacked tree");
+
+    Ok(())
+}
+
+/// Downloads a tree from the remote repository merkle tree by hash
+pub async fn download_tree_from(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     hash: &MerkleHash,
 ) -> Result<MerkleTreeNode, OxenError> {
     let hash_str = hash.to_string();
-    let uri = format!("/tree/all/{hash_str}/download");
+    let uri = format!("/tree/download/{hash_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading tree {} from {}", hash_str, url);
+    log::debug!("downloading tree from {} {}", hash_str, url);
 
     node_download_request(local_repo, &url).await?;
 
-    log::debug!("unpacked tree {}", hash_str);
+    log::debug!("unpacked tree from {}", hash_str);
 
     // We just downloaded, so unwrap is safe
     let node = CommitMerkleTree::read_node(local_repo, hash, true)?.unwrap();
 
-    log::debug!("read tree root {}", node);
+    log::debug!("read tree root from {}", node);
 
     Ok(node)
 }

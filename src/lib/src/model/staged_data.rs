@@ -63,7 +63,7 @@ pub struct StagedData {
     pub staged_schemas: HashMap<PathBuf, StagedSchema>, // All the staged entrisumes will be in here
     pub untracked_dirs: Vec<(PathBuf, usize)>,
     pub untracked_files: Vec<PathBuf>,
-    pub modified_files: Vec<PathBuf>,
+    pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
     pub removed_files: HashSet<PathBuf>,
     pub merge_conflicts: Vec<EntryMergeConflict>,
@@ -77,7 +77,7 @@ impl StagedData {
             staged_schemas: HashMap::new(),
             untracked_dirs: vec![],
             untracked_files: vec![],
-            modified_files: vec![],
+            modified_files: HashSet::new(),
             removed_files: HashSet::new(),
             moved_files: vec![],
             merge_conflicts: vec![],
@@ -86,6 +86,7 @@ impl StagedData {
 
     pub fn is_clean(&self) -> bool {
         self.staged_files.is_empty()
+            && self.staged_dirs.is_empty()
             && self.staged_schemas.is_empty()
             && self.untracked_files.is_empty()
             && self.untracked_dirs.is_empty()
@@ -408,7 +409,7 @@ impl StagedData {
             outputs.push(format!("  {MSG_OXEN_ADD_FILE_EXAMPLE}").normal());
         }
 
-        let mut files = self.modified_files.clone();
+        let mut files: Vec<PathBuf> = self.modified_files.iter().cloned().collect();
         files.sort();
 
         self.__collapse_outputs(

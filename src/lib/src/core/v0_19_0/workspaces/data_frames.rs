@@ -35,7 +35,7 @@ pub fn get_queryable_data_frame_workspace(
     commit: &Commit,
 ) -> Result<Workspace, OxenError> {
     let path = path.as_ref();
-
+    log::debug!("get_queryable_data_frame_workspace path: {:?}", path);
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
         .ok_or(OxenError::path_does_not_exist(path))?;
     if file_node.data_type != EntryDataType::Tabular {
@@ -164,9 +164,14 @@ pub fn extract_file_node_to_working_dir(
     dir_path: impl AsRef<Path>,
     file_node: &FileNode,
 ) -> Result<PathBuf, OxenError> {
-    let workspace_repo = &workspace.workspace_repo;
     let dir_path = dir_path.as_ref();
-    let path = dir_path.join(file_node.name.clone());
+    log::debug!(
+        "extract_file_node_to_working_dir dir_path: {:?} file_node: {}",
+        dir_path,
+        file_node
+    );
+    let workspace_repo = &workspace.workspace_repo;
+    let path = PathBuf::from(file_node.name.clone());
 
     let working_path = workspace_repo.path.join(&path);
     log::debug!("extracting file node to working dir: {:?}", working_path);

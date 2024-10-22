@@ -32,6 +32,7 @@ use liboxen::util;
 use liboxen::view::branch::BranchName;
 use liboxen::view::commit::CommitSyncStatusResponse;
 use liboxen::view::commit::CommitTreeValidationResponse;
+use liboxen::view::commit::UploadCommitResponse;
 use liboxen::view::http::MSG_CONTENT_IS_INVALID;
 use liboxen::view::http::MSG_FAILED_PROCESS;
 use liboxen::view::http::MSG_INTERNAL_SERVER_ERROR;
@@ -515,6 +516,40 @@ pub async fn download_objects_db(
 }
 
 /// Download the database of all entries given a specific commit
+pub async fn download_dir_hashes_db(
+    req: HttpRequest,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    // base_head is the base and head commit id separated by ..
+    let base_head = path_param(&req, "base_head")?;
+    let repository = get_repo(&app_data.path, namespace, name)?;
+
+    // Let user pass in base..head to download a range of commits
+    // or we just get all the commits from the base commit to the first commit
+    let commits = if base_head.contains("..") {
+        let split = base_head.split("..").collect::<Vec<&str>>();
+        if split.len() != 2 {
+            return Err(OxenHttpError::BadRequest("Invalid base_head".into()));
+        }
+        let base_commit_id = split[0];
+        let head_commit_id = split[1];
+        let base_commit = repositories::revisions::get(&repository, base_commit_id)?
+            .ok_or(OxenError::revision_not_found(base_commit_id.into()))?;
+        let head_commit = repositories::revisions::get(&repository, head_commit_id)?
+            .ok_or(OxenError::revision_not_found(head_commit_id.into()))?;
+
+        repositories::commits::list_between(&repository, &base_commit, &head_commit)?
+    } else {
+        repositories::commits::list_from(&repository, &base_head)?
+    };
+    let buffer = compress_commits(&repository, &commits)?;
+
+    Ok(HttpResponse::Ok().body(buffer))
+}
+
+/// Download the database of all entries given a specific commit
 pub async fn download_commit_entries_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -526,16 +561,56 @@ pub async fn download_commit_entries_db(
 
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
         .ok_or(OxenError::revision_not_found(commit_or_branch.into()))?;
-
     let buffer = compress_commit(&repository, &commit)?;
 
     Ok(HttpResponse::Ok().body(buffer))
 }
 
+// Allow downloading of multiple commits for efficiency
+fn compress_commits(
+    repository: &LocalRepository,
+    commits: &[Commit],
+) -> Result<Vec<u8>, OxenError> {
+    // Tar and gzip all the commit dir_hashes db directories
+    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let mut tar = tar::Builder::new(enc);
+
+    let dirs_to_compress = vec![DIRS_DIR, DIR_HASHES_DIR];
+    log::debug!("Compressing {} commits", commits.len());
+    for commit in commits {
+        let commit_dir = util::fs::oxen_hidden_dir(&repository.path)
+            .join(HISTORY_DIR)
+            .join(commit.id.clone());
+        // This will be the subdir within the tarball
+        let tar_subdir = Path::new(HISTORY_DIR).join(commit.id.clone());
+
+        log::debug!("Compressing commit {} from dir {:?}", commit.id, commit_dir);
+
+        for dir in &dirs_to_compress {
+            let full_path = commit_dir.join(dir);
+            let tar_path = tar_subdir.join(dir);
+            if full_path.exists() {
+                tar.append_dir_all(&tar_path, full_path)?;
+            }
+        }
+    }
+    tar.finish()?;
+
+    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
+    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+    log::debug!(
+        "Compressed {} commits, size is {}",
+        commits.len(),
+        ByteSize::b(total_size)
+    );
+
+    Ok(buffer)
+}
+
 // Allow downloading of sub-dirs for efficiency
 fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<u8>, OxenError> {
     // Tar and gzip the commit db directory
-    // zip up the rocksdb in history dir, and post to server
+    // zip up the rocksdb in history dir, and download from server
     let commit_dir = util::fs::oxen_hidden_dir(&repository.path)
         .join(HISTORY_DIR)
         .join(commit.id.clone());
@@ -1075,7 +1150,12 @@ pub async fn upload(
     unpack_entry_tarball(&hidden_dir, &mut archive);
     // });
 
-    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
+    let commit = repositories::commits::get_by_id(&repo, &commit_id)?;
+
+    Ok(HttpResponse::Ok().json(UploadCommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
 }
 
 /// Notify that the push should be complete, and we should start doing our background processing
@@ -1330,6 +1410,7 @@ mod tests {
     use actix_web::{web, App};
     use flate2::write::GzEncoder;
     use flate2::Compression;
+    use liboxen::view::commit::UploadCommitResponse;
     use std::path::Path;
     use std::thread;
 
@@ -1337,7 +1418,7 @@ mod tests {
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
-    use liboxen::view::{CommitResponse, ListCommitResponse};
+    use liboxen::view::ListCommitResponse;
 
     use crate::app_data::OxenAppData;
     use crate::controllers;
@@ -1360,10 +1441,8 @@ mod tests {
 
         let body = to_bytes(resp.into_body()).await.unwrap();
         let text = std::str::from_utf8(&body).unwrap();
-        println!("Got response: {text}");
         let list: ListCommitResponse = serde_json::from_str(text)?;
-        // Plus the initial commit
-        assert_eq!(list.commits.len(), 1);
+        assert_eq!(list.commits.len(), 0);
 
         // cleanup
         util::fs::remove_dir_all(sync_dir)?;
@@ -1393,8 +1472,7 @@ mod tests {
         let body = to_bytes(resp.into_body()).await.unwrap();
         let text = std::str::from_utf8(&body).unwrap();
         let list: ListCommitResponse = serde_json::from_str(text)?;
-        // Plus the initial commit
-        assert_eq!(list.commits.len(), 3);
+        assert_eq!(list.commits.len(), 2);
 
         // cleanup
         util::fs::remove_dir_all(sync_dir)?;
@@ -1440,8 +1518,7 @@ mod tests {
         let body = to_bytes(resp.into_body()).await.unwrap();
         let text = std::str::from_utf8(&body).unwrap();
         let list: ListCommitResponse = serde_json::from_str(text)?;
-        // Plus the initial commit
-        assert_eq!(list.commits.len(), 3);
+        assert_eq!(list.commits.len(), 2);
 
         // cleanup
         util::fs::remove_dir_all(sync_dir)?;
@@ -1457,6 +1534,10 @@ mod tests {
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file)?;
+        repositories::commit(&repo, "First commit")?;
         let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
@@ -1552,13 +1633,17 @@ mod tests {
         let resp = actix_web::test::call_service(&app, req).await;
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&bytes).unwrap();
-        let resp: CommitResponse = serde_json::from_str(body)?;
+        let resp: UploadCommitResponse = serde_json::from_str(body)?;
+
+        let Some(commit) = resp.commit else {
+            return Err(OxenError::basic_str("Commit not found"));
+        };
 
         // Make sure commit gets populated
-        assert_eq!(resp.commit.id, commit.id);
-        assert_eq!(resp.commit.message, commit.message);
-        assert_eq!(resp.commit.author, commit.author);
-        assert_eq!(resp.commit.parent_ids.len(), commit.parent_ids.len());
+        assert_eq!(commit.id, commit.id);
+        assert_eq!(commit.message, commit.message);
+        assert_eq!(commit.author, commit.author);
+        assert_eq!(commit.parent_ids.len(), commit.parent_ids.len());
 
         // We unzip in a background thread, so give it a second
         thread::sleep(std::time::Duration::from_secs(1));

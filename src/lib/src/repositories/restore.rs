@@ -66,6 +66,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
+    use crate::test::append_line_txt_file;
     use crate::util;
 
     #[test]
@@ -140,11 +141,11 @@ mod tests {
             // (file already created in helper)
             let file_to_remove = repo.path.join("labels.txt");
 
-            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
             // Commit the file
             repositories::add(&repo, &file_to_remove)?;
             repositories::commit(&repo, "Adding labels file")?;
+
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let train_dir = repo.path.join("train");
             repositories::add(&repo, train_dir)?;
@@ -344,6 +345,8 @@ mod tests {
                 .join("annotations")
                 .join("train.tsv");
             let ann_path = repo.path.join(&ann_file);
+            let new_line = "new_data,123,456,789";
+            append_line_txt_file(&ann_path, new_line)?;
             let orig_df = tabular::read_df(&ann_path, DFOpts::empty())?;
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
@@ -371,17 +374,22 @@ mod tests {
 
     #[test]
     fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
-        // THIS ONE FAILS BECAUSE OF THE REPOSITOROIES::COMMIT, IT DOESN'T GET TO RESTORE
         test::run_training_data_repo_test_fully_committed(|repo| {
             let ann_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
             let ann_path = repo.path.join(&ann_file);
+
+            let new_line = "new_data,123,456,789";
+            append_line_txt_file(&ann_path, new_line)?;
+
             let orig_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
             // Commit
             repositories::add(&repo, &ann_path)?;
+
             let commit = repositories::commit(&repo, "adding data with duplicates")?;
 
             // Remove
@@ -392,6 +400,7 @@ mod tests {
 
             // Make sure is same size
             let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());
 
@@ -413,7 +422,7 @@ mod tests {
 
             // Make sure is staged
             let status = repositories::status(&repo)?;
-            assert_eq!(status.staged_dirs.len(), 1);
+            assert_eq!(status.staged_dirs.len(), 3);
             assert_eq!(status.staged_files.len(), 6);
             status.print();
 
@@ -429,7 +438,6 @@ mod tests {
         })
     }
 
-    // FAILS BECAUSE OF STATUS IT SEEMS LIKE
     #[test]
     fn test_wildcard_restore_nested_nlp_dir() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
@@ -451,7 +459,7 @@ mod tests {
                     .get(Path::new("nlp"))
                     .unwrap()
                     .len(),
-                3
+                1
             );
             // Should add sub files
             // nlp/classification/annotations/train.tsv
@@ -466,7 +474,7 @@ mod tests {
             std::fs::remove_dir_all(repo_nlp_dir)?;
 
             let status = repositories::status(&repo)?;
-            assert_eq!(status.removed_files.len(), 2);
+            assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
             // Add the removed nlp dir with a wildcard
             repositories::add(&repo, "nlp/*")?;

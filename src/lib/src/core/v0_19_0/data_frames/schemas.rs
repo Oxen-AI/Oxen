@@ -92,9 +92,10 @@ pub fn get_staged(
     path: impl AsRef<Path>,
 ) -> Result<Option<Schema>, OxenError> {
     let path = path.as_ref();
+    let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let key = path.to_string_lossy();
-    // log::debug!("str_json_db::get({:?}) from db {:?}", key, db.path());
     let db = get_staged_db(repo)?;
+    log::debug!("get_staged({:?}) from db {:?}", key, db.path());
     let bytes = key.as_bytes();
     match db.get(bytes) {
         Ok(Some(value)) => {
@@ -179,15 +180,10 @@ pub fn add_schema_metadata(
     let path = path.as_ref();
     let db = get_staged_db(repo)?;
 
-    // Get the FileNode from the CommitMerkleTree
-    let Some(commit) = repositories::commits::head_commit_maybe(repo)? else {
-        return Err(OxenError::basic_str(
-            "Cannot add metadata, no commits found.",
-        ));
-    };
     let key = path.to_string_lossy();
 
     let staged_merkle_tree_node = db.get(key.as_bytes())?;
+    let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
 
     let mut file_node = if let Some(staged_merkle_tree_node) = staged_merkle_tree_node {
         let staged_merkle_tree_node: StagedMerkleTreeNode =
@@ -195,9 +191,36 @@ pub fn add_schema_metadata(
                 .map_err(|_| OxenError::basic_str("Could not read staged merkle tree node"))?;
         staged_merkle_tree_node.node.file()?
     } else {
+        // Get the FileNode from the CommitMerkleTree
+        let Some(commit) = repositories::commits::head_commit_maybe(repo)? else {
+            return Err(OxenError::basic_str(
+                "Cannot add metadata, no commits found.",
+            ));
+        };
         let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, path)? else {
             return Err(OxenError::path_does_not_exist(path));
         };
+        let node = repositories::tree::get_node_by_path(repo, &commit, path)?.unwrap();
+        let mut parent_id = node.parent_id;
+        let mut dir_path = path.to_path_buf();
+        while let Some(current_parent_id) = parent_id {
+            if current_parent_id == MerkleHash::new(0) {
+                break;
+            }
+            let mut parent_node = MerkleTreeNode::from_hash(repo, &current_parent_id)?;
+            parent_id = parent_node.parent_id;
+            let EMerkleTreeNode::Directory(mut dir_node) = parent_node.node.clone() else {
+                continue;
+            };
+            dir_path = dir_path.parent().unwrap().to_path_buf();
+            dir_node.name = dir_path.to_string_lossy().to_string();
+            parent_node.node = EMerkleTreeNode::Directory(dir_node);
+            let staged_parent_node = StagedMerkleTreeNode {
+                status: StagedEntryStatus::Modified,
+                node: parent_node,
+            };
+            staged_nodes.insert(dir_path.clone(), staged_parent_node);
+        }
         file_node
     };
 
@@ -217,25 +240,8 @@ pub fn add_schema_metadata(
         node: staged_entry_node.clone(),
     };
 
-    let node = repositories::tree::get_node_by_path(repo, &commit, path)?.unwrap();
-    let mut parent_id = node.parent_id;
-    let mut staged_nodes = vec![];
-
-    while let Some(current_parent_id) = parent_id {
-        if current_parent_id == MerkleHash::new(0) {
-            break;
-        }
-        let parent_node = MerkleTreeNode::from_hash(repo, &current_parent_id)?;
-        parent_id = parent_node.parent_id;
-        let staged_parent_node = StagedMerkleTreeNode {
-            status: StagedEntryStatus::Unmodified,
-            node: parent_node,
-        };
-        staged_nodes.push(staged_parent_node);
-    }
-
-    for staged_node in staged_nodes.iter() {
-        let key = staged_node.node.hash.to_string();
+    for (path, staged_node) in staged_nodes.iter() {
+        let key = path.to_string_lossy();
         let mut buf = Vec::new();
         staged_node
             .serialize(&mut Serializer::new(&mut buf))
@@ -273,17 +279,13 @@ pub fn add_column_metadata(
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     let db = get_staged_db(repo)?;
     let path = path.as_ref();
+    let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let column = column.as_ref();
-    // Get the FileNode from the CommitMerkleTree
-    let Some(commit) = repositories::commits::head_commit_maybe(repo)? else {
-        return Err(OxenError::basic_str(
-            "Cannot add metadata, no commits found.",
-        ));
-    };
 
     let key = path.to_string_lossy();
 
     let staged_merkle_tree_node = db.get(key.as_bytes())?;
+    let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
 
     let mut file_node = if let Some(staged_merkle_tree_node) = staged_merkle_tree_node {
         let staged_merkle_tree_node: StagedMerkleTreeNode =
@@ -291,8 +293,36 @@ pub fn add_column_metadata(
                 .map_err(|_| OxenError::basic_str("Could not read staged merkle tree node"))?;
         staged_merkle_tree_node.node.file()?
     } else {
-        let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, path)? else {
-            return Err(OxenError::path_does_not_exist(path));
+        // Get the FileNode from the CommitMerkleTree
+        let Some(commit) = repositories::commits::head_commit_maybe(repo)? else {
+            return Err(OxenError::basic_str(
+                "Cannot add metadata, no commits found.",
+            ));
+        };
+        let node = repositories::tree::get_node_by_path(repo, &commit, &path)?.unwrap();
+        let mut parent_id = node.parent_id;
+        let mut dir_path = path.clone();
+        while let Some(current_parent_id) = parent_id {
+            if current_parent_id == MerkleHash::new(0) {
+                break;
+            }
+            let mut parent_node = MerkleTreeNode::from_hash(repo, &current_parent_id)?;
+            parent_id = parent_node.parent_id;
+            let EMerkleTreeNode::Directory(mut dir_node) = parent_node.node.clone() else {
+                continue;
+            };
+            dir_path = dir_path.parent().unwrap().to_path_buf();
+            dir_node.name = dir_path.to_string_lossy().to_string();
+            parent_node.node = EMerkleTreeNode::Directory(dir_node);
+            let staged_parent_node = StagedMerkleTreeNode {
+                status: StagedEntryStatus::Modified,
+                node: parent_node,
+            };
+            staged_nodes.insert(dir_path.clone(), staged_parent_node);
+        }
+
+        let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, &path)? else {
+            return Err(OxenError::path_does_not_exist(&path));
         };
         file_node
     };
@@ -310,7 +340,7 @@ pub fn add_column_metadata(
                     f.metadata = Some(metadata.to_owned());
                 }
             }
-            results.insert(path.to_path_buf(), m.tabular.schema.clone());
+            results.insert(path.clone(), m.tabular.schema.clone());
         }
         _ => {
             return Err(OxenError::path_does_not_exist(path));
@@ -322,25 +352,8 @@ pub fn add_column_metadata(
         node: MerkleTreeNode::from_file(file_node.clone()),
     };
 
-    let node = repositories::tree::get_node_by_path(repo, &commit, path)?.unwrap();
-    let mut parent_id = node.parent_id;
-    let mut staged_nodes = vec![];
-
-    while let Some(current_parent_id) = parent_id {
-        if current_parent_id == MerkleHash::new(0) {
-            break;
-        }
-        let parent_node = MerkleTreeNode::from_hash(repo, &current_parent_id)?;
-        parent_id = parent_node.parent_id;
-        let staged_parent_node = StagedMerkleTreeNode {
-            status: StagedEntryStatus::Unmodified,
-            node: parent_node,
-        };
-        staged_nodes.push(staged_parent_node);
-    }
-
-    for staged_node in staged_nodes.iter() {
-        let key = staged_node.node.hash.to_string();
+    for (path, staged_node) in staged_nodes.iter() {
+        let key = path.to_string_lossy();
         let mut buf = Vec::new();
         staged_node
             .serialize(&mut Serializer::new(&mut buf))

@@ -11,9 +11,39 @@ pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     pull_remote_branch(repo, &rb.remote, &rb.branch, false).await
 }
 
-pub async fn pull_shallow(repo: &LocalRepository) -> Result<(), OxenError> {
-    let pull_all = false;
-    repositories::pull_remote_branch(repo, DEFAULT_REMOTE_NAME, DEFAULT_BRANCH_NAME, pull_all).await
+pub async fn pull_shallow(
+    repo: &LocalRepository,
+    remote: impl AsRef<str>,
+    branch: impl AsRef<str>,
+) -> Result<(), OxenError> {
+    let remote = remote.as_ref();
+    let branch = branch.as_ref();
+    println!("🐂 oxen pull {} {}", remote, branch);
+
+    let remote = repo
+        .get_remote(remote)
+        .ok_or(OxenError::remote_not_set(remote))?;
+
+    let remote_repo = api::client::repositories::get_by_remote(&remote)
+        .await?
+        .ok_or(OxenError::remote_not_found(remote.clone()))?;
+
+    let rb = RemoteBranch {
+        remote: remote.to_string(),
+        branch: branch.to_string(),
+    };
+
+    let Some(branch) = api::client::branches::get_by_name(&remote_repo, &rb.branch).await? else {
+        return Err(OxenError::remote_branch_not_found(&rb.branch));
+    };
+
+    // Fetch all the tree nodes
+    fetch::fetch_tree_and_hashes_for_commit_id(repo, &remote_repo, &branch.commit_id).await?;
+
+    // Mark the repo as shallow, because we only fetched the commit history
+    repo.write_is_shallow(true)?;
+
+    Ok(())
 }
 
 pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {

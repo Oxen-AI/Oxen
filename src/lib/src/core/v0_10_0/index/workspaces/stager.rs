@@ -75,7 +75,7 @@ fn list_staged_entries(
             directory
         );
         if Path::new(".") == directory || path.starts_with(directory) {
-            status.modified_files.push(path.to_owned());
+            status.modified_files.insert(path.to_owned());
         }
     }
 

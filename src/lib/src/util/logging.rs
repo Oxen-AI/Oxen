@@ -21,14 +21,28 @@ pub fn init_logging() {
                 s.split(c).last().unwrap_or("")
             }
 
+            // Format the target to remove "liboxen::" prefix and replace "::" with "/"
+            fn format_target(target: &str) -> String {
+                target
+                    .strip_prefix("liboxen::")
+                    .unwrap_or(target)
+                    .rsplit_once("::")
+                    .map(|(path, _)| path.replace("::", "/"))
+                    .unwrap_or_else(|| target.replace("::", "/"))
+            }
+
+            let formatted_target = format_target(record.target());
+            let file_name = take_last(record.file().unwrap_or("unknown"), '/');
+            let line_number = record.line().unwrap_or(0);
+
             writeln!(
                 buf,
-                "[{}] {} - {} {}:{} {}",
+                "[{}] {} - {}/{}:{} {}",
                 record.level(),
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
-                record.target(),
-                take_last(record.file().unwrap_or("unknown"), '/'),
-                record.line().unwrap_or(0),
+                formatted_target,
+                file_name,
+                line_number,
                 record.args()
             )
         })

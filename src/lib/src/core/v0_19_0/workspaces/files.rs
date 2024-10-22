@@ -101,6 +101,7 @@ fn p_add_file(
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     process_add_file(
+        workspace_repo,
         &workspace_repo.path,
         &versions_path,
         &staged_db,
@@ -118,7 +119,11 @@ fn p_modify_file(
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&workspace_repo.path).join(STAGED_DIR);
-    log::debug!("p_modify_file staged db_path: {:?}", db_path);
+    log::debug!(
+        "p_modify_file path: {:?} staged db_path: {:?}",
+        path,
+        db_path
+    );
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
@@ -127,7 +132,9 @@ fn p_modify_file(
         maybe_file_node = repositories::tree::get_file_by_path(base_repo, head_commit, path)?;
     }
 
-    if let Some(file_node) = maybe_file_node {
+    if let Some(mut file_node) = maybe_file_node {
+        file_node.name = path.to_str().unwrap().to_string();
+        log::debug!("p_modify_file file_node: {}", file_node);
         add_file_node_to_staged_db(&staged_db, path, StagedEntryStatus::Modified, &file_node)
     } else {
         Err(OxenError::basic_str("file not found in head commit"))

@@ -492,12 +492,17 @@ mod tests {
                 .join("bounding_box.csv");
             let bbox_path = repo.path.join(&bbox_file);
 
+            // Stage the file
+            repositories::add(&repo, &bbox_path)?;
+
+            let status = repositories::status(&repo)?;
+            println!("status: {:?}", status);
+            status.print();
+
             // Add the schema
             let metadata = json!({
                 "root": "images"
             });
-            repositories::add(&repo, &bbox_path)?;
-
             repositories::data_frames::schemas::add_column_metadata(
                 &repo, &bbox_file, "file", &metadata,
             )?;
@@ -551,8 +556,16 @@ mod tests {
             // Commit the schema
             let commit = repositories::commit(&repo, "Adding metadata to file column")?;
 
+            let tree = repositories::tree::get_by_commit(&repo, &commit)?;
+            println!("TREE");
+            tree.print();
+
             // List the committed schemas
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
+            for (path, schema) in schemas.iter() {
+                println!("GOT SCHEMA {path:?} -> {schema:?}");
+            }
+
             assert_eq!(schemas.len(), 1);
             // assert_eq!(schema_ref, schemas.keys().next().unwrap().to_string_lossy());
             let schema = schemas.values().next().unwrap();

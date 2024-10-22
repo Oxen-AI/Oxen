@@ -1,14 +1,16 @@
 use flate2::read::GzDecoder;
-use std::path::PathBuf;
 use std::{fs::File, path::Path};
 use tar::Archive;
 
-use crate::command;
-use crate::opts::RestoreOpts;
+use crate::constants::DEFAULT_BRANCH_NAME;
 use crate::repositories;
 use crate::{error::OxenError, model::LocalRepository};
 
-pub fn load(src_path: &Path, dest_path: &Path, no_working_dir: bool) -> Result<(), OxenError> {
+pub async fn load(
+    src_path: &Path,
+    dest_path: &Path,
+    no_working_dir: bool,
+) -> Result<(), OxenError> {
     let done_msg: String = format!(
         "✅ Loaded {:?} to an oxen repo at {:?}",
         src_path, dest_path
@@ -41,22 +43,12 @@ pub fn load(src_path: &Path, dest_path: &Path, no_working_dir: bool) -> Result<(
     // Client repos - need to hydrate working dir from versions files
     let repo = LocalRepository::new(&dest_path)?;
 
-    let status = repositories::status(&repo)?;
-
-    // TODO: This logic can be simplified to restore("*") once wildcard changes are merged
-    let mut restore_opts = RestoreOpts {
-        path: PathBuf::from("/"),
-        staged: false,
-        is_remote: false,
-        source_ref: None,
-    };
-
     println!("🐂 Unpacking files to working directory {:?}", dest_path);
-    for path in status.removed_files {
-        println!("Restoring removed file: {:?}", path);
-        restore_opts.path = path;
-        command::restore(&repo, restore_opts.clone())?;
-    }
+    let branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?
+        .ok_or(OxenError::local_branch_not_found(DEFAULT_BRANCH_NAME))?;
+    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+        .ok_or(OxenError::commit_id_does_not_exist(&branch.commit_id))?;
+    repositories::branches::set_working_repo_to_commit(&repo, &commit, true).await?;
 
     println!("{done_msg}");
     Ok(())
@@ -66,7 +58,6 @@ pub fn load(src_path: &Path, dest_path: &Path, no_working_dir: bool) -> Result<(
 mod tests {
     use std::path::Path;
 
-    use crate::command;
     use crate::error::OxenError;
     use crate::model::LocalRepository;
     use crate::repositories;
@@ -85,7 +76,7 @@ mod tests {
 
             // Save to a path
             let save_path = repo.path.join(Path::new("backup.tar.gz"));
-            command::save(&repo, &save_path)?;
+            repositories::save(&repo, &save_path)?;
 
             assert!(save_path.exists());
 
@@ -96,10 +87,10 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_command_save_load_repo_with_working_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_command_save_load_repo_with_working_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            test::run_empty_dir_test_async(|dir| async move {
                 // Write one file
                 let hello_file = repo.path.join("hello.txt");
                 util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -109,11 +100,11 @@ mod tests {
 
                 // Save to a path
                 let save_path = dir.join(Path::new("backup.tar.gz"));
-                command::save(&repo, &save_path)?;
+                repositories::save(&repo, &save_path)?;
 
                 // Load from a path and hydrate
                 let loaded_repo_path = dir.join(Path::new("loaded_repo"));
-                command::load(&save_path, &loaded_repo_path, false)?;
+                repositories::load(&save_path, &loaded_repo_path, false).await?;
 
                 let hydrated_repo = LocalRepository::from_dir(&loaded_repo_path)?;
                 assert!(hydrated_repo.path.join("hello.txt").exists());
@@ -121,15 +112,17 @@ mod tests {
                 // Cleanup tarball
                 util::fs::remove_file(save_path)?;
 
-                Ok(())
+                Ok(dir)
             })
+            .await
         })
+        .await
     }
 
-    #[test]
-    fn test_command_save_load_repo_no_working_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_command_save_load_repo_no_working_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            test::run_empty_dir_test_async(|dir| async move {
                 // Write one file
                 let hello_file = repo.path.join("hello.txt");
                 util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -139,11 +132,11 @@ mod tests {
 
                 // Save to a path
                 let save_path = dir.join(Path::new("backup.tar.gz"));
-                command::save(&repo, &save_path)?;
+                repositories::save(&repo, &save_path)?;
 
                 // Load from a path and hydrate
                 let loaded_repo_path = dir.join(Path::new("loaded_repo"));
-                command::load(&save_path, &loaded_repo_path, true)?;
+                repositories::load(&save_path, &loaded_repo_path, true).await?;
 
                 let hydrated_repo = LocalRepository::from_dir(&loaded_repo_path)?;
 
@@ -157,15 +150,17 @@ mod tests {
                 // Cleanup tarball
                 util::fs::remove_file(save_path)?;
 
-                Ok(())
+                Ok(dir)
             })
+            .await
         })
+        .await
     }
 
-    #[test]
-    fn test_command_save_load_moved_and_removed() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_command_save_load_moved_and_removed() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            test::run_empty_dir_test_async(|dir| async move {
                 // Write one file
                 let hello_file = repo.path.join("hello.txt");
                 let goodbye_file = repo.path.join("goodbye.txt");
@@ -198,13 +193,17 @@ mod tests {
 
                 // Save to a path
                 let save_path = dir.join(Path::new("backup.tar.gz"));
-                command::save(&repo, &save_path)?;
+                repositories::save(&repo, &save_path)?;
 
                 // Load from a path and hydrate
                 let loaded_repo_path = dir.join(Path::new("loaded_repo"));
-                command::load(&save_path, &loaded_repo_path, false)?;
+                repositories::load(&save_path, &loaded_repo_path, false).await?;
 
                 let hydrated_repo = LocalRepository::from_dir(&loaded_repo_path)?;
+
+                // List files in repo
+                let files = util::fs::rlist_files_in_dir(&hydrated_repo.path);
+                println!("Files in hydrated repo: {:?}", files);
 
                 assert!(hydrated_repo.path.join("third.txt").exists());
                 assert!(hydrated_repo.path.join("hello_dir/hello.txt").exists());
@@ -214,8 +213,10 @@ mod tests {
                 // Cleanup tarball
                 util::fs::remove_file(save_path)?;
 
-                Ok(())
+                Ok(dir)
             })
+            .await
         })
+        .await
     }
 }

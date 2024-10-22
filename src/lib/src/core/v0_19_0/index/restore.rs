@@ -100,9 +100,46 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                     Err(e) => return Err(OxenError::basic_str(&e)),
                 }
             }
+
+            db.write(batch)?;
+            let mut parent_batch = WriteBatch::default();
+
+            let mut parent_path = PathBuf::from(&prefix);
+            while let Some(parent) = parent_path.parent() {
+                let parent_str = parent.to_string_lossy().into_owned();
+                let mut has_children = false;
+
+                for result in db.iterator(rocksdb::IteratorMode::From(
+                    parent_str.as_bytes(),
+                    rocksdb::Direction::Forward,
+                )) {
+                    match result {
+                        Ok((key, _)) => {
+                            let key_str = String::from_utf8_lossy(&key);
+                            if key_str.starts_with(&parent_str) && key_str != parent_str {
+                                has_children = true;
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+
+                if !has_children {
+                    parent_batch.delete(parent_str.as_bytes());
+                    log::debug!(
+                        "restore::restore_staged: removed parent directory with no children: {:?}",
+                        parent_str
+                    );
+                } else {
+                    break;
+                }
+
+                parent_path = parent.to_path_buf();
+            }
+            db.write(parent_batch)?;
         }
 
-        db.write(batch)?;
         log::debug!("restore::restore_staged: changes committed to the database");
     } else {
         log::debug!("restore::restore_staged: no staged database found");

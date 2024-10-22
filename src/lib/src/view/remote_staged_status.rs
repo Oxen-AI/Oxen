@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +113,10 @@ impl RemoteStagedStatus {
         RemoteStagedStatus::iter_to_meta_entry(repo, entries.keys())
     }
 
-    fn modified_to_meta_entry(repo: &LocalRepository, entries: &[PathBuf]) -> Vec<MetadataEntry> {
+    fn modified_to_meta_entry(
+        repo: &LocalRepository,
+        entries: &HashSet<PathBuf>,
+    ) -> Vec<MetadataEntry> {
         RemoteStagedStatus::iter_to_meta_entry(repo, entries.iter())
     }
 

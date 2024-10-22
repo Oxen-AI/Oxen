@@ -3,6 +3,7 @@ use std::path::Path;
 
 use glob::Pattern;
 
+use crate::core;
 use crate::core::refs::RefReader;
 use crate::core::v0_10_0::cache::cacher_status::CacherStatusType;
 use crate::error::OxenError;
@@ -69,9 +70,9 @@ pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     for branch in branches {
         let commit = get_by_id(repo, &branch.commit_id)?;
         if let Some(commit) = commit {
-            if latest_commit.is_none() {
-                latest_commit = Some(commit);
-            } else if commit.timestamp < latest_commit.as_ref().unwrap().timestamp {
+            if latest_commit.is_none()
+                || commit.timestamp < latest_commit.as_ref().unwrap().timestamp
+            {
                 latest_commit = Some(commit);
             }
         }
@@ -214,6 +215,32 @@ pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
         }
     }
     Ok(commits)
+}
+
+pub fn list_unsynced_from(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+) -> Result<HashSet<Commit>, OxenError> {
+    let revision = revision.as_ref();
+    let all_commits: HashSet<Commit> = list_from(repo, revision)?.into_iter().collect();
+    Ok(filter_unsynced(repo, all_commits))
+}
+
+pub fn list_unsynced(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
+    let all_commits = list_all(repo)?;
+    Ok(filter_unsynced(repo, all_commits))
+}
+
+fn filter_unsynced(repo: &LocalRepository, commits: HashSet<Commit>) -> HashSet<Commit> {
+    log::debug!("filter_unsynced filtering down from {}", commits.len());
+    let mut unsynced_commits = HashSet::new();
+    for commit in commits {
+        if !core::commit_sync_status::commit_is_synced(repo, &commit) {
+            unsynced_commits.insert(commit);
+        }
+    }
+    log::debug!("list_unsynced filtered down to {}", unsynced_commits.len());
+    unsynced_commits
 }
 
 fn list_all_recursive(
