@@ -13,4 +13,5 @@ pub struct EmbeddingColumnsResponse {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct IndexEmbeddingRequest {
     pub column: String,
+    pub use_background_thread: Option<bool>,
 }

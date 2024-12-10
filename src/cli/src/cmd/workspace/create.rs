@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
-use liboxen::api;
-use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::{api, repositories};
 use uuid::Uuid;
 
 use crate::cmd::RunCmd;
@@ -24,7 +23,6 @@ impl RunCmd for WorkspaceCreateCmd {
                 Arg::new("branch")
                     .long("branch")
                     .short('b')
-                    .default_value(DEFAULT_BRANCH_NAME)
                     .help("The branch to create the workspace from"),
             )
             .arg(
@@ -37,9 +35,15 @@ impl RunCmd for WorkspaceCreateCmd {
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
         let repo = LocalRepository::from_current_dir()?;
+        let Ok(Some(branch)) = repositories::branches::current_branch(&repo) else {
+            return Err(OxenError::basic_str(
+                "Cannot create workspace without a branch",
+            ));
+        };
 
-        let Some(branch_name) = args.get_one::<String>("branch") else {
-            return Err(OxenError::basic_str("Must supply branch"));
+        let branch_name = match args.get_one::<String>("branch") {
+            Some(branch_name) => branch_name,
+            None => &branch.name,
         };
 
         let default_name = "".to_string();

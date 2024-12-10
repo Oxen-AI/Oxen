@@ -50,7 +50,7 @@ pub async fn index(
         )));
     };
 
-    let uri = format!("/workspaces/{workspace_id}/data_frames/embeddings/{file_path_str}?use_background_thread={use_background_thread}");
+    let uri = format!("/workspaces/{workspace_id}/data_frames/embeddings/{file_path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("index_embeddings {url}");
 

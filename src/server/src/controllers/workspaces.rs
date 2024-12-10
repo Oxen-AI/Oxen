@@ -90,6 +90,50 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     }))
 }
 
+pub async fn create(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
+    let data = match data {
+        Ok(data) => data,
+        Err(err) => {
+            log::error!("Unable to parse body. Err: {}\n{}", err, body);
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+        }
+    };
+
+    let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
+        return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Branch not found")));
+    };
+
+    let workspace_id = &data.workspace_id;
+    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+
+    // Create the workspace
+    repositories::workspaces::create_with_name(
+        &repo,
+        &commit,
+        workspace_id,
+        data.name.clone(),
+        true,
+    )?;
+
+    Ok(HttpResponse::Ok().json(WorkspaceResponseView {
+        status: StatusMessage::resource_created(),
+        workspace: WorkspaceResponse {
+            id: workspace_id.clone(),
+            name: data.name.clone(),
+            commit: commit.into(),
+        },
+    }))
+}
+
 pub async fn list(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
