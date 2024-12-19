@@ -162,20 +162,6 @@ async fn save_parts(
                     f = web::block(move || f.write_all(&chunk).map(|_| f)).await??;
                 }
 
-                match repositories::workspaces::files::add(workspace, &filepath_cpy) {
-                    Ok(path) => {
-                        log::debug!(
-                            "workspace::files::save_parts added file to workspace: {:?}",
-                            path
-                        );
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "workspace::files::save_parts error adding file to workspace: {:?}",
-                            e
-                        );
-                    }
-                }
                 files.push(filepath_cpy);
             }
         }
