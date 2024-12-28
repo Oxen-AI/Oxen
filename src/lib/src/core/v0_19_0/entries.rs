@@ -49,19 +49,15 @@ pub fn get_file_merkle_tree_node(
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    let parent = path.as_ref().parent().unwrap_or(Path::new(""));
-    let parent_node = CommitMerkleTree::dir_with_children(repo, commit, parent)?;
-    let Some(parent_node) = parent_node else {
-        log::debug!("path has no parent: {:?}", path.as_ref());
+    let path = path.as_ref();
+    let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+    if dir_hashes.contains_key(path) {
+        // This is a directory, not a file
+        log::debug!("get_file_merkle_tree_node path is a directory: {:?}", path);
         return Ok(None);
-    };
+    }
 
-    let Some(file_name) = path.as_ref().file_name() else {
-        log::debug!("path has no file name: {:?}", path.as_ref());
-        return Ok(None);
-    };
-
-    let file_node = parent_node.get_by_path(file_name)?;
+    let file_node = CommitMerkleTree::read_file(repo, &dir_hashes, path)?;
     Ok(file_node)
 }
 
@@ -325,20 +321,20 @@ fn p_dir_entries(
 ) -> Result<(), OxenError> {
     let search_directory = search_directory.as_ref();
     let current_directory = current_directory.as_ref();
-    log::debug!(
-        "p_dir_entries current_directory {:?} search_directory {:?} node {}",
-        current_directory,
-        search_directory,
-        node
-    );
+    // log::debug!(
+    //     "p_dir_entries current_directory {:?} search_directory {:?} node {}",
+    //     current_directory,
+    //     search_directory,
+    //     node
+    // );
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
-                log::debug!(
-                    "p_dir_entries got vnode {:?} search_directory {:?}",
-                    current_directory,
-                    search_directory
-                );
+                // log::debug!(
+                //     "p_dir_entries got vnode {:?} search_directory {:?}",
+                //     current_directory,
+                //     search_directory
+                // );
                 p_dir_entries(
                     repo,
                     child,
@@ -350,17 +346,17 @@ fn p_dir_entries(
                 )?;
             }
             EMerkleTreeNode::Directory(child_dir) => {
-                log::debug!(
-                    "p_dir_entries current_directory {:?} search_directory {:?} child_dir {:?}",
-                    current_directory,
-                    search_directory,
-                    child_dir.name
-                );
+                // log::debug!(
+                //     "p_dir_entries current_directory {:?} search_directory {:?} child_dir {:?}",
+                //     current_directory,
+                //     search_directory,
+                //     child_dir.name
+                // );
                 if current_directory == search_directory && !child_dir.name.is_empty() {
-                    log::debug!(
-                        "p_dir_entries adding dir entry current_directory {:?}",
-                        current_directory
-                    );
+                    // log::debug!(
+                    //     "p_dir_entries adding dir entry current_directory {:?}",
+                    //     current_directory
+                    // );
                     let metadata = dir_node_to_metadata_entry(
                         repo,
                         child,
@@ -368,7 +364,7 @@ fn p_dir_entries(
                         found_commits,
                         true,
                     )?;
-                    log::debug!("p_dir_entries added dir entry {:?}", metadata);
+                    // log::debug!("p_dir_entries added dir entry {:?}", metadata);
                     entries.push(metadata.unwrap());
                 }
                 let current_directory = current_directory.join(&child_dir.name);
@@ -382,27 +378,27 @@ fn p_dir_entries(
                     entries,
                 )?;
             }
-            EMerkleTreeNode::File(child_file) => {
-                log::debug!(
-                    "p_dir_entries current_directory {:?} search_directory {:?} child_file {:?}",
-                    current_directory,
-                    search_directory,
-                    child_file.name
-                );
+            EMerkleTreeNode::File(_child_file) => {
+                // log::debug!(
+                //     "p_dir_entries current_directory {:?} search_directory {:?} child_file {:?}",
+                //     current_directory,
+                //     search_directory,
+                //     child_file.name
+                // );
 
                 if current_directory == search_directory {
-                    log::debug!(
-                        "p_dir_entries adding file entry current_directory {:?} file_name {:?}",
-                        current_directory,
-                        child_file.name
-                    );
+                    // log::debug!(
+                    //     "p_dir_entries adding file entry current_directory {:?} file_name {:?}",
+                    //     current_directory,
+                    //     child_file.name
+                    // );
                     let metadata =
                         file_node_to_metadata_entry(repo, child, parsed_resource, found_commits)?;
-                    log::debug!(
-                        "p_dir_entries added file entry {:?} file_name {:?}",
-                        metadata,
-                        child_file.name
-                    );
+                    // log::debug!(
+                    //     "p_dir_entries added file entry {:?} file_name {:?}",
+                    //     metadata,
+                    //     child_file.name
+                    // );
                     entries.push(metadata.unwrap());
                 }
             }

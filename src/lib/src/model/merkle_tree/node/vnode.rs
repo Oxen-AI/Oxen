@@ -12,6 +12,7 @@ use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkle
 pub struct VNode {
     pub hash: MerkleHash,
     pub node_type: MerkleTreeNodeType,
+    pub num_entries: Option<u64>,
 }
 
 impl VNode {
@@ -26,6 +27,7 @@ impl Default for VNode {
         VNode {
             node_type: MerkleTreeNodeType::VNode,
             hash: MerkleHash::new(0),
+            num_entries: None,
         }
     }
 }

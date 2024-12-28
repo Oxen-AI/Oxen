@@ -171,7 +171,7 @@ pub fn list_missing_file_hashes(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
-    let Some(node) = CommitMerkleTree::read_node(repo, hash, false)? else {
+    let Some(node) = CommitMerkleTree::read_depth(repo, hash, 1)? else {
         return Err(OxenError::basic_str(format!("Node {} not found", hash)));
     };
     node.list_missing_file_hashes(repo)

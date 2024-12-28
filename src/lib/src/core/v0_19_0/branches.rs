@@ -421,8 +421,10 @@ pub fn restore_file(
     let version_path = util::fs::version_path_from_hash(repo, file_node.hash.to_string());
     if !version_path.exists() {
         return Err(OxenError::basic_str(format!(
-            "Source file not found in versions directory: {:?}",
-            version_path
+            "Restoring file, source file {} not found in versions directory: {:?} when restoring to {:?}",
+            file_node.name,
+            version_path,
+            dst_path
         )));
     }
 

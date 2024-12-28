@@ -32,6 +32,7 @@ use crate::model::NewCommitBody;
 use crate::model::User;
 use crate::model::{Commit, LocalRepository, StagedEntryStatus};
 
+use crate::util::hasher;
 use crate::{repositories, util};
 use std::str::FromStr;
 
@@ -661,7 +662,16 @@ fn split_into_vnodes(
 
         // Split entries into vnodes
         for child in children.into_iter() {
-            let bucket = child.node.hash.to_u128() % num_vnodes;
+            // let bucket = child.node.hash.to_u128() % num_vnodes;
+            let bucket = hasher::hash_buffer_128bit(
+                child
+                    .node
+                    .maybe_path()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .as_bytes(),
+            ) % num_vnodes;
             vnode_children[bucket as usize].entries.push(child.clone());
         }
 
@@ -808,6 +818,7 @@ fn r_create_dir_node(
     for vnode in vnodes.iter() {
         let vnode_obj = VNode {
             hash: vnode.id,
+            num_entries: Some(vnode.entries.len() as u64),
             ..Default::default()
         };
         if let Some(dir_db) = maybe_dir_db {

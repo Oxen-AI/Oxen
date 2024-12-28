@@ -17,7 +17,7 @@ use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
-use crate::util;
+use crate::util::{self, hasher};
 
 use std::str::FromStr;
 
@@ -266,7 +266,7 @@ impl CommitMerkleTree {
         let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
 
         CommitMerkleTree::read_children_until_depth(repo, &mut node_db, &mut node, depth, 0)?;
-        // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
+        log::debug!("Read depth {} node done: {:?}", depth, node.hash);
         Ok(Some(node))
     }
 
@@ -297,7 +297,11 @@ impl CommitMerkleTree {
                 }
             }
         }
-        // log::debug!("read dir_hashes: {:?}", dir_hashes);
+        log::debug!(
+            "read {} dir_hashes from commit: {}",
+            dir_hashes.len(),
+            commit
+        );
         Ok(dir_hashes)
     }
 
@@ -534,12 +538,12 @@ impl CommitMerkleTree {
         let parent_path = path.parent().unwrap();
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
-        // log::debug!(
-        //     "read_file path {:?} parent_path {:?} file_name {:?}",
-        //     path,
-        //     parent_path,
-        //     file_name
-        // );
+        log::debug!(
+            "read_file path {:?} parent_path {:?} file_name {:?}",
+            path,
+            parent_path,
+            file_name
+        );
 
         // Look up the directory hash
         let node_hash: Option<MerkleHash> = dir_hashes.get(parent_path).cloned();
@@ -547,16 +551,51 @@ impl CommitMerkleTree {
             return Ok(None);
         };
 
-        // Read the directory node at depth 1 to get all the vnodes and their children
-        let Some(dir_node) = CommitMerkleTree::read_depth(repo, &node_hash, 1)? else {
+        // log::debug!("read_file parent node_hash: {:?}", node_hash);
+
+        // Read the directory node at depth 0 to get all the vnodes
+        let merkle_node = CommitMerkleTree::read_depth(repo, &node_hash, 0)?;
+        let Some(merkle_node) = merkle_node else {
             return Ok(None);
         };
-        // log::debug!(
-        //     "read_file got {} dir_node children",
-        //     dir_node.children.len()
-        // );
 
-        dir_node.get_by_path(file_name)
+        // log::debug!("read_file merkle_node: {:?}", merkle_node);
+
+        let vnodes = merkle_node.children;
+
+        // log::debug!("read_file vnodes: {}", vnodes.len());
+
+        // Calculate the total number of children in the vnodes
+        // And use this to skip to the correct vnode
+        let total_children = vnodes
+            .iter()
+            .map(|vnode| vnode.vnode().unwrap().num_entries.unwrap())
+            .sum::<u64>();
+        let vnode_size = repo.vnode_size();
+        let num_vnodes = (total_children as f32 / vnode_size as f32).ceil() as u128;
+
+        // log::debug!("read_file total_children: {}", total_children);
+        // log::debug!("read_file vnode_size: {}", vnode_size);
+        // log::debug!("read_file num_vnodes: {}", num_vnodes);
+
+        // Calculate the bucket to skip to based on the path and the number of vnodes
+        let bucket = hasher::hash_buffer_128bit(path.to_str().unwrap().as_bytes()) % num_vnodes;
+
+        // log::debug!("read_file bucket: {}", bucket);
+
+        // We did not load recursively, so we need to load the children for the specific vnode
+        let vnode_without_children = &vnodes[bucket as usize];
+
+        // Load the children for the vnode
+        let vnode_with_children =
+            CommitMerkleTree::read_depth(repo, &vnode_without_children.hash, 0)?;
+        // log::debug!("read_file vnode_with_children: {:?}", vnode_with_children);
+        let Some(vnode_with_children) = vnode_with_children else {
+            return Ok(None);
+        };
+
+        // Get the file node from the vnode, which does a binary search under the hood
+        vnode_with_children.get_by_path(file_name)
     }
 
     fn read_children_until_depth(
@@ -582,12 +621,12 @@ impl CommitMerkleTree {
         }
 
         let children: Vec<(MerkleHash, MerkleTreeNode)> = node_db.map()?;
-        // log::debug!(
-        //     "read_children_until_depth requested_depth {} traversed_depth {} Got {} children",
-        //     requested_depth,
-        //     traversed_depth,
-        //     children.len()
-        // );
+        log::debug!(
+            "read_children_until_depth requested_depth {} traversed_depth {} Got {} children",
+            requested_depth,
+            traversed_depth,
+            children.len()
+        );
 
         for (_key, child) in children {
             let mut child = child.to_owned();
@@ -650,21 +689,23 @@ impl CommitMerkleTree {
         recurse: bool,
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
-        // log::debug!(
-        //     "read_children_from_node tree_db_dir: {:?} dtype {:?}",
-        //     node_db.path(),
-        //     dtype
-        // );
+        log::debug!(
+            "read_children_from_node tree_db_dir: {:?} dtype {:?} recurse {}",
+            node_db.path(),
+            dtype,
+            recurse
+        );
 
         if dtype != MerkleTreeNodeType::Commit
             && dtype != MerkleTreeNodeType::Dir
             && dtype != MerkleTreeNodeType::VNode
+            || !recurse
         {
             return Ok(());
         }
 
         let children: Vec<(MerkleHash, MerkleTreeNode)> = node_db.map()?;
-        // log::debug!("read_children_from_node Got {} children", children.len());
+        log::debug!("read_children_from_node Got {} children", children.len());
 
         for (_key, child) in children {
             let mut child = child.to_owned();

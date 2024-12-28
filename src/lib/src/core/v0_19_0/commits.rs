@@ -156,10 +156,10 @@ pub fn get_by_id(
 ) -> Result<Option<Commit>, OxenError> {
     let commit_id_str = commit_id_str.as_ref();
     let Ok(commit_id) = MerkleHash::from_str(commit_id_str) else {
-        log::debug!(
-            "get_by_id could not create commit_id from [{}]",
-            commit_id_str
-        );
+        // log::debug!(
+        //     "get_by_id could not create commit_id from [{}]",
+        //     commit_id_str
+        // );
         return Ok(None);
     };
     get_by_hash(repo, &commit_id)

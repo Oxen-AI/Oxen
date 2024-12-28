@@ -200,6 +200,10 @@ async fn push_commits(
         let sub_tree = CommitMerkleTree::from_commit(repo, commit)?;
         sub_tree.walk_tree_without_leaves(|node| {
             candidate_nodes.insert(node.clone());
+            progress.set_message(format!(
+                "Collecting missing nodes... {}",
+                candidate_nodes.len()
+            ));
         });
     }
     log::debug!(
@@ -230,7 +234,7 @@ async fn push_commits(
         .collect();
     log::debug!("push_commits missing_nodes count: {}", missing_nodes.len());
     progress.set_message(format!("Pushing {} nodes...", missing_nodes.len()));
-    api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone()).await?;
+    api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
 
     // Create the dir hashes for the missing commits
     api::client::commits::post_commits_dir_hashes_to_server(repo, remote_repo, &commits).await?;

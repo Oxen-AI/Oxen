@@ -5,12 +5,14 @@ use flate2::Compression;
 use futures_util::TryStreamExt;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time;
 
 use crate::api::client;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::v0_19_0::index::merkle_node_db::node_db_path;
 use crate::core::v0_19_0::index::CommitMerkleTree;
+use crate::core::v0_19_0::structs::PushProgress;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{Commit, LocalRepository, MerkleHash, RemoteRepository};
@@ -52,11 +54,13 @@ pub async fn create_nodes(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     nodes: HashSet<MerkleTreeNode>,
+    progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     // Compress the node
     let enc = GzEncoder::new(Vec::new(), Compression::default());
     let mut tar = tar::Builder::new(enc);
-    for node in nodes {
+    let mut children_count = 0;
+    for (i, node) in nodes.iter().enumerate() {
         let node_dir = node_db_path(local_repo, &node.hash);
         let tree_dir = local_repo
             .path
@@ -69,7 +73,15 @@ pub async fn create_nodes(
             sub_dir,
             node_dir
         );
+        progress.set_message(format!(
+            "Packing {}/{} nodes with {} children",
+            i + 1,
+            nodes.len(),
+            children_count
+        ));
+
         tar.append_dir_all(sub_dir, node_dir)?;
+        children_count += node.children.len();
     }
 
     tar.finish()?;

@@ -367,6 +367,7 @@ pub async fn maybe_fetch_missing_entries(
 
     // TODO: what should we print here? If there is nothing to pull, we
     // shouldn't show the PullProgress
+    log::debug!("Fetching missing entries for commit {}", commit);
 
     // Keep track of how many bytes we have downloaded
     let pull_progress = Arc::new(PullProgress::new());
@@ -392,6 +393,12 @@ async fn r_download_entries(
     directory: &Path,
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
+    log::debug!(
+        "fetch r_download_entries ({}) {:?} {:?}",
+        node.children.len(),
+        node.hash,
+        node.node
+    );
     for child in &node.children {
         let mut new_directory = directory.to_path_buf();
         if let EMerkleTreeNode::Directory(dir_node) = &child.node {

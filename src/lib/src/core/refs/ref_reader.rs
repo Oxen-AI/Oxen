@@ -161,7 +161,7 @@ impl RefReader {
     }
 
     pub fn get_branch_by_name(&self, name: &str) -> Result<Option<Branch>, OxenError> {
-        log::debug!("get_branch_by_name {name}");
+        // log::debug!("get_branch_by_name {name}");
         match self.get_commit_id_for_branch(name) {
             Ok(Some(commit_id)) => Ok(Some(Branch {
                 name: name.to_string(),

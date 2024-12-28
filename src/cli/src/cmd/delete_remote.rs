@@ -35,6 +35,12 @@ impl RunCmd for DeleteRemoteCmd {
                 .action(clap::ArgAction::Set),
         )
         .arg(
+            Arg::new("scheme")
+                .long("scheme")
+                .help("The scheme for the url of the remote repository. For example: 'https' or 'http'")
+                .action(clap::ArgAction::Set),
+        )
+        .arg(
             Arg::new("yes")
                 .long("yes")
                 .short('y')
@@ -55,10 +61,14 @@ impl RunCmd for DeleteRemoteCmd {
             .get_one::<String>("host")
             .map(String::from)
             .unwrap_or(DEFAULT_HOST.to_string());
+        // Default scheme
+        let scheme = args
+            .get_one::<String>("scheme")
+            .map(String::from)
+            .unwrap_or("https".to_string());
 
-        let Some(remote_repo) =
-            api::client::repositories::get_by_name_and_host(namespace_name, host).await?
-        else {
+        let url = format!("{}://{host}/{namespace_name}", scheme);
+        let Some(remote_repo) = api::client::repositories::get_by_url(&url).await? else {
             return Err(OxenError::basic_str(format!(
                 "Remote repository not found: {namespace_name}"
             )));
