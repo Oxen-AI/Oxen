@@ -1,6 +1,6 @@
 [package]
 name = "liboxen"
-version = "0.24.2"
+version = "0.24.3"
 edition = "2021"
 license-file = "LICENSE"
 description = "Oxen is a fast, unstructured data version control, to help version datasets, written in Rust."

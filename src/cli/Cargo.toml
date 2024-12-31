@@ -1,6 +1,6 @@
 [package]
 name = "oxen-cli"
-version = "0.24.2"
+version = "0.24.3"
 edition = "2021"
 
 [dependencies]

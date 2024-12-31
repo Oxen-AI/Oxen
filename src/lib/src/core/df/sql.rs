@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::core::df::tabular;
 use crate::model::LocalRepository;
 use crate::opts::DFOpts;
 use crate::repositories;
@@ -30,7 +31,11 @@ pub fn query_df_from_repo(
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
     let mut conn = df_db::get_connection(db_path)?;
-    query_df(&mut conn, sql, Some(opts))
+    let df = query_df(&mut conn, sql, Some(opts))?;
+
+    // If we are doing this from the CLI, we don't want to export the hidden Oxen columns
+    let df = tabular::strip_excluded_cols(df)?;
+    Ok(df)
 }
 
 pub fn query_df(
