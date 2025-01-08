@@ -71,7 +71,7 @@ mod tests {
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
             // Add-commit
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
             repositories::commit(&repo, "Adding hello file")?;
 
             // Save to a path
@@ -95,7 +95,7 @@ mod tests {
                 let hello_file = repo.path.join("hello.txt");
                 util::fs::write_to_path(&hello_file, "Hello World")?;
                 // Add-commit
-                repositories::add(&repo, &hello_file)?;
+                repositories::add(&repo, &hello_file, false)?;
                 repositories::commit(&repo, "Adding hello file")?;
 
                 // Save to a path
@@ -127,7 +127,7 @@ mod tests {
                 let hello_file = repo.path.join("hello.txt");
                 util::fs::write_to_path(&hello_file, "Hello World")?;
                 // Add-commit
-                repositories::add(&repo, &hello_file)?;
+                repositories::add(&repo, &hello_file, false)?;
                 repositories::commit(&repo, "Adding hello file")?;
 
                 // Save to a path
@@ -167,8 +167,8 @@ mod tests {
                 util::fs::write_to_path(&hello_file, "Hello World")?;
                 util::fs::write_to_path(&goodbye_file, "Goodbye World")?;
                 // Add-commit
-                repositories::add(&repo, &hello_file)?;
-                repositories::add(&repo, &goodbye_file)?;
+                repositories::add(&repo, &hello_file, false)?;
+                repositories::add(&repo, &goodbye_file, false)?;
                 repositories::commit(&repo, "Adding hello file")?;
 
                 // Move hello into a folder
@@ -185,10 +185,10 @@ mod tests {
                 util::fs::write_to_path(&third_file, "Third File")?;
 
                 // Add-commit
-                repositories::add(&repo, &moved_hello)?;
-                repositories::add(&repo, &hello_file)?;
-                repositories::add(&repo, &goodbye_file)?;
-                repositories::add(&repo, &third_file)?;
+                repositories::add(&repo, &moved_hello, false)?;
+                repositories::add(&repo, &hello_file, false)?;
+                repositories::add(&repo, &goodbye_file, false)?;
+                repositories::add(&repo, &third_file, false)?;
                 repositories::commit(&repo, "Moving hello file")?;
 
                 // Save to a path

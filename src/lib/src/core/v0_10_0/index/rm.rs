@@ -67,7 +67,7 @@ fn rm_dir(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     }
 
     // Stage all the removed files
-    repositories::add(repo, &full_path)?;
+    repositories::add(repo, &full_path, false)?;
 
     Ok(())
 }
@@ -127,7 +127,7 @@ fn rm_file(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     }
 
     // Stage the removed file
-    repositories::add(repo, &full_path)?;
+    repositories::add(repo, &full_path, false)?;
 
     Ok(())
 }

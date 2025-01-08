@@ -494,7 +494,7 @@ mod tests {
             util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
 
             // Add and commit all
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             // List files
@@ -508,7 +508,7 @@ mod tests {
             util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
 
             // Add and commit all
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding additional file")?;
 
             let files = repositories::tree::list_tabular_files_in_repo(&repo, &commit)?;
@@ -543,8 +543,8 @@ mod tests {
             test::write_txt_file_to_path(&path_1, common_contents)?;
             test::write_txt_file_to_path(&path_2, common_contents)?;
 
-            repositories::add(&local_repo, &path_1)?;
-            repositories::add(&local_repo, &path_2)?;
+            repositories::add(&local_repo, &path_1, false)?;
+            repositories::add(&local_repo, &path_2, false)?;
 
             let status = repositories::status(&local_repo)?;
 

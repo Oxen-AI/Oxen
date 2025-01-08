@@ -5,4 +5,5 @@ pub struct AddOpts {
     pub paths: Vec<PathBuf>,
     pub directory: Option<PathBuf>,
     pub is_remote: bool,
+    pub is_cli: bool,
 }

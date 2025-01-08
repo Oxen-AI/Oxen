@@ -379,7 +379,7 @@ mod tests {
                 opts.add_col = Some("is_something:n/a:str".to_string());
                 opts.output = Some(full_path.to_path_buf()); // write back to same path
                 command::df(&full_path, opts)?;
-                repositories::add(&cloned_repo, &full_path)?;
+                repositories::add(&cloned_repo, &full_path, false)?;
 
                 // Commit and push the changed schema
                 repositories::commit(&cloned_repo, "Changed the schema 😇")?;

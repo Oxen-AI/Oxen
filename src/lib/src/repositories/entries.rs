@@ -420,7 +420,7 @@ mod tests {
             let file_to_add = repo.path.join("labels.txt");
 
             // Commit the file
-            repositories::add(&repo, file_to_add)?;
+            repositories::add(&repo, file_to_add, false)?;
             let commit = repositories::commit(&repo, "Adding labels file")?;
 
             let entries = repositories::entries::list_for_commit(&repo, &commit)?;
@@ -437,7 +437,7 @@ mod tests {
             let file_to_add = repo.path.join("labels.txt");
 
             // Commit the file
-            repositories::add(&repo, file_to_add)?;
+            repositories::add(&repo, file_to_add, false)?;
             let commit = repositories::commit(&repo, "Adding labels file")?;
 
             let count = repositories::entries::count_for_commit(&repo, &commit)?;
@@ -455,7 +455,7 @@ mod tests {
             let num_files = util::fs::rcount_files_in_dir(&dir_to_add);
 
             // Commit the dir
-            repositories::add(&repo, &dir_to_add)?;
+            repositories::add(&repo, &dir_to_add, false)?;
             let commit = repositories::commit(&repo, "Adding training data")?;
             let count = repositories::entries::count_for_commit(&repo, &commit)?;
             assert_eq!(count, num_files);
@@ -471,7 +471,7 @@ mod tests {
             let num_files = util::fs::rcount_files_in_dir(&repo.path);
 
             // Commit the dir
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all data")?;
 
             let count = repositories::entries::count_for_commit(&repo, &commit)?;
@@ -657,7 +657,7 @@ mod tests {
             util::fs::write(filepath, "readme....")?;
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 1;
@@ -694,7 +694,7 @@ mod tests {
             }
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 2;
@@ -739,7 +739,7 @@ mod tests {
             }
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 11;
@@ -792,7 +792,7 @@ mod tests {
             util::fs::write(filepath, "readme....")?;
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 2;
@@ -837,7 +837,7 @@ mod tests {
             util::fs::write(filepath, "readme....")?;
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 1;
@@ -882,7 +882,7 @@ mod tests {
             util::fs::write(filepath, "readme....")?;
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 1;
@@ -928,7 +928,7 @@ mod tests {
             }
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 1;
@@ -970,7 +970,7 @@ mod tests {
             }
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 2;
@@ -1017,7 +1017,7 @@ mod tests {
             }
 
             // Add and commit all the dirs and files
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             let page_number = 2;
@@ -1085,7 +1085,7 @@ mod tests {
             util::fs::write(filepath, "readme....")?;
 
             // Add and commit all
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             // Get the metadata entries for the two dataframes

@@ -829,7 +829,7 @@ mod tests {
         liboxen::test::write_txt_file_to_path(path1, csv1)?;
         liboxen::test::write_txt_file_to_path(path2, csv2)?;
 
-        repositories::add(&repo, &repo.path)?;
+        repositories::add(&repo, &repo.path, false)?;
 
         repositories::status(&repo)?;
 

@@ -187,7 +187,7 @@ mod tests {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file, false)?;
             repositories::commit(&repo, "Added a new file")?;
 
             repositories::branches::create_from_head(&repo, "feature/add-something")?;

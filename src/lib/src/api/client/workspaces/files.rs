@@ -66,7 +66,11 @@ fn resolve_remote_add_file_path(
         Ok(path) => {
             if util::fs::file_exists_in_directory(&repo.path, &path) {
                 // Path is in the repo, so we get the remote directory from the repo path
-                let relative_to_repo = util::fs::path_relative_to_dir(&path, &repo.path)?;
+                let relative_to_repo = if opts.is_cli {
+                    util::fs::path_relative_to_canon_dir(&path, &repo.path)? 
+                } else {
+                    util::fs::path_relative_to_dir(&path, &repo.path)?
+                };
                 let remote_directory = relative_to_repo
                     .parent()
                     .ok_or_else(|| OxenError::file_has_no_parent(&path))?;

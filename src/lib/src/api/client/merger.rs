@@ -82,7 +82,7 @@ mod tests {
             repositories::checkout(&local_repo, base).await?;
             let path = local_repo.path.join("file_1.txt");
             test::write_txt_file_to_path(&path, "hello")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
             repositories::commit(&local_repo, "adding file 1")?;
             repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, base).await?;
 
@@ -108,17 +108,17 @@ mod tests {
             // Modify README.md
             let path = local_repo.path.join("README.md");
             test::write_txt_file_to_path(&path, "I am the README now")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
 
             // Commit twice
             let path = local_repo.path.join("file_1.txt");
             test::write_txt_file_to_path(&path, "hello")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
             repositories::commit(&local_repo, "adding file 1")?;
 
             let path = local_repo.path.join("file_2.txt");
             test::write_txt_file_to_path(&path, "world")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
             repositories::commit(&local_repo, "adding file 2")?;
 
             // Push commits
@@ -152,17 +152,17 @@ mod tests {
             // Modify README.md to have a conflict
             let path = local_repo.path.join("README.md");
             test::write_txt_file_to_path(&path, "I am the README now")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
 
             // Commit twice
             let path = local_repo.path.join("file_1.txt");
             test::write_txt_file_to_path(&path, "hello")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
             repositories::commit(&local_repo, "adding file 1")?;
 
             let path = local_repo.path.join("file_2.txt");
             test::write_txt_file_to_path(&path, "world")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
             repositories::commit(&local_repo, "adding file 2")?;
 
             // Push commits
@@ -173,7 +173,7 @@ mod tests {
             repositories::checkout(&local_repo, base).await?;
             let path = local_repo.path.join("README.md");
             test::write_txt_file_to_path(&path, "I am on main conflicting the README")?;
-            repositories::add(&local_repo, &path)?;
+            repositories::add(&local_repo, &path, false)?;
             repositories::commit(&local_repo, "modifying readme on main")?;
 
             repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, base).await?;

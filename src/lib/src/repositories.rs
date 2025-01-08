@@ -389,7 +389,7 @@ pub fn create(root_dir: &Path, new_repo: RepoNew) -> Result<LocalRepositoryWithE
                     util::fs::write(&full_path, bytes)?;
                 }
             }
-            add(&local_repo, &full_path)?;
+            add(&local_repo, &full_path, false)?;
         }
 
         commit = Some(core::v0_19_0::commits::commit_with_user(

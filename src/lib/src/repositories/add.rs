@@ -36,18 +36,19 @@ use std::path::Path;
 /// # Ok(())
 /// # }
 /// ```
-pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
-    add_with_version(repo, path, repo.min_version())
+pub fn add(repo: &LocalRepository, path: impl AsRef<Path>, is_cli: bool) -> Result<(), OxenError> {
+    add_with_version(repo, path, repo.min_version(), is_cli)
 }
 
 pub fn add_with_version(
     repo: &LocalRepository,
     path: impl AsRef<Path>,
     version: MinOxenVersion,
+    is_cli: bool,
 ) -> Result<(), OxenError> {
     match version {
         MinOxenVersion::V0_10_0 => core::v0_10_0::add::add(repo, path),
-        MinOxenVersion::V0_19_0 => core::v0_19_0::add::add(repo, path),
+        MinOxenVersion::V0_19_0 => core::v0_19_0::add::add(repo, path, is_cli),
     }
 }
 
@@ -79,7 +80,7 @@ mod tests {
                     &hello_file,
                     "Oxen.ai is the best data version control system.",
                 )?;
-                repositories::add(&local_repo, &hello_file)?;
+                repositories::add(&local_repo, &hello_file, false)?;
 
                 // Get the status and make sure the file is staged
                 let status = repositories::status(&local_repo)?;
@@ -117,7 +118,7 @@ Q: What is the best data version control system?
 A: Oxen.ai
 ",
                 )?;
-                repositories::add(&local_repo, &readme_file)?;
+                repositories::add(&local_repo, &readme_file, false)?;
 
                 // Get the status and make sure the file is staged
                 let status = repositories::status(&local_repo)?;
@@ -145,7 +146,7 @@ A: Oxen.ai
             util::fs::write_to_path(&hello_file, "Hello World")?;
 
             // Track the file
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
             // Get status and make sure it is removed from the untracked, and added to the tracked
             let repo_status = repositories::status(&repo)?;
             // TODO: v0_10_0 logic should have 0 staged_dirs
@@ -172,7 +173,7 @@ A: Oxen.ai
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
             let annotation_dir_path = repo.path.join("annotations");
-            repositories::add(&repo, annotation_dir_path)?;
+            repositories::add(&repo, annotation_dir_path, false)?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
@@ -191,7 +192,7 @@ A: Oxen.ai
             let file_to_remove = repo.path.join("labels.txt");
 
             // Commit the file
-            repositories::add(&repo, &file_to_remove)?;
+            repositories::add(&repo, &file_to_remove, false)?;
             repositories::commit(&repo, "Adding labels file")?;
 
             // Delete the file
@@ -211,7 +212,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits(|repo| {
             let num_files = util::fs::count_files_in_dir(&repo.path);
 
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
 
             // Add shouldn't add any new files in the working dir
             let num_files_after_add = util::fs::count_files_in_dir(&repo.path);
@@ -226,7 +227,7 @@ A: Oxen.ai
     async fn test_can_add_merge_conflict() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");
-            repositories::add(&repo, &labels_path)?;
+            repositories::add(&repo, &labels_path, false)?;
             repositories::commit(&repo, "adding initial labels file")?;
 
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
@@ -236,14 +237,14 @@ A: Oxen.ai
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nnone")?;
-            repositories::add(&repo, &labels_path)?;
+            repositories::add(&repo, &labels_path, false)?;
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
             repositories::checkout(&repo, og_branch.name).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
-            repositories::add(&repo, &labels_path)?;
+            repositories::add(&repo, &labels_path, false)?;
             repositories::commit(&repo, "adding person category")?;
 
             // Try to merge in the changes
@@ -255,7 +256,7 @@ A: Oxen.ai
             // Assume that we fixed the conflict and added the file
             let path = status.merge_conflicts[0].base_entry.path.clone();
             let fullpath = repo.path.join(path);
-            repositories::add(&repo, fullpath)?;
+            repositories::add(&repo, fullpath, false)?;
 
             // Adding should add to added files
             let status = repositories::status(&repo)?;
@@ -275,7 +276,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits(|repo| {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir)?;
+            repositories::add(&repo, repo_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -306,7 +307,7 @@ A: Oxen.ai
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
             let annotation_dir_path = repo.path.join("annotations/*");
-            repositories::add(&repo, annotation_dir_path)?;
+            repositories::add(&repo, annotation_dir_path, false)?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
@@ -323,7 +324,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits(|repo| {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir)?;
+            repositories::add(&repo, repo_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -353,7 +354,7 @@ A: Oxen.ai
             assert_eq!(status.staged_files.len(), 0);
 
             // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*")?;
+            repositories::add(&repo, "nlp/*", false)?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_dirs.len(), 1);
@@ -368,7 +369,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits(|repo| {
             let dir = Path::new("nlp/*");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir)?;
+            repositories::add(&repo, repo_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -403,7 +404,7 @@ A: Oxen.ai
                 .any(|(path, _)| *path == PathBuf::from("empty_dir")));
 
             // Add the empty dir
-            repositories::add(&repo, &empty_dir)?;
+            repositories::add(&repo, &empty_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -448,9 +449,9 @@ A: Oxen.ai
             assert_eq!(dirs.len(), 1);
 
             // Then we add all three
-            repositories::add(&repo, &sub_file_1)?;
-            repositories::add(&repo, &sub_file_2)?;
-            repositories::add(&repo, &sub_file_3)?;
+            repositories::add(&repo, &sub_file_1, false)?;
+            repositories::add(&repo, &sub_file_2, false)?;
+            repositories::add(&repo, &sub_file_3, false)?;
 
             // There now there are no untracked directories
             let status = repositories::status(&repo)?;
@@ -484,7 +485,7 @@ A: Oxen.ai
             //     one_shot.csv
             //   test/
             //     annotations.txt
-            repositories::add(&repo, &annotations_dir)?;
+            repositories::add(&repo, &annotations_dir, false)?;
 
             // List dirs
             let status = repositories::status(&repo)?;
@@ -506,13 +507,13 @@ A: Oxen.ai
             let hello_file = test::add_txt_file_to_dir(repo_path, "Hello World")?;
 
             // Add it
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
 
             // Commit it
             repositories::commit(&repo, "Add Hello World")?;
 
             // try to add it again
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
 
             // make sure we don't have it added again, because the hash hadn't changed since last commit
             let status = repositories::status(&repo)?;
@@ -527,7 +528,7 @@ A: Oxen.ai
         test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Track & commit all the data
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             repositories::commit(&repo, "Adding one shot")?;
 
             let branch_name = "feature/modify-data";
@@ -542,7 +543,7 @@ A: Oxen.ai
                 .modified_files
                 .contains(&PathBuf::from("annotations/train/one_shot.csv")));
 
-            repositories::add(&repo, &one_shot_path)?;
+            repositories::add(&repo, &one_shot_path, false)?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);

@@ -390,7 +390,7 @@ mod tests {
             util::fs::write_to_path(&hello_file, "Hello World")?;
 
             // Track the file
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
             // Commit the file
             let commit = repositories::commit(&repo, "My message")?;
             assert_eq!(commit.message, "My message");
@@ -417,7 +417,7 @@ mod tests {
             util::fs::write_to_path(&hello_file, "Hello World")?;
 
             // Track the file
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
 
             // Remove the file
             util::fs::remove_file(&hello_file)?;
@@ -431,7 +431,7 @@ mod tests {
             assert_eq!(commit_list.len(), 1);
 
             // Add the removed file and commit
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file, false)?;
             repositories::commit(&repo, "Second Message")?;
 
             // We should now have no entries
@@ -448,7 +448,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits(|repo| {
             // Track the file
             let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir)?;
+            repositories::add(&repo, train_dir, false)?;
             // Commit the file
             repositories::commit(&repo, "Adding training data")?;
 
@@ -471,7 +471,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits(|repo| {
             // Track the annotations dir, which has sub dirs
             let annotations_dir = repo.path.join("annotations");
-            repositories::add(&repo, annotations_dir)?;
+            repositories::add(&repo, annotations_dir, false)?;
             repositories::commit(&repo, "Adding annotations data dir, which has two levels")?;
 
             let repo_status = repositories::status(&repo)?;
@@ -494,7 +494,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Track & commit (dir already created in helper)
             let new_dir_path = repo.path.join("annotations").join("train");
-            repositories::add(&repo, &new_dir_path)?;
+            repositories::add(&repo, &new_dir_path, false)?;
             repositories::commit(&repo, "Adding train dir")?;
 
             // Get the original branch name
@@ -508,7 +508,7 @@ mod tests {
             let test_dir_path = repo.path.join("annotations").join("test");
             let og_num_files = util::fs::rcount_files_in_dir(&test_dir_path);
 
-            repositories::add(&repo, &test_dir_path)?;
+            repositories::add(&repo, &test_dir_path, false)?;
             repositories::commit(&repo, "Adding test dir")?;
 
             // checkout OG and make sure it removes the train dir
@@ -532,14 +532,14 @@ mod tests {
             let dir_to_remove = repo.path.join("train");
             let og_file_count = util::fs::rcount_files_in_dir(&dir_to_remove);
 
-            repositories::add(&repo, &dir_to_remove)?;
+            repositories::add(&repo, &dir_to_remove, false)?;
             repositories::commit(&repo, "Adding train directory")?;
 
             // Delete the directory
             util::fs::remove_dir_all(&dir_to_remove)?;
 
             // Add the deleted dir, so that we can commit the deletion
-            repositories::add(&repo, &dir_to_remove)?;
+            repositories::add(&repo, &dir_to_remove, false)?;
 
             // Make sure we have the correct amount of files tagged as removed
             let status = repositories::status(&repo)?;
@@ -562,7 +562,7 @@ mod tests {
     async fn test_commit_after_merge_conflict() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");
-            repositories::add(&repo, &labels_path)?;
+            repositories::add(&repo, &labels_path, false)?;
             repositories::commit(&repo, "adding initial labels file")?;
 
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
@@ -572,14 +572,14 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nnone")?;
-            repositories::add(&repo, &labels_path)?;
+            repositories::add(&repo, &labels_path, false)?;
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
             repositories::checkout(&repo, og_branch.name).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
-            repositories::add(&repo, &labels_path)?;
+            repositories::add(&repo, &labels_path, false)?;
             repositories::commit(&repo, "adding person category")?;
 
             // Try to merge in the changes
@@ -592,7 +592,7 @@ mod tests {
             // Assume that we fixed the conflict and added the file
             let path = status.merge_conflicts[0].base_entry.path.clone();
             let fullpath = repo.path.join(path);
-            repositories::add(&repo, fullpath)?;
+            repositories::add(&repo, fullpath, false)?;
 
             // Should commit, and then see full commit history
             repositories::commit(&repo, "merging into main")?;
@@ -618,7 +618,7 @@ mod tests {
             util::fs::write_to_path(&text_path, "Hello World")?;
 
             // Get the hash of the file at this timestamp
-            repositories::add(&repo, &text_path)?;
+            repositories::add(&repo, &text_path, false)?;
             repositories::commit(&repo, "Committing hello world")?;
 
             // Modify the text file
@@ -651,7 +651,7 @@ mod tests {
             // Get the hash of the file at this timestamp
             let hash_when_add =
                 MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
-            repositories::add(&repo, &text_path)?;
+            repositories::add(&repo, &text_path, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -667,7 +667,7 @@ mod tests {
                 MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
 
             // Add and commit the file
-            repositories::add(&repo, &text_path)?;
+            repositories::add(&repo, &text_path, false)?;
             repositories::commit(&repo, "Committing goodbye world")?;
 
             // Get the most recent commit - the new head commit
@@ -709,8 +709,8 @@ mod tests {
             let _ = test::add_txt_file_to_dir(&test_dir, "Test Ex 2")?;
 
             // Add a file and a directory
-            repositories::add(&repo, &annotation_file)?;
-            repositories::add(&repo, &train_dir)?;
+            repositories::add(&repo, &annotation_file, false)?;
+            repositories::add(&repo, &train_dir, false)?;
 
             let message = "Adding training data to 🐂";
             repositories::commit(&repo, message)?;
@@ -780,18 +780,18 @@ mod tests {
     fn test_commit_history_order() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir)?;
+            repositories::add(&repo, train_dir, false)?;
             let initial_commit_message = "adding train dir";
             repositories::commit(&repo, initial_commit_message)?;
 
             // Write a text file
             let text_path = repo.path.join("newnewnew.txt");
             util::fs::write_to_path(&text_path, "Hello World")?;
-            repositories::add(&repo, &text_path)?;
+            repositories::add(&repo, &text_path, false)?;
             repositories::commit(&repo, "adding text file")?;
 
             let test_dir = repo.path.join("test");
-            repositories::add(&repo, test_dir)?;
+            repositories::add(&repo, test_dir, false)?;
             let most_recent_message = "adding test dir";
             repositories::commit(&repo, most_recent_message)?;
 
@@ -810,22 +810,22 @@ mod tests {
         test::run_training_data_repo_test_fully_committed(|repo| {
             let new_file = repo.path.join("new_1.txt");
             test::write_txt_file_to_path(&new_file, "new 1")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file, false)?;
             let base_commit = repositories::commit(&repo, "commit 1")?;
 
             let new_file = repo.path.join("new_2.txt");
             test::write_txt_file_to_path(&new_file, "new 2")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file, false)?;
             repositories::commit(&repo, "commit 2")?;
 
             let new_file = repo.path.join("new_3.txt");
             test::write_txt_file_to_path(&new_file, "new 3")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file, false)?;
             let head_commit = repositories::commit(&repo, "commit 3")?;
 
             let new_file = repo.path.join("new_4.txt");
             test::write_txt_file_to_path(&new_file, "new 4")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file, false)?;
             repositories::commit(&repo, "commit 4")?;
 
             let history = repositories::commits::list_between(&repo, &head_commit, &base_commit)?;
@@ -852,7 +852,7 @@ mod tests {
             util::fs::write_to_path(&file_repo_path, "test")?;
 
             // Add the dir
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let commit_1 = repositories::commit(&repo, "adding test dir")?;
 
             let tree_1 = repositories::tree::get_by_commit(&repo, &commit_1)?;
@@ -865,7 +865,7 @@ mod tests {
             util::fs::write_to_path(&file_repo_path_2, "test")?;
 
             // Add the file
-            repositories::add(&repo, &file_repo_path_2)?;
+            repositories::add(&repo, &file_repo_path_2, false)?;
             let commit_2 = repositories::commit(&repo, "adding test file")?;
 
             let tree_1 = repositories::tree::get_by_commit(&repo, &commit_1)?;
@@ -907,7 +907,7 @@ mod tests {
                 .any(|(path, _)| *path == PathBuf::from("empty_dir")));
 
             // Add the empty dir
-            repositories::add(&repo, &empty_dir)?;
+            repositories::add(&repo, &empty_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -931,7 +931,7 @@ mod tests {
             let full_path = repo.path.join("invalid.parquet");
             util::fs::copy(&invalid_parquet_file, &full_path)?;
 
-            repositories::add(&repo, &full_path)?;
+            repositories::add(&repo, &full_path, false)?;
             let commit = repositories::commit(&repo, "Adding invalid parquet file")?;
 
             let tree = repositories::tree::get_by_commit(&repo, &commit)?;
@@ -970,7 +970,7 @@ Q: What is a good alternative to git LFS?
 A: Oxen.ai
 ",
                 )?;
-                repositories::add(&local_repo, &readme_file)?;
+                repositories::add(&local_repo, &readme_file, false)?;
                 let commit = repositories::commit(&local_repo, "adding README.md to the test dir")?;
 
                 let tree = repositories::tree::get_by_commit(&local_repo, &commit)?;
@@ -999,7 +999,7 @@ A: Oxen.ai
                 // Add a new file
                 let empty_file = local_repo.path.join("empty.txt");
                 util::fs::write_to_path(&empty_file, "")?;
-                repositories::add(&local_repo, &empty_file)?;
+                repositories::add(&local_repo, &empty_file, false)?;
                 let commit = repositories::commit(&local_repo, "adding empty file")?;
 
                 let tree = repositories::tree::get_by_commit(&local_repo, &commit)?;
@@ -1017,7 +1017,7 @@ A: Oxen.ai
 ";
                 util::fs::write_to_path(&empty_file, raw_str)?;
 
-                repositories::add(&local_repo, &empty_file)?;
+                repositories::add(&local_repo, &empty_file, false)?;
                 let commit = repositories::commit(&local_repo, "adding README.md to the test dir")?;
 
                 let tree = repositories::tree::get_by_commit(&local_repo, &commit)?;

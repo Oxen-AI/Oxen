@@ -164,7 +164,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Create branch
@@ -271,7 +271,7 @@ mod tests {
                 }
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -373,7 +373,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Add and commit the dogs
@@ -383,7 +383,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Create branch
@@ -398,7 +398,7 @@ mod tests {
                 util::image::resize_and_save(&repo_filepath, &repo_filepath, dims)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             repositories::commit(&repo, "Resized all the cats")?;
 
             // Remove one of the dogs
@@ -416,7 +416,7 @@ mod tests {
             let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, repo_filepath)?;
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             let commit = repositories::commit(&repo, "Adding dwight and vince")?;
 
             // Should have 3 cats, 3 dogs, and one dwight/vince
@@ -447,7 +447,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits(|repo| {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir)?;
+            repositories::add(&repo, repo_dir, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -480,7 +480,7 @@ mod tests {
             status.print();
 
             // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*")?;
+            repositories::add(&repo, "nlp/*", false)?;
             println!("AFTER ADD");
             println!("status: {:?}", status);
             status.print();
@@ -516,7 +516,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Add and commit the dogs
@@ -526,7 +526,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir, false)?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Pre-remove two cats and one dog to ensure deleted images get staged as removed as well as non-deleted images
@@ -587,7 +587,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
             // Stage the README.md file
             let path = Path::new("README.md");
-            repositories::add(&repo, repo.path.join(path))?;
+            repositories::add(&repo, repo.path.join(path), false)?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 1);
@@ -610,7 +610,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path))?;
+            repositories::add(&repo, repo.path.join(path), false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -636,7 +636,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Stage the data
             let path = Path::new("annotations").join("train");
-            repositories::add(&repo, repo.path.join(&path))?;
+            repositories::add(&repo, repo.path.join(&path), false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -667,7 +667,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path))?;
+            repositories::add(&repo, repo.path.join(path), false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -698,7 +698,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train/");
-            repositories::add(&repo, repo.path.join(path))?;
+            repositories::add(&repo, repo.path.join(path), false)?;
 
             let status = repositories::status(&repo)?;
             // 1: train dir

@@ -105,7 +105,7 @@ mod tests {
             let file_path = local_repo.path.join(file_name);
             let file_content = "Hello, World!";
             util::fs::write_to_path(&file_path, file_content)?;
-            repositories::add(&local_repo, file_path)?;
+            repositories::add(&local_repo, file_path, false)?;
 
             // Commit it
             let first_commit = repositories::commit(&local_repo, "Add file.txt")?;
@@ -130,7 +130,7 @@ mod tests {
             let file2_content = "Hello, World 2!";
             util::fs::write_to_path(&file1_path, file1_content)?;
             util::fs::write_to_path(&file2_path, file2_content)?;
-            repositories::add(&local_repo, &dir_path)?;
+            repositories::add(&local_repo, &dir_path, false)?;
 
             // Commit it
             let second_commit = repositories::commit(&local_repo, "Add data dir")?;
@@ -180,7 +180,7 @@ mod tests {
             let file4_content = "Hello, World 4!";
             util::fs::write_to_path(&file3_path, file3_content)?;
             util::fs::write_to_path(&file4_path, file4_content)?;
-            repositories::add(&local_repo, &dir2_path)?;
+            repositories::add(&local_repo, &dir2_path, false)?;
 
             // Commit it
             let third_commit = repositories::commit(&local_repo, "Add a_data dir")?;
@@ -238,7 +238,7 @@ mod tests {
             let file6_content = "Hello, World 6!";
             util::fs::write_to_path(&file5_path, file5_content)?;
             util::fs::write_to_path(&file6_path, file6_content)?;
-            repositories::add(&local_repo, &dir3_path)?;
+            repositories::add(&local_repo, &dir3_path, false)?;
 
             // Commit it
             let fourth_commit = repositories::commit(&local_repo, "Add sub_data dir")?;

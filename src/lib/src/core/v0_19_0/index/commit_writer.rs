@@ -1266,7 +1266,7 @@ mod tests {
             let new_file = repo.path.join("all_files/dir_0/new_file.txt");
             util::fs::create_dir_all(new_file.parent().unwrap())?;
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -1295,7 +1295,7 @@ mod tests {
             let new_file = repo.path.join("files/dir_0/new_file.txt");
             util::fs::create_dir_all(new_file.parent().unwrap())?;
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file, false)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -1343,7 +1343,7 @@ mod tests {
             // Add a new file to files/dir_1/
             let new_file = repo.path.join("README.md");
             util::fs::write_to_path(&new_file, "Update that README.md")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file, false)?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1395,7 +1395,7 @@ mod tests {
             // Add a new file to files/dir_1/
             let new_file = repo.path.join("files/dir_1/new_file.txt");
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file, false)?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1530,7 +1530,7 @@ mod tests {
                     .path
                     .join(format!("files/dir_{}/new_file_{}.txt", dir_num, i));
                 util::fs::write_to_path(&new_file, format!("New fileeeee {}", i))?;
-                repositories::add(&repo, &new_file)?;
+                repositories::add(&repo, &new_file, false)?;
             }
 
             // Commit the data
@@ -1584,7 +1584,7 @@ mod tests {
             // Add a news file
             let new_file = repo.path.join("files/dir_0/new_file.txt");
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file, false)?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1646,7 +1646,7 @@ mod tests {
             // Update README.md
             let new_file = repo.path.join("README.md");
             util::fs::write_to_path(&new_file, "Update README.md in second commit")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file, false)?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1672,7 +1672,7 @@ mod tests {
             // Write a new file to files/dir_1/
             let new_file = repo.path.join("files/dir_1/new_file.txt");
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file, false)?;
 
             // Commit the data
             let third_commit = super::commit(&repo, "Third commit")?;

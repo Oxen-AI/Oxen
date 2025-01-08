@@ -109,6 +109,7 @@ fn p_add_file(
         &maybe_dir_node,
         path,
         &seen_dirs,
+        false,
     )
 }
 

@@ -1455,10 +1455,10 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path, false)?;
         repositories::commit(&repo, "first commit")?;
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path, false)?;
         repositories::commit(&repo, "second commit")?;
 
         let uri = format!("/oxen/{namespace}/{name}/commits");
@@ -1485,14 +1485,14 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path, false)?;
         repositories::commit(&repo, "first commit")?;
 
         let branch_name = "feature/list-commits";
         repositories::branches::create_checkout(&repo, branch_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path, false)?;
         repositories::commit(&repo, "second commit")?;
 
         let uri = format!("/oxen/{namespace}/{repo_name}/commits/history/{branch_name}");
@@ -1532,19 +1532,19 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let hello_file = repo.path.join("hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file, false)?;
         repositories::commit(&repo, "First commit")?;
         let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path, false)?;
         repositories::commit(&repo, "first commit")?;
 
         let branch_name = "feature/list-commits";
         repositories::branches::create_checkout(&repo, branch_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path, false)?;
         repositories::commit(&repo, "second commit")?;
 
         // List commits from the first branch
@@ -1588,7 +1588,7 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let hello_file = repo.path.join("hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file, false)?;
         let commit = repositories::commit(&repo, "First commit")?;
 
         // create random tarball to post.. currently no validation that it is a valid commit dir

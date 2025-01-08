@@ -56,6 +56,7 @@ impl RunCmd for AddCmd {
             paths,
             is_remote: false,
             directory: None,
+            is_cli: true,
         };
 
         // Recursively look up from the current dir for .oxen directory
@@ -63,7 +64,7 @@ impl RunCmd for AddCmd {
         check_repo_migration_needed(&repository)?;
 
         for path in &opts.paths {
-            repositories::add(&repository, path)?;
+            repositories::add(&repository, path, true)?;
         }
 
         Ok(())

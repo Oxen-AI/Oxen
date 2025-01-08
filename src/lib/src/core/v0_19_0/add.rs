@@ -44,7 +44,7 @@ impl AddAssign<CumulativeStats> for CumulativeStats {
     }
 }
 
-pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn add(repo: &LocalRepository, path: impl AsRef<Path>, is_cli: bool) -> Result<(), OxenError> {
     // Collect paths that match the glob pattern either:
     // 1. In the repo working directory (untracked or modified files)
     // 2. In the commit entry db (removed files)
@@ -78,7 +78,7 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
-    let stats = add_files(repo, &paths, &staged_db)?;
+    let stats = add_files(repo, &paths, &staged_db, is_cli)?;
 
     // Stop the timer, and round the duration to the nearest second
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
@@ -99,6 +99,7 @@ fn add_files(
     repo: &LocalRepository,
     paths: &HashSet<PathBuf>,
     staged_db: &DBWithThreadMode<MultiThreaded>,
+    is_cli: bool,
 ) -> Result<CumulativeStats, OxenError> {
     log::debug!("add files: {:?}", paths);
 
@@ -120,9 +121,9 @@ fn add_files(
         log::debug!("path is {path:?}");
 
         if path.is_dir() {
-            total += add_dir_inner(repo, &maybe_head_commit, path.clone(), staged_db)?;
+            total += add_dir_inner(repo, &maybe_head_commit, path.clone(), staged_db, is_cli)?;
         } else if path.is_file() {
-            let entry = add_file_inner(repo, &maybe_head_commit, path, staged_db)?;
+            let entry = add_file_inner(repo, &maybe_head_commit, path, staged_db, is_cli)?;
             if let Some(entry) = entry {
                 if let EMerkleTreeNode::File(file_node) = &entry.node.node {
                     let data_type = file_node.data_type.clone();
@@ -154,11 +155,12 @@ fn add_dir_inner(
     maybe_head_commit: &Option<Commit>,
     path: PathBuf,
     staged_db: &DBWithThreadMode<MultiThreaded>,
+    is_cli: bool,
 ) -> Result<CumulativeStats, OxenError> {
     let versions_path = util::fs::oxen_hidden_dir(&repo.path)
         .join(VERSIONS_DIR)
         .join(FILES_DIR);
-    process_add_dir(repo, maybe_head_commit, &versions_path, staged_db, path)
+    process_add_dir(repo, maybe_head_commit, &versions_path, staged_db, path, is_cli)
 }
 
 pub fn add_dir(
@@ -171,7 +173,7 @@ pub fn add_dir(
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
-    add_dir_inner(repo, maybe_head_commit, path, &staged_db)
+    add_dir_inner(repo, maybe_head_commit, path, &staged_db, false)
 }
 
 pub fn process_add_dir(
@@ -180,6 +182,7 @@ pub fn process_add_dir(
     versions_path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     path: PathBuf,
+    is_cli: bool,
 ) -> Result<CumulativeStats, OxenError> {
     let start = std::time::Instant::now();
 
@@ -219,17 +222,12 @@ pub fn process_add_dir(
             let added_file_counter_clone = Arc::clone(&added_file_counter);
             let unchanged_file_counter_clone = Arc::clone(&unchanged_file_counter);
 
-            let relative_dir_path = util::fs::path_relative_to_dir(dir, repo_path).unwrap();
-
             // Fix for Windows CLI
             // TODO: does dir_path ever not exist? this will propogate an error if so
-            let dir_path = if relative_dir_path.exists() {
-                relative_dir_path
-            } else {
-                log::debug!(
-                    "dir path {relative_dir_path:?} was not found. Checking for Windows CLI"
-                );
+            let dir_path = if is_cli {
                 util::fs::path_relative_to_canon_dir(dir, repo.path.clone())?
+            } else {
+                util::fs::path_relative_to_dir(dir, repo_path).unwrap()
             };
             log::debug!("path now: {dir_path:?}");
 
@@ -265,6 +263,7 @@ pub fn process_add_dir(
                     &dir_node,
                     &path,
                     &seen_dirs_clone,
+                    is_cli,
                 ) {
                     Ok(Some(node)) => {
                         if let EMerkleTreeNode::File(file_node) = &node.node.node {
@@ -326,6 +325,7 @@ fn add_file_inner(
     maybe_head_commit: &Option<Commit>,
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
+    is_cli: bool,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let repo_path = &repo.path.clone();
     let versions_path = util::fs::oxen_hidden_dir(&repo.path)
@@ -347,6 +347,7 @@ fn add_file_inner(
         &maybe_dir_node,
         path,
         &seen_dirs,
+        is_cli,
     )
 }
 
@@ -360,7 +361,7 @@ pub fn add_file(
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
-    add_file_inner(repo, maybe_head_commit, path, &staged_db)
+    add_file_inner(repo, maybe_head_commit, path, &staged_db, false)
 }
 
 pub fn process_add_file(
@@ -371,34 +372,30 @@ pub fn process_add_file(
     maybe_dir_node: &Option<MerkleTreeNode>,
     path: &Path,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+    is_cli: bool,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     log::debug!("process_add_file {:?}", path);
-    let mut relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
-    let mut full_path = repo_path.join(&relative_path);
+    
+    let (relative_path, full_path) = if is_cli {
+        let canon_repo_path = dunce::canonicalize(repo_path)?;
+        let canon_relative_path = util::fs::path_relative_to_dir(path, &canon_repo_path)?;
+        (canon_relative_path.clone(), canon_repo_path.join(canon_relative_path))
+    } else {
+        let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+        (relative_path.clone(), repo_path.join(&relative_path))
+    };
+
+    log::debug!("relative path: {relative_path:?}, full path: {full_path:?}");
 
     if !full_path.is_file() {
-        // Fix for Windows CLI
-        // util::fs::path_relative_to_dir can fail if the capitalization of the input path differs from what it is in the working directory
-        // TODO: is there ever a situation where process_add_file will be called on a path that doesn't exist? That will be propogated as an error here
-        log::debug!(
-            "file {:?} was not found. Checking for Windows CLI path",
-            full_path
-        );
-        let canon_repo_path = dunce::canonicalize(repo_path)?;
-        let cli_path = util::fs::path_relative_to_dir(path, &canon_repo_path)?;
 
-        if cli_path.is_file() {
-            relative_path = cli_path;
-            full_path = canon_repo_path.join(&relative_path);
-        } else {
-            // If it's not a file - no need to add it
-            // We handle directories by traversing the parents of files below
-            log::debug!("file is not a file - skipping add on {:?}", full_path);
-            return Ok(Some(StagedMerkleTreeNode {
-                status: StagedEntryStatus::Added,
-                node: MerkleTreeNode::default_dir(),
-            }));
-        }
+        // If it's not a file - no need to add it
+        // We handle directories by traversing the parents of files below
+        log::debug!("file is not a file - skipping add on {:?}", full_path);
+        return Ok(Some(StagedMerkleTreeNode {
+            status: StagedEntryStatus::Added,
+            node: MerkleTreeNode::default_dir(),
+        }));
     }
 
     // Check if the file is already in the head commit

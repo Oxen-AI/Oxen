@@ -123,7 +123,7 @@ mod tests {
 
             test::write_txt_file_to_path(&labels_path, "I am the labels file")?;
 
-            repositories::add(&local_repo, &labels_path)?;
+            repositories::add(&local_repo, &labels_path, false)?;
 
             let first_commit = repositories::commit(&local_repo, "adding labels file")?;
 
@@ -136,7 +136,7 @@ mod tests {
 
             test::write_txt_file_to_path(&labels_path, "I am the labels file v2")?;
 
-            repositories::add(&local_repo, &labels_path)?;
+            repositories::add(&local_repo, &labels_path, false)?;
 
             let second_commit = repositories::commit(&local_repo, "adding labels file v2")?;
 

@@ -41,6 +41,7 @@ impl RunCmd for WorkspaceAddCmd {
             paths,
             is_remote: false,
             directory: None,
+            is_cli: true,
         };
 
         let repository = LocalRepository::from_current_dir()?;

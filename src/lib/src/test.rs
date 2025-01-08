@@ -117,7 +117,7 @@ pub fn add_n_files_m_dirs(
     let readme_file = repo.path.join("README.md");
     util::fs::write_to_path(&readme_file, format!("Repo with {} files", num_files))?;
 
-    repositories::add(repo, &readme_file)?;
+    repositories::add(repo, &readme_file, false)?;
 
     // Write files.csv
     let files_csv = repo.path.join("files.csv");
@@ -142,8 +142,8 @@ pub fn add_n_files_m_dirs(
         util::fs::write_to_path(&file_file, format!("File {}", i))?;
     }
 
-    repositories::add(repo, &files_csv)?;
-    repositories::add(repo, &files_dir)?;
+    repositories::add(repo, &files_csv, false)?;
+    repositories::add(repo, &files_dir, false)?;
 
     Ok(())
 }
@@ -313,7 +313,7 @@ where
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&repo, &file_path)?;
+    repositories::add(&repo, &file_path, false)?;
     repositories::commit(&repo, "Init commit")?;
 
     let result = match test(repo).await {
@@ -346,7 +346,7 @@ where
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&local_repo, &file_path)?;
+    repositories::add(&local_repo, &file_path, false)?;
     repositories::commit(&local_repo, "Init commit")?;
 
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -409,7 +409,7 @@ where
         // Get random string
         let txt = generate_random_string(20);
         let file_path = add_txt_file_to_dir(&local_repo_dir, &txt)?;
-        repositories::add(&local_repo, &file_path)?;
+        repositories::add(&local_repo, &file_path, false)?;
         repositories::commit(&local_repo, &format!("Adding file_{}", i))?;
     }
 
@@ -478,16 +478,16 @@ where
     populate_dir_with_training_data(&repo_dir)?;
 
     // Make a few commits before we sync
-    repositories::add(&local_repo, local_repo.path.join("train"))?;
+    repositories::add(&local_repo, local_repo.path.join("train"), false)?;
     repositories::commit(&local_repo, "Adding train/")?;
 
-    repositories::add(&local_repo, local_repo.path.join("test"))?;
+    repositories::add(&local_repo, local_repo.path.join("test"), false)?;
     repositories::commit(&local_repo, "Adding test/")?;
 
-    repositories::add(&local_repo, local_repo.path.join("annotations"))?;
+    repositories::add(&local_repo, local_repo.path.join("annotations"), false)?;
     repositories::commit(&local_repo, "Adding annotations/")?;
 
-    repositories::add(&local_repo, local_repo.path.join("nlp"))?;
+    repositories::add(&local_repo, local_repo.path.join("nlp"), false)?;
     repositories::commit(&local_repo, "Adding nlp/")?;
 
     // Remove the test dir to make a more complex history
@@ -502,7 +502,7 @@ where
     repositories::commit(&local_repo, "Removing test/")?;
 
     // Add all the files
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path, false)?;
     // Commit all the data locally
     repositories::commit(&local_repo, "Adding rest of data")?;
 
@@ -545,7 +545,7 @@ where
     populate_select_training_data(&repo_dir, data)?;
 
     // Make a few commits before we sync
-    repositories::add(&local_repo, local_repo.path.join(data))?;
+    repositories::add(&local_repo, local_repo.path.join(data), false)?;
     repositories::commit(&local_repo, &format!("Adding {data}"))?;
 
     // Create remote
@@ -698,7 +698,7 @@ where
 
     // Add a README file
     util::fs::write_to_path(local_repo.path.join("README.md"), "Hello World")?;
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path, false)?;
     repositories::commit(&local_repo, "Adding README")?;
 
     // Set the proper remote
@@ -848,7 +848,7 @@ where
 
     // Write all the files
     create_bounding_box_csv(&local_repo.path)?;
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path, false)?;
     log::debug!("about to commit bounding box csv");
     repositories::commit(&local_repo, "Adding bounding box csv")?;
     log::debug!("successfully committed bounding box csv");
@@ -899,7 +899,7 @@ where
 
     // Write all the files
     create_embeddings_jsonl(&local_repo.path)?;
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path, false)?;
     log::debug!("about to commit embeddings jsonl");
     repositories::commit(&local_repo, "Adding embeddings jsonl")?;
     log::debug!("successfully committed embeddings jsonl");
@@ -1052,7 +1052,7 @@ where
     populate_select_training_data(&repo_dir, data)?;
 
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
     log::debug!("about to commit whole repo");
     // commit
     repositories::commit(&repo, "Adding all data")?;
@@ -1184,7 +1184,7 @@ where
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
     log::debug!("about to commit this repo");
     repositories::commit(&repo, "adding all data baby")?;
     log::debug!("successfully committed the repo");
@@ -1223,7 +1223,7 @@ where
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
     log::debug!("about to commit this repo");
     repositories::commit(&repo, "adding all data baby")?;
     log::debug!("successfully committed the repo");
@@ -1298,7 +1298,7 @@ where
     // Write all the files
     create_bounding_box_csv(&repo.path)?;
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
     repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
@@ -1331,7 +1331,7 @@ where
 
     // Add all the files
     create_bounding_box_csv(&repo.path)?;
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
     repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
@@ -1398,7 +1398,7 @@ where
 71,241,M,1,no",
     )?;
 
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
     repositories::commit(&repo, "adding both csvs for compare")?;
 
     log::info!(">>>>> run_compare_data_repo_test_fully_committed running test");
@@ -1429,7 +1429,7 @@ where
     populate_dir_with_training_data(&repo_dir)?;
 
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
 
     // Get the status and print it
     let status = repositories::status(&repo)?;
@@ -1482,7 +1482,7 @@ where
     populate_dir_with_training_data(&repo_dir)?;
 
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path, false)?;
 
     // Get the status and print it
     let status = repositories::status(&repo)?;
@@ -1510,13 +1510,13 @@ where
 }
 
 fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
-    repositories::add(repo, repo.path.join("train"))?;
-    repositories::add(repo, repo.path.join("test"))?;
-    repositories::add(repo, repo.path.join("annotations"))?;
-    repositories::add(repo, repo.path.join("large_files"))?;
-    repositories::add(repo, repo.path.join("nlp"))?;
-    repositories::add(repo, repo.path.join("labels.txt"))?;
-    repositories::add(repo, repo.path.join("README.md"))?;
+    repositories::add(repo, repo.path.join("train"), false)?;
+    repositories::add(repo, repo.path.join("test"), false)?;
+    repositories::add(repo, repo.path.join("annotations"), false)?;
+    repositories::add(repo, repo.path.join("large_files"), false)?;
+    repositories::add(repo, repo.path.join("nlp"), false)?;
+    repositories::add(repo, repo.path.join("labels.txt"), false)?;
+    repositories::add(repo, repo.path.join("README.md"), false)?;
 
     Ok(())
 }
@@ -1533,7 +1533,7 @@ where
     // add and commit a file
     let new_file = repo.path.join("new_file.txt");
     util::fs::write(&new_file, "I am a new file")?;
-    repositories::add(&repo, new_file)?;
+    repositories::add(&repo, new_file, false)?;
     repositories::commit(&repo, "Added a new file")?;
 
     let referencer = RefWriter::new(&repo)?;

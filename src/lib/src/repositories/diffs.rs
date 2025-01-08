@@ -1209,8 +1209,8 @@ mod tests {
             test::write_txt_file_to_path(&hello_file, "Hello")?;
             test::write_txt_file_to_path(&world_file, "World")?;
 
-            repositories::add(&repo, &hello_file)?;
-            repositories::add(&repo, &world_file)?;
+            repositories::add(&repo, &hello_file, false)?;
+            repositories::add(&repo, &world_file, false)?;
             let head_commit = repositories::commit(&repo, "Adding two files")?;
 
             let entries = repositories::diffs::list_diff_entries(
@@ -1252,7 +1252,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
 ",
             )?;
 
-            repositories::add(&repo, bbox_file)?;
+            repositories::add(&repo, bbox_file, false)?;
             let head_commit = repositories::commit(&repo, "Removing a row from train bbox data")?;
 
             let entries = repositories::diffs::list_diff_entries(
@@ -1369,8 +1369,8 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             test::write_txt_file_to_path(&hello_file, "Hello")?;
             test::write_txt_file_to_path(&world_file, "World")?;
 
-            repositories::add(&repo, &hello_file)?;
-            repositories::add(&repo, &world_file)?;
+            repositories::add(&repo, &hello_file, false)?;
+            repositories::add(&repo, &world_file, false)?;
             repositories::commit(&repo, "Removing a row from train bbox data")?;
 
             let bbox_filename = Path::new("annotations")
@@ -1450,7 +1450,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
 
             let opts = RmOpts::from_path(&bbox_filename);
             repositories::rm(&repo, &opts)?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path, false)?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
             let entries = repositories::diffs::list_diff_entries_in_dir_top_level(
                 &repo,
@@ -1610,7 +1610,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone())?;
+            repositories::add(&repo, repo.path.clone(), false)?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -1671,7 +1671,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone())?;
+            repositories::add(&repo, repo.path.clone(), false)?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -1742,7 +1742,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone())?;
+            repositories::add(&repo, repo.path.clone(), false)?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -1813,7 +1813,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone())?;
+            repositories::add(&repo, repo.path.clone(), false)?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -1883,7 +1883,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone())?;
+            repositories::add(&repo, repo.path.clone(), false)?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -1948,7 +1948,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone())?;
+            repositories::add(&repo, repo.path.clone(), false)?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
