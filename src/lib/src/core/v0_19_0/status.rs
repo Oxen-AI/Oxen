@@ -406,6 +406,7 @@ fn find_changes(
         } else if let Some(node) =
             maybe_get_child_node(relative_path.file_name().unwrap(), &dir_node)?
         {
+
             // If we have a dir node, it's either tracked (clean) or modified
             // Either way, we know the directory is not all_untracked
             untracked.all_untracked = false;
@@ -434,6 +435,7 @@ fn find_changes(
         && relative_path != Path::new("")
         && !is_staged(relative_path, staged_db)?
         && full_path.is_dir()
+        && !dir_node.is_some()
     {
         untracked.add_dir(relative_path.to_path_buf(), untracked_count);
         // Clear individual files as they're now represented by the directory
