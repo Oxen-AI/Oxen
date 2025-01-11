@@ -127,6 +127,10 @@ mod tests {
             let opts = RestoreOpts::from_staged_path(&rm_dir);
             repositories::restore::restore(&repo, opts)?;
 
+            let commit = repositories::commits::head_commit_maybe(&repo)?.unwrap();
+            let tree = repositories::tree::get_by_commit(&repo, &commit)?;
+            tree.print();
+
             // This should have removed all the staged files, but not restored from disk yet.
             let status = repositories::status(&repo)?;
             status.print();

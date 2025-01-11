@@ -475,13 +475,80 @@ fn find_changes(
                     }
                 } else if let EMerkleTreeNode::Directory(dir) = &child.node {
                     let dir_path = full_path.join(&dir.name);
+                    let relative_dir_path = relative_path.join(&dir.name);
                     if !dir_path.exists() {
-                        removed.insert(relative_path.join(&dir.name));
+
+                        // Only call this for non-existant dirs, because existant dirs already trigger a find_changes call
+                        removed.insert(relative_dir_path.clone());
+                        let (removed_untracked, removed_modified, removed_removed) =
+                            find_removed_entries(
+                                repo,
+                                &relative_dir_path,
+                                &dir.hash,
+                                &gitignore,
+                                total_entries,
+                            )?;
+ 
+                        untracked.merge(removed_untracked);
+                        modified.extend(removed_modified);
+                        removed.extend(removed_removed);
+
+                        log::debug!("Removed untracked: {:?}", untracked);
+                        log::debug!("Removed modified: {:?}", modified);
+                        log::debug!("Removed removed: {:?}", removed);
+
                     }
                 }
             }
         }
     }
+
+    Ok((untracked, modified, removed))
+}
+
+
+// Search merkle tree for removed tracked entries
+fn find_removed_entries(
+    repo: &LocalRepository,
+    relative_path: &Path,
+    dir_hash: &MerkleHash,
+    gitignore: &Option<Gitignore>,
+    removed_entries: &mut u64,
+) -> Result<(UntrackedData, HashSet<PathBuf>, HashSet<PathBuf>), OxenError> {
+    let mut untracked = UntrackedData::new();
+    let mut modified = HashSet::new();
+    let mut removed = HashSet::new();
+
+    if is_ignored(relative_path, gitignore, relative_path.is_dir()) {
+        return Ok((untracked, modified, removed));
+    }
+
+    let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
+    if let Some(ref node) = dir_node {
+        for child in CommitMerkleTree::node_files_and_folders(node)? {
+            *removed_entries += 1;
+            if let EMerkleTreeNode::File(file) = &child.node {
+                removed.insert(relative_path.join(&file.name));
+                
+            } else if let EMerkleTreeNode::Directory(dir) = child.node {
+                let relative_dir_path = relative_path.join(&dir.name);
+
+                removed.insert(relative_dir_path.clone());
+                let (removed_untracked, removed_modified, removed_removed) = find_removed_entries(
+                    repo,
+                    &relative_dir_path,
+                    &dir.hash,
+                    gitignore,
+                    removed_entries,
+                )?;
+
+                untracked.merge(removed_untracked);
+                modified.extend(removed_modified);
+                removed.extend(removed_removed);
+            }
+        }
+    }
+
 
     Ok((untracked, modified, removed))
 }
