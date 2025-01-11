@@ -477,7 +477,6 @@ fn find_changes(
                     let dir_path = full_path.join(&dir.name);
                     let relative_dir_path = relative_path.join(&dir.name);
                     if !dir_path.exists() {
-
                         // Only call this for non-existant dirs, because existant dirs already trigger a find_changes call
                         removed.insert(relative_dir_path.clone());
                         let (removed_untracked, removed_modified, removed_removed) =
@@ -488,7 +487,7 @@ fn find_changes(
                                 &gitignore,
                                 total_entries,
                             )?;
- 
+
                         untracked.merge(removed_untracked);
                         modified.extend(removed_modified);
                         removed.extend(removed_removed);
@@ -496,7 +495,6 @@ fn find_changes(
                         log::debug!("Removed untracked: {:?}", untracked);
                         log::debug!("Removed modified: {:?}", modified);
                         log::debug!("Removed removed: {:?}", removed);
-
                     }
                 }
             }
@@ -505,7 +503,6 @@ fn find_changes(
 
     Ok((untracked, modified, removed))
 }
-
 
 // Search merkle tree for removed tracked entries
 fn find_removed_entries(
@@ -529,7 +526,6 @@ fn find_removed_entries(
             *removed_entries += 1;
             if let EMerkleTreeNode::File(file) = &child.node {
                 removed.insert(relative_path.join(&file.name));
-                
             } else if let EMerkleTreeNode::Directory(dir) = child.node {
                 let relative_dir_path = relative_path.join(&dir.name);
 
@@ -548,7 +544,6 @@ fn find_removed_entries(
             }
         }
     }
-
 
     Ok((untracked, modified, removed))
 }
