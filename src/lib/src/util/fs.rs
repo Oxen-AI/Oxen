@@ -1614,10 +1614,10 @@ pub fn compare_file_contents(
     })?;
 
     let mut reader_1 = BufReader::new(file_1);
-    let mut buffer_1 = [0; 4096];
+    let mut buffer_1 = [0; 1048576];
 
     let mut reader_2 = BufReader::new(file_2);
-    let mut buffer_2 = [0; 4096];
+    let mut buffer_2 = [0; 1048576];
 
     loop {
         let count_1 = reader_1.read(&mut buffer_1).map_err(|_| {
