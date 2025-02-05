@@ -13,6 +13,7 @@ use liboxen::view::{CommitResponse, StatusMessage};
 use actix_files::NamedFile;
 use actix_multipart::Multipart;
 use actix_web::{http::header, web, HttpRequest, HttpResponse};
+use serde_json::Value;
 use uuid::Uuid;
 
 /// Download file content
@@ -156,6 +157,130 @@ pub async fn put(
     };
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
     log::debug!("file::put workspace commit ✅ success! commit {:?}", commit);
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+/// import files from hf/kaggle (create a workspace and commit)
+pub async fn import(
+    req: HttpRequest,
+    body: web::Json<Value>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch for committing the workspace
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+    let directory = resource.path.clone();
+    log::debug!("workspace::files::import_file Got directory: {directory:?}");
+
+    // commit info
+    let author = req.headers().get("oxen-commit-author");
+    let email = req.headers().get("oxen-commit-email");
+    let message = req.headers().get("oxen-commit-message");
+
+    log::debug!(
+        "file::import commit info author:{:?}, email:{:?}, message:{:?}",
+        author,
+        email,
+        message
+    );
+
+    let workspace_id = Uuid::new_v4().to_string();
+    let workspace_name = format!("import-file-{}", directory.display());
+
+    // Make sure the resource path is not already a file
+    let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    if node.is_some() && node.unwrap().is_file() {
+        return Err(OxenHttpError::BasicError(
+            format!(
+                "Target path must be a directory: {}",
+                resource.path.display()
+            )
+            .into(),
+        ));
+    }
+
+    // Create temporary workspace
+    let workspace = repositories::workspaces::create_with_name(
+        &repo,
+        &commit,
+        &workspace_id,
+        Some(workspace_name),
+        true,
+    )?;
+
+    log::debug!("workspace::files::import_file workspace created!");
+
+    // extract auth key from req body
+    let auth = body
+        .get("headers")
+        .and_then(|headers| headers.as_object())
+        .and_then(|map| map.get("Authorization"))
+        .and_then(|auth| auth.as_str())
+        .unwrap_or_default();
+
+    let url = body.get("url").and_then(|v| v.as_str()).unwrap_or_default();
+
+    // Validate URL domain
+    let url_parsed =
+        url::Url::parse(url).map_err(|_| OxenHttpError::BadRequest("Invalid URL".into()))?;
+    let domain = url_parsed
+        .domain()
+        .ok_or_else(|| OxenHttpError::BadRequest("Invalid URL domain".into()))?;
+    if !["huggingface.co", "kaggle.com"]
+        .iter()
+        .any(|&d| domain.ends_with(d))
+    {
+        return Err(OxenHttpError::BadRequest("URL domain not allowed".into()));
+    }
+
+    // parse filename from the given url
+    let filename = if url_parsed.domain() == Some("huggingface.co") {
+        url_parsed.path_segments().and_then(|segments| {
+            let segments: Vec<_> = segments.collect();
+            if segments.len() >= 2 {
+                let last_two = &segments[segments.len() - 2..];
+                Some(format!("{}_{}", last_two[0], last_two[1]))
+            } else {
+                None
+            }
+        })
+    } else {
+        url_parsed
+            .path_segments()
+            .and_then(|segments| segments.last())
+            .map(|s| s.to_string())
+    }
+    .ok_or_else(|| OxenHttpError::BadRequest("Invalid filename in URL".into()))?;
+
+    // download and save the file into the workspace
+    repositories::workspaces::files::import(url, auth, directory, filename, &workspace).await?;
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: author.map_or("".to_string(), |a| a.to_str().unwrap().to_string()),
+        email: email.map_or("".to_string(), |e| e.to_str().unwrap().to_string()),
+        message: message.map_or(
+            format!("Import files to {}", &resource.path.to_string_lossy()),
+            |m| m.to_str().unwrap().to_string(),
+        ),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
+    log::debug!("workspace::commit ✅ success! commit {:?}", commit);
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
