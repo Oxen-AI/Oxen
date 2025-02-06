@@ -8,4 +8,8 @@ pub fn file() -> Scope {
         .route("/{resource:.*}", web::get().to(controllers::file::get))
         .route("/{resource:.*}", web::head().to(controllers::file::get))
         .route("/{resource:.*}", web::put().to(controllers::file::put))
+        .route(
+            "/import/{resource:.*}",
+            web::post().to(controllers::file::import),
+        )
 }

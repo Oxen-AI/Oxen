@@ -78,8 +78,20 @@ impl error::ResponseError for OxenHttpError {
             OxenHttpError::MultipartError(_) => {
                 HttpResponse::BadRequest().json(StatusMessage::bad_request())
             }
-            OxenHttpError::BadRequest(desc) => HttpResponse::BadRequest()
-                .json(StatusMessageDescription::bad_request(desc.to_string())),
+            OxenHttpError::BadRequest(desc) => {
+                let error_json = json!({
+                    "error": {
+                        "type": "bad_request",
+                        "title":
+                            "Bad Request",
+                        "detail":
+                            desc.to_string()
+                    },
+                    "status": STATUS_ERROR,
+                    "status_message": MSG_BAD_REQUEST,
+                });
+                HttpResponse::BadRequest().json(error_json)
+            }
             OxenHttpError::SQLParseError(query) => {
                 HttpResponse::BadRequest().json(SQLParseError::new(query.to_string()))
             }
@@ -389,6 +401,20 @@ impl error::ResponseError for OxenHttpError {
                                     "Column Name Not Found",
                                 "detail":
                                     format!("Column name '{}' not found in schema", column_name)
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::ImportFileError(desc) => {
+                        let error_json = json!({
+                            "error": {
+                                "type": "bad_request",
+                                "title":
+                                    "Bad Request",
+                                "detail":
+                                    desc.to_string()
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,

@@ -106,6 +106,9 @@ pub enum OxenError {
     // Dataframe Errors
     DataFrameError(StringError),
 
+    // File Import Error
+    ImportFileError(StringError),
+
     // External Library Errors
     IO(io::Error),
     Authentication(StringError),
@@ -173,6 +176,10 @@ impl OxenError {
 
     pub fn repo_not_found(repo: RepoNew) -> Self {
         OxenError::RepoNotFound(Box::new(repo))
+    }
+
+    pub fn file_import_error(s: impl AsRef<str>) -> Self {
+        OxenError::ImportFileError(StringError::from(s.as_ref()))
     }
 
     pub fn remote_not_set(name: impl AsRef<str>) -> Self {
