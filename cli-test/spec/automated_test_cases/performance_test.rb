@@ -7,16 +7,19 @@ RSpec.describe 'test', type: :aruba do
   end
 
   after(:each) do
-    run_command_and_stop('rm -rf test-small-repo')
+    FileUtils.rm_rf('test-small-repo')
+  
   end
 
   it 'tests oxen init, add, commit, and push with a small file' do
     # Setup
-    measure_time('mkdir test-small-repo')
-    cd 'test-small-repo'
+    repo_path = File.join('tmp', 'aruba', 'test-small-repo')
+    FileUtils.mkdir_p(repo_path)
+    Dir.chdir(repo_path)
 
     # Generate image repository
-    system('python ../benchmark/generate_image_repo.py --output_dir ~/test-small-repo/Data/10k_images --num_images 10000 --num_dirs 10 --image_size 128 128')
+    script_path = File.join('..', 'benchmark', 'generate_image_repo.py')
+    run_system_command("python #{script_path} --output_dir ~/test-small-repo/Data/10k_images --num_images 10000 --num_dirs 10 --image_size 128 128")
 
     # Initialize the repository
     init_time = measure_time('oxen init')
@@ -48,7 +51,7 @@ RSpec.describe 'test', type: :aruba do
     puts "oxen push command took: #{push_time} seconds"
     expect(push_time).to be < 1000.0
 
-    cd '..'
+    Dir.chdir('..')
 
     # Clone the repository
     clone_time = measure_time('oxen clone https://dev.hub.oxen.ai/EloyMartinez/performance-test')
@@ -66,8 +69,7 @@ RSpec.describe 'test', type: :aruba do
       file.puts 'This is a simple text file. Edited remotely.'
     end
 
-    cd 'performance-test'
-
+    Dir.chdir('performance-test')
     # Add, commit, and push the changes
     add_simple_time = measure_time('oxen add simple.txt')
     puts "oxen add simple.txt command took: #{add_simple_time} seconds"
@@ -82,8 +84,8 @@ RSpec.describe 'test', type: :aruba do
     expect(push_simple_time).to be < 300.0
 
     # Pull the changes from test-repo
-    cd '..'
-    cd 'test-small-repo'
+    Dir.chdir('..')
+    Dir.chdir('test-small-repo')
     pull_time = measure_time('oxen pull')
     puts "oxen pull command took: #{pull_time} seconds"
     expect(pull_time).to be < 125.0
@@ -93,7 +95,7 @@ RSpec.describe 'test', type: :aruba do
     puts "oxen checkout command took: #{checkout_time} seconds"
     expect(checkout_time).to be < 7.0
 
-    directory_path = 'tmp/aruba/test-small-repo'
+    directory_path = File.join('tmp', 'aruba', 'test-small-repo')
     file_path = File.join(directory_path, 'simple.txt')
 
     # Ensure the directory exists
@@ -135,21 +137,21 @@ RSpec.describe 'test', type: :aruba do
     puts "oxen checkout main command took: #{checkout_main_branch_time} seconds"
     expect(checkout_main_branch_time).to be < 100.0
 
-    run_command_and_stop('mkdir files')
+    FileUtils.mkdir_p('files')
 
-      directory_path = 'tmp/aruba/test-small-repo'
+      directory_path = File.join('tmp', 'aruba', 'test-small-repo') 
 
       30.times do |i|
-        file_path = File.join(directory_path, 'README.md')
+        file_path = File.join('README.md')
         File.open(file_path, 'w') do |file|
           file.puts "\n\nnew Commit #{i}"
         end
-        file_path = File.join(directory_path, "#{i}.txt")
+        file_path = File.join("#{i}.txt")
         File.open(file_path, 'w') do |file|
           file.puts "hello #{i} world"
         end
-        run_command_and_stop('oxen add .')
-        run_command_and_stop("oxen commit -m \"commit #{i}\"")
+        run_system_command('oxen add .')
+        run_system_command("oxen commit -m \"commit #{i}\"")
         puts "Completed commit #{i + 1} of 30"
       end
 
@@ -159,11 +161,15 @@ RSpec.describe 'test', type: :aruba do
     puts "oxen push command took: #{push_time} seconds"
     expect(push_time).to be < 60.0
 
+    # Return to cli-test 
+    parent_path = File.join('..', '..')
+    Dir.chdir(parent_path)
+
   end
 
   def measure_time(command)
     start_time = Time.now
-    run_command_and_stop(command)
+    run_system_command(command)
     end_time = Time.now
     end_time - start_time
   end

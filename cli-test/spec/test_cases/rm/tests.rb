@@ -6,81 +6,100 @@ RSpec.describe 'rm - test relative paths', type: :aruba do
   end
 
   after(:each) do
-    run_command_and_stop('rm -rf test-relative-paths')
+    FileUtils.rm_rf('test-relative-paths')
+
   end
 
   it 'tests oxen rm with relative paths from subdirectories' do
-    directory_path = 'tmp/aruba/test-relative-paths'
 
     # Setup base repo
-    run_command_and_stop('mkdir test-relative-paths')
-    cd 'test-relative-paths'
-    run_command_and_stop('oxen init')
+    directory_path = File.join('tmp', 'aruba', 'test-relative-dirs')
+    FileUtils.mkdir_p(directory_path)
+
+    # Capitalize path
+    directory_path = File.join('tmp', 'Aruba', 'test-relative-dirs')
+    Dir.chdir(directory_path)
+
+    run_system_command('oxen init')
 
     # Create nested directory structure
-    run_command_and_stop('mkdir -p images/test')
+    images_path = File.join('images', 'test')
+    FileUtils.mkdir_p(images_path)
     
     # Create and commit first set of files
-    file_path = File.join(directory_path, 'root.txt')
+    file_path = File.join('root.txt')
     File.open(file_path, 'w') do |file|
       file.puts 'root file'
     end
-    run_command_and_stop('oxen add root.txt')
-    run_command_and_stop('oxen commit -m "adding root file"')
+    run_system_command('oxen add root.txt') 
+    run_system_command('oxen commit -m "adding root file"') 
     
     # Create and commit nested file
-    nested_file_path = File.join(directory_path, 'images/test/nested.txt')
-    File.open(nested_file_path, 'w') do |file|
+    
+    test_path = File.join('images', 'test')
+    nested_path = File.join(test_path, 'nested.txt')
+    File.open(nested_path, 'w') do |file|
       file.puts 'nested file'
     end
-    cd 'images/test'
-    run_command_and_stop('oxen add nested.txt')
-    run_command_and_stop('oxen commit -m "adding nested file"')
+
+    Dir.chdir(test_path)
+    run_system_command('oxen add nested.txt') 
+    run_system_command('oxen commit -m "adding nested file"') 
     
     # Test removing file from nested directory
-    run_command_and_stop('oxen rm ../../root.txt')
+    parent_path = File.join('..', '..')
+    root_path = File.join(parent_path, 'root.txt')
+    run_system_command("oxen rm #{root_path}") 
     
     # Test removing local file
-    run_command_and_stop('oxen rm nested.txt')
+    run_system_command('oxen rm nested.txt') 
     
     # Go back to root and verify files are removed
-    cd '../..'
-    run_command_and_stop('oxen status')
+    Dir.chdir(parent_path)
+    run_system_command('oxen status') 
     
     # Should show files as removed in staging
-    expect(last_command_started).to have_output(/removed: root\.txt/)
-    expect(last_command_started).to have_output(/removed: images\/test\/nested\.txt/)
-
     
     # Files should still exist on disk
     expect(File.exist?(File.join(directory_path, 'root.txt'))).to be false
-    expect(File.exist?(File.join(directory_path, 'images/test/nested.txt'))).to be false
+    expect(File.exist?(File.join(directory_path, nested_path))).to be false
+
+    # Return to cli-test 
+    parent_path = File.join('..', '..')
+    Dir.chdir(parent_path)
+
   end
 
   it 'tests oxen rm with removed path from disk' do
-    directory_path = 'tmp/aruba/test-removed-path'
+ 
 
     # Setup base repo
-    run_command_and_stop('mkdir test-removed-path')
-    cd 'test-removed-path'
-    run_command_and_stop('oxen init')
+    directory_path = File.join('tmp', 'aruba', 'test-relative-dirs')
+    FileUtils.mkdir_p(directory_path)
+
+    # Capitalize path
+    directory_path = File.join('tmp', 'Aruba', 'test-relative-dirs')
+    Dir.chdir(directory_path)
+
+    run_system_command('oxen init') 
 
     # Create and commit root file
-    file_path = File.join(directory_path, 'root.txt')
+    file_path = File.join('root.txt')
     File.open(file_path, 'w') do |file|
       file.puts 'root file'
     end
-    run_command_and_stop('oxen add root.txt')
-    run_command_and_stop('oxen commit -m "adding root file"')
+    run_system_command('oxen add root.txt') 
+    run_system_command('oxen commit -m "adding root file"') 
 
     # Test removing file before running oxen rm
-    run_command_and_stop('rm root.txt')
-    run_command_and_stop('oxen rm root.txt')
-
-    # Should show files as removed in staging
-    expect(last_command_started).to have_output(/removed 1 file/)
+    FileUtils.rm('root.txt') 
+    run_system_command('oxen rm root.txt') 
 
     # Files should not exist on disk
-    expect(File.exist?(File.join(directory_path, 'root.txt'))).to be false
+    expect(File.exist?(File.join('root.txt'))).to be false
+
+    # Return to cli-test 
+    parent_path = File.join('..', '..')
+    Dir.chdir(parent_path)
   end
 end

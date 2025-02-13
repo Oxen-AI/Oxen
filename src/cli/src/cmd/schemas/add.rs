@@ -7,6 +7,7 @@ use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
+use crate::util;
 pub const NAME: &str = "add";
 
 pub struct SchemasAddCmd;
@@ -51,13 +52,7 @@ impl RunCmd for SchemasAddCmd {
                     OxenError::basic_str(format!("Failed to get current directory: {}", e))
                 })?;
                 let path = current_dir.join(p);
-                path.canonicalize().map_err(|e| {
-                    OxenError::basic_str(format!(
-                        "Failed to resolve path '{}': {}",
-                        path.display(),
-                        e
-                    ))
-                })
+                util::fs::canonicalize(&path).or_else(|_| Ok(path))
             })
             .transpose()?;
 
