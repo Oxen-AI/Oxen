@@ -88,8 +88,16 @@ pub fn list_directory(
         dir_entries(repo, &dir, directory, parsed_resource, &mut found_commits)?;
     log::debug!("list_directory got {} entries", entries.len());
 
-    let (entries, pagination) = util::paginate(entries, page, page_size);
+    let (mut entries, pagination) = util::paginate(entries, page, page_size);
     let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
+
+    if parsed_resource.workspace.is_some() {
+        repositories::workspaces::populate_entries_with_workspace_data(
+            directory,
+            parsed_resource.workspace.as_ref().unwrap(),
+            &mut entries,
+        )?;
+    }
 
     Ok(PaginatedDirEntries {
         dir: dir_entry,
@@ -227,6 +235,7 @@ fn dir_node_to_metadata_entry(
             dir_node.data_types(),
         ))),
         is_queryable: None,
+        status: None,
     }))
 }
 
@@ -280,6 +289,7 @@ fn file_node_to_metadata_entry(
         extension: file_node.extension().to_string(),
         metadata: file_node.metadata(),
         is_queryable: is_indexed,
+        status: None,
     }))
 }
 

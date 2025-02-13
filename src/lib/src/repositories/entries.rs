@@ -11,7 +11,9 @@ use crate::repositories;
 use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
-use crate::model::{Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource};
+use crate::model::{
+    Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
+};
 use crate::view::PaginatedDirEntries;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -47,7 +49,14 @@ pub fn list_commit_entries(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts, repo.min_version())
+    list_directory_w_version(
+        repo,
+        ROOT_PATH,
+        revision,
+        None,
+        paginate_opts,
+        repo.min_version(),
+    )
 }
 
 /// List all the entries within a directory given a specific commit
@@ -57,7 +66,14 @@ pub fn list_directory(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, directory, revision, paginate_opts, repo.min_version())
+    list_directory_w_version(
+        repo,
+        directory,
+        revision,
+        None,
+        paginate_opts,
+        repo.min_version(),
+    )
 }
 
 /// Force a version when listing a repo
@@ -65,21 +81,29 @@ pub fn list_directory_w_version(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
     revision: impl AsRef<str>,
+    workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
-            let revision = revision.as_ref().to_string();
-            let branch = repositories::branches::get_by_name(repo, &revision)?;
-            let commit = repositories::revisions::get(repo, &revision)?;
+            let revision_str = revision.as_ref().to_string();
+            let version_str = if let Some(workspace) = workspace.clone() {
+                workspace.id.clone()
+            } else {
+                revision_str.clone()
+            };
+
+            let branch = repositories::branches::get_by_name(repo, &revision_str)?;
+            let commit = repositories::revisions::get(repo, &revision_str)?;
             let parsed_resource = ParsedResource {
                 path: directory.as_ref().to_path_buf(),
                 commit,
+                workspace,
                 branch,
-                version: PathBuf::from(&revision),
-                resource: PathBuf::from(&revision).join(&directory),
+                version: PathBuf::from(&version_str),
+                resource: PathBuf::from(&version_str).join(directory.as_ref()),
             };
             core::v_latest::entries::list_directory(
                 repo,
@@ -113,6 +137,7 @@ pub fn get_meta_entry(
         path: path.to_path_buf(),
         commit: Some(commit.clone()),
         branch: None,
+        workspace: None,
         version: PathBuf::from(&commit.id),
         resource: PathBuf::from(&commit.id).join(path),
     };

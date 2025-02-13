@@ -530,7 +530,7 @@ jobs:
     needs: [release_mac_13, release_mac_14, release_mac_15]
     uses: oxen-ai/homebrew-oxen/.github/workflows/update-formula.yml@main
     with:
-      version: ${{ github.ref_name != '' && startsWith(github.ref_name, 'v') }}
+      version: ${{ github.ref_name }}
     secrets:
       token: ${{ secrets.HOMEBREW_DEPLOY_PAT }}
 
@@ -541,7 +541,7 @@ jobs:
     needs: [release_mac_13, release_mac_14, release_mac_15]
     uses: oxen-ai/homebrew-oxen-server/.github/workflows/update-formula.yml@main
     with:
-      version: ${{ github.ref_name != '' && startsWith(github.ref_name, 'v') }}
+      version: ${{ github.ref_name }}
     secrets:
       token: ${{ secrets.HOMEBREW_DEPLOY_PAT }}
 

@@ -258,6 +258,7 @@ impl DiffEntry {
         node.map(|_| ParsedResource {
             commit: None,
             branch: None,
+            workspace: None,
             version: PathBuf::from(version.as_ref()),
             path: path.clone(),
             resource: PathBuf::from(version.as_ref()).join(path),
@@ -272,6 +273,7 @@ impl DiffEntry {
         node.map(|node| ParsedResource {
             commit: None,
             branch: None,
+            workspace: None,
             version: PathBuf::from(node.last_commit_id().to_string()),
             path: path.clone(),
             resource: PathBuf::from(node.last_commit_id().to_string()).join(path),
@@ -282,6 +284,7 @@ impl DiffEntry {
         dir.map(|dir| ParsedResource {
             commit: Some(commit.to_owned()),
             branch: None,
+            workspace: None,
             version: PathBuf::from(commit.id.to_string()),
             path: dir.clone(),
             resource: PathBuf::from(commit.id.to_string()).join(dir),

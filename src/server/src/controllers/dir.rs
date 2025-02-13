@@ -28,10 +28,17 @@ pub async fn get(
         liboxen::current_function!()
     );
 
+    let revision = if let Some(workspace) = resource.workspace.clone() {
+        workspace.commit.id
+    } else {
+        resource.version.to_str().unwrap_or_default().to_string()
+    };
+
     let paginated_entries = repositories::entries::list_directory_w_version(
         &repo,
         &resource.path,
-        resource.version.to_str().unwrap_or_default(),
+        revision,
+        resource.workspace.clone(),
         &PaginateOpts {
             page_num: page,
             page_size,

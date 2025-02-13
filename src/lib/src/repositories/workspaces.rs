@@ -2,6 +2,7 @@ use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_CONFIG};
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
 use crate::repositories;
 use crate::util;
 
@@ -18,6 +19,7 @@ pub use df::df;
 pub use diff::diff;
 pub use upload::upload;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
@@ -301,4 +303,97 @@ fn init_workspace_repo(
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::init_workspace_repo(repo, workspace_dir),
     }
+}
+
+pub fn populate_entries_with_workspace_data(
+    directory: &Path,
+    workspace: &Workspace,
+    entries: &mut Vec<MetadataEntry>,
+) -> Result<(), OxenError> {
+    let workspace_changes =
+        repositories::workspaces::status::status_from_dir(workspace, directory)?;
+
+    let (additions_map, other_changes_map) = build_file_status_maps(&workspace_changes);
+    for entry in entries.iter_mut() {
+        entry.status = other_changes_map.get(&entry.filename).cloned();
+    }
+    for (file_path, status) in additions_map.iter() {
+        if *status == StagedEntryStatus::Added {
+            let file_path_from_workspace = workspace.dir().join(file_path);
+            let mut metadata_from_path =
+                repositories::metadata::from_path(&file_path_from_workspace)?;
+            metadata_from_path.status = Some(status.clone());
+            entries.push(metadata_from_path);
+        }
+    }
+
+    Ok(())
+}
+
+pub fn populate_entry_with_workspace_data(
+    file_path: &Path,
+    entry: &mut MetadataEntry,
+    workspace: &Workspace,
+) -> Result<(), OxenError> {
+    let workspace_changes =
+        repositories::workspaces::status::status_from_dir(workspace, file_path)?;
+    let (_additions_map, other_changes_map) = build_file_status_maps(&workspace_changes);
+    entry.status = other_changes_map
+        .get(file_path.to_str().unwrap())
+        .cloned();
+    Ok(())
+}
+
+pub fn get_added_entry(
+    file_path: &Path,
+    workspace: &Workspace,
+    resource: &ParsedResource,
+) -> Result<MetadataEntry, OxenError> {
+    let workspace_changes =
+        repositories::workspaces::status::status_from_dir(workspace, file_path)?;
+    let (additions_map, _other_changes_map) = build_file_status_maps(&workspace_changes);
+    let status = additions_map
+        .get(file_path.to_str().unwrap())
+        .cloned();
+    let file_path_from_workspace = workspace.dir().join(file_path);
+    if status == Some(StagedEntryStatus::Added) {
+        let mut metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
+
+        metadata_from_path.status = Some(StagedEntryStatus::Added);
+        metadata_from_path.resource = Some(resource.clone());
+        Ok(metadata_from_path)
+    } else {
+        Err(OxenError::basic_str(
+            "Entry is not in the workspace's staged database",
+        ))
+    }
+}
+
+/// Build a hashmap mapping file paths to their status from workspace_changes.staged_files.
+///
+/// Returns a tuple of two hashmaps:
+/// - The first hashmap contains file paths mapped to their status if they are added.
+/// - The second hashmap contains file paths mapped to their status if they are modified or removed.
+///
+/// This allows us to track files that were added to the workspace efficiently.
+fn build_file_status_maps(
+    workspace_changes: &StagedData,
+) -> (
+    HashMap<String, StagedEntryStatus>,
+    HashMap<String, StagedEntryStatus>,
+) {
+    let mut additions_map = HashMap::new();
+    let mut other_changes_map = HashMap::new();
+
+    for (file_path, entry) in workspace_changes.staged_files.iter() {
+        let key = file_path.to_str().unwrap().to_string();
+        let status = entry.status.clone();
+        if status == StagedEntryStatus::Added {
+            additions_map.insert(key, status);
+        } else {
+            other_changes_map.insert(key, status);
+        }
+    }
+
+    (additions_map, other_changes_map)
 }

@@ -43,3 +43,21 @@ impl Workspace {
         Self::workspace_dir(&self.base_repo, &workspace_id_hash)
     }
 }
+
+/// Conversion from the internal `Workspace` to a `WorkspaceView`
+impl From<Workspace> for WorkspaceView {
+    fn from(workspace: Workspace) -> Self {
+        Self {
+            name: workspace.name,
+            id: workspace.id,
+            commit: workspace.commit,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct WorkspaceView {
+    pub name: Option<String>,
+    pub id: String,
+    pub commit: Commit,
+}
