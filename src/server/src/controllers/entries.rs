@@ -10,7 +10,7 @@ use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesR
 use liboxen::view::StatusMessage;
 use liboxen::{constants, current_function, repositories, util};
 
-use actix_web::{http::header, web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -121,18 +121,12 @@ pub async fn download_chunk(
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
     let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
 
-    let meta_entry = repositories::entries::get_meta_entry(&repo, &commit, &resource.path)?;
-    let content_length = &meta_entry.size.to_string();
-
     let mut f = File::open(version_path).unwrap();
     f.seek(std::io::SeekFrom::Start(chunk_start)).unwrap();
     let mut buffer = vec![0u8; chunk_size as usize];
     f.read_exact(&mut buffer).unwrap();
 
-    Ok(HttpResponse::Ok()
-        .insert_header((header::CONTENT_TYPE, meta_entry.mime_type.as_str()))
-        .insert_header((header::CONTENT_LENGTH, content_length.as_str()))
-        .body(buffer))
+    Ok(HttpResponse::Ok().body(buffer))
 }
 
 pub async fn list_tabular(
