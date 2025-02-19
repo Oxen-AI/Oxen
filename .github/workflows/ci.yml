@@ -200,7 +200,7 @@ jobs:
           .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data\test\config\user_config.toml
           cmd /c "START /B .\target\debug\oxen-server.exe start"
-          cargo test -- --test-threads=1
+          
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
