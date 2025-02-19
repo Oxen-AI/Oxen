@@ -303,9 +303,10 @@ jobs:
           echo "Starting server"
           pwd
           ls .\target\debug\
-          cmd /c "START /B .\target\debug\oxen-server.exe start"
+       
           echo "🐂 Running tests"
           cd cli-test
+          pwd
           bundle config path vendor/bundle
           bundle install
           bundle exec rspec spec/test_cases/**/tests.rb
