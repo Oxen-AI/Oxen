@@ -297,7 +297,7 @@ jobs:
         run: |
           mkdir .\data\test\runs
           echo "Adding user"
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           echo "Copying user config"
           cp user_config.toml data\test\config\user_config.toml
           echo "Starting server"
