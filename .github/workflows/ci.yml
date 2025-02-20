@@ -269,44 +269,37 @@ jobs:
           bundle exec rspec spec/test_cases/**/tests.rb
 
   rspec_test_windows:
-    name: Windows RSpec CLI Tests
-    needs: [test_windows]
-    runs-on: windows-latest
+  name: Windows RSpec CLI Tests
+  needs: [test_windows]
+  runs-on: windows-latest
 
-    env:
-      OXEN_API_KEY: ${{ secrets.DEV_OXEN_API_KEY }}
+  env:
+    OXEN_API_KEY: ${{ secrets.DEV_OXEN_API_KEY }}
 
-    steps:
-      - uses: actions/checkout@v4
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: oxen-binary-windows
-          path: target/debug
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: oxen-binary-windows
+        path: target/debug
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.0'
-          bundler-cache: true
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: true
 
-      - name: Run oxen-server
-        env:
-          PATH: ${{ env.PATH }};${{ github.workspace }}/target/debug
-        run: |
-          mkdir .\data\test\runs
-          echo "Adding user"
-          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          echo "Copying user config"
-          cp user_config.toml data\test\config\user_config.toml
-          echo "Starting server"
-          pwd
-          ls .\target\debug\
-       
-          echo "🐂 Running tests"
-          cd cli-test
-          pwd
-          bundle config path vendor/bundle
-          bundle install
-          bundle exec rspec spec/test_cases/**/tests.rb
+    - name: Install Ruby dependencies
+      working-directory: ./cli-test
+      run: |
+        bundle config path vendor/bundle
+        bundle install
+
+    - name: Run RSpec tests
+      env:
+        PATH: ${{ env.PATH }};${{ github.workspace }}/target/debug
+      working-directory: ./cli-test
+      run: |
+        bundle exec rspec spec/test_cases/**/tests.rb
