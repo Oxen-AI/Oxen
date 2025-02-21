@@ -196,10 +196,7 @@ jobs:
       - name: Run Tests
         run: |
           cargo build
-          mkdir .\data\test\runs
-          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          cp user_config.toml data\test\config\user_config.toml
-          cmd /c "START /B .\target\debug\oxen-server.exe start"
+          
           
 
       - name: Upload build artifacts
@@ -302,4 +299,8 @@ jobs:
           PATH: ${{ env.PATH }};${{ github.workspace }}/target/debug
         working-directory: ./cli-test
         run: |
+          cmd /c "START /B .\target\debug\oxen-server.exe start"
+          mkdir .\data\test\runs
+          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          cp user_config.toml data\test\config\user_config.toml
           bundle exec rspec spec/test_cases/**/tests.rb
