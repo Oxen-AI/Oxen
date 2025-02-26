@@ -1,3 +1,4 @@
+use crate::config::repository_config::StorageConfig;
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
@@ -5,11 +6,16 @@ use crate::core::versions::MinOxenVersion;
 use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
+use crate::storage::local::LocalVersionStore;
+use crate::storage::s3::S3VersionStore;
+use crate::storage::version_store::VersionStore;
 use crate::util;
 use crate::view::RepositoryView;
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalRepository {
@@ -21,6 +27,10 @@ pub struct LocalRepository {
     vnode_size: Option<u64>,     // Size of the vnodes
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
+
+    // Skip this field during serialization/deserialization
+    #[serde(skip)]
+    version_store: Option<Arc<dyn VersionStore>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,26 +40,96 @@ pub struct LocalRepositoryWithEntries {
 }
 
 impl LocalRepository {
-    /// Load a repository from a directory, this reads the config file and returns the repository struct
-    pub fn from_dir(dir: &Path) -> Result<LocalRepository, OxenError> {
-        let config_path = util::fs::config_filepath(dir);
-        if !config_path.exists() {
-            return Err(OxenError::LocalRepoNotFound(Box::new(
-                dir.to_path_buf().into(),
-            )));
+    /// Factory method to create the appropriate version store
+    fn create_version_store(
+        path: &Path,
+        storage_config: Option<&StorageConfig>,
+    ) -> Result<Arc<dyn VersionStore>, OxenError> {
+        match storage_config {
+            Some(config) => match config.type_.as_str() {
+                "local" => {
+                    let versions_dir = util::fs::oxen_hidden_dir(path)
+                        .join(constants::VERSIONS_DIR)
+                        .join(constants::FILES_DIR);
+                    let store = LocalVersionStore::new(versions_dir);
+                    store.init()?;
+                    Ok(Arc::new(store))
+                }
+                "s3" => {
+                    let bucket = config
+                        .settings
+                        .get("bucket")
+                        .ok_or_else(|| OxenError::basic_str("S3 bucket not specified"))?;
+                    let prefix = config
+                        .settings
+                        .get("prefix")
+                        .map(|s| s.clone())
+                        .unwrap_or_else(|| String::from("versions"));
+                    let store = S3VersionStore::new(bucket, prefix);
+                    store.init()?;
+                    Ok(Arc::new(store))
+                }
+                _ => Err(OxenError::basic_str(format!(
+                    "Unsupported storage type: {}",
+                    config.type_
+                ))),
+            },
+            None => {
+                // Default to local storage
+                let versions_dir = util::fs::oxen_hidden_dir(path)
+                    .join(constants::VERSIONS_DIR)
+                    .join(constants::FILES_DIR);
+                let store = LocalVersionStore::new(versions_dir);
+                store.init()?;
+                Ok(Arc::new(store))
+            }
         }
-        let cfg = RepositoryConfig::from_file(&config_path)?;
-        let vnode_size = cfg.vnode_size();
-        let repo = LocalRepository {
-            path: dir.to_path_buf(),
-            remotes: cfg.remotes,
-            remote_name: cfg.remote_name,
-            min_version: cfg.min_version,
-            vnode_size: Some(vnode_size),
-            subtree_paths: cfg.subtree_paths,
-            depth: cfg.depth,
+    }
+
+    /// Create a LocalRepository from a directory
+    pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
+        let path = path.as_ref().to_path_buf();
+        let config_path = util::fs::config_filepath(&path);
+        let config = RepositoryConfig::from_file(&config_path)?;
+
+        let mut repo = LocalRepository {
+            path,
+            remote_name: config.remote_name,
+            min_version: config.min_version,
+            remotes: config.remotes,
+            vnode_size: config.vnode_size,
+            subtree_paths: config.subtree_paths.clone(),
+            depth: config.depth,
+            version_store: None,
         };
+
+        // Initialize the version store based on config
+        let store = Self::create_version_store(&repo.path, config.storage.as_ref())?;
+        repo.version_store = Some(store);
+
         Ok(repo)
+    }
+
+    /// Get a reference to the version store
+    pub fn version_store(&self) -> Result<Arc<dyn VersionStore>, OxenError> {
+        match &self.version_store {
+            Some(store) => Ok(Arc::clone(store)),
+            None => Err(OxenError::basic_str("Version store not initialized")),
+        }
+    }
+
+    /// Initialize the version store if not already set
+    pub fn init_version_store(&mut self) -> Result<(), OxenError> {
+        if self.version_store.is_none() {
+            // Load config to get storage settings
+            let config_path = util::fs::config_filepath(&self.path);
+            let config = RepositoryConfig::from_file(&config_path)?;
+
+            // Create and initialize the store
+            let store = Self::create_version_store(&self.path, config.storage.as_ref())?;
+            self.version_store = Some(store);
+        }
+        Ok(())
     }
 
     /// Load a repository from the current directory
@@ -75,6 +155,7 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
+            version_store: None,
         })
     }
 
@@ -91,6 +172,7 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
+            version_store: None,
         })
     }
 
@@ -103,6 +185,7 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
+            version_store: None,
         })
     }
 
@@ -115,6 +198,7 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
+            version_store: None,
         })
     }
 
@@ -178,24 +262,36 @@ impl LocalRepository {
         self.depth = depth;
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), OxenError> {
-        let cfg = RepositoryConfig {
+    /// Save the repository configuration to disk
+    pub fn save(&self) -> Result<(), OxenError> {
+        let config_path = util::fs::config_filepath(&self.path);
+
+        // Determine the current storage type and settings using the trait methods
+        let storage = if let Some(store) = &self.version_store {
+            Some(StorageConfig {
+                type_: store.storage_type().to_string(),
+                settings: store.storage_settings(),
+            })
+        } else {
+            None
+        };
+
+        let config = RepositoryConfig {
             remote_name: self.remote_name.clone(),
             remotes: self.remotes.clone(),
-            min_version: self.min_version.clone(),
-            vnode_size: Some(self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)),
             subtree_paths: self.subtree_paths.clone(),
             depth: self.depth,
+            min_version: self.min_version.clone(),
+            vnode_size: self.vnode_size,
+            storage,
         };
-        let toml = toml::to_string(&cfg)?;
-        util::fs::write_to_path(path, toml)?;
-        Ok(())
+
+        config.save(&config_path)
     }
 
+    /// Save the repository configuration to the default location
     pub fn save_default(&self) -> Result<(), OxenError> {
-        let filename = util::fs::config_filepath(&self.path);
-        self.save(&filename)?;
-        Ok(())
+        self.save()
     }
 
     pub fn set_remote(&mut self, name: impl AsRef<str>, url: impl AsRef<str>) -> Remote {

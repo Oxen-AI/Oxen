@@ -1,10 +1,22 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::constants::DEFAULT_VNODE_SIZE;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
 use crate::util;
+
+/// Configuration for version storage backend
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StorageConfig {
+    /// Storage type: "local" or "s3"
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Backend-specific settings
+    #[serde(default)]
+    pub settings: HashMap<String, String>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RepositoryConfig {
@@ -18,6 +30,8 @@ pub struct RepositoryConfig {
     // write the version if it is past v0.18.4
     pub min_version: Option<String>,
     pub vnode_size: Option<u64>,
+    /// Storage configuration
+    pub storage: Option<StorageConfig>,
 }
 
 impl Default for RepositoryConfig {
@@ -35,6 +49,7 @@ impl RepositoryConfig {
             depth: None,
             min_version: None,
             vnode_size: None,
+            storage: None,
         }
     }
 

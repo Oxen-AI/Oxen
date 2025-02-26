@@ -1,6 +1,5 @@
 use filetime::FileTime;
 use glob::glob;
-// use jwalk::WalkDirGeneric;
 use rayon::prelude::*;
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::collections::{HashMap, HashSet};
@@ -13,7 +12,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rmp_serde::Serializer;
 use serde::Serialize;
 
-use crate::constants::{FILES_DIR, OXEN_HIDDEN_DIR, STAGED_DIR, VERSIONS_DIR};
+use crate::constants::{OXEN_HIDDEN_DIR, STAGED_DIR};
 use crate::core;
 use crate::core::db;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
@@ -93,12 +92,6 @@ fn add_files(
     // Start a timer
     let start = std::time::Instant::now();
 
-    // Create the versions dir if it doesn't exist
-    let versions_path = util::fs::oxen_hidden_dir(&repo.path).join(VERSIONS_DIR);
-    if !versions_path.exists() {
-        util::fs::create_dir_all(versions_path)?;
-    }
-
     // Lookup the head commit
     let maybe_head_commit = repositories::commits::head_commit_maybe(repo)?;
 
@@ -111,7 +104,7 @@ fn add_files(
         log::debug!("path is {path:?}");
 
         if path.is_dir() {
-            total += add_dir_inner(repo, &maybe_head_commit, path.clone(), staged_db)?;
+            total += process_add_dir(repo, &maybe_head_commit, staged_db, path.clone())?;
         } else if path.is_file() {
             let entry = add_file_inner(repo, &maybe_head_commit, path, staged_db)?;
             if let Some(entry) = entry {
@@ -127,9 +120,9 @@ fn add_files(
                 }
             }
         } else {
-            // TODO: Should there be a way to add non-existant dirs? I think it's safer to just require rm for those?
+            // TODO: Should there be a way to add nonexistent dirs? I think it's safer to just require rm for those?
             log::debug!(
-                "Found nonexistant path {path:?}. Staging for removal. Recursive flag not set"
+                "Found nonexistent path {path:?}. Staging for removal. Recursive flag not set"
             );
             let mut opts = RmOpts::from_path(path);
             opts.recursive = true;
@@ -155,18 +148,6 @@ fn add_files(
     Ok(total)
 }
 
-fn add_dir_inner(
-    repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
-    path: PathBuf,
-    staged_db: &DBWithThreadMode<MultiThreaded>,
-) -> Result<CumulativeStats, OxenError> {
-    let versions_path = util::fs::oxen_hidden_dir(&repo.path)
-        .join(VERSIONS_DIR)
-        .join(FILES_DIR);
-    process_add_dir(repo, maybe_head_commit, &versions_path, staged_db, path)
-}
-
 pub fn add_dir(
     repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
@@ -177,13 +158,12 @@ pub fn add_dir(
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
-    add_dir_inner(repo, maybe_head_commit, path, &staged_db)
+    process_add_dir(repo, maybe_head_commit, &staged_db, path)
 }
 
 pub fn process_add_dir(
     repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
-    versions_path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     path: PathBuf,
 ) -> Result<CumulativeStats, OxenError> {
@@ -255,10 +235,9 @@ pub fn process_add_dir(
                 match process_add_file(
                     &repo,
                     repo_path,
-                    versions_path,
+                    &path,
                     staged_db,
                     &dir_node,
-                    &path,
                     &seen_dirs_clone,
                 ) {
                     Ok(Some(node)) => {
@@ -323,9 +302,6 @@ fn add_file_inner(
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let repo_path = &repo.path.clone();
-    let versions_path = util::fs::oxen_hidden_dir(&repo.path)
-        .join(VERSIONS_DIR)
-        .join(FILES_DIR);
     let mut maybe_dir_node = None;
     if let Some(head_commit) = maybe_head_commit {
         let path = util::fs::path_relative_to_dir(path, repo_path)?;
@@ -337,10 +313,9 @@ fn add_file_inner(
     process_add_file(
         repo,
         repo_path,
-        &versions_path,
+        path,
         staged_db,
         &maybe_dir_node,
-        path,
         &seen_dirs,
     )
 }
@@ -361,10 +336,9 @@ pub fn add_file(
 pub fn process_add_file(
     repo: &LocalRepository,
     repo_path: &Path,
-    versions_path: &Path,
+    path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     maybe_dir_node: &Option<MerkleTreeNode>,
-    path: &Path,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     log::debug!("process_add_file {:?}", path);
@@ -488,20 +462,11 @@ pub fn process_add_file(
         data_type = EntryDataType::Binary;
     }
 
-    // Add the file to the versions db
-    // Take first 2 chars of hash as dir prefix and last N chars as the dir suffix
-    let dir_prefix_len = 2;
-    let dir_name = hash.to_string();
-    let dir_prefix = dir_name.chars().take(dir_prefix_len).collect::<String>();
-    let dir_suffix = dir_name.chars().skip(dir_prefix_len).collect::<String>();
-    let dst_dir = versions_path.join(dir_prefix).join(dir_suffix);
-
-    if !dst_dir.exists() {
-        util::fs::create_dir_all(&dst_dir)?;
-    }
-
-    let dst = dst_dir.join("data");
-    util::fs::copy(&full_path, &dst)?;
+    // TODO: (josh) VersionStore refactor: util::fs::copy function we were using before handled retries
+    // Use the version store to store the file
+    let version_store = repo.version_store()?;
+    let file_content = std::fs::read(&full_path)?;
+    version_store.store_version(&hash.to_string(), &file_content)?;
 
     let file_extension = relative_path
         .extension()
