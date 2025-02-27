@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::OxenError;
@@ -46,6 +46,31 @@ impl VersionStore for LocalVersionStore {
         util::fs::create_dir_all(&self.root_path)
     }
 
+    fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash);
+        util::fs::create_dir_all(&version_dir)?;
+
+        let version_path = self.version_path(hash);
+        fs::copy(file_path, &version_path)?;
+
+        Ok(())
+    }
+
+    fn store_version_from_reader(
+        &self,
+        hash: &str,
+        mut reader: Box<dyn Read>,
+    ) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash);
+        util::fs::create_dir_all(&version_dir)?;
+
+        let version_path = self.version_path(hash);
+        let mut file = File::create(&version_path)?;
+        io::copy(&mut *reader, &mut file)?;
+
+        Ok(())
+    }
+
     fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
         let version_dir = self.version_dir(hash);
         util::fs::create_dir_all(&version_dir)?;
@@ -57,9 +82,21 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
+    fn open_version(&self, hash: &str) -> Result<Box<dyn Read>, OxenError> {
+        let path = self.version_path(hash);
+        let file = File::open(&path)?;
+        Ok(Box::new(file))
+    }
+
     fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
         let path = self.version_path(hash);
         Ok(fs::read(&path)?)
+    }
+
+    fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
+        let version_path = self.version_path(hash);
+        fs::copy(&version_path, dest_path)?;
+        Ok(())
     }
 
     fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
@@ -117,6 +154,7 @@ impl VersionStore for LocalVersionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use tempfile::TempDir;
 
     fn setup() -> (TempDir, LocalVersionStore) {
@@ -149,6 +187,49 @@ mod tests {
 
         // Get and verify the data
         let retrieved = store.get_version(hash).unwrap();
+        assert_eq!(retrieved, data);
+    }
+
+    #[test]
+    fn test_store_from_reader() {
+        let (_temp_dir, store) = setup();
+        let hash = "abcdef1234567890";
+        let data = b"test data from reader";
+
+        // Create a cursor with the test data
+        let cursor = Cursor::new(data.to_vec());
+
+        // Store using the reader
+        store
+            .store_version_from_reader(hash, Box::new(cursor))
+            .unwrap();
+
+        // Verify the file exists
+        let version_path = store.version_path(hash);
+        assert!(version_path.exists());
+
+        // Get and verify the data
+        let retrieved = store.get_version(hash).unwrap();
+        assert_eq!(retrieved, data);
+    }
+
+    #[test]
+    fn test_open_version() {
+        let (_temp_dir, store) = setup();
+        let hash = "abcdef1234567892";
+        let data = b"test data for open";
+
+        // Store the version
+        store.store_version(hash, data).unwrap();
+
+        // Open the version as a reader
+        let mut reader = store.open_version(hash).unwrap();
+
+        // Read the data
+        let mut retrieved = Vec::new();
+        reader.read_to_end(&mut retrieved).unwrap();
+
+        // Verify the data
         assert_eq!(retrieved, data);
     }
 

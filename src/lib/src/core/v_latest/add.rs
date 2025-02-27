@@ -1,5 +1,6 @@
 use filetime::FileTime;
 use glob::glob;
+// use jwalk::WalkDirGeneric;
 use rayon::prelude::*;
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 use std::collections::{HashMap, HashSet};
@@ -19,6 +20,7 @@ use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::opts::RmOpts;
+use crate::storage::version_store::VersionStore;
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
 use std::ops::AddAssign;
@@ -72,20 +74,27 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
         }
     }
 
+    // Get the version store from the repository
+    let version_store = repo.version_store()?;
+
+    // Initialize the version store if needed
+    version_store.init()?;
+
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
-    let _stats = add_files(repo, &paths, &staged_db)?;
+    let _stats = add_files(repo, &paths, &staged_db, &version_store)?;
 
     Ok(())
 }
 
-fn add_files(
+pub fn add_files(
     repo: &LocalRepository,
     paths: &HashSet<PathBuf>,
     staged_db: &DBWithThreadMode<MultiThreaded>,
+    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
 ) -> Result<CumulativeStats, OxenError> {
     log::debug!("add files: {:?}", paths);
 
@@ -104,9 +113,15 @@ fn add_files(
         log::debug!("path is {path:?}");
 
         if path.is_dir() {
-            total += process_add_dir(repo, &maybe_head_commit, staged_db, path.clone())?;
+            total += add_dir_inner(
+                repo,
+                &maybe_head_commit,
+                path.clone(),
+                staged_db,
+                version_store,
+            )?;
         } else if path.is_file() {
-            let entry = add_file_inner(repo, &maybe_head_commit, path, staged_db)?;
+            let entry = add_file_inner(repo, &maybe_head_commit, path, staged_db, version_store)?;
             if let Some(entry) = entry {
                 if let EMerkleTreeNode::File(file_node) = &entry.node.node {
                     let data_type = file_node.data_type();
@@ -148,6 +163,16 @@ fn add_files(
     Ok(total)
 }
 
+fn add_dir_inner(
+    repo: &LocalRepository,
+    maybe_head_commit: &Option<Commit>,
+    path: PathBuf,
+    staged_db: &DBWithThreadMode<MultiThreaded>,
+    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
+) -> Result<CumulativeStats, OxenError> {
+    process_add_dir(repo, maybe_head_commit, version_store, staged_db, path)
+}
+
 pub fn add_dir(
     repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
@@ -158,12 +183,19 @@ pub fn add_dir(
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
-    process_add_dir(repo, maybe_head_commit, &staged_db, path)
+    // Get the version store from the repository
+    let version_store = repo.version_store()?;
+
+    // Initialize the version store if needed
+    version_store.init()?;
+
+    add_dir_inner(repo, maybe_head_commit, path, &staged_db, &version_store)
 }
 
 pub fn process_add_dir(
     repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
+    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     path: PathBuf,
 ) -> Result<CumulativeStats, OxenError> {
@@ -235,9 +267,10 @@ pub fn process_add_dir(
                 match process_add_file(
                     &repo,
                     repo_path,
-                    &path,
+                    version_store,
                     staged_db,
                     &dir_node,
+                    &path,
                     &seen_dirs_clone,
                 ) {
                     Ok(Some(node)) => {
@@ -300,6 +333,7 @@ fn add_file_inner(
     maybe_head_commit: &Option<Commit>,
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
+    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let repo_path = &repo.path.clone();
     let mut maybe_dir_node = None;
@@ -313,9 +347,10 @@ fn add_file_inner(
     process_add_file(
         repo,
         repo_path,
-        path,
+        version_store,
         staged_db,
         &maybe_dir_node,
+        path,
         &seen_dirs,
     )
 }
@@ -330,15 +365,22 @@ pub fn add_file(
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
-    add_file_inner(repo, maybe_head_commit, path, &staged_db)
+    // Get the version store from the repository
+    let version_store = repo.version_store()?;
+
+    // Initialize the version store if needed
+    version_store.init()?;
+
+    add_file_inner(repo, maybe_head_commit, path, &staged_db, &version_store)
 }
 
 pub fn process_add_file(
     repo: &LocalRepository,
     repo_path: &Path,
-    path: &Path,
+    version_store: &Arc<dyn VersionStore>,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     maybe_dir_node: &Option<MerkleTreeNode>,
+    path: &Path,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     log::debug!("process_add_file {:?}", path);
@@ -462,11 +504,9 @@ pub fn process_add_file(
         data_type = EntryDataType::Binary;
     }
 
-    // TODO: (josh) VersionStore refactor: util::fs::copy function we were using before handled retries
-    // Use the version store to store the file
-    let version_store = repo.version_store()?;
-    let file_content = std::fs::read(&full_path)?;
-    version_store.store_version(&hash.to_string(), &file_content)?;
+    // Store the file in the version store using the hash as the key
+    let hash_str = hash.to_string();
+    version_store.store_version_from_path(&hash_str, &full_path)?;
 
     let file_extension = relative_path
         .extension()

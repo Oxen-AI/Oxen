@@ -1,24 +1,55 @@
 use crate::error::OxenError;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::io::Read;
+use std::panic::RefUnwindSafe;
+use std::path::Path;
 
 /// Trait defining operations for version file storage backends
-pub trait VersionStore: Debug + Send + Sync + 'static {
+pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
     /// Initialize the storage backend
     fn init(&self) -> Result<(), OxenError>;
 
-    /// Store a version file
+    /// Store a version file from a file path
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `file_path` - Path to the file to store
+    fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError>;
+
+    /// Store a version file from a reader
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `reader` - Any type that implements Read trait, boxed for object safety
+    fn store_version_from_reader(&self, hash: &str, reader: Box<dyn Read>)
+        -> Result<(), OxenError>;
+
+    /// Store a version file from bytes (less efficient for large files)
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     /// * `data` - The raw bytes to store
     fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
 
-    /// Retrieve a version file's contents
+    /// Open a version file for reading
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    fn open_version(&self, hash: &str) -> Result<Box<dyn Read>, OxenError>;
+
+    /// Retrieve a version file's contents as bytes (less efficient for large files)
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
+
+    /// Copy a version to a destination path
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    /// * `dest_path` - Destination path to copy the file to
+    fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError>;
 
     /// Check if a version exists
     ///
