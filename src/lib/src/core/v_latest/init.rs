@@ -29,14 +29,13 @@ pub fn init_with_version(
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
     std::fs::create_dir_all(hidden_dir)?;
-    let config_path = util::fs::config_filepath(path);
-    if config_path.try_exists()? {
+    if util::fs::config_filepath(path).try_exists()? {
         let err = format!("Oxen repository already exists: {path:?}");
         return Err(OxenError::basic_str(err));
     }
 
     let repo = LocalRepository::new_from_version(path, version.to_string())?;
-    repo.save(&config_path)?;
+    repo.save()?;
 
     Ok(repo)
 }

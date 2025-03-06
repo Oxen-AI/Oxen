@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::OxenError;

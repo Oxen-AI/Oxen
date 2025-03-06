@@ -1,9 +1,27 @@
-use crate::error::OxenError;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::Read;
 use std::panic::RefUnwindSafe;
 use std::path::Path;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::constants;
+use crate::error::OxenError;
+use crate::storage::{LocalVersionStore, S3VersionStore};
+use crate::util;
+
+/// Configuration for version storage backend
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StorageConfig {
+    /// Storage type: "local" or "s3"
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Backend-specific settings
+    #[serde(default)]
+    pub settings: HashMap<String, String>,
+}
 
 /// Trait defining operations for version file storage backends
 pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
@@ -71,4 +89,51 @@ pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
 
     /// Get the storage-specific settings
     fn storage_settings(&self) -> HashMap<String, String>;
+}
+
+/// Factory method to create the appropriate version store
+pub fn create_version_store(
+    path: impl AsRef<Path>,
+    storage_config: Option<&StorageConfig>,
+) -> Result<Arc<dyn VersionStore>, OxenError> {
+    let path = path.as_ref();
+    match storage_config {
+        Some(config) => match config.type_.as_str() {
+            "local" => {
+                let versions_dir = util::fs::oxen_hidden_dir(path)
+                    .join(constants::VERSIONS_DIR)
+                    .join(constants::FILES_DIR);
+                let store = LocalVersionStore::new(versions_dir);
+                store.init()?;
+                Ok(Arc::new(store))
+            }
+            "s3" => {
+                let bucket = config
+                    .settings
+                    .get("bucket")
+                    .ok_or_else(|| OxenError::basic_str("S3 bucket not specified"))?;
+                let prefix = config
+                    .settings
+                    .get("prefix")
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| String::from("versions"));
+                let store = S3VersionStore::new(bucket, prefix);
+                store.init()?;
+                Ok(Arc::new(store))
+            }
+            _ => Err(OxenError::basic_str(format!(
+                "Unsupported storage type: {}",
+                config.type_
+            ))),
+        },
+        None => {
+            // Default to local storage
+            let versions_dir = util::fs::oxen_hidden_dir(path)
+                .join(constants::VERSIONS_DIR)
+                .join(constants::FILES_DIR);
+            let store = LocalVersionStore::new(versions_dir);
+            store.init()?;
+            Ok(Arc::new(store))
+        }
+    }
 }

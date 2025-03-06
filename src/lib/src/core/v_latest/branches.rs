@@ -165,8 +165,14 @@ pub async fn checkout_subtrees(
             return Err(OxenError::cannot_overwrite_files(&cannot_overwrite_entries));
         }
 
+        let version_store = repo.version_store()?;
         for file_to_restore in files_to_restore {
-            restore::restore_file(repo, &file_to_restore.file_node, &file_to_restore.path)?;
+            restore::restore_file(
+                repo,
+                &file_to_restore.file_node,
+                &file_to_restore.path,
+                &version_store,
+            )?;
         }
     }
 
@@ -245,8 +251,14 @@ pub async fn set_working_repo_to_commit(
         return Err(OxenError::cannot_overwrite_files(&cannot_overwrite_entries));
     }
 
+    let version_store = repo.version_store()?;
     for file_to_restore in files_to_restore {
-        restore::restore_file(repo, &file_to_restore.file_node, &file_to_restore.path)?;
+        restore::restore_file(
+            repo,
+            &file_to_restore.file_node,
+            &file_to_restore.path,
+            &version_store,
+        )?;
     }
 
     Ok(())

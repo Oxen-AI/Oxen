@@ -77,9 +77,6 @@ pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenErr
     // Get the version store from the repository
     let version_store = repo.version_store()?;
 
-    // Initialize the version store if needed
-    version_store.init()?;
-
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
@@ -94,7 +91,7 @@ pub fn add_files(
     repo: &LocalRepository,
     paths: &HashSet<PathBuf>,
     staged_db: &DBWithThreadMode<MultiThreaded>,
-    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
+    version_store: &Arc<dyn VersionStore>,
 ) -> Result<CumulativeStats, OxenError> {
     log::debug!("add files: {:?}", paths);
 
@@ -168,7 +165,7 @@ fn add_dir_inner(
     maybe_head_commit: &Option<Commit>,
     path: PathBuf,
     staged_db: &DBWithThreadMode<MultiThreaded>,
-    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
+    version_store: &Arc<dyn VersionStore>,
 ) -> Result<CumulativeStats, OxenError> {
     process_add_dir(repo, maybe_head_commit, version_store, staged_db, path)
 }
@@ -186,16 +183,13 @@ pub fn add_dir(
     // Get the version store from the repository
     let version_store = repo.version_store()?;
 
-    // Initialize the version store if needed
-    version_store.init()?;
-
     add_dir_inner(repo, maybe_head_commit, path, &staged_db, &version_store)
 }
 
 pub fn process_add_dir(
     repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
-    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
+    version_store: &Arc<dyn VersionStore>,
     staged_db: &DBWithThreadMode<MultiThreaded>,
     path: PathBuf,
 ) -> Result<CumulativeStats, OxenError> {
@@ -333,7 +327,7 @@ fn add_file_inner(
     maybe_head_commit: &Option<Commit>,
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
-    version_store: &Arc<dyn crate::storage::version_store::VersionStore>,
+    version_store: &Arc<dyn VersionStore>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let repo_path = &repo.path.clone();
     let mut maybe_dir_node = None;
@@ -367,9 +361,6 @@ pub fn add_file(
 
     // Get the version store from the repository
     let version_store = repo.version_store()?;
-
-    // Initialize the version store if needed
-    version_store.init()?;
 
     add_file_inner(repo, maybe_head_commit, path, &staged_db, &version_store)
 }

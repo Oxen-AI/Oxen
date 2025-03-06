@@ -1,12 +1,9 @@
-use crate::config::RepositoryConfig;
-use crate::constants::{DEFAULT_REMOTE_NAME, DEFAULT_VNODE_SIZE, REPO_CONFIG_FILENAME};
+use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::CloneOpts;
 use crate::util;
 use crate::{api, repositories};
-
-use std::path::Path;
 
 pub async fn clone_repo(
     remote_repo: RemoteRepository,
@@ -30,7 +27,6 @@ pub async fn clone_repo(
     util::fs::create_dir_all(&oxen_hidden_path)?;
 
     // save LocalRepository in .oxen directory
-    let repo_config_file = oxen_hidden_path.join(Path::new(REPO_CONFIG_FILENAME));
     let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
@@ -38,18 +34,7 @@ pub async fn clone_repo(
     local_repo.set_subtree_paths(opts.fetch_opts.subtree_paths.clone());
     local_repo.set_depth(opts.fetch_opts.depth);
 
-    // Save remote config in .oxen/config.toml
-    let remote_cfg = RepositoryConfig {
-        remote_name: Some(DEFAULT_REMOTE_NAME.to_string()),
-        remotes: vec![remote_repo.remote.clone()],
-        min_version: Some(remote_repo.min_version().to_string()),
-        vnode_size: Some(DEFAULT_VNODE_SIZE),
-        subtree_paths: opts.fetch_opts.subtree_paths.clone(),
-        depth: opts.fetch_opts.depth,
-    };
-
-    let toml = toml::to_string(&remote_cfg)?;
-    util::fs::write_to_path(&repo_config_file, &toml)?;
+    local_repo.save()?;
 
     if remote_repo.is_empty {
         println!("The remote repository is empty. Oxen has configured the local repository, but there are no files yet.");
