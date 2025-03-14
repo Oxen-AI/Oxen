@@ -11,7 +11,9 @@ use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode}
 use crate::model::{Commit, LocalRepository, MerkleHash};
 use crate::opts::RestoreOpts;
 use crate::repositories;
+use crate::storage::version_store::VersionStore;
 use crate::util;
+use std::sync::Arc;
 
 pub struct FileToRestore {
     pub file_node: FileNode,
@@ -25,6 +27,9 @@ pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenErro
         return restore_staged(repo, opts);
     }
 
+    // Get the version store from the repository
+    let version_store = repo.version_store()?;
+
     let path = opts.path;
     let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
@@ -35,7 +40,7 @@ pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenErro
     match dir {
         Some(dir) => {
             log::debug!("restore::restore: restoring directory");
-            restore_dir(repo, dir, &path)
+            restore_dir(repo, dir, &path, &version_store)
         }
         None => {
             log::debug!("restore::restore: restoring file");
@@ -51,7 +56,7 @@ pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenErro
 
                     let child_file = merkle_tree.root.file().unwrap();
 
-                    restore_file(repo, &child_file, &path)
+                    restore_file(repo, &child_file, &path, &version_store)
                 }
                 Err(OxenError::Basic(msg))
                     if msg.to_string().contains("Merkle tree hash not found") =>
@@ -168,6 +173,7 @@ fn restore_dir(
     repo: &LocalRepository,
     dir: MerkleTreeNode,
     path: &PathBuf,
+    version_store: &Arc<dyn VersionStore>,
 ) -> Result<(), OxenError> {
     log::debug!("restore::restore_dir: start");
     // Change the return type to include both FileNode and PathBuf
@@ -196,7 +202,7 @@ fn restore_dir(
         .for_each(|(file_node, file_path)| {
             existing_files.remove(file_path);
 
-            match restore_file(repo, file_node, file_path) {
+            match restore_file(repo, file_node, file_path, version_store) {
                 Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
                 Err(e) => {
                     log::error!(
@@ -251,13 +257,12 @@ pub fn restore_file(
     repo: &LocalRepository,
     file_node: &FileNode,
     path: impl AsRef<Path>,
+    version_store: &Arc<dyn VersionStore>,
 ) -> Result<(), OxenError> {
     let path = path.as_ref();
     let file_hash = file_node.hash();
     let last_modified_seconds = file_node.last_modified_seconds();
     let last_modified_nanoseconds = file_node.last_modified_nanoseconds();
-
-    let version_path = util::fs::version_path_from_node(repo, file_hash.to_string(), path);
 
     let working_path = repo.path.join(path);
     let parent = working_path.parent().unwrap();
@@ -265,7 +270,10 @@ pub fn restore_file(
         util::fs::create_dir_all(parent)?;
     }
 
-    util::fs::copy(version_path, working_path.clone())?;
+    // Use the version store to copy the file to the working path
+    let hash_str = file_hash.to_string();
+    version_store.copy_version_to_path(&hash_str, &working_path)?;
+
     let last_modified = std::time::SystemTime::UNIX_EPOCH
         + std::time::Duration::from_secs(last_modified_seconds as u64)
         + std::time::Duration::from_nanos(last_modified_nanoseconds as u64);

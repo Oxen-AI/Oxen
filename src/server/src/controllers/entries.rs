@@ -8,7 +8,7 @@ use liboxen::util::fs::replace_file_name_keep_extension;
 use liboxen::util::paginate;
 use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::view::StatusMessage;
-use liboxen::{constants, current_function, repositories, util};
+use liboxen::{constants, current_function, repositories};
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use flate2::read::GzDecoder;
@@ -17,7 +17,6 @@ use flate2::Compression;
 use futures_util::stream::StreamExt as _;
 use serde::Deserialize;
 
-use std::fs::File;
 use std::io::prelude::*;
 
 #[derive(Deserialize, Debug)]
@@ -117,11 +116,13 @@ pub async fn download_chunk(
         resource
     );
 
-    let version_path = util::fs::version_path_for_commit_id(&repo, &commit.id, &resource.path)?;
+    let version_store = repo.version_store()?;
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
     let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
 
-    let mut f = File::open(version_path).unwrap();
+    let file_node = repositories::entries::get_file(&repo, &commit, &resource.path)?
+        .ok_or(OxenHttpError::NotFound)?;
+    let mut f = version_store.open_version(&file_node.hash().to_string())?;
     f.seek(std::io::SeekFrom::Start(chunk_start)).unwrap();
     let mut buffer = vec![0u8; chunk_size as usize];
     f.read_exact(&mut buffer).unwrap();

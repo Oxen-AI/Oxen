@@ -581,9 +581,9 @@ fn list_missing_file_hashes_from_hashes(
     hashes: &HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let mut results = HashSet::new();
+    let version_store = repo.version_store()?;
     for hash in hashes {
-        let version_path = util::fs::version_path_from_hash(repo, hash.to_string());
-        if !version_path.exists() {
+        if !version_store.version_exists(&hash.to_string())? {
             results.insert(*hash);
         }
     }

@@ -193,10 +193,8 @@ pub fn transfer_namespace(
     util::fs::rename(&repo_dir, &new_repo_dir)?;
 
     // Update path in config
-    let config_path = util::fs::config_filepath(&new_repo_dir);
-    let mut repo = LocalRepository::from_dir(&new_repo_dir)?;
-    repo.path = new_repo_dir;
-    repo.save(&config_path)?;
+    let repo = LocalRepository::from_dir(&new_repo_dir)?;
+    repo.save()?;
 
     let updated_repo = get_by_namespace_and_name(sync_dir, to_namespace, repo_name)?;
 
@@ -227,9 +225,8 @@ pub fn create(root_dir: &Path, new_repo: RepoNew) -> Result<LocalRepositoryWithE
     std::fs::create_dir_all(&hidden_dir)?;
 
     // Create config file
-    let config_path = util::fs::config_filepath(&repo_dir);
     let local_repo = LocalRepository::new(&repo_dir)?;
-    local_repo.save(&config_path)?;
+    local_repo.save()?;
 
     // Create history dir
     let history_dir = util::fs::oxen_hidden_dir(&repo_dir).join(constants::HISTORY_DIR);

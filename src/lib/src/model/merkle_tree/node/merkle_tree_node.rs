@@ -9,7 +9,6 @@ use super::*;
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
-use crate::util;
 
 use serde::{Deserialize, Serialize};
 
@@ -191,16 +190,11 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
     ) -> Result<HashSet<MerkleHash>, OxenError> {
         let mut missing_hashes = HashSet::new();
+        let version_store = repo.version_store()?;
         for child in &self.children {
             if let EMerkleTreeNode::File(_) = &child.node {
-                // Check if the file exists in the versions directory
-                let file_path = util::fs::version_path_from_hash(repo, child.hash.to_string());
-                // log::debug!(
-                //     "list_missing_file_hashes {} checking file_path: {:?}",
-                //     self,
-                //     file_path
-                // );
-                if !file_path.exists() {
+                // Check if the file exists in the version store
+                if !version_store.version_exists(&child.hash.to_string())? {
                     missing_hashes.insert(child.hash);
                 }
             }
