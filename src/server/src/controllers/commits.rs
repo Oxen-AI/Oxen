@@ -807,7 +807,7 @@ fn unpack_entry_tarball(
         if path.starts_with("versions") && path.to_string_lossy().contains("files") {
             // Handle version files
             let hash = extract_hash_from_path(&path)?;
-            version_store.store_version_from_reader(&hash, &mut file)?;
+            version_store.save_from_reader(&hash, &mut file)?;
         } else {
             // For non-version files, use filename sent by client
             file.unpack_in(&hidden_dir)

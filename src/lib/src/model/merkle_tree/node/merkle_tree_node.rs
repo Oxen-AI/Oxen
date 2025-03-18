@@ -194,7 +194,7 @@ impl MerkleTreeNode {
         for child in &self.children {
             if let EMerkleTreeNode::File(_) = &child.node {
                 // Check if the file exists in the version store
-                if !version_store.version_exists(&child.hash.to_string())? {
+                if !version_store.exists(&child.hash.to_string())? {
                     missing_hashes.insert(child.hash);
                 }
             }

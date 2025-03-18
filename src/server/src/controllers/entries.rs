@@ -122,7 +122,7 @@ pub async fn download_chunk(
 
     let file_node = repositories::entries::get_file(&repo, &commit, &resource.path)?
         .ok_or(OxenHttpError::NotFound)?;
-    let mut f = version_store.open_version(&file_node.hash().to_string())?;
+    let mut f = version_store.get_to_reader(&file_node.hash().to_string())?;
     f.seek(std::io::SeekFrom::Start(chunk_start)).unwrap();
     let mut buffer = vec![0u8; chunk_size as usize];
     f.read_exact(&mut buffer).unwrap();

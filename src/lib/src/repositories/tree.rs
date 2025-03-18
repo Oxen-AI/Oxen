@@ -583,7 +583,7 @@ fn list_missing_file_hashes_from_hashes(
     let mut results = HashSet::new();
     let version_store = repo.version_store()?;
     for hash in hashes {
-        if !version_store.version_exists(&hash.to_string())? {
+        if !version_store.exists(&hash.to_string())? {
             results.insert(*hash);
         }
     }

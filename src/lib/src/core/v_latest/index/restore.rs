@@ -272,7 +272,7 @@ pub fn restore_file(
 
     // Use the version store to copy the file to the working path
     let hash_str = file_hash.to_string();
-    version_store.copy_version_to_path(&hash_str, &working_path)?;
+    version_store.get_to_path(&hash_str, &working_path)?;
 
     let last_modified = std::time::SystemTime::UNIX_EPOCH
         + std::time::Duration::from_secs(last_modified_seconds as u64)

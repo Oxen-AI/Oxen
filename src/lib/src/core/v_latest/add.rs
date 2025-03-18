@@ -497,7 +497,7 @@ pub fn process_add_file(
 
     // Store the file in the version store using the hash as the key
     let hash_str = hash.to_string();
-    version_store.store_version_from_path(&hash_str, &full_path)?;
+    version_store.save_from_path(&hash_str, &full_path)?;
 
     let file_extension = relative_path
         .extension()

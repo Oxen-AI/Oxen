@@ -39,56 +39,55 @@ pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     /// * `file_path` - Path to the file to store
-    fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError>;
+    fn save_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError>;
 
     /// Store a version file from a reader
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     /// * `reader` - Any type that implements Read trait
-    fn store_version_from_reader(&self, hash: &str, reader: &mut dyn Read)
-        -> Result<(), OxenError>;
+    fn save_from_reader(&self, hash: &str, reader: &mut dyn Read) -> Result<(), OxenError>;
 
     /// Store a version file from bytes (less efficient for large files)
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     /// * `data` - The raw bytes to store
-    fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
+    fn save_from_bytes(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
 
-    /// Open a version file for reading
+    /// Open a version file as a Reader (ReadSeek)
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
-    fn open_version(&self, hash: &str) -> Result<Box<dyn ReadSeek>, OxenError>;
+    fn get_to_reader(&self, hash: &str) -> Result<Box<dyn ReadSeek>, OxenError>;
 
-    /// Retrieve a version file's contents as bytes (less efficient for large files)
+    /// Get a version file's contents as bytes (less efficient for large files)
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
-    fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
+    fn get_to_bytes(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
 
-    /// Copy a version to a destination path
+    /// Copy a version file to a destination path
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     /// * `dest_path` - Destination path to copy the file to
-    fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError>;
+    fn get_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError>;
 
     /// Check if a version exists
     ///
     /// # Arguments
     /// * `hash` - The content hash to check
-    fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
+    fn exists(&self, hash: &str) -> Result<bool, OxenError>;
 
     /// Delete a version
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to delete
-    fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
+    fn delete(&self, hash: &str) -> Result<(), OxenError>;
 
     /// List all versions
-    fn list_versions(&self) -> Result<Vec<String>, OxenError>;
+    fn list(&self) -> Result<Vec<String>, OxenError>;
 
     /// Get the storage type identifier (e.g., "local", "s3")
     fn storage_type(&self) -> &str;

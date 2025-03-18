@@ -29,20 +29,22 @@ impl LocalVersionStore {
     }
 
     /// Get the full path for a version file
-    fn version_path(&self, hash: &str) -> PathBuf {
-        let topdir = &hash[..2];
-        let subdir = &hash[2..];
-        self.root_path
-            .join(topdir)
-            .join(subdir)
-            .join(VERSION_FILE_NAME)
+    fn version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
+        let version_dir = self.version_dir(hash)?;
+        Ok(version_dir.join(VERSION_FILE_NAME))
     }
 
     /// Get the directory containing a version file
-    fn version_dir(&self, hash: &str) -> PathBuf {
+    fn version_dir(&self, hash: &str) -> Result<PathBuf, OxenError> {
+        if hash.len() < 4 {
+            return Err(OxenError::basic_str(format!(
+                "VersionStore: Invalid hash: {}",
+                hash
+            )));
+        }
         let topdir = &hash[..2];
         let subdir = &hash[2..];
-        self.root_path.join(topdir).join(subdir)
+        Ok(self.root_path.join(topdir).join(subdir))
     }
 }
 
@@ -51,72 +53,69 @@ impl VersionStore for LocalVersionStore {
         util::fs::create_dir_all(&self.root_path)
     }
 
-    fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
+    fn save_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash)?;
         util::fs::create_dir_all(&version_dir)?;
 
-        let version_path = self.version_path(hash);
+        let version_path = self.version_path(hash)?;
         fs::copy(file_path, &version_path)?;
 
         Ok(())
     }
 
-    fn store_version_from_reader(
-        &self,
-        hash: &str,
-        reader: &mut dyn Read,
-    ) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
+    fn save_from_reader(&self, hash: &str, reader: &mut dyn Read) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash)?;
         util::fs::create_dir_all(&version_dir)?;
 
-        let version_path = self.version_path(hash);
+        let version_path = self.version_path(hash)?;
         let mut file = File::create(&version_path)?;
         io::copy(reader, &mut file)?;
 
         Ok(())
     }
 
-    fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
+    fn save_from_bytes(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash)?;
         util::fs::create_dir_all(&version_dir)?;
 
-        let version_path = self.version_path(hash);
+        let version_path = self.version_path(hash)?;
         let mut file = File::create(&version_path)?;
         file.write_all(data)?;
 
         Ok(())
     }
 
-    fn open_version(&self, hash: &str) -> Result<Box<dyn ReadSeek>, OxenError> {
-        let path = self.version_path(hash);
-        let file = File::open(&path)?;
+    fn get_to_reader(&self, hash: &str) -> Result<Box<dyn ReadSeek>, OxenError> {
+        let version_path = self.version_path(hash)?;
+        let file = File::open(&version_path)?;
         Ok(Box::new(file))
     }
 
-    fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
-        let path = self.version_path(hash);
-        Ok(fs::read(&path)?)
+    fn get_to_bytes(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
+        let version_path = self.version_path(hash)?;
+        Ok(fs::read(&version_path)?)
     }
 
-    fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
-        let version_path = self.version_path(hash);
+    fn get_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
+        let version_path = self.version_path(hash)?;
         fs::copy(&version_path, dest_path)?;
         Ok(())
     }
 
-    fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
-        Ok(self.version_path(hash).exists())
+    fn exists(&self, hash: &str) -> Result<bool, OxenError> {
+        let version_path = self.version_path(hash)?;
+        Ok(version_path.exists())
     }
 
-    fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
+    fn delete(&self, hash: &str) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash)?;
         if version_dir.exists() {
             util::fs::remove_dir_all(&version_dir)?;
         }
         Ok(())
     }
 
-    fn list_versions(&self) -> Result<Vec<String>, OxenError> {
+    fn list(&self) -> Result<Vec<String>, OxenError> {
         let mut versions = Vec::new();
 
         // Walk through the two-level directory structure
@@ -183,15 +182,18 @@ mod tests {
         let data = b"test data";
 
         // Store the version
-        store.store_version(hash, data).unwrap();
+        store.save_from_bytes(hash, data).unwrap();
 
         // Verify the file exists with correct structure
-        let version_path = store.version_path(hash);
+        let version_path = store.version_path(hash).unwrap();
         assert!(version_path.exists());
-        assert_eq!(version_path.parent().unwrap(), store.version_dir(hash));
+        assert_eq!(
+            version_path.parent().unwrap(),
+            store.version_dir(hash).unwrap()
+        );
 
         // Get and verify the data
-        let retrieved = store.get_version(hash).unwrap();
+        let retrieved = store.get_to_bytes(hash).unwrap();
         assert_eq!(retrieved, data);
     }
 
@@ -205,14 +207,14 @@ mod tests {
         let mut cursor = Cursor::new(data.to_vec());
 
         // Store using the reader
-        store.store_version_from_reader(hash, &mut cursor).unwrap();
+        store.save_from_reader(hash, &mut cursor).unwrap();
 
         // Verify the file exists
-        let version_path = store.version_path(hash);
+        let version_path = store.version_path(hash).unwrap();
         assert!(version_path.exists());
 
         // Get and verify the data
-        let retrieved = store.get_version(hash).unwrap();
+        let retrieved = store.get_to_bytes(hash).unwrap();
         assert_eq!(retrieved, data);
     }
 
@@ -223,10 +225,10 @@ mod tests {
         let data = b"test data for open";
 
         // Store the version
-        store.store_version(hash, data).unwrap();
+        store.save_from_bytes(hash, data).unwrap();
 
         // Open the version as a reader
-        let mut reader = store.open_version(hash).unwrap();
+        let mut reader = store.get_to_reader(hash).unwrap();
 
         // Read the data
         let mut retrieved = Vec::new();
@@ -243,11 +245,11 @@ mod tests {
         let data = b"test data";
 
         // Check non-existent version
-        assert!(!store.version_exists(hash).unwrap());
+        assert!(!store.exists(hash).unwrap());
 
         // Store and check again
-        store.store_version(hash, data).unwrap();
-        assert!(store.version_exists(hash).unwrap());
+        store.save_from_bytes(hash, data).unwrap();
+        assert!(store.exists(hash).unwrap());
     }
 
     #[test]
@@ -257,13 +259,14 @@ mod tests {
         let data = b"test data";
 
         // Store and verify
-        store.store_version(hash, data).unwrap();
-        assert!(store.version_exists(hash).unwrap());
+        store.save_from_bytes(hash, data).unwrap();
+        assert!(store.exists(hash).unwrap());
 
         // Delete and verify
-        store.delete_version(hash).unwrap();
-        assert!(!store.version_exists(hash).unwrap());
-        assert!(!store.version_dir(hash).exists());
+        store.delete(hash).unwrap();
+        assert!(!store.exists(hash).unwrap());
+        let version_dir = store.version_dir(hash).unwrap();
+        assert!(!version_dir.exists());
     }
 
     #[test]
@@ -274,11 +277,11 @@ mod tests {
 
         // Store multiple versions
         for hash in &hashes {
-            store.store_version(hash, data).unwrap();
+            store.save_from_bytes(hash, data).unwrap();
         }
 
         // List and verify
-        let mut versions = store.list_versions().unwrap();
+        let mut versions = store.list().unwrap();
         versions.sort();
         assert_eq!(versions.len(), hashes.len());
 
@@ -292,7 +295,7 @@ mod tests {
         let (_temp_dir, store) = setup();
         let hash = "nonexistent";
 
-        match store.get_version(hash) {
+        match store.get_to_bytes(hash) {
             Ok(_) => panic!("Expected error when getting non-existent version"),
             Err(OxenError::IO(e)) => {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);
@@ -312,6 +315,6 @@ mod tests {
         let hash = "nonexistent";
 
         // Should not error when deleting non-existent version
-        store.delete_version(hash).unwrap();
+        store.delete(hash).unwrap();
     }
 }
