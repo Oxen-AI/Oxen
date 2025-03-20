@@ -2,9 +2,7 @@ use liboxen::constants;
 use liboxen::constants::COMMITS_DIR;
 use liboxen::constants::DIRS_DIR;
 use liboxen::constants::DIR_HASHES_DIR;
-use liboxen::constants::HASH_FILE;
 use liboxen::constants::HISTORY_DIR;
-use liboxen::constants::OBJECTS_DIR;
 use liboxen::constants::VERSION_FILE_NAME;
 
 use liboxen::error::OxenError;
@@ -488,7 +486,7 @@ pub async fn upload_chunk(
                     // doing a lot of extra work unpacking tarballs multiple
                     // times.
                     check_if_upload_complete_and_unpack(
-                        hidden_dir,
+                        &repo,
                         tmp_dir,
                         total_chunks,
                         size,
@@ -521,7 +519,7 @@ pub async fn upload_chunk(
 }
 
 fn check_if_upload_complete_and_unpack(
-    hidden_dir: PathBuf,
+    repo: &LocalRepository,
     tmp_dir: PathBuf,
     total_chunks: usize,
     total_size: usize,
@@ -568,13 +566,13 @@ fn check_if_upload_complete_and_unpack(
         log::debug!(
             "check_if_upload_complete_and_unpack decompressing {} bytes to {:?}",
             total_size,
-            hidden_dir
+            repo.path
         );
 
         // TODO: Cleanup these if / else / match statements
         // Combine into actual file data
         if is_compressed {
-            match unpack_compressed_data(&files, &hidden_dir) {
+            match unpack_compressed_data(&files, repo) {
                 Ok(_) => {
                     log::debug!(
                         "check_if_upload_complete_and_unpack unpacked {} files successfully",
@@ -591,7 +589,7 @@ fn check_if_upload_complete_and_unpack(
         } else {
             match filename {
                 Some(filename) => {
-                    match unpack_to_file(&files, &hidden_dir, &filename) {
+                    match unpack_to_file(&files, repo, &filename) {
                         Ok(_) => {
                             log::debug!("check_if_upload_complete_and_unpack unpacked {} files successfully", files.len());
                         }
@@ -628,45 +626,6 @@ fn check_if_upload_complete_and_unpack(
     }
 }
 
-pub async fn upload_tree(
-    req: HttpRequest,
-    mut body: web::Payload,
-) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let client_head_id = path_param(&req, "commit_id")?;
-    let repo = get_repo(&app_data.path, namespace, name)?;
-    // Get head commit on sever repo
-    let server_head_commit = repositories::commits::head_commit(&repo)?;
-
-    // Unpack in tmp/tree/commit_id
-    let tmp_dir = util::fs::oxen_hidden_dir(&repo.path).join("tmp");
-
-    let mut bytes = web::BytesMut::new();
-    while let Some(item) = body.next().await {
-        bytes.extend_from_slice(&item.unwrap());
-    }
-
-    let total_size: u64 = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-    log::debug!(
-        "Got compressed data for tree {} -> {}",
-        client_head_id,
-        ByteSize::b(total_size)
-    );
-
-    log::debug!("Decompressing {} bytes to {:?}", bytes.len(), tmp_dir);
-
-    let mut archive = Archive::new(GzDecoder::new(&bytes[..]));
-
-    unpack_tree_tarball(&tmp_dir, &mut archive);
-
-    Ok(HttpResponse::Ok().json(CommitResponse {
-        status: StatusMessage::resource_found(),
-        commit: server_head_commit.to_owned(),
-    }))
-}
-
 pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -681,7 +640,7 @@ pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError
     }))
 }
 
-fn unpack_compressed_data(files: &[PathBuf], hidden_dir: &Path) -> Result<(), OxenError> {
+fn unpack_compressed_data(files: &[PathBuf], repo: &LocalRepository) -> Result<(), OxenError> {
     let mut buffer: Vec<u8> = Vec::new();
     for file in files.iter() {
         log::debug!("Reading file bytes {:?}", file);
@@ -693,12 +652,16 @@ fn unpack_compressed_data(files: &[PathBuf], hidden_dir: &Path) -> Result<(), Ox
 
     // Unpack tarball to our hidden dir
     let mut archive = Archive::new(GzDecoder::new(&buffer[..]));
-    unpack_entry_tarball(hidden_dir, &mut archive);
+    unpack_entry_tarball(repo, &mut archive)?;
 
     Ok(())
 }
 
-fn unpack_to_file(files: &[PathBuf], hidden_dir: &Path, filename: &str) -> Result<(), OxenError> {
+fn unpack_to_file(
+    files: &[PathBuf],
+    repo: &LocalRepository,
+    filename: &str,
+) -> Result<(), OxenError> {
     // Append each buffer to the end of the large file
     // TODO: better error handling...
     log::debug!("Got filename {}", filename);
@@ -707,6 +670,7 @@ fn unpack_to_file(files: &[PathBuf], hidden_dir: &Path, filename: &str) -> Resul
     let os_path = OsPath::from(filename).to_pathbuf();
     log::debug!("Got native filename {:?}", os_path);
 
+    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let mut full_path = hidden_dir.join(os_path);
     full_path =
         util::fs::replace_file_name_keep_extension(&full_path, VERSION_FILE_NAME.to_owned());
@@ -754,8 +718,6 @@ pub async fn upload(
     let name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &name)?;
 
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-
     // Read bytes from body
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -774,10 +736,15 @@ pub async fn upload(
     // Unpack in background thread because could take awhile
     // std::thread::spawn(move || {
     // Get tar.gz bytes for history/COMMIT_ID data
-    log::debug!("Decompressing {} bytes to {:?}", bytes.len(), hidden_dir);
-    // Unpack tarball to our hidden dir
+    log::debug!(
+        "Decompressing {} bytes to repo at {}",
+        bytes.len(),
+        repo.path.display()
+    );
+    // Unpack tarball to repo
     let mut archive = Archive::new(GzDecoder::new(&bytes[..]));
-    unpack_entry_tarball(&hidden_dir, &mut archive);
+    // TODO: we're not handling errors here other than logging them
+    unpack_entry_tarball(&repo, &mut archive)?;
     // });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
@@ -823,114 +790,61 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     }
 }
 
-fn unpack_tree_tarball(tmp_dir: &Path, archive: &mut Archive<GzDecoder<&[u8]>>) {
-    match archive.entries() {
-        Ok(entries) => {
-            for file in entries {
-                if let Ok(mut file) = file {
-                    let path = file.path().unwrap();
-                    log::debug!("unpack_tree_tarball path {:?}", path);
-                    let stripped_path = if path.starts_with(HISTORY_DIR) {
-                        match path.strip_prefix(HISTORY_DIR) {
-                            Ok(stripped) => stripped,
-                            Err(err) => {
-                                log::error!("Could not strip prefix from path {:?}", err);
-                                return;
-                            }
-                        }
-                    } else {
-                        &path
-                    };
+fn unpack_entry_tarball(
+    repo: &LocalRepository,
+    archive: &mut Archive<GzDecoder<&[u8]>>,
+) -> Result<(), OxenError> {
+    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+    let version_store = repo.version_store()?;
 
-                    let mut new_path = PathBuf::from(tmp_dir);
-                    new_path.push(stripped_path);
+    let entries = archive.entries()?;
+    for entry in entries {
+        let mut file = entry?;
+        let path = file
+            .path()
+            .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {}", e)))?;
 
-                    if let Some(parent) = new_path.parent() {
-                        if !parent.exists() {
-                            std::fs::create_dir_all(parent).expect("Could not create parent dir");
-                        }
-                    }
-                    log::debug!("unpack_tree_tarball new_path {:?}", path);
-                    file.unpack(&new_path).unwrap();
-                } else {
-                    log::error!("Could not unpack file in archive...");
-                }
-            }
-        }
-        Err(err) => {
-            log::error!("Could not unpack tree database from archive...");
-            log::error!("Err: {:?}", err);
-        }
-    }
-}
-
-fn unpack_entry_tarball(hidden_dir: &Path, archive: &mut Archive<GzDecoder<&[u8]>>) {
-    // Unpack and compute HASH and save next to the file to speed up computation later
-    // log::debug!("unpack_entry_tarball hidden_dir {:?}", hidden_dir);
-
-    match archive.entries() {
-        Ok(entries) => {
-            for file in entries {
-                match file {
-                    Ok(mut file) => {
-                        // Why hash now? To make sure everything synced properly
-                        // When we want to check is_synced, it is expensive to rehash everything
-                        // But since upload is network bound already, hashing here makes sense, and we will just
-                        // load the HASH file later
-                        let path = file.path().unwrap();
-                        let mut version_path = PathBuf::from(hidden_dir);
-                        // log::debug!("unpack_entry_tarball path {:?}", path);
-
-                        if path.starts_with("versions") && path.to_string_lossy().contains("files")
-                        {
-                            // Unpack version files to common name (data.extension) regardless of the name sent from the client
-                            let new_path = util::fs::replace_file_name_keep_extension(
-                                &path,
-                                VERSION_FILE_NAME.to_owned(),
-                            );
-                            version_path.push(new_path);
-                            // log::debug!("unpack_entry_tarball version_path {:?}", version_path);
-
-                            if let Some(parent) = version_path.parent() {
-                                if !parent.exists() {
-                                    std::fs::create_dir_all(parent)
-                                        .expect("Could not create parent dir");
-                                }
-                            }
-                            file.unpack(&version_path).unwrap();
-                            // log::debug!("unpack_entry_tarball unpacked! {:?}", version_path);
-
-                            let hash_dir = version_path.parent().unwrap();
-                            let hash_file = hash_dir.join(HASH_FILE);
-                            let hash = util::hasher::hash_file_contents(&version_path).unwrap();
-                            util::fs::write_to_path(&hash_file, &hash)
-                                .expect("Could not write hash file");
-                        } else if path.starts_with(OBJECTS_DIR) {
-                            let temp_objects_dir = hidden_dir.join("tmp");
-                            if !temp_objects_dir.exists() {
-                                std::fs::create_dir_all(&temp_objects_dir).unwrap();
-                            }
-
-                            file.unpack_in(&temp_objects_dir).unwrap();
-                        } else {
-                            // For non-version files, use filename sent by client
-                            file.unpack_in(hidden_dir).unwrap();
-                        }
-                    }
-                    Err(err) => {
-                        log::error!("Could not unpack file in archive...");
-                        log::error!("Err: {:?}", err);
-                    }
-                }
-            }
-        }
-        Err(err) => {
-            log::error!("Could not unpack entries from archive...");
-            log::error!("Err: {:?}", err);
+        if path.starts_with("versions") && path.to_string_lossy().contains("files") {
+            // Handle version files
+            let hash = extract_hash_from_path(&path)?;
+            version_store.save_from_reader(&hash, &mut file)?;
+        } else {
+            // For non-version files, use filename sent by client
+            file.unpack_in(&hidden_dir)
+                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {}", e)))?;
         }
     }
 
     log::debug!("Done decompressing.");
+    Ok(())
+}
+
+// Helper function to extract the content hash from a version file path
+fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
+    // Path structure is: versions/files/XX/YYYYYYYY/data
+    // where XXYYYYYYYY is the content hash
+
+    // Split the path and look for the pattern
+    let parts: Vec<_> = path.components().map(|comp| comp.as_os_str()).collect();
+    if parts.len() >= 5 && parts[0] == "versions" && parts[1] == "files" {
+        // The hash is composed of the directory names: XX/YYYYYYYY
+        let top_dir = parts[2];
+        let sub_dir = parts[3];
+
+        // Ensure we have a valid hash structure
+        if top_dir.len() == 2 && !sub_dir.is_empty() {
+            return Ok(format!(
+                "{}{}",
+                top_dir.to_string_lossy(),
+                sub_dir.to_string_lossy()
+            ));
+        }
+    }
+
+    Err(OxenError::basic_str(format!(
+        "Could not get hash for file: {:?}",
+        path
+    )))
 }
 
 #[cfg(test)]

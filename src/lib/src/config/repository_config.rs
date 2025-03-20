@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::constants::DEFAULT_VNODE_SIZE;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
+use crate::storage::StorageConfig;
 use crate::util;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -18,11 +19,16 @@ pub struct RepositoryConfig {
     // write the version if it is past v0.18.4
     pub min_version: Option<String>,
     pub vnode_size: Option<u64>,
+    /// Storage configuration
+    pub storage: Option<StorageConfig>,
 }
 
 impl Default for RepositoryConfig {
     fn default() -> Self {
-        Self::new()
+        RepositoryConfig {
+            vnode_size: Some(DEFAULT_VNODE_SIZE),
+            ..Self::new()
+        }
     }
 }
 
@@ -35,6 +41,7 @@ impl RepositoryConfig {
             depth: None,
             min_version: None,
             vnode_size: None,
+            storage: None,
         }
     }
 

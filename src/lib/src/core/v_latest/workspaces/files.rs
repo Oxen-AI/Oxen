@@ -11,9 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zip::ZipArchive;
 
-use crate::constants::FILES_DIR;
 use crate::constants::STAGED_DIR;
-use crate::constants::VERSIONS_DIR;
 use crate::core::db;
 use crate::core::v_latest::add::{add_file_node_to_staged_db, process_add_file};
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -417,9 +415,7 @@ fn p_add_file(
     maybe_head_commit: &Option<Commit>,
     path: &Path,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    let versions_path = util::fs::oxen_hidden_dir(&base_repo.path)
-        .join(VERSIONS_DIR)
-        .join(FILES_DIR);
+    let version_store = base_repo.version_store()?;
     let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&workspace_repo.path).join(STAGED_DIR);
     let staged_db: DBWithThreadMode<MultiThreaded> =
@@ -436,7 +432,7 @@ fn p_add_file(
     process_add_file(
         workspace_repo,
         &workspace_repo.path,
-        &versions_path,
+        &version_store,
         &staged_db,
         &maybe_dir_node,
         path,

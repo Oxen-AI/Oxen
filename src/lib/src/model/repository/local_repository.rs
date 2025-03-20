@@ -5,11 +5,14 @@ use crate::core::versions::MinOxenVersion;
 use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
+use crate::storage::{create_version_store, StorageConfig, VersionStore};
 use crate::util;
 use crate::view::RepositoryView;
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LocalRepository {
@@ -21,6 +24,10 @@ pub struct LocalRepository {
     vnode_size: Option<u64>,     // Size of the vnodes
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
+
+    // Skip this field during serialization/deserialization
+    #[serde(skip)]
+    version_store: Option<Arc<dyn VersionStore>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,26 +37,57 @@ pub struct LocalRepositoryWithEntries {
 }
 
 impl LocalRepository {
-    /// Load a repository from a directory, this reads the config file and returns the repository struct
-    pub fn from_dir(dir: &Path) -> Result<LocalRepository, OxenError> {
-        let config_path = util::fs::config_filepath(dir);
-        if !config_path.exists() {
-            return Err(OxenError::LocalRepoNotFound(Box::new(
-                dir.to_path_buf().into(),
-            )));
-        }
-        let cfg = RepositoryConfig::from_file(&config_path)?;
-        let vnode_size = cfg.vnode_size();
-        let repo = LocalRepository {
-            path: dir.to_path_buf(),
-            remotes: cfg.remotes,
-            remote_name: cfg.remote_name,
-            min_version: cfg.min_version,
-            vnode_size: Some(vnode_size),
-            subtree_paths: cfg.subtree_paths,
-            depth: cfg.depth,
+    /// Create a LocalRepository from a directory
+    pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
+        let path = path.as_ref().to_path_buf();
+        let config_path = util::fs::config_filepath(&path);
+        let config = RepositoryConfig::from_file(&config_path)?;
+
+        let mut repo = LocalRepository {
+            path,
+            remote_name: config.remote_name,
+            min_version: config.min_version,
+            remotes: config.remotes,
+            vnode_size: config.vnode_size,
+            subtree_paths: config.subtree_paths.clone(),
+            depth: config.depth,
+            version_store: None,
         };
+
+        // Initialize the version store based on config
+        let store = create_version_store(&repo.path, config.storage.as_ref())?;
+        repo.version_store = Some(store);
+
         Ok(repo)
+    }
+
+    /// Get a reference to the version store
+    pub fn version_store(&self) -> Result<Arc<dyn VersionStore>, OxenError> {
+        match &self.version_store {
+            Some(store) => Ok(Arc::clone(store)),
+            None => Err(OxenError::basic_str("Version store not initialized")),
+        }
+    }
+
+    /// Initialize the version store if not already set
+    pub fn init_version_store(&mut self) -> Result<(), OxenError> {
+        if self.version_store.is_none() {
+            // Load config to get storage settings
+            let config_path = util::fs::config_filepath(&self.path);
+            let config = RepositoryConfig::from_file(&config_path)?;
+
+            // Create and initialize the store
+            let store = create_version_store(&self.path, config.storage.as_ref())?;
+            self.version_store = Some(store);
+        }
+        Ok(())
+    }
+
+    /// Initialize the default version store
+    pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
+        let store = create_version_store(&self.path, None)?;
+        self.version_store = Some(store);
+        Ok(())
     }
 
     /// Load a repository from the current directory
@@ -65,7 +103,7 @@ impl LocalRepository {
     /// Note: Does not create the repository on disk, or read the config file, just instantiates the struct
     /// To load the repository, use `LocalRepository::from_dir` or `LocalRepository::from_current_dir`
     pub fn new(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
-        Ok(LocalRepository {
+        let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
             // No remotes are set yet
             remotes: vec![],
@@ -75,7 +113,11 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-        })
+            version_store: None,
+        };
+
+        repo.init_default_version_store()?;
+        Ok(repo)
     }
 
     /// Load an older version of a repository with older oxen core logic
@@ -83,7 +125,7 @@ impl LocalRepository {
         path: impl AsRef<Path>,
         min_version: impl AsRef<str>,
     ) -> Result<LocalRepository, OxenError> {
-        Ok(LocalRepository {
+        let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
             remotes: vec![],
             remote_name: None,
@@ -91,11 +133,15 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-        })
+            version_store: None,
+        };
+
+        repo.init_default_version_store()?;
+        Ok(repo)
     }
 
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
-        Ok(LocalRepository {
+        let mut repo = LocalRepository {
             path: std::env::current_dir()?.join(view.name),
             remotes: vec![],
             remote_name: None,
@@ -103,11 +149,15 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-        })
+            version_store: None,
+        };
+
+        repo.init_default_version_store()?;
+        Ok(repo)
     }
 
     pub fn from_remote(repo: RemoteRepository, path: &Path) -> Result<LocalRepository, OxenError> {
-        Ok(LocalRepository {
+        let mut local_repo = LocalRepository {
             path: path.to_owned(),
             remotes: vec![repo.remote],
             remote_name: Some(String::from(constants::DEFAULT_REMOTE_NAME)),
@@ -115,7 +165,11 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-        })
+            version_store: None,
+        };
+
+        local_repo.init_default_version_store()?;
+        Ok(local_repo)
     }
 
     pub fn min_version(&self) -> MinOxenVersion {
@@ -178,24 +232,27 @@ impl LocalRepository {
         self.depth = depth;
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), OxenError> {
-        let cfg = RepositoryConfig {
+    /// Save the repository configuration to disk
+    pub fn save(&self) -> Result<(), OxenError> {
+        let config_path = util::fs::config_filepath(&self.path);
+
+        // Determine the current storage type and settings using the trait methods
+        let storage = self.version_store.as_ref().map(|store| StorageConfig {
+            type_: store.storage_type().to_string(),
+            settings: store.storage_settings(),
+        });
+
+        let config = RepositoryConfig {
             remote_name: self.remote_name.clone(),
             remotes: self.remotes.clone(),
-            min_version: self.min_version.clone(),
-            vnode_size: Some(self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)),
             subtree_paths: self.subtree_paths.clone(),
             depth: self.depth,
+            min_version: self.min_version.clone(),
+            vnode_size: self.vnode_size,
+            storage,
         };
-        let toml = toml::to_string(&cfg)?;
-        util::fs::write_to_path(path, toml)?;
-        Ok(())
-    }
 
-    pub fn save_default(&self) -> Result<(), OxenError> {
-        let filename = util::fs::config_filepath(&self.path);
-        self.save(&filename)?;
-        Ok(())
+        config.save(&config_path)
     }
 
     pub fn set_remote(&mut self, name: impl AsRef<str>, url: impl AsRef<str>) -> Remote {
