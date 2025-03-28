@@ -3431,6 +3431,7 @@ dependencies = [
  "sqlparser 0.53.0",
  "sysinfo 0.33.1",
  "tar",
+ "tempfile",
  "threadpool",
  "time",
  "tokio",

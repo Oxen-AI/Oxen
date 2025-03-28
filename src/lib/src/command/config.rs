@@ -14,7 +14,7 @@ pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<R
     }
 
     let remote = repo.set_remote(name, url);
-    repo.save_default()?;
+    repo.save()?;
     Ok(remote)
 }
 
@@ -22,6 +22,6 @@ pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<R
 /// If you added a remote you no longer want, can remove it by supplying the name
 pub fn delete_remote(repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
     repo.delete_remote(name);
-    repo.save_default()?;
+    repo.save()?;
     Ok(())
 }
