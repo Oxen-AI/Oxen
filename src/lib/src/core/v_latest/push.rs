@@ -280,6 +280,10 @@ async fn push_commits(
     log::debug!("pushing {} entries", missing_files.len());
     let commit = &history.last().unwrap();
     push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
+
+    // Mark commits as synced on the server
+    api::client::commits::mark_commit_hashes_as_synced(remote_repo, missing_commit_hashes).await?;
+
     progress.finish();
 
     Ok(())
