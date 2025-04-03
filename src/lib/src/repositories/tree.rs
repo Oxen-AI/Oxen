@@ -10,6 +10,7 @@ use std::str::FromStr;
 use tar::Archive;
 
 use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR, NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
+use crate::core::commit_sync_status;
 use crate::core::db;
 use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
 use crate::core::db::merkle_node::MerkleNodeDB;
@@ -569,10 +570,15 @@ pub fn list_missing_node_hashes(
     let mut results = HashSet::new();
     for hash in hashes {
         let dir_prefix = node_db_path(repo, hash);
-        if !(dir_prefix.join("node").exists() && dir_prefix.join("children").exists()) {
+
+        if !(commit_sync_status::commit_hash_is_synced(repo, hash)
+            && dir_prefix.join("node").exists()
+            && dir_prefix.join("children").exists())
+        {
             results.insert(*hash);
         }
     }
+
     Ok(results)
 }
 

@@ -7,6 +7,7 @@ use liboxen::constants::HISTORY_DIR;
 use liboxen::constants::OBJECTS_DIR;
 use liboxen::constants::VERSION_FILE_NAME;
 
+use liboxen::core::commit_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
@@ -175,6 +176,34 @@ pub async fn list_missing(
         hashes: missing_commits,
     };
     Ok(HttpResponse::Ok().json(response))
+}
+
+pub async fn mark_hashes_as_synced(
+    req: HttpRequest,
+    mut body: web::Payload,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = body.next().await {
+        bytes.extend_from_slice(&item.unwrap());
+    }
+
+    let request: MerkleHashes = serde_json::from_slice(&bytes)?;
+    let hashes = request.hashes;
+    log::debug!(
+        "mark_hashes_as_synced marking {} commit hashes",
+        &hashes.len()
+    );
+    commit_sync_status::mark_commit_hashes_as_synced(&repository, &hashes)?;
+    log::debug!("successfully marked {} commit hashes", &hashes.len());
+    Ok(HttpResponse::Ok().json(MerkleHashesResponse {
+        status: StatusMessage::resource_found(),
+        hashes,
+    }))
 }
 
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
