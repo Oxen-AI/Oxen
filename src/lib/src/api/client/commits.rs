@@ -1,5 +1,5 @@
 use crate::api::client;
-use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR, OBJECTS_DIR};
+use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
 
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
@@ -272,16 +272,6 @@ pub async fn root_commit_maybe(
     } else {
         Err(OxenError::basic_str("root_commit() Request failed"))
     }
-}
-
-/// Download the database of all the entries given a commit
-pub async fn download_commit_entries_db_to_repo(
-    local_repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
-    commit_id: &str,
-) -> Result<PathBuf, OxenError> {
-    let hidden_dir = util::fs::oxen_hidden_dir(&local_repo.path);
-    download_dir_hashes_db_to_path(remote_repo, commit_id, hidden_dir).await
 }
 
 pub async fn download_dir_hashes_from_commit(
@@ -646,46 +636,6 @@ pub async fn post_commits_to_server(
 
     bulk_create_commit_obj_on_server(remote_repo, &commits_with_size).await?;
     Ok(())
-}
-
-pub async fn post_tree_objects_to_server(
-    local_repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
-) -> Result<(), OxenError> {
-    let objects_dir = util::fs::oxen_hidden_dir(local_repo.path.clone()).join(OBJECTS_DIR);
-
-    let tar_subdir = Path::new(OBJECTS_DIR);
-
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
-    let mut tar = tar::Builder::new(enc);
-
-    log::debug!(
-        "post_tree_objects_to_server appending objects dir {:?} to tar at path {:?}",
-        objects_dir,
-        tar_subdir
-    );
-    tar.append_dir_all(tar_subdir, objects_dir)?;
-
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-
-    let is_compressed = true;
-
-    let filename = None;
-
-    let quiet_bar = Arc::new(ProgressBar::hidden());
-
-    let client = client::new_for_remote_repo(remote_repo)?;
-    post_data_to_server_with_client(
-        &client,
-        remote_repo,
-        buffer,
-        is_compressed,
-        &filename,
-        quiet_bar,
-    )
-    .await
 }
 
 pub async fn post_commit_dir_hashes_to_server(
