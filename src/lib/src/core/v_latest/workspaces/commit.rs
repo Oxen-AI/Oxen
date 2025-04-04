@@ -89,10 +89,12 @@ pub fn commit(
     // tree.print();
 
     // Update the branch
-    let ref_writer = RefWriter::new(&workspace.base_repo)?;
-    let commit_id = commit.id.to_owned();
-
-    ref_writer.set_branch_commit_id(branch_name, &commit_id)?;
+    {
+        // Create a new scope to ensure the ref writer is dropped as soon as possible
+        let ref_writer = RefWriter::new(&workspace.base_repo)?;
+        let commit_id = commit.id.to_owned();
+        ref_writer.set_branch_commit_id(branch_name, &commit_id)?;
+    }
 
     // Cleanup workspace on commit
     repositories::workspaces::delete(workspace)?;

@@ -87,6 +87,7 @@ mime = "0.3.17"
 minus = { version = "5.4.0", features = ["static_output", "search"] }
 nom = "7.1.3"
 num_cpus = "1.16.0"
+parking_lot = "0.12.1"
 percent-encoding = "2.1"
 pluralizer = "0.4.0"
 polars = { version = "0.45.0", features = [
