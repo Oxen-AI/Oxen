@@ -223,7 +223,7 @@ pub fn create_temporary(
     commit: &Commit,
 ) -> Result<TemporaryWorkspace, OxenError> {
     let workspace_id = Uuid::new_v4().to_string();
-    let workspace_name = format!("temporary-{}", commit.id);
+    let workspace_name = format!("temporary-{}", workspace_id);
     let workspace = create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true)?;
     Ok(TemporaryWorkspace { workspace })
 }
@@ -505,6 +505,7 @@ fn build_file_status_maps_for_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::repositories;
     use crate::test;
@@ -719,6 +720,85 @@ mod tests {
             );
 
             Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_workspace_commits() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
+            // Create two files in different directories to avoid conflicts
+            let file1 = repo.path.join("dir1").join("file1.txt");
+            let file2 = repo.path.join("dir2").join("file2.txt");
+            util::fs::write_to_path(&file1, "File 1 content")?;
+            util::fs::write_to_path(&file2, "File 2 content")?;
+            repositories::add(&repo, &file1)?;
+            repositories::add(&repo, &file2)?;
+            let _commit = repositories::commit(&repo, "Adding initial files")?;
+            repositories::push(&repo).await?;
+
+            // Create two workspaces
+            let workspace1 =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, "workspace1")
+                    .await?;
+            let workspace2 =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, "workspace2")
+                    .await?;
+
+            // Modify files in each workspace
+            util::fs::write_to_path(&file1, "Updated file 1")?;
+            util::fs::write_to_path(&file2, "Updated file 2")?;
+            api::client::workspaces::files::post_file(&remote_repo, &workspace1.id, "dir1", file1)
+                .await?;
+            api::client::workspaces::files::post_file(&remote_repo, &workspace2.id, "dir2", file2)
+                .await?;
+
+            // Create commit bodies
+            let commit_body1 = NewCommitBody {
+                message: "Update file 1".to_string(),
+                author: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            };
+            let commit_body2 = NewCommitBody {
+                message: "Update file 2".to_string(),
+                author: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            };
+
+            // Clone necessary values for the second task
+            let remote_repo_clone1 = remote_repo.clone();
+            let remote_repo_clone2 = remote_repo.clone();
+
+            // Spawn two concurrent commit tasks
+            let commit_task1 = tokio::spawn(async move {
+                api::client::workspaces::commit(
+                    &remote_repo_clone1,
+                    DEFAULT_BRANCH_NAME,
+                    &workspace1.id,
+                    &commit_body1,
+                )
+                .await
+            });
+            let commit_task2 = tokio::spawn(async move {
+                api::client::workspaces::commit(
+                    &remote_repo_clone2,
+                    DEFAULT_BRANCH_NAME,
+                    &workspace2.id,
+                    &commit_body2,
+                )
+                .await
+            });
+
+            // Wait for both tasks to complete
+            let result1 = commit_task1.await.expect("Task 1 panicked")?;
+            let result2 = commit_task2.await.expect("Task 2 panicked")?;
+
+            // Verify both commits were successful
+            assert_ne!(result1.id, result2.id, "Commits should have different IDs");
+            assert!(result1.id.len() > 0, "Commit 1 should have valid ID");
+            assert!(result2.id.len() > 0, "Commit 2 should have valid ID");
+
+            Ok(remote_repo)
         })
         .await
     }

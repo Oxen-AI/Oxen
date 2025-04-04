@@ -5,9 +5,16 @@ use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository};
 use crate::util;
 
+use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use rocksdb::{IteratorMode, DB};
 use std::path::{Path, PathBuf};
 use std::str;
+use std::time::Duration;
+
+lazy_static! {
+    static ref REFS_DB_LOCK: Mutex<()> = parking_lot::const_mutex(());
+}
 
 pub struct RefWriter {
     refs_db: DB,
@@ -21,6 +28,18 @@ impl RefWriter {
         log::debug!("RefWriter::new() refs_dir: {}", refs_dir.display());
 
         let opts = db::key_val::opts::default();
+
+        // Try to acquire the lock with a 5 second timeout
+        let _guard = match REFS_DB_LOCK.try_lock_for(Duration::from_secs(5)) {
+            Some(guard) => guard,
+            None => {
+                return Err(OxenError::basic_str(
+                    "Timed out waiting for refs DB lock after 5 seconds",
+                ))
+            }
+        };
+
+        // The lock guard will be automatically released when it goes out of scope
         Ok(RefWriter {
             refs_db: DB::open(&opts, dunce::simplified(&refs_dir))?,
             head_file: head_filename,
