@@ -416,8 +416,9 @@ fn fast_forward_merge(
     )?;
     // If there are no conflicts, restore the entries
     if cannot_overwrite_entries.is_empty() {
+        let version_store = repo.version_store()?;
         for entry in entries_to_restore.iter() {
-            restore::restore_file(repo, &entry.file_node, &entry.path)?;
+            restore::restore_file(repo, &entry.file_node, &entry.path, &version_store)?;
         }
     } else {
         // If there are conflicts, return an error without restoring anything
@@ -915,8 +916,9 @@ pub fn find_merge_conflicts(
 
     // If there are no conflicts, restore the entries
     if cannot_overwrite_entries.is_empty() {
+        let version_store = repo.version_store()?;
         for entry in entries_to_restore.iter() {
-            restore::restore_file(repo, &entry.file_node, &entry.path)?;
+            restore::restore_file(repo, &entry.file_node, &entry.path, &version_store)?;
         }
     } else {
         // If there are conflicts, return an error without restoring anything

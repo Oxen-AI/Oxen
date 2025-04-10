@@ -76,6 +76,7 @@ pub mod namespaces;
 pub mod opts;
 pub mod repositories;
 pub mod resource;
+pub mod storage;
 pub mod test;
 pub mod util;
 pub mod view;
