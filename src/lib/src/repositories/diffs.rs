@@ -806,7 +806,7 @@ pub fn get_cached_diff(
     compare_entry_1: Option<CommitEntry>,
     compare_entry_2: Option<CommitEntry>,
 ) -> Result<Option<DiffResult>, OxenError> {
-    // Check if commits have cahnged since LEFT and RIGHT files were last cached
+    // Check if commits have changed since LEFT and RIGHT files were last cached
     let (cached_left_id, cached_right_id) = get_diff_commit_ids(repo, compare_id)?;
 
     // If commits cache files do not exist or have changed since last hash (via branch name) then return None to recompute

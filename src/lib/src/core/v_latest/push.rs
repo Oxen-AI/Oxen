@@ -434,9 +434,13 @@ async fn upload_large_file_chunks(
     progress: &Arc<PushProgress>,
 ) {
     // Open versioned file
+    let version_store = repo.version_store().unwrap();
+    let file = version_store.open_version(&entry.hash()).unwrap();
+    let mut reader = BufReader::new(file);
+    // The version path is just being used for compatibility with the server endpoint,
+    // we aren't using it to read the file.
+    // TODO: This should be migrated to use the new versions API
     let version_path = util::fs::version_path_for_entry(&repo, &entry);
-    let f = std::fs::File::open(&version_path).unwrap();
-    let mut reader = BufReader::new(f);
 
     // These variables are the same for every chunk
     // let is_compressed = false;

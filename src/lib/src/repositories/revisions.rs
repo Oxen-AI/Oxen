@@ -26,20 +26,6 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
 }
 
 /// Get the version file path from a commit id
-pub fn get_version_file(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    let commit_id = match get(repo, &revision)? {
-        Some(commit) => commit.id,
-        None => return Err(OxenError::commit_id_does_not_exist(revision.as_ref())),
-    };
-
-    get_version_file_from_commit_id(repo, commit_id, path)
-}
-
-/// Get the version file path from a commit id
 pub fn get_version_file_from_commit_id(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
