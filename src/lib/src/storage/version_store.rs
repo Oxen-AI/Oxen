@@ -73,8 +73,9 @@ pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `chunk_number` - The chunk number to retrieve
-    fn get_version_chunk(&self, hash: &str, chunk_number: u32) -> Result<Vec<u8>, OxenError>;
+    /// * `offset` - The starting byte position of the chunk
+    /// * `size` - The chunk size
+    fn get_version_chunk(&self, hash: &str, offset: u64, size: u64) -> Result<Vec<u8>, OxenError>;
 
     /// List all chunks for a version file
     ///

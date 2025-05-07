@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use crate::constants::{VERSION_CHUNKS_DIR, VERSION_CHUNK_FILE_NAME, VERSION_FILE_NAME};
@@ -188,9 +188,17 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
-    fn get_version_chunk(&self, hash: &str, chunk_number: u32) -> Result<Vec<u8>, OxenError> {
-        let chunk_path = self.version_chunk_file(hash, chunk_number);
-        Ok(fs::read(&chunk_path)?)
+    fn get_version_chunk(&self, hash: &str, offset: u64, size: u64) -> Result<Vec<u8>, OxenError> {
+        // let chunk_path = self.version_chunk_file(hash, chunk_number);
+        let version_file_path = self.version_path(hash);
+
+        let mut file = File::open(&version_file_path)?;
+        file.seek(std::io::SeekFrom::Start(offset))?;
+
+        let mut buffer = vec![0u8; size as usize];
+        file.read_exact(&mut buffer)?;
+
+        Ok(buffer)
     }
 
     fn list_version_chunks(&self, hash: &str) -> Result<Vec<u32>, OxenError> {
@@ -413,22 +421,20 @@ mod tests {
     fn test_store_and_get_version_chunk() {
         let (_temp_dir, store) = setup();
         let hash = "abcdef1234567890";
-        let chunk_number = 1;
+        let offset = 0;
         let data = b"test chunk data";
+        let size = data.len() as u32;
 
         // Store the chunk
-        store.store_version_chunk(hash, chunk_number, data).unwrap();
+        store.store_version(hash, data).unwrap();
 
         // Verify the file exists with correct structure
-        let chunk_path = store.version_chunk_file(hash, chunk_number);
-        assert!(chunk_path.exists());
-        assert_eq!(
-            chunk_path.parent().unwrap(),
-            store.version_chunk_dir(hash, chunk_number)
-        );
+        let file_path = store.version_path(hash);
+        assert!(file_path.exists());
+        assert_eq!(file_path.parent().unwrap(), store.version_dir(hash));
 
         // Get and verify the data
-        let retrieved = store.get_version_chunk(hash, chunk_number).unwrap();
+        let retrieved = store.get_version_chunk(hash, offset, size).unwrap();
         assert_eq!(retrieved, data);
     }
 
@@ -436,9 +442,10 @@ mod tests {
     fn test_get_nonexistent_chunk() {
         let (_temp_dir, store) = setup();
         let hash = "abcdef1234567890";
-        let chunk_number = 999;
+        let offset = 0;
+        let size = 100;
 
-        match store.get_version_chunk(hash, chunk_number) {
+        match store.get_version_chunk(hash, offset, size) {
             Ok(_) => panic!("Expected error when getting non-existent chunk"),
             Err(OxenError::IO(e)) => {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);

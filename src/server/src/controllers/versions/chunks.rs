@@ -7,10 +7,18 @@ use crate::params::{app_data, path_param};
 use actix_web::web::BytesMut;
 use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::stream::StreamExt as _;
+use liboxen::constants::AVG_CHUNK_SIZE;
 use liboxen::core;
 use liboxen::repositories;
 use liboxen::view::versions::CompleteVersionUploadRequest;
 use liboxen::view::StatusMessage;
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+pub struct ChunkQuery {
+    pub offset: Option<u64>,
+    pub size: Option<u64>,
+}
 
 pub async fn upload(
     req: HttpRequest,
@@ -115,4 +123,31 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     }
 
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
+}
+
+pub async fn download(
+    req: HttpRequest,
+    query: web::Query<ChunkQuery>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let version_id = path_param(&req, "version_id")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let offset = query.offset.unwrap_or(0);
+    let size = query.size.unwrap_or(AVG_CHUNK_SIZE);
+
+    log::debug!(
+        "download_chunk for repo: {:?}, file_hash: {}, offset: {}, size: {}",
+        repo.path,
+        version_id,
+        offset,
+        size
+    );
+
+    let version_store = repo.version_store()?;
+
+    let chunk_data = version_store.get_version_chunk(&version_id, offset, size)?;
+    Ok(HttpResponse::Ok().body(chunk_data))
 }

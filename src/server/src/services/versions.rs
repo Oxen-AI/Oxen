@@ -23,4 +23,12 @@ pub fn versions() -> Scope {
             "/{version_id}/complete",
             web::post().to(controllers::versions::chunks::complete),
         )
+        .route(
+            "/{version_id}/chunks/download",
+            web::get().to(controllers::versions::chunks::download),
+        )
+        .route(
+            "/{version_id}/download",
+            web::get().to(controllers::versions::download),
+        )
 }
