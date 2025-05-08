@@ -215,6 +215,47 @@ impl CommitMerkleTree {
         }
     }
 
+    // Load in dir with only its vnodes
+    /* pub fn dir_with_vnodes(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        log::debug!("dir_with_vnodes read path {:?} in commit {:?}", node_path, commit);
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
+        if let Some(node_hash) = node_hash {
+            log::debug!("Look up dir 🗂️ {:?}", node_path);
+            // Read the node and its vnodes
+            // Can't use read_depth, because read_children_until_depth doesn't count vnodes
+            let mut node = MerkleTreeNode::from_hash(repo, hash)?;
+            let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
+
+            let children: Vec<(MerkleHash, MerkleTreeNode)> = node_db.map()?;
+
+            for (_key, child) in children {
+                   // Here we have to not panic on error, because if we clone a subtree we might not have all of the children nodes of a particular dir
+                        // given that we are only loading the nodes that are needed.
+                        if let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, &child.hash) {
+                            CommitMerkleTree::read_children_until_depth(
+                                repo,
+                                &mut node_db,
+                                &mut child,
+                                requested_depth,
+                                traversed_depth,
+                            )?;
+                        }
+                node.children.push(child);
+
+            }
+
+        } else {
+            Ok(None)
+        }
+    }
+    */
+
     pub fn read_node(
         repo: &LocalRepository,
         hash: &MerkleHash,

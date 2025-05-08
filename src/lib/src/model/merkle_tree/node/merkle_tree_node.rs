@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
-
 use std::path::PathBuf;
 
 use super::*;
@@ -192,6 +192,166 @@ impl MerkleTreeNode {
                 child.list_dir_paths_helper(current_path, dirs)?;
             }
         }
+        Ok(())
+    }
+
+    /// List all file hashes in the tree
+    pub fn list_file_hashes(&self) -> Result<HashSet<MerkleHash>, OxenError> {
+        let mut files = HashSet::new();
+        let current_path = Path::new("");
+        self.list_file_hashes_helper(current_path, &mut files)?;
+        Ok(files)
+    }
+
+    fn list_file_hashes_helper(
+        &self,
+        current_path: &Path,
+        files: &mut HashSet<MerkleHash>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(_) = &self.node {
+            files.insert(self.hash);
+        }
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                child.list_file_hashes_helper(&new_path, files)?;
+            } else {
+                child.list_file_hashes_helper(current_path, files)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all file hashes in the tree
+    pub fn list_file_paths(&self) -> Result<HashSet<PathBuf>, OxenError> {
+        let mut files = HashSet::new();
+        let current_path = Path::new("");
+        self.list_file_paths_helper(current_path, &mut files)?;
+        Ok(files)
+    }
+
+    fn list_file_paths_helper(
+        &self,
+        current_path: &Path,
+        files: &mut HashSet<PathBuf>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(file) = &self.node {
+            let file_path = current_path.join(file.name());
+            files.insert(file_path);
+        }
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                child.list_file_paths_helper(&new_path, files)?;
+            } else {
+                child.list_file_paths_helper(current_path, files)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all file hashes in the tree
+    pub fn list_files(&self) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
+        let mut files = HashMap::new();
+        let current_path = Path::new("");
+        self.list_files_helper(current_path, &mut files)?;
+        Ok(files)
+    }
+
+    fn list_files_helper(
+        &self,
+        current_path: &Path,
+        files: &mut HashMap<PathBuf, MerkleTreeNode>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(file_node) = &self.node {
+            files.insert(
+                current_path.join(file_node.name()).to_path_buf(),
+                self.clone(),
+            );
+        }
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                child.list_files_helper(&new_path, files)?;
+            } else {
+                child.list_files_helper(current_path, files)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all the directory and vnode hashes in the tree
+    pub fn list_dir_and_vnode_hashes(&self) -> Result<HashSet<MerkleHash>, OxenError> {
+        let mut hashes = HashSet::new();
+        let current_path = Path::new("");
+        self.list_dir_and_vnode_hashes_helper(current_path, &mut hashes)?;
+        Ok(hashes)
+    }
+
+    fn list_dir_and_vnode_hashes_helper(
+        &self,
+        current_path: &Path,
+        hashes: &mut HashSet<MerkleHash>,
+    ) -> Result<(), OxenError> {
+        match &self.node {
+            EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_) => {
+                hashes.insert(self.hash);
+            }
+            _ => {}
+        };
+
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                child.list_dir_and_vnode_hashes_helper(&new_path, hashes)?;
+            } else {
+                child.list_dir_and_vnode_hashes_helper(current_path, hashes)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all the directory and vnode hashes in the tree that aren't in old_hashes
+    pub fn list_shared_dir_and_vnode_hashes(
+        &self,
+        old_hashes: &HashSet<MerkleHash>,
+    ) -> Result<HashSet<MerkleHash>, OxenError> {
+        let mut new_hashes = HashSet::new();
+        let current_path = Path::new("");
+        self.list_shared_dir_and_vnode_hashes_helper(current_path, &mut new_hashes, old_hashes)?;
+        Ok(new_hashes)
+    }
+
+    fn list_shared_dir_and_vnode_hashes_helper(
+        &self,
+        current_path: &Path,
+        new_hashes: &mut HashSet<MerkleHash>,
+        old_hashes: &HashSet<MerkleHash>,
+    ) -> Result<(), OxenError> {
+        match &self.node {
+            EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_) => {
+                // If the dir is in old_hashes, no need to search further
+                if old_hashes.contains(&self.hash) {
+                    new_hashes.insert(self.hash);
+                    return Ok(());
+                }
+            }
+            _ => {}
+        };
+
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                child.list_shared_dir_and_vnode_hashes_helper(&new_path, new_hashes, old_hashes)?;
+            } else {
+                child.list_shared_dir_and_vnode_hashes_helper(
+                    current_path,
+                    new_hashes,
+                    old_hashes,
+                )?;
+            }
+        }
+
         Ok(())
     }
 

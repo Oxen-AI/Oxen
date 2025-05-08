@@ -236,7 +236,67 @@ pub fn should_restore_file(
 
     // Check to see if the file has been modified if it exists
     if working_path.exists() {
-        let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
+        // Check metadata for changes first
+        let meta = util::fs::metadata(&working_path)?;
+        let file_last_modified = filetime::FileTime::from_last_modification_time(&meta);
+
+        // If there are modifications compared to the base node, we should not restore the file
+        if let Some(base_node) = base_node {
+            let node_modified_nanoseconds = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(base_node.last_modified_seconds() as u64)
+                + std::time::Duration::from_nanos(base_node.last_modified_nanoseconds() as u64);
+
+            let node_last_modified =
+                filetime::FileTime::from_system_time(node_modified_nanoseconds);
+
+            if file_last_modified == node_last_modified {
+                return Ok(true);
+            }
+
+            // If modified times are different, check hashes
+            let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
+
+            let base_node_hash = base_node.hash();
+            if hash != *base_node_hash {
+                return Ok(false);
+            }
+        } else {
+            // Untracked file, check if we are overwriting it
+            let node_modified_nanoseconds = std::time::SystemTime::UNIX_EPOCH
+                + std::time::Duration::from_secs(file_node.last_modified_seconds() as u64)
+                + std::time::Duration::from_nanos(file_node.last_modified_nanoseconds() as u64);
+
+            let node_last_modified =
+                filetime::FileTime::from_system_time(node_modified_nanoseconds);
+
+            if file_last_modified == node_last_modified {
+                return Ok(true);
+            }
+
+            // If modified times are different, check hashes
+            let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
+            if hash != *file_node.hash() {
+                return Ok(false);
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+// Skip hashing the file in the working path
+pub fn should_restore_hashed_file(
+    repo: &LocalRepository,
+    base_node: Option<FileNode>,
+    file_node: &FileNode,
+    path: impl AsRef<Path>,
+    hash: MerkleHash,
+) -> Result<bool, OxenError> {
+    let path = path.as_ref();
+    let working_path = repo.path.join(path);
+
+    // Check to see if the file has been modified if it exists
+    if working_path.exists() {
         // If there are modifications compared to the base node, we should not restore the file
         if let Some(base_node) = base_node {
             let base_node_hash = base_node.hash();

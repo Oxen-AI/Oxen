@@ -562,6 +562,55 @@ pub fn dir_entries_with_paths(
     Ok(entries)
 }
 
+// Get HashMap of all entries that aren't present in shared_hashes
+pub fn unique_dir_entries(
+    base_path: &PathBuf,
+    node: &MerkleTreeNode,
+    shared_hashes: &HashSet<MerkleHash>,
+) -> Result<HashMap<PathBuf, FileNode>, OxenError> {
+    let mut entries = HashMap::new();
+    if !shared_hashes.contains(&node.hash) {
+        match &node.node {
+            EMerkleTreeNode::Directory(_)
+            | EMerkleTreeNode::VNode(_)
+            | EMerkleTreeNode::Commit(_) => {
+                for child in &node.children {
+                    match &child.node {
+                        EMerkleTreeNode::File(file_node) => {
+                            let file_path = base_path.join(file_node.name());
+                            entries.insert(file_path, file_node.clone());
+                        }
+                        EMerkleTreeNode::Directory(dir_node) => {
+                            let new_base_path = base_path.join(dir_node.name());
+                            entries.extend(unique_dir_entries(
+                                &new_base_path,
+                                child,
+                                shared_hashes,
+                            )?);
+                        }
+                        EMerkleTreeNode::VNode(_vnode) => {
+                            entries.extend(unique_dir_entries(base_path, child, shared_hashes)?);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            EMerkleTreeNode::File(file_node) => {
+                let file_path = base_path.join(file_node.name());
+                entries.insert(file_path, file_node.clone());
+            }
+            _ => {
+                return Err(OxenError::basic_str(format!(
+                    "Unexpected node type: {:?}",
+                    node.node.node_type()
+                )))
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
 // Given a set of hashes, return the hashes that are missing from the tree
 pub fn list_missing_node_hashes(
     repo: &LocalRepository,

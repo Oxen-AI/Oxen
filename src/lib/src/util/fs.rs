@@ -30,6 +30,7 @@ use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
+use crate::model::MerkleHash;
 use crate::model::Schema;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
@@ -1600,6 +1601,33 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
         Ok(false)
     } else {
         Ok(true)
+    }
+}
+
+pub fn hash_if_modified_from_node(
+    path: &Path,
+    node: &FileNode,
+) -> Result<Option<MerkleHash>, OxenError> {
+    let meta = util::fs::metadata(path)?;
+    let file_last_modified = filetime::FileTime::from_last_modification_time(&meta);
+
+    let node_modified_nanoseconds = std::time::SystemTime::UNIX_EPOCH
+        + std::time::Duration::from_secs(node.last_modified_seconds() as u64)
+        + std::time::Duration::from_nanos(node.last_modified_nanoseconds() as u64);
+
+    let node_last_modified = filetime::FileTime::from_system_time(node_modified_nanoseconds);
+
+    if file_last_modified == node_last_modified {
+        return Ok(None);
+    }
+
+    let node_hash = node.hash().to_u128();
+    let working_hash = util::hasher::get_hash_given_metadata(path, &meta)?;
+
+    if node_hash == working_hash {
+        Ok(None)
+    } else {
+        Ok(Some(MerkleHash::new(working_hash)))
     }
 }
 
