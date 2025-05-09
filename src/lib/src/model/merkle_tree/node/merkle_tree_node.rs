@@ -56,17 +56,6 @@ impl MerkleTreeNode {
         matches!(self.node, EMerkleTreeNode::Directory(_))
     }
 
-    pub fn total_files(&self) -> usize {
-        let mut count = 0;
-        for child in &self.children {
-            if let EMerkleTreeNode::File(_) = child.node {
-                count += 1
-            }
-            count += child.total_files();
-        }
-        count
-    }
-
     /// Recursively count the total number of vnodes in the tree
     pub fn total_vnodes(&self) -> usize {
         let mut count = 0;
@@ -192,6 +181,7 @@ impl MerkleTreeNode {
         current_path: &Path,
         dirs: &mut Vec<PathBuf>,
     ) -> Result<(), OxenError> {
+        println!("self.node: {:?}", self.node);
         if let EMerkleTreeNode::Directory(_) = &self.node {
             dirs.push(current_path.to_path_buf());
         }
