@@ -32,9 +32,7 @@ impl RunCmd for PullCmd {
             )
             .arg(
                 Arg::new("BRANCH")
-                    .help("Branch name to pull")
-                    .default_value(DEFAULT_BRANCH_NAME)
-                    .default_missing_value(DEFAULT_BRANCH_NAME),
+                    .help("Branch name to pull"),
             )
             .arg(
                 Arg::new("all")
@@ -45,18 +43,21 @@ impl RunCmd for PullCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        let repository = LocalRepository::from_current_dir()?;
+        let current_branch = repositories::branches::current_branch(&repository)?;
+
         // Parse args
         let remote = args
             .get_one::<String>("REMOTE")
             .expect("Must supply a remote");
-        let branch = args
-            .get_one::<String>("BRANCH")
-            .expect("Must supply a branch");
-
+        let branch = if let Some(branch) = args.get_one::<String>("BRANCH") {
+            branch
+        } else if current_branch.is_some() {
+            &current_branch.unwrap().name
+        } else {
+            DEFAULT_BRANCH_NAME
+        };
         let all = args.get_flag("all");
-
-        // Get the repo
-        let repository = LocalRepository::from_current_dir()?;
 
         let host = get_host_from_repo(&repository)?;
         check_repo_migration_needed(&repository)?;

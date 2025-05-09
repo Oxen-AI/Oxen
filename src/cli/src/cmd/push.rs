@@ -10,7 +10,7 @@ use crate::helpers::{
     check_remote_version, check_remote_version_blocking, check_repo_migration_needed,
     get_host_from_repo,
 };
-use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
+use liboxen::constants::DEFAULT_REMOTE_NAME;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "push";
@@ -31,12 +31,7 @@ impl RunCmd for PushCmd {
                     .default_value(DEFAULT_REMOTE_NAME)
                     .default_missing_value(DEFAULT_REMOTE_NAME),
             )
-            .arg(
-                Arg::new("BRANCH")
-                    .help("Branch name to push to")
-                    .default_value(DEFAULT_BRANCH_NAME)
-                    .default_missing_value(DEFAULT_BRANCH_NAME),
-            )
+            .arg(Arg::new("BRANCH").help("Branch name to push to"))
             .arg(
                 Arg::new("delete")
                     .long("delete")
@@ -48,22 +43,30 @@ impl RunCmd for PushCmd {
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse args
+
+        let repo = LocalRepository::from_current_dir()?;
+        let current_branch = repositories::branches::current_branch(&repo)?;
+
         let remote = args
             .get_one::<String>("REMOTE")
             .expect("Must supply a remote");
 
-        let branch = args
-            .get_one::<String>("BRANCH")
-            .expect("Must supply a branch");
+        let branch = if let Some(branch) = args.get_one::<String>("BRANCH") {
+            branch
+        } else if current_branch.is_some() {
+            &current_branch.unwrap().name
+        } else {
+            return Err(OxenError::basic_str(
+                "Error: Cannot push from non-existant branch",
+            ));
+        };
 
         // Call into liboxen to push or delete
         if args.get_flag("delete") {
-            let repository = LocalRepository::from_current_dir()?;
-
-            let host = get_host_from_repo(&repository)?;
+            let host = get_host_from_repo(&repo)?;
             check_remote_version(host).await?;
 
-            api::client::branches::delete_remote(&repository, remote, branch).await?;
+            api::client::branches::delete_remote(&repo, remote, branch).await?;
             println!("Deleted remote branch: {remote}/{branch}");
             Ok(())
         } else {
@@ -75,17 +78,8 @@ impl RunCmd for PushCmd {
             check_remote_version_blocking(host.clone()).await?;
             check_remote_version(host).await?;
 
-            match repositories::push::push_remote_branch(&repository, remote, branch).await {
-                Ok(_) => Ok(()),
-                Err(OxenError::BranchNotFound(branch)) => {
-                    let msg = format!("{}\nMake sure you are on the correct branch and have committed your changes.", branch);
-                    Err(OxenError::basic_str(msg))
-                }
-                Err(e) => {
-                    println!("Error pushing: {}", e);
-                    Err(e)
-                }
-            }
+            repositories::push::push_remote_branch(&repository, remote, branch).await?;
+            Ok(())
         }
     }
 }
