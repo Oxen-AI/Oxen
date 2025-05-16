@@ -24,10 +24,10 @@ pub struct StorageConfig {
 }
 
 /// Trait for types that implement Read and Seek
-pub trait ReadSeek: Read + Seek {}
+pub trait ReadSeek: Read + Seek + Send + Sync {}
 
 /// Implement ReadSeek for any type that implements both Read and Seek
-impl<T: Read + Seek> ReadSeek for T {}
+impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
 
 /// Trait defining operations for version file storage backends
 pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
@@ -73,8 +73,9 @@ pub trait VersionStore: Debug + Send + Sync + RefUnwindSafe + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `chunk_number` - The chunk number to retrieve
-    fn get_version_chunk(&self, hash: &str, chunk_number: u32) -> Result<Vec<u8>, OxenError>;
+    /// * `offset` - The starting byte position of the chunk
+    /// * `size` - The chunk size
+    fn get_version_chunk(&self, hash: &str, offset: u64, size: u64) -> Result<Vec<u8>, OxenError>;
 
     /// List all chunks for a version file
     ///

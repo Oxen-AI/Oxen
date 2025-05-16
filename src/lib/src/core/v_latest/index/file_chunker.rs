@@ -405,8 +405,8 @@ impl FileChunker {
         entry: &CommitEntry,
         csm: &mut ChunkShardManager,
     ) -> Result<Vec<u128>, OxenError> {
-        let version_file = util::fs::version_path(&self.repo, entry);
-        let mut read_file = File::open(&version_file)?;
+        let version_store = &self.repo.version_store()?;
+        let mut read_file = version_store.open_version(&entry.hash)?;
 
         // Create a progress bar for larger files
         let mut progress_bar: Option<Arc<ProgressBar>> =
