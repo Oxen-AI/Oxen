@@ -2,12 +2,16 @@ use crate::api;
 use crate::api::client;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::error::OxenError;
-use crate::model::{MerkleHash, RemoteRepository};
+use crate::model::entry::commit_entry::Entry;
+use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::view::versions::{
     CompleteVersionUploadRequest, CompletedFileUpload, MultipartLargeFileUpload,
     MultipartLargeFileUploadStatus, VersionFile, VersionFileResponse,
 };
+use crate::view::{ErrorFileInfo, FilesHashResponse};
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use http::header::CONTENT_LENGTH;
@@ -291,6 +295,93 @@ async fn complete_multipart_large_file_upload(
     let body = client::parse_json_body(&url, response).await?;
     log::debug!("complete_multipart_large_file_upload got body: {}", body);
     Ok(upload)
+}
+
+/// Multipart batch upload with retry
+/// Uploads a batch of small files to the server in parallel and retries on failure
+/// Returns a list of files that failed to upload
+pub async fn multipart_batch_upload_with_retry(
+    local_repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    chunk: &Vec<Entry>,
+    client: &reqwest::Client,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
+    let mut first_try = true;
+    let mut retry_count: usize = 0;
+
+    while (first_try || !files_to_retry.is_empty()) && retry_count < MAX_RETRIES {
+        first_try = false;
+        retry_count += 1;
+
+        files_to_retry =
+            multipart_batch_upload(local_repo, remote_repo, chunk, client, files_to_retry).await?;
+
+        if !files_to_retry.is_empty() {
+            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+            sleep(Duration::from_millis(wait_time as u64)).await;
+        }
+    }
+    Ok(files_to_retry)
+}
+
+pub async fn multipart_batch_upload(
+    local_repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    chunk: &Vec<Entry>,
+    client: &reqwest::Client,
+    files_to_retry: Vec<ErrorFileInfo>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    let version_store = local_repo.version_store()?;
+    let mut form = reqwest::multipart::Form::new();
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+
+    // if it's the first try, we don't have any files to retry
+    let retry_hashes: std::collections::HashSet<String> = if files_to_retry.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        files_to_retry.iter().map(|f| f.hash.clone()).collect()
+    };
+
+    for entry in chunk {
+        let file_hash = entry.hash();
+
+        // if it's not the first try and the file is not in the retry list, skip
+        if !files_to_retry.is_empty() && !retry_hashes.contains(&file_hash) {
+            continue;
+        }
+
+        let reader = version_store.open_version(&file_hash)?;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut buf_reader = std::io::BufReader::new(reader);
+        std::io::copy(&mut buf_reader, &mut encoder)?;
+        let compressed_bytes = match encoder.finish() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::error!("Failed to finish gzip for file {}: {}", &file_hash, e);
+                err_files.push(ErrorFileInfo {
+                    hash: file_hash.clone(),
+                    error: format!("Failed to finish gzip for file {}: {}", &file_hash, e),
+                });
+                continue;
+            }
+        };
+
+        let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+            .file_name(entry.hash().to_string())
+            .mime_str("application/gzip")?;
+        form = form.part("file[]", file_part);
+    }
+    let uri = ("/versions").to_string();
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let response = client.post(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, response).await?;
+    let response: FilesHashResponse = serde_json::from_str(&body)?;
+
+    err_files.extend(response.err_files);
+
+    Ok(err_files)
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {

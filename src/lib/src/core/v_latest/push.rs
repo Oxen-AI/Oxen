@@ -1,7 +1,4 @@
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use futures::prelude::*;
-use indicatif::ProgressBar;
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
@@ -434,9 +431,13 @@ async fn upload_large_file_chunks(
     progress: &Arc<PushProgress>,
 ) {
     // Open versioned file
+    let version_store = repo.version_store().unwrap();
+    let file = version_store.open_version(&entry.hash()).unwrap();
+    let mut reader = BufReader::new(file);
+    // The version path is just being used for compatibility with the server endpoint,
+    // we aren't using it to read the file.
+    // TODO: This should be migrated to use the new versions API
     let version_path = util::fs::version_path_for_entry(&repo, &entry);
-    let f = std::fs::File::open(&version_path).unwrap();
-    let mut reader = BufReader::new(f);
 
     // These variables are the same for every chunk
     // let is_compressed = false;
@@ -698,9 +699,6 @@ async fn bundle_and_send_small_entries(
             loop {
                 let (chunk, repo, _commit, remote_repo, client) = queue.pop().await;
                 log::debug!("worker[{}] processing task...", worker);
-
-                let enc = GzEncoder::new(Vec::new(), Compression::default());
-                let mut tar = tar::Builder::new(enc);
                 log::debug!("Chunk size {}", chunk.len());
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
@@ -710,64 +708,23 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
-                for entry in &chunk {
-                    log::trace!(
-                        "bundle_and_send_small_entries adding entry to tarball: {:?}",
-                        entry
-                    );
-                    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-                    let version_path = util::fs::version_path_for_entry(&repo, entry);
-                    let name = util::fs::path_relative_to_dir(&version_path, &hidden_dir).unwrap();
-
-                    match tar.append_path_with_name(version_path, name) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::error!("Failed to add file to archive: {}", e);
-                            continue; // TODO: error handling, same as above
-                        }
-                    };
-                }
-
-                let buffer = match tar.into_inner() {
-                    Ok(gz_encoder) => match gz_encoder.finish() {
-                        Ok(buffer) => {
-                            let size = buffer.len() as u64;
-                            log::debug!("Got tarball buffer of size {}", size);
-                            buffer
-                        }
-                        Err(err) => {
-                            panic!("Error creating tar.gz on entries: {}", err)
-                        }
-                    },
-                    Err(err) => {
-                        panic!("Error creating tar of entries: {}", err)
-                    }
-                };
-
-                // Send tar.gz to server
-                let is_compressed = true;
-                let file_name = None;
-
-                // TODO: Refactor where the bars are being passed so we don't need silent here
-                let quiet_bar = Arc::new(ProgressBar::hidden());
-
-                match api::client::commits::post_data_to_server_with_client(
-                    &client,
+                match api::client::versions::multipart_batch_upload_with_retry(
+                    &repo,
                     &remote_repo,
-                    buffer,
-                    is_compressed,
-                    &file_name,
-                    quiet_bar,
+                    &chunk,
+                    &client,
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_err_files) => {
+                        // TODO: return err files info to the user
                         log::debug!("Successfully uploaded data!")
                     }
-                    Err(err) => {
-                        log::error!("Error uploading chunk: {:?}", err)
+                    Err(e) => {
+                        log::error!("Error uploading chunk: {:?}", e)
                     }
                 }
+
                 bar.add_bytes(chunk_size);
                 bar.add_files(chunk.len() as u64);
                 finished_queue.pop().await;

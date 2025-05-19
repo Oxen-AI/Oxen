@@ -25,3 +25,16 @@ pub struct FilePathsResponse {
     pub status: StatusMessage,
     pub paths: Vec<PathBuf>,
 }
+#[derive(Deserialize, Serialize, Debug)]
+pub struct FilesHashResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    #[serde(default)]
+    pub err_files: Vec<ErrorFileInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ErrorFileInfo {
+    pub hash: String,
+    pub error: String,
+}
