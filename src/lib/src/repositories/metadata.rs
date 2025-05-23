@@ -197,13 +197,14 @@ pub fn get_file_metadata_with_extension(
                 Ok(None)
             }
         },
-        EntryDataType::Audio => match audio::get_metadata(path) {
-            Ok(metadata) => Ok(Some(GenericMetadata::MetadataAudio(metadata))),
-            Err(err) => {
-                log::warn!("could not compute audio metadata: {}", err);
-                Ok(None)
-            }
-        },
+        EntryDataType::Audio => Ok(None),
+        // EntryDataType::Audio => match audio::get_metadata(path) {
+        //     Ok(metadata) => Ok(Some(GenericMetadata::MetadataAudio(metadata))),
+        //     Err(err) => {
+        //         log::warn!("could not compute audio metadata: {}", err);
+        //         Ok(None)
+        //     }
+        // },
         EntryDataType::Tabular => match tabular::get_metadata_with_extension(path, extension) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
             Err(err) => {
