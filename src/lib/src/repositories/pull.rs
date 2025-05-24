@@ -1891,4 +1891,71 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_subtree_clone_branch_push_pull() -> Result<(), OxenError> {
+        // Push the Remote Repo
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            test::run_empty_dir_test_async(|repo_dir| async move {
+                let repo_dir = repo_dir.join("subtree_repo");
+
+                // 1. Clone repo with subtree filter
+                let mut clone_opts = CloneOpts::new(&remote_repo.remote.url, &repo_dir);
+                clone_opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from("train")]);
+                // clone_opts.fetch_opts.depth = Some(1);
+                let repo = repositories::clone(&clone_opts).await?;
+
+                // Verify we only have the subtree
+                assert!(repo.path.join("train").exists());
+                assert!(!repo.path.join("test").exists());
+
+                // 2. Create and checkout new branch
+                let branch_name = "branch1";
+                repositories::branches::create_checkout(&repo, branch_name)?;
+
+                // 3. Add new file in dir1
+                let dir1 = repo.path.join("dir1");
+                util::fs::create_dir_all(&dir1)?;
+                let new_file = dir1.join("newfile.txt");
+                test::write_txt_file_to_path(&new_file, "This is a new file")?;
+
+                // 4. Add and commit the new file
+                repositories::add(&repo, &new_file)?;
+                repositories::commit(&repo, "Adding new file in dir1")?;
+
+                // 5. Push to origin branch1
+                repositories::push::push_remote_branch(
+                    &repo,
+                    constants::DEFAULT_REMOTE_NAME,
+                    branch_name,
+                )
+                .await?;
+
+                // 6. Pull from main
+                repositories::pull_remote_branch(
+                    &repo,
+                    &FetchOpts {
+                        remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                        branch: "main".to_string(),
+                        all: false,
+                        subtree_paths: Some(vec![PathBuf::from("train")]),
+                        depth: None,
+                        ..FetchOpts::new()
+                    },
+                )
+                .await?;
+
+                // Verify the state after pull
+                assert!(repo.path.join("train").exists());
+                assert!(repo.path.join("dir1").join("newfile.txt").exists());
+
+                Ok(repo_dir)
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
 }

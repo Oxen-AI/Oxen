@@ -119,7 +119,7 @@ mod tests {
             let bytes = api::client::file::get_file(&remote_repo, branch_name, file_path).await;
 
             assert!(bytes.is_ok());
-            assert!(bytes.unwrap().len() > 0);
+            assert!(!bytes.unwrap().is_empty());
 
             Ok(remote_repo)
         })
@@ -153,7 +153,7 @@ mod tests {
             let bytes = api::client::file::get_file(&remote_repo, workspace_id, file_path).await;
 
             assert!(bytes.is_ok());
-            assert!(bytes.as_ref().unwrap().len() > 0);
+            assert!(!bytes.as_ref().unwrap().is_empty());
             assert_eq!(bytes.unwrap(), Bytes::from_static(b"test content"));
 
             Ok(remote_repo)
