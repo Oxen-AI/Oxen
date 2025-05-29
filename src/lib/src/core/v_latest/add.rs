@@ -572,7 +572,7 @@ pub fn process_add_version_file(
     repo: &LocalRepository,
     file_status: &FileStatus, // All the metadata including if the file is added, modified, or deleted
     staged_db: &DBWithThreadMode<MultiThreaded>,
-    version_path: &Path, // Path to the file in the repository, or path defined by the user
+    version_path: &Path, // Path to the file in the version store
     dst_path: &Path,     // Path to the file in the workspace
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
@@ -586,6 +586,14 @@ pub fn process_add_version_file(
     let maybe_file_node = file_status.previous_file_node.clone();
     let previous_metadata = file_status.previous_metadata.clone();
 
+    // Normalize the path
+    let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
+    let file_extension = relative_path
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let relative_path_str = relative_path.to_str().unwrap_or_default();
+
     log::debug!("status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}");
 
     // Don't have to add the file to the staged db if it hasn't changed
@@ -594,18 +602,27 @@ pub fn process_add_version_file(
         return Ok(None);
     }
 
-    // Get the data type of the file
-    let mime_type = util::fs::file_mime_type(version_path);
-    let mut data_type = util::fs::datatype_from_mimetype(version_path, &mime_type);
+    // version_path is where the file is stored, relative_path is the working directory path that contains the file extension
+    let mime_type = util::fs::file_mime_type_from_extension(version_path, &relative_path);
+    let mut data_type =
+        util::fs::datatype_from_mimetype_from_extension(version_path, &relative_path, &mime_type);
     let metadata = match &previous_metadata {
         Some(previous_oxen_metadata) => {
-            let df_metadata = repositories::metadata::get_file_metadata(version_path, &data_type)?;
+            let df_metadata = repositories::metadata::get_file_metadata_with_extension(
+                version_path,
+                &data_type,
+                &util::fs::file_extension(&relative_path),
+            )?;
             maybe_construct_generic_metadata_for_tabular(
                 df_metadata,
                 previous_oxen_metadata.clone(),
             )
         }
-        None => repositories::metadata::get_file_metadata(version_path, &data_type)?,
+        None => repositories::metadata::get_file_metadata_with_extension(
+            version_path,
+            &data_type,
+            &util::fs::file_extension(&relative_path),
+        )?,
     };
 
     // If the metadata is None, but the data type is tabular, we need to set the data type to binary
@@ -614,8 +631,6 @@ pub fn process_add_version_file(
         data_type = EntryDataType::Binary;
     }
 
-    let file_extension = dst_path.extension().unwrap_or_default().to_string_lossy();
-    let relative_path_str = dst_path.to_str().unwrap_or_default();
     let (hash, metadata_hash, combined_hash) = if let Some(metadata) = &metadata {
         let metadata_hash = util::hasher::get_metadata_hash(&Some(metadata.clone()))?;
         let metadata_hash = MerkleHash::new(metadata_hash);

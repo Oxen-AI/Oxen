@@ -50,6 +50,7 @@ pub fn add_version_file(
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    // version_path is where the file is stored, dst_path is the relative path to the repo path
     let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
 
@@ -63,6 +64,7 @@ pub fn add_version_file(
         version_path,
         dst_path,
     )?;
+
     Ok(dst_path.to_path_buf())
 }
 

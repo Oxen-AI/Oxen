@@ -3,12 +3,25 @@ use crate::api::client;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
-use crate::util;
+use crate::util::{self, concurrency};
 use crate::view::FilePathsResponse;
+use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
 
 use bytesize::ByteSize;
 use pluralizer::pluralize;
+use rand::{thread_rng, Rng};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+
+const BASE_WAIT_TIME: usize = 300;
+const MAX_WAIT_TIME: usize = 10_000;
+const MAX_RETRIES: usize = 5;
+#[derive(Debug)]
+pub struct UploadResult {
+    pub files_to_add: Vec<FileWithHash>,
+    pub err_files: Vec<ErrorFileInfo>,
+}
 
 pub async fn add(
     remote_repo: &RemoteRepository,
@@ -124,7 +137,7 @@ async fn upload_multiple_files(
     }
 
     // Upload small files in batches
-    sequential_batched_small_file_upload(
+    parallel_batched_small_file_upload(
         remote_repo,
         workspace_id,
         directory,
@@ -136,7 +149,7 @@ async fn upload_multiple_files(
     Ok(())
 }
 
-async fn sequential_batched_small_file_upload(
+async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
@@ -153,31 +166,166 @@ async fn sequential_batched_small_file_upload(
     let workspace_id = workspace_id.as_ref();
     let directory_str = directory.as_ref().to_string_lossy();
 
+    // create batches
+    let mut batches = Vec::new();
     let mut current_batch = Vec::new();
     let mut current_batch_size = 0;
 
     for (idx, (path, file_size)) in small_files.iter().enumerate() {
-        // Add the file to the current batch
         current_batch.push(path.clone());
         current_batch_size += file_size;
 
-        // If the current batch is larger than our target size or we're at the end of the list, upload it
         if current_batch_size > AVG_CHUNK_SIZE || idx >= small_files.len() - 1 {
-            log::debug!(
-                "Uploading batch of {} files ({} bytes)",
-                current_batch.len(),
-                current_batch_size
-            );
-            match multipart_upload(remote_repo, workspace_id, &directory_str, current_batch).await {
-                Ok(_) => log::debug!("Successfully uploaded batch of files"),
-                Err(err) => log::error!("Failed to upload batch of files: {}", err),
-            }
+            batches.push(current_batch.clone());
             current_batch = Vec::new();
             current_batch_size = 0;
         }
     }
 
+    type PieceOfWork = (Vec<PathBuf>, String, String, RemoteRepository);
+    type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
+    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
+
+    let worker_count = concurrency::num_threads_for_items(batches.len());
+    let queue = Arc::new(TaskQueue::new(batches.len()));
+    let finished_queue = Arc::new(FinishedTaskQueue::new(batches.len()));
+
+    for batch in batches {
+        queue
+            .try_push((
+                batch,
+                workspace_id.to_string(),
+                directory_str.to_string(),
+                remote_repo.clone(),
+            ))
+            .unwrap();
+        finished_queue.try_push(false).unwrap();
+    }
+
+    // Create a client for uploading batches
+    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+
+    for worker in 0..worker_count {
+        let queue = queue.clone();
+        let finished_queue = finished_queue.clone();
+        let client = client.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let (batch, workspace_id, directory_str, remote_repo) = queue.pop().await;
+                log::debug!(
+                    "worker[{}] processing batch of {} files",
+                    worker,
+                    batch.len()
+                );
+
+                // first, upload the files to the version store
+                match api::client::versions::workspace_multipart_batch_upload_versions_with_retry(
+                    &remote_repo,
+                    client.clone(),
+                    &directory_str,
+                    batch,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        log::debug!("Successfully uploaded batch of files");
+                        // second, stage the files to workspace
+                        match add_version_files_to_workspace_with_retry(
+                            &remote_repo,
+                            client.clone(),
+                            workspace_id,
+                            Arc::new(result.files_to_add),
+                        )
+                        .await
+                        {
+                            Ok(_err_files) => {
+                                log::debug!("Successfully added version files to workspace");
+                                // TODO: return err files info to the user
+                            }
+                            Err(err) => {
+                                log::error!("Failed to add version files to workspace: {}", err)
+                            }
+                        }
+                    }
+                    Err(err) => log::error!("Failed to upload batch of files: {}", err),
+                }
+
+                finished_queue.pop().await;
+            }
+        });
+    }
+
+    while !finished_queue.is_empty() {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    log::debug!("All upload tasks completed");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     Ok(())
+}
+
+pub async fn add_version_files_to_workspace_with_retry(
+    remote_repo: &RemoteRepository,
+    client: Arc<reqwest::Client>,
+    workspace_id: impl AsRef<str>,
+    files_to_add: Arc<Vec<FileWithHash>>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    let mut first_try = true;
+    let mut retry_count: usize = 0;
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    let workspace_id = workspace_id.as_ref().to_string();
+
+    while (first_try || !err_files.is_empty()) && retry_count < MAX_RETRIES {
+        first_try = false;
+        retry_count += 1;
+
+        err_files = add_version_files_to_workspace(
+            remote_repo,
+            client.clone(),
+            &workspace_id,
+            files_to_add.clone(),
+            err_files,
+        )
+        .await?;
+
+        if !err_files.is_empty() {
+            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+            sleep(Duration::from_millis(wait_time as u64)).await;
+        }
+    }
+    Ok(err_files)
+}
+
+pub async fn add_version_files_to_workspace(
+    remote_repo: &RemoteRepository,
+    client: Arc<reqwest::Client>,
+    workspace_id: impl AsRef<str>,
+    files_to_add: Arc<Vec<FileWithHash>>,
+    err_files: Vec<ErrorFileInfo>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let uri = format!("/workspaces/{}/versions", workspace_id);
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let files_to_send = if !err_files.is_empty() {
+        let err_hashes: std::collections::HashSet<String> =
+            err_files.iter().map(|f| f.hash.clone()).collect();
+        files_to_add
+            .iter()
+            .filter(|f| err_hashes.contains(&f.hash))
+            .cloned()
+            .collect()
+    } else {
+        files_to_add.to_vec()
+    };
+
+    let response = client.post(&url).json(&files_to_send).send().await?;
+    let body = client::parse_json_body(&url, response).await?;
+    let response: ErrorFilesResponse = serde_json::from_str(&body)?;
+
+    Ok(response.err_files)
 }
 
 async fn p_upload_single_file(
@@ -225,41 +373,6 @@ async fn p_upload_single_file(
             Err(OxenError::basic_str(err))
         }
     }
-}
-
-async fn multipart_upload(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory_name: impl AsRef<str>,
-    paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory_name = directory_name.as_ref();
-
-    log::debug!("Uploading {} files to {}", paths.len(), directory_name);
-
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let mut form = reqwest::multipart::Form::new();
-    for path in paths {
-        let file_name = path
-            .file_name()
-            .unwrap()
-            .to_os_string()
-            .into_string()
-            .ok()
-            .unwrap();
-        let file = std::fs::read(&path).unwrap();
-        let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
-        form = form.part("file[]", file_part);
-    }
-
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let response: FilePathsResponse = serde_json::from_str(&body)?;
-    Ok(response.paths)
 }
 
 pub async fn add_many(
@@ -354,6 +467,14 @@ pub async fn download(
     util::fs::write(output_path, file_contents)?;
 
     Ok(())
+}
+
+pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
+    (base_wait_time + n.pow(2) + jitter()).min(max)
+}
+
+fn jitter() -> usize {
+    thread_rng().gen_range(0..=500)
 }
 
 #[cfg(test)]

@@ -279,21 +279,21 @@ fn export_tabular_data_frames(
                     {
                         node_path = dir_path.join(node_path);
                     }
-                    if *file_node.data_type() == EntryDataType::Tabular {
+
+                    // Only recompute the metadata if the file is tabular and indexed (editable df and eval)
+                    if *file_node.data_type() == EntryDataType::Tabular
+                        && repositories::workspaces::data_frames::is_indexed(workspace, &node_path)?
+                    {
                         log::debug!(
                             "Exporting tabular data frame: {:?} -> {:?}",
                             node_path,
                             file_node.name()
                         );
-                        let exported_path = if repositories::workspaces::data_frames::is_indexed(
-                            workspace, &node_path,
-                        )? {
+
+                        let exported_path =
                             workspaces::data_frames::extract_file_node_to_working_dir(
                                 workspace, &dir_path, file_node,
-                            )?
-                        } else {
-                            workspace.workspace_repo.path.join(node_path)
-                        };
+                            )?;
 
                         log::debug!("exported path: {:?}", exported_path);
 
