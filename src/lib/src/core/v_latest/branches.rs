@@ -5,7 +5,7 @@ use crate::core::v_latest::index::restore::{self, FileToRestore};
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use crate::model::{Commit, CommitEntry, LocalRepository, MerkleHash};
+use crate::model::{Commit, CommitEntry, LocalRepository, MerkleHash, PartialNode};
 use crate::repositories;
 use crate::util;
 
@@ -100,28 +100,6 @@ impl CheckoutHashes {
             seen_hashes: HashSet::new(),
             seen_paths: HashSet::new(),
             common_nodes,
-        }
-    }
-}
-
-// Reduced form of the FileNode, used to save space
-#[derive(Eq, Hash, PartialEq, Debug)]
-pub struct PartialNode {
-    pub hash: MerkleHash,
-    pub last_modified: FileTime,
-}
-
-impl PartialNode {
-    pub fn from(
-        hash: MerkleHash,
-        last_modified_seconds: i64,
-        last_modified_nanoseconds: u32,
-    ) -> Self {
-        let last_modified =
-            util::fs::last_modified_time(last_modified_seconds, last_modified_nanoseconds);
-        PartialNode {
-            hash,
-            last_modified,
         }
     }
 }
@@ -272,6 +250,10 @@ pub async fn checkout_commit(
     Ok(())
 }
 
+// Notes for future optimizations:
+// If a dir or a vnode is shared between the trees, then all files under it will also be shared exactly
+// However, shared file nodes may not always fall under the same dirs and vnodes between the trees
+// Hence, it's necessary to traverse all unique paths in each tree at least once
 pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     to_commit: &Commit,
@@ -279,6 +261,7 @@ pub async fn set_working_repo_to_commit(
 ) -> Result<(), OxenError> {
     let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
 
+    // Load in the target tree, collecting every dir and vnode hash for comparison with the from tree
     let mut target_hashes = HashSet::new();
     let Some(target_tree) =
         CommitMerkleTree::root_with_children_and_hashes(repo, to_commit, &mut target_hashes)?
@@ -288,6 +271,9 @@ pub async fn set_working_repo_to_commit(
         ));
     };
 
+    // If the from tree exists, load in the nodes not found in the target tree
+    // Also collects a 'PartialNode' of every file node unique to the from tree
+    // This is used to determine missing or modified files in the recursive function
     let mut shared_hashes = HashSet::new();
     let mut partial_nodes = HashMap::new();
     let from_tree = if let Some(from_commit) = maybe_from_commit {
@@ -313,6 +299,7 @@ pub async fn set_working_repo_to_commit(
     let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
 
     log::debug!("restore_missing_or_modified_files");
+    // Restore files present in the target commit
     r_restore_missing_or_modified_files(
         repo,
         &target_tree,
@@ -349,7 +336,6 @@ pub async fn set_working_repo_to_commit(
     Ok(())
 }
 
-// Remove files not present in the target tree
 // Only called if checking out from an existant commit
 fn cleanup_removed_files(
     repo: &LocalRepository,

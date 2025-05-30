@@ -843,9 +843,11 @@ mod tests {
 
                 // Check for merge conflict
                 let status = repositories::status(&user_b_repo)?;
+                println!("Err here");
                 assert!(!status.merge_conflicts.is_empty());
                 status.print();
 
+                println!("now here");
                 // Checkout your version and add the changes
                 repositories::checkout::checkout_ours(&user_b_repo, new_file)?;
                 repositories::add(&user_b_repo, &new_file_path)?;

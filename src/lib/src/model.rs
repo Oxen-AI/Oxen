@@ -15,6 +15,7 @@ pub mod metadata;
 pub mod namespace;
 pub mod object_id;
 pub mod parsed_resource;
+pub mod partial_node;
 pub mod remote;
 pub mod remote_branch;
 pub mod repository;
@@ -84,3 +85,6 @@ pub use crate::model::merkle_tree::merkle_hash::MerkleHash;
 pub use crate::model::merkle_tree::node_type::{
     MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
 };
+
+// Partial Node
+pub use crate::model::partial_node::PartialNode;

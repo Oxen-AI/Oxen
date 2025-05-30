@@ -7,7 +7,6 @@ use rocksdb::{DBWithThreadMode, IteratorMode, MultiThreaded};
 use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR};
 use crate::core::db;
 use crate::core::db::merkle_node::MerkleNodeDB;
-use crate::core::v_latest::branches::PartialNode;
 
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 
@@ -15,8 +14,7 @@ use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 
 use crate::error::OxenError;
-use crate::model::Commit;
-use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
+use crate::model::{Commit, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode};
 
 use crate::util::{self, hasher};
 
@@ -303,11 +301,7 @@ impl CommitMerkleTree {
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
         let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
 
-        let start_path = if let EMerkleTreeNode::Directory(dir_node) = &node.node {
-            PathBuf::from(dir_node.name())
-        } else {
-            PathBuf::new()
-        };
+        let start_path = PathBuf::new();
 
         CommitMerkleTree::load_unique_children(
             repo,
@@ -851,9 +845,10 @@ impl CommitMerkleTree {
                 }
                 // FileChunks and Schemas are leaf nodes
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
+                    // TODO: Is this the wrong function? THe wrong check?
                     if let EMerkleTreeNode::File(file_node) = &child.node {
                         let file_path = current_path.join(PathBuf::from(file_node.name()));
-                        //log::debug!("Adding path {file_path:?} to partial_nodes");
+                        println!("Adding path {file_path:?} to partial_nodes");
                         let partial_node = PartialNode::from(
                             *file_node.hash(),
                             file_node.last_modified_seconds(),

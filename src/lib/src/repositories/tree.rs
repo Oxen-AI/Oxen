@@ -547,10 +547,7 @@ pub fn dir_entries_with_paths(
                 }
             }
         }
-        EMerkleTreeNode::File(file_node) => {
-            let file_path = base_path.join(file_node.name());
-            entries.insert((file_node.clone(), file_path));
-        }
+        EMerkleTreeNode::File(_) => {}
         _ => {
             return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
@@ -569,11 +566,9 @@ pub fn unique_dir_entries(
     shared_hashes: &HashSet<MerkleHash>,
 ) -> Result<HashMap<PathBuf, FileNode>, OxenError> {
     let mut entries = HashMap::new();
-    if !shared_hashes.contains(&node.hash) {
-        match &node.node {
-            EMerkleTreeNode::Directory(_)
-            | EMerkleTreeNode::VNode(_)
-            | EMerkleTreeNode::Commit(_) => {
+    match &node.node {
+        EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_) | EMerkleTreeNode::Commit(_) => {
+            if !shared_hashes.contains(&node.hash) {
                 for child in &node.children {
                     match &child.node {
                         EMerkleTreeNode::File(file_node) => {
@@ -595,16 +590,13 @@ pub fn unique_dir_entries(
                     }
                 }
             }
-            EMerkleTreeNode::File(file_node) => {
-                let file_path = base_path.join(file_node.name());
-                entries.insert(file_path, file_node.clone());
-            }
-            _ => {
-                return Err(OxenError::basic_str(format!(
-                    "Unexpected node type: {:?}",
-                    node.node.node_type()
-                )))
-            }
+        }
+        EMerkleTreeNode::File(_) => {}
+        _ => {
+            return Err(OxenError::basic_str(format!(
+                "Unexpected node type: {:?}",
+                node.node.node_type()
+            )))
         }
     }
 

@@ -13,7 +13,6 @@ use crate::model::{
 };
 use crate::{repositories, util};
 
-use filetime::FileTime;
 use ignore::gitignore::Gitignore;
 use indicatif::{ProgressBar, ProgressStyle};
 use rocksdb::{DBWithThreadMode, IteratorMode, SingleThreaded};
@@ -457,10 +456,12 @@ fn find_changes(
             // If we have a dir node, it's either tracked (clean) or modified
             // Either way, we know the directory is not all_untracked
             untracked.all_untracked = false;
-            let is_modified = is_modified(repo, &node, &path)?;
-            log::debug!("is_modified {} {:?}", is_modified, relative_path);
-            if is_modified {
-                modified.insert(relative_path.clone());
+            if let EMerkleTreeNode::File(file_node) = &node.node {
+                let is_modified = util::fs::is_modified_from_node(&path, file_node)?;
+                log::debug!("is_modified {} {:?}", is_modified, relative_path);
+                if is_modified {
+                    modified.insert(relative_path.clone());
+                }
             }
         } else {
             log::debug!("find_changes entry is not a child node {:?}", path);
@@ -468,9 +469,9 @@ fn find_changes(
             // then check if it's untracked or modified
             let mut found_file = false;
             if let Some(search_node) = &search_node {
-                if let EMerkleTreeNode::File(_) = &search_node.node {
+                if let EMerkleTreeNode::File(file_node) = &search_node.node {
                     found_file = true;
-                    if is_modified(repo, search_node, &path)? {
+                    if util::fs::is_modified_from_node(&path, file_node)? {
                         modified.insert(relative_path.clone());
                     }
                 }
@@ -735,64 +736,4 @@ fn maybe_get_dir_children(
     } else {
         Ok(None)
     }
-}
-
-fn is_modified(
-    repo: &LocalRepository,
-    node: &MerkleTreeNode,
-    full_path: impl AsRef<Path>,
-) -> Result<bool, OxenError> {
-    if !full_path.as_ref().exists() {
-        return Ok(false);
-    }
-
-    // Check the file timestamps vs the commit timestamps
-    let metadata = util::fs::metadata(&full_path)?;
-    let mtime = FileTime::from_last_modification_time(&metadata);
-
-    let mut is_dir = false;
-    let (node_modified_seconds, node_modified_nanoseconds) = match &node.node {
-        EMerkleTreeNode::File(file) => {
-            let node_modified_seconds = file.last_modified_seconds();
-            let node_modified_nanoseconds = file.last_modified_nanoseconds();
-            (node_modified_seconds, node_modified_nanoseconds)
-        }
-        EMerkleTreeNode::Directory(dir) => {
-            let node_modified_seconds = dir.last_modified_seconds();
-            let node_modified_nanoseconds = dir.last_modified_nanoseconds();
-            is_dir = true;
-            (node_modified_seconds, node_modified_nanoseconds)
-        }
-        _ => {
-            return Err(OxenError::basic_str("unsupported node type"));
-        }
-    };
-
-    if node_modified_nanoseconds != mtime.nanoseconds()
-        || node_modified_seconds != mtime.unix_seconds()
-    {
-        /*log::debug!(
-            "is_modified path {:?} modified time mismatch {:?} vs {:?} || {:?} vs {:?}. Comparing file content",
-            full_path.as_ref(),
-            node_modified_seconds,
-            mtime.unix_seconds(),
-            node_modified_nanoseconds,
-            mtime.nanoseconds()
-        );*/
-
-        if is_dir {
-            // If the timestamps don't match, we need to check the file contents
-            // to see if the directory is modified
-            return Ok(true);
-        }
-
-        // if the times are different, check the file contents
-        let version_path =
-            util::fs::version_path_from_node(repo, node.hash.to_string(), &full_path);
-        let is_modified = util::fs::compare_file_contents(version_path, full_path)?;
-        return Ok(is_modified);
-    }
-    //log::debug!("Last modified time matches node. File is unmodified");
-
-    Ok(false)
 }
