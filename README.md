@@ -281,6 +281,15 @@ To set a different test host you can set the `OXEN_TEST_HOST` environment variab
 env OXEN_TEST_HOST=0.0.0.0:4000 cargo test
 ```
 
+## Pre-Commit Hook
+
+We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
+make sure to install [`pre-commit-hooks`](https://pre-commit.com/) library
+and then install the precommits locally using
+```
+pre-commit install
+```
+
 # Oxen Server
 
 ## Structure
