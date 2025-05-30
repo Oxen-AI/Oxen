@@ -1021,4 +1021,67 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[test]
+    fn test_list_by_path_from_paginated() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|repo| {
+            let target_file_path = PathBuf::from("target_file.txt");
+            let other_file_path_1 = PathBuf::from("other_file_1.txt");
+            let dummy_dir_path = PathBuf::from("dummy_dir");
+
+            // Commit a: Add target_file
+            let full_target_path = repo.path.join(&target_file_path);
+            util::fs::write_to_path(&full_target_path, "Initial content")?;
+            repositories::add(&repo, &full_target_path)?;
+            let commit_a = repositories::commit(&repo, "Add target_file.txt")?;
+
+            // Commit b: without impacting target_file
+            let full_other_path_1 = repo.path.join(&other_file_path_1);
+            util::fs::write_to_path(&full_other_path_1, "Some other content")?;
+            repositories::add(&repo, &full_other_path_1)?;
+            let _commit_b = repositories::commit(&repo, "Add other_file_1.txt")?;
+
+            // Commit c: Modify target_file
+            util::fs::write_to_path(&full_target_path, "Modified content 1")?;
+            repositories::add(&repo, &full_target_path)?;
+            let commit_c = repositories::commit(&repo, "Modify target_file.txt first time")?;
+
+            // Commit d: without impacting target_file
+            let full_dummy_dir_path = repo.path.join(&dummy_dir_path);
+            util::fs::create_dir_all(&full_dummy_dir_path)?;
+            repositories::add(&repo, &full_dummy_dir_path)?;
+            let _commit_d = repositories::commit(&repo, "Add dummy dir")?;
+
+            // Commit e: modify target_file.txt
+            util::fs::write_to_path(&full_target_path, "Modified content 2")?;
+            repositories::add(&repo, &full_target_path)?;
+            let commit_e = repositories::commit(&repo, "Modify target_file.txt second time")?;
+
+            // Get the HEAD commit (should be commit_e)
+            let head_commit = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head_commit.id, commit_e.id);
+
+            let expected_commits = vec![commit_e.clone(), commit_c.clone(), commit_a.clone()];
+
+            let pagination_opts = PaginateOpts::default();
+            let paginated_result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head_commit,
+                &target_file_path,
+                pagination_opts,
+            )?;
+
+            assert_eq!(paginated_result.commits.len(), expected_commits.len());
+
+            for (i, commit) in paginated_result.commits.iter().enumerate() {
+                assert_eq!(
+                    commit.id, expected_commits[i].id,
+                    "Commits should match expected list at index {}",
+                    i
+                );
+            }
+
+            Ok(())
+        })
+    }
 }
