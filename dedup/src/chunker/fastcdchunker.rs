@@ -1,7 +1,7 @@
 use std::{fs, io::{self, BufWriter, Write}, path::{Path, PathBuf}};
 use fastcdc::v2020;
 use serde::{Deserialize, Serialize};
-use crate::{chunker::Chunker, xhash};
+use crate::{chunker::{Chunker, ArchiveDedupStats}, xhash};
 
 #[derive(Serialize, Deserialize)]
 struct ChunkMetadata {
@@ -67,7 +67,7 @@ impl Chunker for FastCDChunker {
         "fastcdc-chunker"
     }
 
-    fn pack(&self, input_file: &Path, output_dir: &Path) -> Result<PathBuf, io::Error> {
+    fn pack(&self, input_file: &Path, output_dir: &Path, _ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
         fs::create_dir_all(output_dir)?;
 
         let file_content = fs::read(input_file)?;
@@ -133,5 +133,10 @@ impl Chunker for FastCDChunker {
             .map_err(map_bincode_error)?;
 
         Ok(metadata.chunks)
+    }
+
+    fn get_archive_stats(&self, _archive_dir: &Path) -> Result<Option<ArchiveDedupStats>, io::Error> {
+        // FastCDChunker currently does not compute these detailed stats.
+        Ok(None)
     }
 }

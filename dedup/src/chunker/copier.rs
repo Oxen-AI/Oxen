@@ -2,7 +2,7 @@ use std::{
     fs::{self, File}, 
     io::{self, BufReader, BufWriter, Write}, path::{Path, PathBuf}
 };
-use crate::chunker::Chunker;
+use crate::chunker::{Chunker, ArchiveDedupStats};
 
 /*
 Super simple chunker that just copies the file to a new location.
@@ -18,7 +18,7 @@ impl Chunker for Copier {
         "mover"
     }
     
-    fn pack(&self, input_file: &Path, output_dir: &Path) -> Result<PathBuf, io::Error> {
+    fn pack(&self, input_file: &Path, output_dir: &Path, _ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
         println!("Packing file: {:?}", input_file);
         fs::create_dir_all(output_dir)?;
         let file_name = input_file
@@ -48,9 +48,13 @@ impl Chunker for Copier {
         Ok(output_path.to_path_buf())
     }
 
-    fn get_chunk_hashes(&self, input_dir: &Path) -> Result<Vec<String>, io::Error>{
+    fn get_chunk_hashes(&self, _input_dir: &Path) -> Result<Vec<String>, io::Error>{
         let hashes = Vec::new();
         Ok(hashes) //returning empty vector because we are not hashing anything
     }
 
+    fn get_archive_stats(&self, _archive_dir: &Path) -> Result<Option<ArchiveDedupStats>, io::Error> {
+        // Copier does not produce deduplication stats
+        Ok(None)
+    }
 }

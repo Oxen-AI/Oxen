@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use crate::chunker::{Chunker, map_bincode_error};
+use crate::chunker::{Chunker, map_bincode_error, ArchiveDedupStats};
 use crate::xhash;
 use rayon::prelude::*;
 
@@ -136,7 +136,7 @@ impl Chunker for FixedSizeMultiChunker {
         "fixed-size-64k-multithreaded"
     }
 
-    fn pack(&self, input_file: &Path, output_dir: &Path) -> Result<PathBuf, io::Error> {
+    fn pack(&self, input_file: &Path, output_dir: &Path, _ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
         fs::create_dir_all(output_dir)?;
 
         let original_file_metadata = fs::metadata(input_file)
@@ -206,5 +206,10 @@ impl Chunker for FixedSizeMultiChunker {
             .map_err(map_bincode_error)?;
 
         Ok(metadata.chunks)
+    }
+
+    fn get_archive_stats(&self, _archive_dir: &Path) -> Result<Option<ArchiveDedupStats>, io::Error> {
+        // FixedSizeMultiChunker currently does not compute these detailed stats.
+        Ok(None)
     }
 }

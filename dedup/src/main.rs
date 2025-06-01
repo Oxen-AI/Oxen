@@ -85,9 +85,6 @@ enum Commands {
 
         #[arg(short, long)]
         use_temp: bool,
-
-        #[arg(short, long)]
-        n_commits: u8,
     },
 }
 
@@ -96,18 +93,18 @@ fn main() -> FrameworkResult<()> {
 
     match args.command {
         Commands::Pack { algorithm, chunk_size, input_file, output_dir } => {
+            // For now, pass an empty Vec for ignored_dirs. CLI could be extended later.
             let chunker = get_chunker(&algorithm, chunk_size)?;
-            chunker.pack(&input_file, &output_dir)?;
-
+            chunker.pack(&input_file, &output_dir, &Vec::new())?;
             Ok(())
         }
         Commands::Unpack { algorithm, chunk_size, input_dir, output_file } => {
             let chunker = get_chunker(&algorithm, chunk_size)?;
-            let _ = chunker.unpack(&input_dir, &output_file);
+            chunker.unpack(&input_dir, &output_file)?;
             Ok(())
         }
 
-        Commands::TestOxen { algorithm, chunk_size, input_file, use_temp , n_commits} => {
+        Commands::TestOxen { algorithm, chunk_size, input_file, use_temp } => {
             
             let base_dir = if use_temp {
                 let temp_dir = std::env::temp_dir();
@@ -134,7 +131,13 @@ fn main() -> FrameworkResult<()> {
 
             let test_dir_name = format!("chunker_test_{}", timestamp_nanos);
             let test_dir = base_dir.join(test_dir_name);
-            oxen_dedup.pack(algorithm, chunk_size, &input_file, &test_dir, n_commits)?;
+            
+            println!("Testing Oxen dedup pack for directory: {:?} (from HEAD commit)", input_file);
+            // The `input_file` for TestOxen should be a directory path, as OxenChunker::pack now expects a directory.
+            // Pass an empty Vec for ignored_dirs.
+            // The n_commits argument has been removed from oxen_dedup.pack
+            oxen_dedup.pack(algorithm, chunk_size, &input_file, &test_dir, &Vec::new())?;
+            
             Ok(())
         }
 
@@ -175,7 +178,7 @@ fn main() -> FrameworkResult<()> {
 
             println!("Packing {:?} into {:?}", input_file, test_dir);
             let pack_start_time = Instant::now();
-            chunker.pack(&input_file, &test_dir)?;
+            chunker.pack(&input_file, &test_dir, &Vec::new())?; // Pass empty Vec for ignored_dirs
             metrics.pack_time = pack_start_time.elapsed();
 
 
@@ -183,7 +186,7 @@ fn main() -> FrameworkResult<()> {
             println!("Unpacking from {:?} to {:?}", test_dir, unpacked_output_file);
 
             let unpack_start_time = Instant::now();
-            let _ = chunker.unpack(&test_dir, &unpacked_output_file)?;
+            chunker.unpack(&test_dir, &unpacked_output_file)?;
             metrics.unpack_time = unpack_start_time.elapsed();
 
 

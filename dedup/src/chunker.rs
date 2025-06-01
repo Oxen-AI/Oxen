@@ -5,6 +5,7 @@ pub use crate::chunker::fixedsize::FixedSizeChunker;
 pub use crate::chunker::fixedsize_multithreaded::FixedSizeMultiChunker;
 pub use crate::chunker::copier::Copier;
 pub use crate::chunker::fastcdchunker::FastCDChunker;
+use serde::{Serialize, Deserialize};
 
 pub mod fixedsize;
 pub mod copier;
@@ -38,6 +39,16 @@ pub enum FrameworkError {
     },
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveDedupStats {
+    pub overlapping_unique_chunks_between_files: usize,
+    pub total_space_saved_bytes: u64,
+    pub total_logical_chunks_referenced: usize,
+    pub unique_chunks_physically_stored: usize,
+    pub total_logical_size_bytes: u64,
+    pub total_physical_size_bytes: u64,
+}
+
 struct ChunkMetadata {
     original_file_name: String,
     original_file_size: u64,
@@ -51,11 +62,13 @@ pub trait Chunker {
     
     fn name(&self) -> &'static str;
 
-    fn pack(&self, input_file: &Path, output_dir: &Path) -> Result<PathBuf, io::Error>;
+    fn pack(&self, input_file: &Path, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error>;
 
     fn unpack(&self, input_dir: &Path, output_path: &Path) -> Result<PathBuf, io::Error>;
 
     fn get_chunk_hashes(&self, input_dir: &Path) -> Result<Vec<String>, io::Error>;
+
+    fn get_archive_stats(&self, archive_dir: &Path) -> Result<Option<ArchiveDedupStats>, io::Error>;
 }
 
 pub fn get_chunker(algorithm: &Algorithm, chunk_size: usize) -> FrameworkResult<Box<dyn Chunker>> {
