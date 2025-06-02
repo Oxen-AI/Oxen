@@ -32,7 +32,7 @@ struct ArchiveEntry {
 struct ArchiveMetadata {
     chunk_size: usize,
     entries: Vec<ArchiveEntry>,
-    dedup_stats: Option<ArchiveDedupStats>, // New field to store stats
+    dedup_stats: Option<ArchiveDedupStats>,
 }
 
 
@@ -111,133 +111,166 @@ impl FixedSizeChunker {
         Ok(Self { chunk_size })
     }
 
-    // process_file_for_stats and pack_directory_recursive_for_stats remain largely the same,
-    // as their role is to feed data into PackStatsCollector.
-    fn process_file_for_stats(
+    fn process_single_file_for_archive(
         &self,
-        file_path: &Path,
-        base_input_path: &Path, 
-        output_dir: &Path,
-        archive_entries: &mut Vec<ArchiveEntry>,
-        stats_collector: &mut PackStatsCollector, 
-    ) -> Result<(), io::Error> {
-        let mut input = BufReader::new(File::open(file_path)?);
-        let metadata = file_path.metadata()?;
+        disk_file_path: &Path,
+        archive_entry_path: &Path, 
+        output_dir: &Path, 
+        stats_collector: &mut PackStatsCollector,
+    ) -> Result<ArchiveEntry, io::Error> {
+        let mut input_file_reader = BufReader::new(File::open(disk_file_path)?);
+        let metadata = disk_file_path.metadata()?;
         let original_file_size = metadata.len();
-
-        let relative_path = file_path
-            .strip_prefix(base_input_path)
-            .map_err(map_strip_prefix_error)?
-            .to_path_buf();
 
         let mut buffer = vec![0; self.chunk_size];
         let mut chunk_hashes_for_entry: Vec<String> = Vec::new();
 
         loop {
-            let bytes_read = input.read(&mut buffer)?;
+            let bytes_read = input_file_reader.read(&mut buffer)?;
             if bytes_read == 0 { break; }
 
             let chunk_content = &buffer[..bytes_read];
             let chunk_hash_str = xhash::hash_buffer_128bit(chunk_content).to_string();
             
-            stats_collector.record_chunk_generated(&chunk_hash_str, bytes_read, &relative_path);
+            // Path used for stats_collector refers to its path *in the archive*
+            stats_collector.record_chunk_generated(&chunk_hash_str, bytes_read, archive_entry_path);
 
-            let chunk_path = output_dir.join(&chunk_hash_str);
+            let chunk_path_on_disk = output_dir.join(&chunk_hash_str);
             chunk_hashes_for_entry.push(chunk_hash_str.clone());
 
-            if !chunk_path.exists() {
-                let mut chunk_file = BufWriter::new(File::create(&chunk_path)?);
-                chunk_file.write_all(chunk_content)?;
-                chunk_file.flush()?;
+            if !chunk_path_on_disk.exists() {
+                let mut chunk_file_writer = BufWriter::new(File::create(&chunk_path_on_disk)?);
+                chunk_file_writer.write_all(chunk_content)?;
+                chunk_file_writer.flush()?;
                 stats_collector.record_chunk_written_to_disk(&chunk_hash_str);
             }
-
             if bytes_read < self.chunk_size { break; }
         }
 
-        archive_entries.push(ArchiveEntry {
-            path: relative_path,
+        Ok(ArchiveEntry {
+            path: archive_entry_path.to_path_buf(),
             is_dir: false,
             chunks: Some(chunk_hashes_for_entry),
             size: Some(original_file_size),
-        });
-        Ok(())
+        })
     }
 
-    fn pack_directory_recursive_for_stats(
+    fn pack_directory_recursive_for_archive(
         &self,
-        current_dir: &Path,
-        base_input_path: &Path,
+        disk_current_dir: &Path,
+        base_dir_for_ignored_check: &Path, 
+        archive_path_prefix: &Path, 
         output_dir: &Path,
-        archive_entries: &mut Vec<ArchiveEntry>,
+        archive_entries_list: &mut Vec<ArchiveEntry>,
         stats_collector: &mut PackStatsCollector,
         ignored_dirs: &Vec<PathBuf>,
     ) -> Result<(), io::Error> {
-        for entry_result in fs::read_dir(current_dir)? {
+        for entry_result in fs::read_dir(disk_current_dir)? {
             let entry = entry_result?;
-            let entry_path = entry.path();
-            let metadata = entry_path.metadata()?;
-            let relative_path_for_entry = entry_path
-                 .strip_prefix(base_input_path)
+            let disk_entry_path = entry.path(); 
+            let metadata = disk_entry_path.metadata()?;
+
+            let path_relative_to_scan_root = disk_entry_path
+                 .strip_prefix(base_dir_for_ignored_check)
                  .map_err(map_strip_prefix_error)?
                  .to_path_buf();
 
+            let final_archive_path = archive_path_prefix.join(&path_relative_to_scan_root);
+
             if metadata.is_dir() {
-                if ignored_dirs.contains(&relative_path_for_entry) {
-                    // Directory is in the ignore list, skip processing it
+                if ignored_dirs.contains(&path_relative_to_scan_root) {
                     continue; 
                 }
-                 archive_entries.push(ArchiveEntry {
-                     path: relative_path_for_entry.clone(),
+                 archive_entries_list.push(ArchiveEntry {
+                     path: final_archive_path.clone(),
                      is_dir: true,
                      chunks: None,
                      size: None,
                  });
-                 self.pack_directory_recursive_for_stats(&entry_path, base_input_path, output_dir, archive_entries, stats_collector, ignored_dirs)?;
+
+                self.pack_directory_recursive_for_archive(
+                    &disk_entry_path, 
+                    base_dir_for_ignored_check, 
+                    archive_path_prefix, 
+                    output_dir, 
+                    archive_entries_list, 
+                    stats_collector, 
+                    ignored_dirs
+                )?;
             } else if metadata.is_file() {
-                 self.process_file_for_stats(&entry_path, base_input_path, output_dir, archive_entries, stats_collector)?;
+                let file_entry = self.process_single_file_for_archive(
+                    &disk_entry_path,
+                    &final_archive_path,
+                    output_dir,
+                    stats_collector,
+                )?;
+                archive_entries_list.push(file_entry);
             }
         }
         Ok(())
     }
-    pub fn pack_and_get_stats(&self, input_path: &Path, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<(PathBuf, ArchiveDedupStats), io::Error> {
+
+    pub fn pack_and_get_stats(&self, input_paths: &Vec<PathBuf>, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<(PathBuf, ArchiveDedupStats), io::Error> {
         fs::create_dir_all(output_dir)?;
         
         let mut stats_collector = PackStatsCollector::new();
-        let mut entries_vec: Vec<ArchiveEntry> = Vec::new(); // Temporary vec for entries
+        let mut final_archive_entries: Vec<ArchiveEntry> = Vec::new();
 
-        let input_metadata = fs::metadata(input_path)?;
+        for current_disk_path in input_paths {
+            let input_metadata = fs::metadata(current_disk_path)
+                .map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("Input path not found: {}. Error: {}", current_disk_path.display(), e)))?;
 
-        if input_metadata.is_file() {
-            let base_input_path_for_file = input_path.parent().unwrap_or_else(|| Path::new("."));
-            self.process_file_for_stats(
-                input_path, 
-                base_input_path_for_file,
-                output_dir, 
-                &mut entries_vec, 
-                &mut stats_collector // ignored_dirs is not directly used by process_file_for_stats
-            )?;
-        } else if input_metadata.is_dir() {
-            entries_vec.push(ArchiveEntry {
-                 path: PathBuf::from("."), 
-                 is_dir: true,
-                 chunks: None,
-                 size: None,
-            });
-            self.pack_directory_recursive_for_stats(
-                input_path, input_path, output_dir, 
-                &mut entries_vec, &mut stats_collector, ignored_dirs
-            )?;
-        } else {
-             return Err(io::Error::new(io::ErrorKind::InvalidInput, "Input path must be a file or a directory"));
+            let archive_path_for_this_input_item = current_disk_path.clone();
+
+            if archive_path_for_this_input_item.is_absolute() {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput,
+                    format!("Absolute input paths are not directly supported for archive creation: {}. Please use relative paths.", current_disk_path.display())));
+            }
+
+            if input_metadata.is_file() {
+                let file_entry = self.process_single_file_for_archive(
+                    current_disk_path,
+                    &archive_path_for_this_input_item,
+                    output_dir,
+                    &mut stats_collector,
+                )?;
+                final_archive_entries.push(file_entry);
+
+            } else if input_metadata.is_dir() {
+
+                let current_dir_name_as_path = current_disk_path.file_name().map(PathBuf::from).unwrap_or_default();
+                if !current_dir_name_as_path.as_os_str().is_empty() && ignored_dirs.contains(&current_dir_name_as_path) {
+                    continue; 
+                }
+
+                final_archive_entries.push(ArchiveEntry {
+                    path: archive_path_for_this_input_item.clone(),
+                    is_dir: true,
+                    chunks: None,
+                    size: None,
+                });
+                
+                self.pack_directory_recursive_for_archive(
+                    current_disk_path,       
+                    current_disk_path,
+                    &archive_path_for_this_input_item,
+                    output_dir,
+                    &mut final_archive_entries,
+                    &mut stats_collector,
+                    ignored_dirs,
+                )?;
+
+            } else {
+                 return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("Input path {} is not a file or a directory", current_disk_path.display())));
+            }
         }
 
-        let final_stats = stats_collector.calculate_final_stats(); // Calculate stats
+        let final_stats = stats_collector.calculate_final_stats();
 
-        let archive_metadata = ArchiveMetadata { // Construct metadata with stats
+        let archive_metadata = ArchiveMetadata {
             chunk_size: self.chunk_size,
-            entries: entries_vec,
-            dedup_stats: Some(final_stats.clone()), // Store a clone of the stats
+            entries: final_archive_entries,
+            dedup_stats: Some(final_stats.clone()),
         };
 
         let metadata_path = output_dir.join(METADATA_FILE_NAME);
@@ -267,8 +300,8 @@ impl Chunker for FixedSizeChunker {
         "fixed-size-chunker"
     }
 
-    fn pack(&self, input_path: &Path, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
-        self.pack_and_get_stats(input_path, output_dir, ignored_dirs)
+    fn pack(&self, input_paths: &Vec<PathBuf>, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
+        self.pack_and_get_stats(input_paths, output_dir, ignored_dirs)
             .map(|(output_path_buf, _stats)| output_path_buf)
     }
 

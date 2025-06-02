@@ -33,11 +33,11 @@ enum Commands {
         #[arg(short, long, value_enum)]
         algorithm: Algorithm,
 
-        #[arg(short, long, value_enum)]
+        #[arg(short, long)]
         chunk_size: usize,
 
         #[arg(short, long)]
-        input_file: PathBuf,
+        input_files: Vec<PathBuf>,
 
         #[arg(short, long)]
         output_dir: PathBuf,
@@ -48,7 +48,7 @@ enum Commands {
         #[arg(short, long, value_enum)]
         algorithm: Algorithm,
 
-        #[arg(short, long, value_enum)]
+        #[arg(short, long)]
         chunk_size: usize,
 
         #[arg(short, long)]
@@ -63,7 +63,7 @@ enum Commands {
         #[arg(short, long, value_enum)]
         algorithm: Algorithm,
 
-        #[arg(short, long, value_enum)]
+        #[arg(short, long)]
         chunk_size: usize,
 
         #[arg(short, long)]
@@ -77,7 +77,7 @@ enum Commands {
         #[arg(short, long, value_enum)]
         algorithm: Algorithm,
 
-        #[arg(short, long, value_enum)]
+        #[arg(short, long)]
         chunk_size: usize,
 
         #[arg(short, long)]
@@ -92,10 +92,10 @@ fn main() -> FrameworkResult<()> {
     let args = Args::parse();
 
     match args.command {
-        Commands::Pack { algorithm, chunk_size, input_file, output_dir } => {
+        Commands::Pack { algorithm, chunk_size, input_files, output_dir } => {
             // For now, pass an empty Vec for ignored_dirs. CLI could be extended later.
             let chunker = get_chunker(&algorithm, chunk_size)?;
-            chunker.pack(&input_file, &output_dir, &Vec::new())?;
+            chunker.pack(&input_files, &output_dir, &Vec::new())?;
             Ok(())
         }
         Commands::Unpack { algorithm, chunk_size, input_dir, output_file } => {
@@ -176,9 +176,13 @@ fn main() -> FrameworkResult<()> {
 
             fs::create_dir_all(&test_dir)?;
 
-            println!("Packing {:?} into {:?}", input_file, test_dir);
+            // The Chunker trait's pack method expects a Vec<PathBuf>.
+            // For the test command, we'll wrap the single input_file into a Vec.
+            // We need to clone input_file if it's used after this call.
+            let files_to_pack = vec![input_file.clone()];
+            println!("Packing {:?} into {:?}", files_to_pack, test_dir);
             let pack_start_time = Instant::now();
-            chunker.pack(&input_file, &test_dir, &Vec::new())?; // Pass empty Vec for ignored_dirs
+            chunker.pack(&files_to_pack, &test_dir, &Vec::new())?;
             metrics.pack_time = pack_start_time.elapsed();
 
 

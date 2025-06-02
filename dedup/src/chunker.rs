@@ -49,20 +49,13 @@ pub struct ArchiveDedupStats {
     pub total_physical_size_bytes: u64,
 }
 
-struct ChunkMetadata {
-    original_file_name: String,
-    original_file_size: u64,
-    chunk_size: usize,
-    chunks: Vec<String>,
-}
-
 pub type FrameworkResult<T> = Result<T, FrameworkError>;
 
 pub trait Chunker {
     
     fn name(&self) -> &'static str;
 
-    fn pack(&self, input_file: &Path, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error>;
+    fn pack(&self, input_files: &Vec<PathBuf>, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error>;
 
     fn unpack(&self, input_dir: &Path, output_path: &Path) -> Result<PathBuf, io::Error>;
 
