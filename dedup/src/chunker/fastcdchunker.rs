@@ -2,7 +2,8 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, BufWriter, Write}, 
     path::{Path, PathBuf},
-    collections::{HashMap, HashSet}
+    collections::{HashMap, HashSet},
+    time::{Instant, Duration}
 };
 use fastcdc::v2020;
 use serde::{Deserialize, Serialize};
@@ -61,7 +62,7 @@ impl PackStatsCollector {
         self.unique_chunks_written_hashes.insert(hash.to_string());
     }
 
-    fn calculate_final_stats(&self) -> ArchiveDedupStats {
+    fn calculate_final_stats(&self, pack_duration: Duration) -> ArchiveDedupStats {
         let mut total_logical_chunks_referenced = 0;
         let mut total_logical_size_bytes = 0;
         
@@ -81,15 +82,31 @@ impl PackStatsCollector {
         
         let total_space_saved_bytes = total_logical_size_bytes.saturating_sub(total_physical_size_bytes);
 
+        let mut total_intra_file_space_saved_bytes = 0;
         let overlapping_unique_chunks_between_files = self.chunk_data.values().filter(|(_, _, files_set)| files_set.len() > 1).count();
+
+        for (occurrences, size, files_set) in self.chunk_data.values() {
+            let n_occurrences = *occurrences as u64;
+            let chunk_size_val = *size as u64;
+            let n_files = files_set.len() as u64;
+
+            if n_occurrences > n_files {
+                // This chunk appears more times in total than the number of unique files it's in.
+                // This means it must be repeated within at least one file.
+                // The number of "excess" occurrences (intra-file duplications) is (n_occurrences - n_files).
+                total_intra_file_space_saved_bytes += (n_occurrences - n_files) * chunk_size_val;
+            }
+        }
 
         ArchiveDedupStats {
             overlapping_unique_chunks_between_files,
+            total_intra_file_space_saved_bytes,
             total_space_saved_bytes,
             total_logical_chunks_referenced,
             unique_chunks_physically_stored,
             total_logical_size_bytes,
             total_physical_size_bytes,
+            time_to_pack: pack_duration,
         }
     }
 }
@@ -136,7 +153,7 @@ impl FastCDChunker {
         })
     }
 
-    // This method is called by the trait implementation of get_archive_stats.
+
     pub fn get_archive_stats(&self, archive_dir: &Path) -> Result<Option<ArchiveDedupStats>, io::Error> {
         let metadata_path = archive_dir.join(METADATA_FILE_NAME);
         if !metadata_path.exists() {
@@ -160,6 +177,8 @@ impl Chunker for FastCDChunker {
 
     fn pack(&self, input_files: &Vec<PathBuf>, output_dir: &Path, _ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
         fs::create_dir_all(output_dir)?;
+
+        let pack_start_time = Instant::now();
 
         if input_files.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "No input files provided for pack operation"));
@@ -220,7 +239,8 @@ impl Chunker for FastCDChunker {
             final_archive_entries.push(archive_entry);
         }
 
-        let final_stats = stats_collector.calculate_final_stats();
+        let pack_duration = pack_start_time.elapsed();
+        let final_stats = stats_collector.calculate_final_stats(pack_duration);
 
         let archive_metadata = ArchiveMetadata {
             min_chunk_size: self.min_chunk_size,

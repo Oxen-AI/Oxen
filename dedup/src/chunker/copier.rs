@@ -2,6 +2,7 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 use crate::chunker::{Chunker, ArchiveDedupStats};
 
@@ -118,11 +119,13 @@ impl Chunker for Copier {
 
         Ok(Some(ArchiveDedupStats {
             overlapping_unique_chunks_between_files: 0,
+            total_intra_file_space_saved_bytes: 0,
             total_space_saved_bytes: 0,
             total_logical_chunks_referenced: num_files_copied as usize,
             unique_chunks_physically_stored: num_files_copied as usize,
             total_logical_size_bytes: total_bytes_copied,
             total_physical_size_bytes: total_bytes_copied,
+            time_to_pack: Duration::ZERO, // Copier's pack time isn't stored in archive metadata
         }))
     }
 }

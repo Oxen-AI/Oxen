@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, path::{Path, PathBuf}};
+use std::{collections::HashMap, io, path::{Path, PathBuf}, time::Duration};
 use clap::ValueEnum;
 use thiserror::Error;
 pub use crate::chunker::fixedsize::FixedSizeChunker;
@@ -42,11 +42,13 @@ pub enum FrameworkError {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveDedupStats {
     pub overlapping_unique_chunks_between_files: usize,
+    pub total_intra_file_space_saved_bytes: u64,
     pub total_space_saved_bytes: u64,
     pub total_logical_chunks_referenced: usize,
     pub unique_chunks_physically_stored: usize,
     pub total_logical_size_bytes: u64,
     pub total_physical_size_bytes: u64,
+    pub time_to_pack: Duration,
 }
 
 pub type FrameworkResult<T> = Result<T, FrameworkError>;

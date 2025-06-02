@@ -3,10 +3,11 @@ use std::{
     io::{self, Read, Write, BufReader, BufWriter, Seek, SeekFrom},
     path::{Path, PathBuf, StripPrefixError},
     collections::{HashMap, HashSet},
+    time::{Instant, Duration},
 };
 
 use serde::{Deserialize, Serialize};
-use crate::chunker::{Chunker, map_bincode_error as common_map_bincode_error, ArchiveDedupStats}; // Renamed to avoid conflict
+use crate::chunker::{Chunker, map_bincode_error as common_map_bincode_error, ArchiveDedupStats};
 use crate::xhash;
 use rayon::prelude::*;
 
@@ -58,7 +59,7 @@ impl PackStatsCollector {
         self.unique_chunks_written_hashes.insert(hash.to_string());
     }
 
-    fn calculate_final_stats(&self) -> ArchiveDedupStats {
+    fn calculate_final_stats(&self, pack_duration: Duration) -> ArchiveDedupStats {
         let mut total_logical_chunks_referenced = 0;
         let mut total_logical_size_bytes = 0;
         
@@ -78,20 +79,34 @@ impl PackStatsCollector {
         
         let total_space_saved_bytes = total_logical_size_bytes.saturating_sub(total_physical_size_bytes);
 
+        let mut total_intra_file_space_saved_bytes = 0;
         let mut overlapping_unique_chunks_between_files = 0;
-        for (_occurrences, _size, files_set) in self.chunk_data.values() {
+        for (occurrences, size, files_set) in self.chunk_data.values() {
+            let n_occurrences = *occurrences as u64;
+            let chunk_size_val = *size as u64;
+            let n_files = files_set.len() as u64;
+
             if files_set.len() > 1 {
                 overlapping_unique_chunks_between_files += 1;
+            }
+
+            if n_occurrences > n_files {
+                // This chunk appears more times in total than the number of unique files it's in.
+                // This means it must be repeated within at least one file.
+                // The number of "excess" occurrences (intra-file duplications) is (n_occurrences - n_files).
+                total_intra_file_space_saved_bytes += (n_occurrences - n_files) * chunk_size_val;
             }
         }
 
         ArchiveDedupStats {
             overlapping_unique_chunks_between_files,
+            total_intra_file_space_saved_bytes,
             total_space_saved_bytes,
             total_logical_chunks_referenced,
             unique_chunks_physically_stored,
             total_logical_size_bytes,
             total_physical_size_bytes,
+            time_to_pack: pack_duration,
         }
     }
 }
@@ -267,6 +282,8 @@ impl FixedSizeMultiChunker {
 
     pub fn pack_and_get_stats(&self, input_paths: &Vec<PathBuf>, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<(PathBuf, ArchiveDedupStats), io::Error> {
         fs::create_dir_all(output_dir)?;
+
+        let pack_start_time = Instant::now();
         
         let mut stats_collector = PackStatsCollector::new();
         let mut final_archive_entries: Vec<ArchiveEntry> = Vec::new();
@@ -317,7 +334,8 @@ impl FixedSizeMultiChunker {
             }
         }
 
-        let final_stats = stats_collector.calculate_final_stats();
+        let pack_duration = pack_start_time.elapsed();
+        let final_stats = stats_collector.calculate_final_stats(pack_duration);
 
         let archive_metadata = MultiChunkArchiveMetadata {
             chunk_size: self.chunk_size,
@@ -337,7 +355,6 @@ impl FixedSizeMultiChunker {
 impl Chunker for FixedSizeMultiChunker {
     fn name(&self) -> &'static str {
         "fixed-size-64k-multithreaded"
-        // Consider renaming to reflect new capabilities, e.g., "fixed-size-multithreaded-packer"
     }
 
     fn pack(&self, input_paths: &Vec<PathBuf>, output_dir: &Path, ignored_dirs: &Vec<PathBuf>) -> Result<PathBuf, io::Error> {
