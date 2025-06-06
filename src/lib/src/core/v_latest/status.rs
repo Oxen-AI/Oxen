@@ -1,4 +1,3 @@
-use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::core::oxenignore;
@@ -392,7 +391,7 @@ fn find_changes(
     let mut untracked = UntrackedData::new();
     let mut modified = HashSet::new();
     let mut removed = HashSet::new();
-    let gitignore = oxenignore::create(repo);
+    let gitignore: Option<Gitignore> = oxenignore::create(repo);
 
     let mut entries: Vec<PathBuf> = Vec::new();
     if full_path.is_dir() {
@@ -427,7 +426,7 @@ fn find_changes(
             search_node_path
         );
 
-        if is_ignored(&relative_path, &gitignore, path.is_dir()) {
+        if oxenignore::is_ignored(&relative_path, &gitignore, path.is_dir()) {
             continue;
         }
 
@@ -565,7 +564,7 @@ fn count_removed_entries(
     gitignore: &Option<Gitignore>,
     removed_entries: &mut usize,
 ) -> Result<(), OxenError> {
-    if is_ignored(relative_path, gitignore, relative_path.is_dir()) {
+    if oxenignore::is_ignored(relative_path, gitignore, relative_path.is_dir()) {
         return Ok(());
     }
 
@@ -629,19 +628,6 @@ fn maybe_get_node(
     } else {
         CommitMerkleTree::read_file(repo, dir_hashes, path)
     }
-}
-
-fn is_ignored(path: &Path, gitignore: &Option<Gitignore>, is_dir: bool) -> bool {
-    // Skip hidden .oxen files
-    if path.starts_with(OXEN_HIDDEN_DIR) {
-        return true;
-    }
-    if let Some(gitignore) = gitignore {
-        if gitignore.matched(path, is_dir).is_ignore() {
-            return true;
-        }
-    }
-    false
 }
 
 fn is_staged(

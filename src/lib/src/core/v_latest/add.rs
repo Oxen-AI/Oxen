@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::constants::{OXEN_HIDDEN_DIR, STAGED_DIR};
 use crate::core;
 use crate::core::db;
+use crate::core::oxenignore;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
@@ -23,6 +24,7 @@ use crate::opts::RmOpts;
 use crate::storage::version_store::VersionStore;
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
+use ignore::gitignore::Gitignore;
 use std::ops::AddAssign;
 
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -120,6 +122,8 @@ pub fn add_files(
         data_type_counts: HashMap::new(),
     };
     let excluded_hashes = None;
+    let gitignore = oxenignore::create(repo);
+
     for path in paths {
         log::debug!("path is {path:?}");
 
@@ -131,8 +135,13 @@ pub fn add_files(
                 staged_db,
                 version_store,
                 &excluded_hashes,
+                &gitignore,
             )?;
         } else if path.is_file() {
+            if oxenignore::is_ignored(path, &gitignore, path.is_dir()) {
+                continue;
+            }
+
             let entry = add_file_inner(repo, &maybe_head_commit, path, staged_db, version_store)?;
             if let Some(entry) = entry {
                 if let EMerkleTreeNode::File(file_node) = &entry.node.node {
@@ -180,6 +189,7 @@ fn add_dir_inner(
     staged_db: &DBWithThreadMode<MultiThreaded>,
     version_store: &Arc<dyn VersionStore>,
     excluded_hashes: &Option<HashSet<MerkleHash>>,
+    gitignore: &Option<Gitignore>,
 ) -> Result<CumulativeStats, OxenError> {
     process_add_dir(
         repo,
@@ -188,29 +198,7 @@ fn add_dir_inner(
         staged_db,
         path,
         excluded_hashes,
-    )
-}
-
-pub fn add_dir(
-    repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
-    path: PathBuf,
-) -> Result<CumulativeStats, OxenError> {
-    let opts = db::key_val::opts::default();
-    let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
-    let staged_db: DBWithThreadMode<MultiThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
-
-    // Get the version store from the repository
-    let version_store = repo.version_store()?;
-    let excluded_hashes = None;
-    add_dir_inner(
-        repo,
-        maybe_head_commit,
-        path,
-        &staged_db,
-        &version_store,
-        &excluded_hashes,
+        gitignore,
     )
 }
 
@@ -229,6 +217,7 @@ pub fn add_dir_except(
     // Get the version store from the repository
     let version_store = repo.version_store()?;
     let excluded_hashes = Some(excluded_hashes);
+    let gitignore = None;
 
     add_dir_inner(
         repo,
@@ -237,6 +226,7 @@ pub fn add_dir_except(
         &staged_db,
         &version_store,
         &excluded_hashes,
+        &gitignore,
     )
 }
 
@@ -247,6 +237,7 @@ pub fn process_add_dir(
     staged_db: &DBWithThreadMode<MultiThreaded>,
     path: PathBuf,
     excluded_hashes: &Option<HashSet<MerkleHash>>,
+    gitignore: &Option<Gitignore>,
 ) -> Result<CumulativeStats, OxenError> {
     let start = std::time::Instant::now();
 
@@ -286,9 +277,12 @@ pub fn process_add_dir(
         .collect();
 
     let walker = WalkDir::new(&path).into_iter();
-    // TODO: this shouldn't just be 'OXEN_HIDDEN_DIR', but everything in .oxenignore
     walker
-        .filter_entry(|e| e.file_type().is_dir() && e.file_name() != OXEN_HIDDEN_DIR)
+        .filter_entry(|e| {
+            e.file_type().is_dir()
+                && e.file_name() != OXEN_HIDDEN_DIR
+                && !oxenignore::is_ignored(e.path(), gitignore, e.file_type().is_dir())
+        })
         .par_bridge()
         .try_for_each(|entry| -> Result<(), OxenError> {
             let entry = entry.unwrap();
@@ -336,7 +330,7 @@ pub fn process_add_dir(
                     mbps
                 ));
 
-                if path.is_dir() {
+                if path.is_dir() || oxenignore::is_ignored(&path, gitignore, path.is_dir()) {
                     return;
                 }
 
@@ -823,4 +817,52 @@ pub fn add_dir_to_staged_db(
 pub fn has_different_modification_time(node: &FileNode, time: &FileTime) -> bool {
     node.last_modified_nanoseconds() != time.nanoseconds()
         || node.last_modified_seconds() != time.unix_seconds()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test;
+
+    #[test]
+    fn test_add_respects_oxenignore() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|repo| {
+            let ignored_file = "ignored.txt";
+            let normal_file = "normal.txt";
+
+            let ignored_path = repo.path.join(ignored_file);
+            let normal_path = repo.path.join(normal_file);
+
+            test::write_txt_file_to_path(&ignored_path, "This should be ignored")?;
+            test::write_txt_file_to_path(&normal_path, "This should be added")?;
+
+            // Create .oxenignore file with the ignored file pattern
+            let oxenignore_path = repo.path.join(".oxenignore");
+            test::write_txt_file_to_path(&oxenignore_path, ignored_file)?;
+
+            add(&repo, Path::new(&repo.path))?;
+
+            let status = repositories::status(&repo)?;
+
+            // The normal file should be staged
+            assert!(status
+                .staged_files
+                .iter()
+                .any(|path| path.0.ends_with(normal_file)));
+
+            // The ignored file should not be staged
+            assert!(!status
+                .staged_files
+                .iter()
+                .any(|path| path.0.ends_with(ignored_file)));
+
+            // The oxenignore file itself should be staged
+            assert!(status
+                .staged_files
+                .iter()
+                .any(|path| path.0.ends_with(".oxenignore")));
+
+            Ok(())
+        })
+    }
 }
