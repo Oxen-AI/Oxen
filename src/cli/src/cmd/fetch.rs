@@ -37,10 +37,11 @@ impl RunCmd for FetchCmd {
 
         check_repo_migration_needed(&repository)?;
         check_remote_version_blocking(scheme.clone(), host.clone()).await?;
-
         let mut fetch_opts = FetchOpts::new();
+        let subtrees = repository.subtree_paths();
+        fetch_opts.subtree_paths = subtrees;
         if let Some(branch) = args.get_one::<String>("branch") {
-            fetch_opts = FetchOpts::from_branch(branch);
+            fetch_opts.branch = branch.clone();
             repositories::fetch_branch(&repository, &fetch_opts).await?;
         } else {
             repositories::fetch_all(&repository, &fetch_opts).await?;

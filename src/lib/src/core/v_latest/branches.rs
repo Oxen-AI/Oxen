@@ -191,13 +191,11 @@ pub async fn checkout_subtrees(
             log::error!("Cannot get subtree for commit: {}", from_commit);
             continue;
         };
-
         let mut progress = CheckoutProgressBar::new(from_commit.id.clone());
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
         let mut results = CheckoutResult::new();
         let mut hashes = CheckoutHashes::new();
         let mut partial_nodes = HashMap::new();
-
         r_restore_missing_or_modified_files(
             repo,
             &target_root,
@@ -207,6 +205,24 @@ pub async fn checkout_subtrees(
             &mut partial_nodes,
             &mut hashes,
         )?;
+
+        match repositories::commits::head_commit_maybe(repo)? {
+            Some(head_commit) => {
+                log::debug!("💯 head_commit: {:?}", head_commit);
+                match repositories::tree::get_root_with_children(repo, &head_commit)? {
+                    Some(from_root_node) => {
+                        log::debug!("from node: {:?}", from_root_node);
+                        cleanup_removed_files(repo, &from_root_node, &mut progress, &mut hashes)?;
+                    }
+                    None => {
+                        log::debug!("Cannot get root node for base commit");
+                    }
+                }
+            }
+            None => {
+                log::debug!("No head commit found");
+            }
+        }
 
         if !results.cannot_overwrite_entries.is_empty() {
             return Err(OxenError::cannot_overwrite_files(
@@ -444,6 +460,19 @@ fn r_remove_if_not_in_target(
             let full_dir_path = repo.path.join(&dir_path);
             if full_dir_path.exists() {
                 paths_to_remove.push(full_dir_path.clone());
+            }
+        }
+        EMerkleTreeNode::VNode(_) => {
+            // VNodes themselves aren't removed, but their children might be if they are unique to this 'from_node' path
+            for child in &from_node.children {
+                r_remove_if_not_in_target(
+                    repo,
+                    child,
+                    current_path,
+                    paths_to_remove,
+                    cannot_overwrite_entries,
+                    hashes,
+                )?;
             }
         }
         _ => {}

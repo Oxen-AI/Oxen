@@ -639,4 +639,111 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_clone_subtree_and_checkout_branch() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            let feature_branch_name = "feature/subtree-checkout-test";
+            repositories::branches::create_checkout(&local_repo, feature_branch_name)?;
+
+            let new_file_relative_path = PathBuf::from("annotations")
+                .join("test")
+                .join("new_on_feature.txt");
+            let new_file_full_path = local_repo.path.join(&new_file_relative_path);
+            util::fs::create_dir_all(new_file_full_path.parent().unwrap())?;
+            util::fs::write_to_path(
+                &new_file_full_path,
+                "This file is new on the feature branch.",
+            )?;
+            repositories::add(&local_repo, &new_file_full_path)?;
+            repositories::commit(&local_repo, "Added new_on_feature.txt to annotations/test")?;
+            repositories::push::push_remote_branch(
+                &local_repo,
+                DEFAULT_REMOTE_NAME,
+                feature_branch_name,
+            )
+            .await?;
+
+            // Switch original_local_repo back to main for good measure, though not strictly necessary for this test's focus
+            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
+
+            // 2. Clone ONLY the subtree "annotations/test" from the new feature branch.
+            let remote_for_inner_closure = remote_repo_copy.clone();
+            test::run_empty_dir_test_async(|dir_a| async move {
+                let path_a = dir_a.join("repo_A_subtree");
+                let subtree_to_clone = PathBuf::from("annotations").join("test");
+
+                let mut clone_opts_subtree =
+                    CloneOpts::new(remote_for_inner_closure.url(), &path_a);
+                clone_opts_subtree.fetch_opts.branch = feature_branch_name.to_string();
+                clone_opts_subtree.fetch_opts.subtree_paths = Some(vec![subtree_to_clone.clone()]);
+
+                let cloned_repo_a = repositories::clone(&clone_opts_subtree).await?;
+
+                // Verify initial clone state (feature branch, subtree only)
+                let expected_new_file_in_a = cloned_repo_a.path.join(&new_file_relative_path);
+                let expected_orig_file_in_a = cloned_repo_a
+                    .path
+                    .join("annotations")
+                    .join("test")
+                    .join("annotations.csv");
+
+                assert!(
+                    expected_new_file_in_a.exists(),
+                    "new_on_feature.txt should exist in feature branch clone"
+                );
+                assert!(
+                    expected_orig_file_in_a.exists(),
+                    "annotations.csv should exist in feature branch clone"
+                );
+
+                // Verify other files/dirs are NOT present
+                assert!(!cloned_repo_a.path.join("README.md").exists());
+                assert!(!cloned_repo_a.path.join("train").exists());
+                assert!(!cloned_repo_a
+                    .path
+                    .join("annotations")
+                    .join("train")
+                    .exists()); // only annotations/test
+
+                let fetch_opts = FetchOpts {
+                    branch: DEFAULT_BRANCH_NAME.to_string(),
+                    ..FetchOpts::new()
+                };
+                core::v_latest::fetch::fetch_remote_branch(
+                    &cloned_repo_a,
+                    &remote_repo,
+                    &fetch_opts,
+                )
+                .await?;
+                repositories::checkout(&cloned_repo_a, DEFAULT_BRANCH_NAME).await?;
+
+                assert!(
+                    !expected_new_file_in_a.exists(),
+                    "new_on_feature.txt should NOT exist on main branch after checkout"
+                );
+
+                assert!(
+                    expected_orig_file_in_a.exists(),
+                    "annotations.csv should still exist on main branch after checkout"
+                );
+
+                assert!(!cloned_repo_a.path.join("README.md").exists());
+                assert!(!cloned_repo_a.path.join("train").exists());
+                assert!(!cloned_repo_a
+                    .path
+                    .join("annotations")
+                    .join("train")
+                    .exists());
+
+                Ok(dir_a)
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
 }
