@@ -1,3 +1,4 @@
+
 /target
 .DS_Store
 data/test/runs
@@ -32,3 +33,6 @@ result
 
 # Cursor config
 .cursor/
+
+release/
+.oxen

@@ -1,0 +1,5 @@
+i
+am a
+file
+with
+some lines

@@ -1,0 +1,7 @@
+i
+am a NEW
+file
+with
+some lines
+that are
+added

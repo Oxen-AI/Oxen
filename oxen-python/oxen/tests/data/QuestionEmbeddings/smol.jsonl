@@ -1,0 +1,3 @@
+{"id": "1", "question": "What is the best data version control system?", "answer": "checkout oxen.ai", "embedding": [0.1, 0.2, 0.3]}
+{"id": "2", "question": "What is a replacement for git-lfs?", "answer": "oxen is a great replacement for git-lfs", "embedding": [0.2, 0.3, 0.4]}
+{"id": "3", "question": "What is the best way to version control data?", "answer": "oxen.ai builds a great data version control system", "embedding": [0.3, 0.4, 0.5]}

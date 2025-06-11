@@ -1,0 +1,99 @@
+name: Python Tests
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  test_ubuntu:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./oxen
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - uses: robinraju/release-downloader@v1.8
+      with:
+        repository: "Oxen-AI/Oxen"
+        latest: true
+        fileName: "oxen-server-ubuntu-22.04.deb"
+        out-file-path: "."
+    
+    - uses: robinraju/release-downloader@v1.8
+      with:
+        repository: "Oxen-AI/Oxen"
+        latest: true
+        fileName: "oxen-ubuntu-22.04.deb"
+        out-file-path: "."
+
+    - name: Install oxen-server
+      run: |
+        sudo dpkg -i /home/runner/work/oxen-release/oxen-release/oxen-server-ubuntu-22.04.deb
+        sudo dpkg -i /home/runner/work/oxen-release/oxen-release/oxen-ubuntu-22.04.deb
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install -r requirements.txt
+
+    - name: Run Tests
+      run: |
+        oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
+        oxen-server start &
+        pytest -s tests
+
+  test_windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ./oxen
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - uses: robinraju/release-downloader@v1.8
+      with:
+        repository: "Oxen-AI/Oxen"
+        latest: true
+        fileName: "oxen-server.exe"
+        out-file-path: "./oxen"
+    
+    - uses: robinraju/release-downloader@v1.8
+      with:
+        repository: "Oxen-AI/Oxen"
+        latest: true
+        fileName: "oxen.exe"
+        out-file-path: "./oxen"
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install -r requirements.txt
+
+    - name: Run Tests
+      run: |
+        ./oxen.exe config --name "Bessie Testington" --email "bessie@yourcompany.com"
+        ./oxen-server.exe start &
+        pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
+
+
+
+

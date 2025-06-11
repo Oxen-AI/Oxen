@@ -1,0 +1,240 @@
+name: CI
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    name: "Build on ${{ matrix.platform.name }} with Python ${{ matrix.python.version }}"
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        python: [
+          {
+            name: "cp39-cp39",
+            version: "3.9"
+          },
+          {
+            name: "cp310-cp310",
+            version: "3.10"
+          },
+          {
+            name: "cp311-cp311",
+            version: "3.11"
+          },
+          {
+            name: "cp312-cp312",
+            version: "3.12"
+          },
+          {
+            name: "cp313-cp313",
+            version: "3.13"
+          },
+        ]
+        rust: [stable]
+        platform: [
+          {
+            os: "ubuntu-22.04",
+            python-architecture: "x64",
+            rust-target: "x86_64-unknown-linux-gnu",
+            name: "Ubuntu 22.04"
+          },
+          {
+            os: "ubuntu-latest",
+            python-architecture: "x64",
+            rust-target: "x86_64-unknown-linux-gnu",
+            name: "Ubuntu Latest"
+          },
+          {
+            os: "macos-13-large",
+            python-architecture: "x64",
+            rust-target: "aarch64-apple-darwin",
+            name: "macOS arm64"
+          },
+          {
+            os: "macos-13-large",
+            python-architecture: "x64",
+            rust-target: "x86_64-apple-darwin",
+            name: "macOS x64"
+          },
+          # {
+          #   os: "windows-latest",
+          #   python-architecture: "x86",
+          #   rust-target: "i686-pc-windows-msvc",
+          #   name: "Windows x86"
+          # },
+          {
+            os: "windows-latest",
+            python-architecture: "x64",
+            rust-target: "x86_64-pc-windows-msvc",
+            name: "Windows x64"
+          },
+        ]
+      fail-fast: false
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.platform.rust-target }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.platform.python-architecture }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.platform.python-architecture }}-cargo-${{ matrix.rust }}-
+      - name: Install Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python.version }}
+          architecture: ${{ matrix.platform.python-architecture }}
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.platform.rust-target }}
+          default: true
+          profile: minimal
+          override: true
+      - name: Install CLang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "15.0"
+          directory: ${{ runner.temp }}/llvm
+      - name: Set LIBCLANG_PATH
+        run: echo "LIBCLANG_PATH=$((gcm clang).source -replace "clang.exe")" >> ${GITHUB_ENV}
+        if: runner.os == 'Windows'
+      - name: Install dependencies
+        run: pip install maturin pygithub
+        if: matrix.platform.rust-target != 'x86_64-unknown-linux-gnu'
+      - name: Install dependencies
+        # Only need patch elf on linux
+        run: pip install maturin[patchelf] pygithub
+        if: matrix.platform.rust-target == 'x86_64-unknown-linux-gnu'
+
+      # - name: Install dependencies OSX
+      #   run: brew install pkg-config ffmpeg imagemagick
+      #   if: matrix.platform.os == 'macos-13-large'
+
+      - name: Install Deps Linux
+        run: |
+          sudo apt-get update \
+          && sudo apt-get install -y \
+          libdbus-1-dev libssl-dev \
+          clang libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev libavutil-dev pkg-config \
+        if: runner.os == 'Linux'
+
+      - name: Install ffmpeg dependencies windows
+        env:
+          FFMPEG_DOWNLOAD_URL: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z
+        run: |
+          $VCINSTALLDIR = $(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)
+          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=${VCINSTALLDIR}\VC\Tools\LLVM\x64\bin`n"
+          Invoke-WebRequest "${env:FFMPEG_DOWNLOAD_URL}" -OutFile ffmpeg-release-full-shared.7z
+          7z x ffmpeg-release-full-shared.7z
+          mkdir ffmpeg
+          mv ffmpeg-*/* ffmpeg/
+          Add-Content $env:GITHUB_ENV "FFMPEG_DIR=${pwd}\ffmpeg`n"
+          Add-Content $env:GITHUB_PATH "${pwd}\ffmpeg\bin`n"
+        if: runner.os == 'Windows'
+
+      - name: Build package Linux
+        env:
+          PY_VERSION: ${{ matrix.python.name }}
+        run: cd oxen && maturin build --out dist --release --interpreter ${PY_LOCATION}/bin/python
+        if: runner.os == 'Linux'
+      - name: Debug C++
+        run: |
+          which c++
+          c++ --version
+      - name: Build package macOS x86
+        env:
+          PY_LOCATION: ${{ env.pythonLocation }}
+          CXXFLAGS: "-fno-aligned-allocation"
+          MACOSX_DEPLOYMENT_TARGET: '13.0'
+          # CPLUS_INCLUDE_PATH: ${{ runner.temp }}/llvm/include/c++/v1/
+        run: cd oxen && maturin build --out dist --release --interpreter ${PY_LOCATION}/bin/python
+        if: matrix.platform.rust-target == 'x86_64-apple-darwin'
+      - name: Build package macOS arm64
+        env:
+          PY_LOCATION: ${{ env.pythonLocation }}
+        run: cd oxen && maturin build --out dist --release --interpreter ${PY_LOCATION}/bin/python
+        if: matrix.platform.rust-target == 'aarch64-apple-darwin'
+      - name: Build package Windows
+        env:
+          PY_LOCATION: ${{ env.pythonLocation }}
+        run: cd oxen && maturin build --out dist --release --interpreter ${env:PY_LOCATION}\python.exe
+        if: runner.os == 'Windows'
+      - name: Build Ubuntu 22.04
+        env:
+          PY_LOCATION: ${{ env.pythonLocation }}
+        # This one does not have --sdist because we do it in Ubuntu Latest
+        run: cd oxen && maturin build --release --out dist --interpreter ${PY_LOCATION}/bin/python
+        # run: cd oxen && docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release --out dist
+        if: matrix.platform.name == 'Ubuntu 22.04'
+      - name: Build linux package sdist
+        env:
+          PY_LOCATION: ${{ env.pythonLocation }}
+        # This packages up the source with --sdist
+        run: cd oxen && maturin build --release --out dist --sdist --interpreter ${PY_LOCATION}/bin/python
+        if: matrix.platform.name == 'Ubuntu Latest'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.python.version }}-${{ matrix.platform.name }}
+          path: oxen/dist
+          overwrite: true
+
+  # sdist:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Build sdist
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         command: sdist
+  #         args: --out dist
+  #         working-directory: oxen
+  #     - name: Upload sdist
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheels
+  #         path: dist
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: "startsWith(github.ref, 'refs/tags/')"
+    needs: [build]
+    steps:
+      - name: Set env
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/v}" >> $GITHUB_ENV
+      - uses: actions/download-artifact@v4
+        id: download
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheels
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --skip-existing wheels/*
+          maturin-version: v1.8.5
+      - name: List downloaded wheels
+        run: echo ${{steps.download.outputs.download-path}} && ls -R ${{steps.download.outputs.download-path}}
+      - name: Create tarball with wheels
+        run: tar -czvf wheels.tar.gz wheels/
+      - name: Upload wheels to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: wheels.tar.gz
+          asset_name: wheels.tar.gz
+          tag: ${{ github.ref }}
+          release_name: "🐍 Release ${{ github.ref }}"
