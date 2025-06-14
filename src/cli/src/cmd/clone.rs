@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use clap::{arg, Arg, Command};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use liboxen::api;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
@@ -27,6 +27,7 @@ impl RunCmd for CloneCmd {
             .about("Clone a repository by its URL")
             .arg_required_else_help(true)
             .arg(arg!(<URL> "URL of the repository you want to clone"))
+            .arg(arg!([DESTINATION] "Optional name of the directory to clone into").required(false))
             .arg(
                 Arg::new("filter")
                     .long("filter")
@@ -72,10 +73,36 @@ impl RunCmd for CloneCmd {
             .get_one::<String>("depth")
             .map(|s| s.parse().expect("Invalid depth, must be an integer"));
 
-        let dst = std::env::current_dir().expect("Could not get current working directory");
-        // Get the name of the repo from the url
-        let name = url.split('/').next_back().unwrap();
-        let dst = dst.join(name);
+        let current_dir = std::env::current_dir().expect("Could not get current working directory");
+        let dst: PathBuf = match args.get_one::<String>("DESTINATION") {
+            Some(dir_name) => {
+                let path = Path::new(dir_name);
+
+                if path.is_absolute()
+                    || path.components().any(|c| matches!(c, Component::ParentDir))
+                {
+                    return Err(OxenError::basic_str(
+                        "Invalid destination: absolute paths or '..' not allowed",
+                    ));
+                }
+
+                let joined = current_dir.join(path);
+                let canon = joined
+                    .canonicalize()
+                    .map_err(|_| OxenError::basic_str("Failed to resolve destination"))?;
+                if !canon.starts_with(&current_dir) {
+                    return Err(OxenError::basic_str(
+                        "Invalid destination: path escapes base directory",
+                    ));
+                }
+                canon
+            }
+            None => {
+                // Get the name of the repo from the url
+                let repo_name = url.split('/').next_back().unwrap_or("repository");
+                current_dir.join(repo_name)
+            }
+        };
 
         let opts = CloneOpts {
             url: url.to_string(),
