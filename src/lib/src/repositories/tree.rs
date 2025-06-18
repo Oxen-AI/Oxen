@@ -656,9 +656,12 @@ fn list_missing_file_hashes_from_hashes(
     Ok(results)
 }
 
-pub fn list_all_files(node: &MerkleTreeNode) -> Result<HashSet<FileNodeWithDir>, OxenError> {
+pub fn list_all_files(
+    node: &MerkleTreeNode,
+    subtree_path: &PathBuf,
+) -> Result<HashSet<FileNodeWithDir>, OxenError> {
     let mut file_nodes = HashSet::new();
-    r_list_all_files(node, PathBuf::from(""), &mut file_nodes)?;
+    r_list_all_files(node, subtree_path, &mut file_nodes)?;
     Ok(file_nodes)
 }
 

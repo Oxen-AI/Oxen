@@ -242,7 +242,7 @@ fn collect_missing_entries(
                     );
                     continue;
                 };
-                collect_missing_entries_for_subtree(&tree, &mut missing_entries)?;
+                collect_missing_entries_for_subtree(&tree, subtree_path, &mut missing_entries)?;
             }
         } else {
             let Some(tree) = repositories::tree::get_subtree_by_depth(repo, commit, &None, depth)?
@@ -253,7 +253,7 @@ fn collect_missing_entries(
                 );
                 continue;
             };
-            collect_missing_entries_for_subtree(&tree, &mut missing_entries)?;
+            collect_missing_entries_for_subtree(&tree, &PathBuf::from(""), &mut missing_entries)?;
         }
     }
     Ok(missing_entries)
@@ -261,9 +261,10 @@ fn collect_missing_entries(
 
 fn collect_missing_entries_for_subtree(
     tree: &MerkleTreeNode,
+    subtree_path: &PathBuf,
     missing_entries: &mut HashSet<Entry>,
 ) -> Result<(), OxenError> {
-    let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree)?;
+    let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree, subtree_path)?;
     for file in files {
         missing_entries.insert(Entry::CommitEntry(CommitEntry {
             commit_id: file.file_node.last_commit_id().to_string(),
