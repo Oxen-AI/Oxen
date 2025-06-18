@@ -104,8 +104,11 @@ async fn push_to_new_branch(
     // We need to find all the commits that need to be pushed
     let history = repositories::commits::list_from(repo, &commit.id)?;
 
+    // Find the latest remote commit to use as a base for filtering out existing nodes
+    let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
+
     // Push the commits
-    push_commits(repo, remote_repo, &history).await?;
+    push_commits(repo, remote_repo, latest_remote_commit, &history).await?;
 
     // Create the remote branch from the commit
     api::client::branches::create_from_commit(remote_repo, &branch.name, commit).await?;
@@ -170,7 +173,7 @@ async fn push_to_existing_branch(
     let mut commits = repositories::commits::list_between(repo, &latest_remote_commit, commit)?;
     commits.reverse();
 
-    push_commits(repo, remote_repo, &commits).await?;
+    push_commits(repo, remote_repo, Some(latest_remote_commit), &commits).await?;
 
     // Update the remote branch to point to the latest commit
     api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
@@ -181,6 +184,7 @@ async fn push_to_existing_branch(
 async fn push_commits(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
+    latest_remote_commit: Option<Commit>,
     history: &[Commit],
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
@@ -197,7 +201,7 @@ async fn push_commits(
         missing_commit_hashes.len()
     );
 
-    let commits: Vec<Commit> = history
+    let missing_commits: Vec<Commit> = history
         .iter()
         .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
         .map(|c| c.to_owned())
@@ -206,8 +210,23 @@ async fn push_commits(
     // Collect all the nodes that could be missing from the server
     let progress = Arc::new(PushProgress::new());
     progress.set_message("Collecting missing nodes...");
+
+    // Get the node hashes for the starting commit (if we have one)
+    let mut starting_node_hashes = HashSet::new();
+    if let Some(ref commit) = latest_remote_commit {
+        repositories::tree::get_node_hashes_for_commit(
+            repo,
+            commit,
+            &None,
+            &None,
+            false,
+            &None,
+            &mut starting_node_hashes,
+        )?;
+    }
+
     let mut candidate_nodes: HashSet<MerkleTreeNode> = HashSet::new();
-    for commit in &commits {
+    for commit in &missing_commits {
         log::debug!("push_commits adding candidate nodes for commit: {}", commit);
         let Some(commit_node) = repositories::tree::get_root_with_children(repo, commit)? else {
             log::error!("push_commits commit node not found for commit: {}", commit);
@@ -215,11 +234,13 @@ async fn push_commits(
         };
         candidate_nodes.insert(commit_node.clone());
         commit_node.walk_tree_without_leaves(|node| {
-            candidate_nodes.insert(node.clone());
-            progress.set_message(format!(
-                "Collecting missing nodes... {}",
-                candidate_nodes.len()
-            ));
+            if !starting_node_hashes.contains(&node.hash) {
+                candidate_nodes.insert(node.clone());
+                progress.set_message(format!(
+                    "Collecting missing nodes... {}",
+                    candidate_nodes.len()
+                ));
+            }
         });
     }
     log::debug!(
@@ -253,7 +274,8 @@ async fn push_commits(
     api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
 
     // Create the dir hashes for the missing commits
-    api::client::commits::post_commits_dir_hashes_to_server(repo, remote_repo, &commits).await?;
+    api::client::commits::post_commits_dir_hashes_to_server(repo, remote_repo, &missing_commits)
+        .await?;
 
     // Check which file hashes are missing from the server
     progress.set_message("Checking for missing files...".to_string());
@@ -784,4 +806,41 @@ async fn bundle_and_send_small_entries(
     sleep(Duration::from_millis(100)).await;
 
     Ok(())
+}
+
+async fn find_latest_remote_commit(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+) -> Result<Option<Commit>, OxenError> {
+    // TODO: Revisit this and compute the latest commit from the LCA of the local and remote branches
+    // Try to get remote branches
+    let remote_branches = api::client::branches::list(remote_repo).await?;
+
+    if remote_branches.is_empty() {
+        // No remote branches exist - this is a new repo
+        return Ok(None);
+    }
+
+    // First, try to find the default branch (main)
+    let default_branch = remote_branches
+        .iter()
+        .find(|b| b.name == crate::constants::DEFAULT_BRANCH_NAME)
+        .or_else(|| remote_branches.first());
+
+    if let Some(remote_branch) = default_branch {
+        // Get the commit from the remote branch
+        if let Some(remote_commit) =
+            repositories::commits::get_by_id(repo, &remote_branch.commit_id)?
+        {
+            // We have the remote commit locally, so use it
+            Ok(Some(remote_commit))
+        } else {
+            // We don't have the remote commit locally - this shouldn't happen in normal flow
+            // but can happen if we haven't fetched the remote branch
+            Ok(None)
+        }
+    } else {
+        // No branches found
+        Ok(None)
+    }
 }
