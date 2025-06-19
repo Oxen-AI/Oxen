@@ -244,23 +244,46 @@ fn list_recursive(
     stop_at_base: Option<&Commit>,
     visited: &mut HashSet<String>,
 ) -> Result<(), OxenError> {
+    recurse_commit(repo, head_commit, results, stop_at_base, visited)?;
+    results.reverse();
+    Ok(())
+}
+
+// post-order traversal of the commit tree
+// returns a Topological sort with priority to timestamp in case of multiple parents
+fn recurse_commit(
+    repo: &LocalRepository,
+    head_commit: Commit,
+    results: &mut Vec<Commit>,
+    stop_at_base: Option<&Commit>,
+    visited: &mut HashSet<String>,
+) -> Result<(), OxenError> {
     // Check if we've already visited this commit
     if !visited.insert(head_commit.id.clone()) {
         return Ok(());
     }
 
-    results.push(head_commit.clone());
-
-    if stop_at_base.is_some() && &head_commit == stop_at_base.unwrap() {
-        return Ok(());
-    }
-
-    for parent_id in head_commit.parent_ids {
-        let parent_id = MerkleHash::from_str(&parent_id)?;
-        if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
-            list_recursive(repo, parent_commit, results, stop_at_base, visited)?;
+    if let Some(base) = stop_at_base {
+        if head_commit.id == base.id {
+            results.push(head_commit.clone());
+            return Ok(());
         }
     }
+
+    let mut parent_commits: Vec<Commit> = Vec::new();
+    for parent_id in head_commit.parent_ids.clone() {
+        let parent_id = MerkleHash::from_str(&parent_id)?;
+        if let Some(c) = get_by_hash(repo, &parent_id)? {
+            parent_commits.push(c);
+        }
+    }
+
+    parent_commits.sort_by_key(|c| c.timestamp);
+    for parent_commit in parent_commits {
+        recurse_commit(repo, parent_commit, results, stop_at_base, visited)?;
+    }
+    results.push(head_commit.clone());
+
     Ok(())
 }
 
@@ -342,9 +365,6 @@ pub fn list_from(
     if let Some(commit) = commit {
         list_recursive(repo, commit, &mut results, None, &mut HashSet::new())?;
     }
-    // TODO: Git does something called as a `date-order` traversal which guarantees that the parent never comes before a child
-    // irrespective of the timestamp. We should implement that at a later time.
-    results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(results)
 }
