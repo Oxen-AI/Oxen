@@ -491,24 +491,13 @@ pub fn list_missing_file_hashes_from_commits(
         // Handle the case where we are given a list of subtrees to check
         // It is much faster to check the subtree directly than to walk the entire tree
         if let Some(subtree_paths) = subtree_paths {
-            // Compute all the parents of the subtrees
-            let mut all_parent_paths: HashSet<PathBuf> = HashSet::new();
-            for path in subtree_paths.clone() {
-                let mut path = path.clone();
-                all_parent_paths.insert(path.clone());
-                while let Some(parent) = path.parent() {
-                    all_parent_paths.insert(parent.to_path_buf());
-                    path = parent.to_path_buf();
-                }
-            }
-            log::debug!(
-                "list_missing_file_hashes_from_commits all_parent_paths: {:?}",
-                all_parent_paths
-            );
-
-            for path in all_parent_paths {
-                let Some(tree) =
-                    repositories::tree::get_subtree_by_depth(repo, &commit, &Some(path), depth)?
+            for path in subtree_paths {
+                let Some(tree) = repositories::tree::get_subtree_by_depth(
+                    repo,
+                    &commit,
+                    &Some(path.clone()),
+                    depth,
+                )?
                 else {
                     log::warn!("list_missing_file_hashes_from_commits subtree not found for path");
                     continue;
