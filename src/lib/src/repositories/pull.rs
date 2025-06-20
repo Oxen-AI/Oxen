@@ -1929,7 +1929,7 @@ mod tests {
                 .await?;
 
                 // 6. Pull from main
-                repositories::pull_remote_branch(
+                let pull_result = repositories::pull_remote_branch(
                     &repo,
                     &FetchOpts {
                         remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -1940,7 +1940,12 @@ mod tests {
                         ..FetchOpts::new()
                     },
                 )
-                .await?;
+                .await;
+
+                assert_eq!(
+                    pull_result.unwrap_err().to_string(),
+                    OxenError::basic_str("No changes to commit").to_string()
+                );
 
                 // Verify the state after pull
                 assert!(repo.path.join("train").exists());

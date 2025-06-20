@@ -244,6 +244,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_command_checkout_commit_then_merge_main() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write a hello file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            // Track & commit the file
+            repositories::add(&repo, &hello_file)?;
+            let first_commit = repositories::commit(&repo, "Added hello.txt")?;
+
+            // Write a world
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&world_file, "World")?;
+
+            // Stage a world file
+            repositories::add(&repo, &world_file)?;
+
+            // Commit the world file
+            let _ = repositories::commit(&repo, "Adding world")?;
+
+            // Create and checkout branch
+            let branch_name = "feature/my-branch";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Add a third file
+            let branch_file = repo.path.join("branch.txt");
+            util::fs::write_to_path(&branch_file, "Branch file")?;
+
+            // Stage a world file
+            repositories::add(&repo, &branch_file)?;
+
+            // Commit the world file
+            repositories::commit(&repo, "Adding branch file")?;
+
+            // We have the branch file
+            assert!(branch_file.exists());
+
+            // Checkout the previous commit
+            repositories::checkout(&repo, first_commit.id).await?;
+
+            // Then we do not have the branch file anymore
+            assert!(!branch_file.exists());
+            assert!(!world_file.exists());
+
+            // Check status
+            let status = repositories::status(&repo)?;
+            assert!(status.is_clean());
+
+            // Checkout branch again
+            repositories::checkout(&repo, branch_name).await?;
+
+            // // Merge to main again
+            // let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            // // Checkout the branch
+            // repositories::checkout(&repo, second_commit.id).await?;
+
+            let has_merges = repositories::merge::merge(&repo, DEFAULT_BRANCH_NAME).is_ok();
+
+            // We should not have a merge because the current branch has all the old commits
+            assert!(!has_merges);
+            assert!(world_file.exists());
+            assert!(hello_file.exists());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_command_checkout_current_branch_name_does_nothing() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
