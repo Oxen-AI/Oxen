@@ -1,5 +1,7 @@
+use regex::Regex;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use liboxen::error::OxenError;
 use liboxen::model::{Branch, Commit, LocalRepository, ParsedResource};
@@ -28,6 +30,9 @@ pub use df_opts_query::DFOptsQuery;
 
 pub mod tree_depth;
 pub use tree_depth::TreeDepthQuery;
+
+static REGEX_USER_AGENT_VERSION_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d+\.\d+\.\d+").unwrap());
 
 pub fn app_data(req: &HttpRequest) -> Result<&OxenAppData, OxenHttpError> {
     log::debug!(
@@ -175,7 +180,16 @@ fn user_cli_is_out_of_date(user_agent: &str) -> bool {
         // Can't parse version from user agent
         return true;
     }
-    let user_cli_version = match OxenVersion::from_str(parts[1]) {
+
+    let Some(version) = REGEX_USER_AGENT_VERSION_NUMBER
+        .find(parts[1])
+        .map(|m| m.as_str())
+    else {
+        // Can't parse version from user agent
+        return true;
+    };
+
+    let user_cli_version = match OxenVersion::from_str(version) {
         Ok(v) => v,
         Err(_) => return true,
     };

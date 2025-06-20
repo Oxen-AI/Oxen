@@ -1,7 +1,9 @@
 //! # API Client - For interacting with repositories on a remote machine
 //!
 
+use crate::config::runtime_config::runtime::Runtime;
 use crate::config::AuthConfig;
+use crate::config::RuntimeConfig;
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
@@ -87,7 +89,7 @@ fn builder_for_host<S: AsRef<str>>(
     let builder = if should_add_user_agent {
         builder()
     } else {
-        builder_no_user_agent()
+        Ok(builder_no_user_agent())
     };
 
     let config = match AuthConfig::get() {
@@ -113,19 +115,38 @@ fn builder_for_host<S: AsRef<str>>(
         auth_value.set_sensitive(true);
         let mut headers = header::HeaderMap::new();
         headers.insert(header::AUTHORIZATION, auth_value);
-        Ok(builder.default_headers(headers))
+        Ok(builder?.default_headers(headers))
     } else {
         log::trace!("No auth token found for host: {}", host.as_ref());
-        Ok(builder)
+        builder
     }
 }
 
-fn builder() -> ClientBuilder {
-    Client::builder().user_agent(format!("{USER_AGENT}/{VERSION}"))
+fn builder() -> Result<ClientBuilder, OxenError> {
+    let user_agent = build_user_agent()?;
+    Ok(Client::builder().user_agent(user_agent))
 }
 
 fn builder_no_user_agent() -> ClientBuilder {
     Client::builder()
+}
+
+fn build_user_agent() -> Result<String, OxenError> {
+    let config = RuntimeConfig::get()?;
+    let host_platform = config.host_platform.display_name();
+
+    let runtime_name = match config.runtime_name {
+        Runtime::CLI => config.runtime_name.display_name().to_string(),
+        _ => format!(
+            "{} {}",
+            config.runtime_name.display_name(),
+            config.runtime_version
+        ),
+    };
+
+    Ok(format!(
+        "{USER_AGENT}/{VERSION} ({host_platform}; {runtime_name})"
+    ))
 }
 
 /// Performs an extra parse to validate that the response is success
