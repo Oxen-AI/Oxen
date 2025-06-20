@@ -33,6 +33,19 @@ impl MerkleTreeNode {
         })
     }
 
+    pub fn read_children_from_hash(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
+        let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, hash) else {
+            // We don't return an error here because there are some situations where we won't have all the node files.
+            // For example, when working in a subtree clone.
+            log::warn!("no child node db: {:?}", hash);
+            return Ok(Vec::new());
+        };
+        node_db.map()
+    }
+
     /// Check if the node is a leaf node (i.e. it has no children)
     pub fn is_leaf(&self) -> bool {
         matches!(
