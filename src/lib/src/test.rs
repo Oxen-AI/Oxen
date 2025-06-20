@@ -13,6 +13,7 @@ use crate::error::OxenError;
 use crate::model::data_frame::schema::Field;
 use crate::model::file::FileContents;
 use crate::model::file::FileNew;
+use crate::model::merkle_tree::node::merkle_tree_node_cache;
 use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::User;
@@ -1628,6 +1629,9 @@ async fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
 
 // This function conditionally removes the repo dir given a CLEANUP_REPOS environment variable
 pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
+    // Always remove the node cache
+    merkle_tree_node_cache::remove_from_cache(repo_dir)?;
+
     let no_cleanup = std::env::var("NO_CLEANUP") == Ok("true".to_string())
         || std::env::var("NO_CLEANUP") == Ok("1".to_string());
     if !no_cleanup {

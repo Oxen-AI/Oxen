@@ -413,7 +413,7 @@ impl CommitMerkleTree {
         }
 
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        CommitMerkleTree::read_children_from_node(repo, &mut node, recurse)?;
+        CommitMerkleTree::load_children_from_node(repo, &mut node, recurse)?;
         // log::debug!("read_node done: {:?} recurse: {}", node.hash, recurse);
         Ok(Some(node))
     }
@@ -500,7 +500,7 @@ impl CommitMerkleTree {
         }
 
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        CommitMerkleTree::read_children_until_depth(repo, &mut node, depth, 0)?;
+        CommitMerkleTree::load_children_until_depth(repo, &mut node, depth, 0)?;
         // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
         Ok(Some(node))
     }
@@ -819,7 +819,7 @@ impl CommitMerkleTree {
         vnode_with_children.get_by_path(file_name)
     }
 
-    fn read_children_until_depth(
+    fn load_children_until_depth(
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
         requested_depth: i32,
@@ -827,7 +827,7 @@ impl CommitMerkleTree {
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
         // log::debug!(
-        //     "read_children_until_depth requested_depth {} traversed_depth {} node {}",
+        //     "load_children_until_depth requested_depth {} traversed_depth {} node {}",
         //     requested_depth,
         //     traversed_depth,
         //     node
@@ -841,17 +841,17 @@ impl CommitMerkleTree {
         }
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        log::debug!(
-            "read_children_until_depth requested_depth node {} traversed_depth {} Got {} children",
-            node,
-            traversed_depth,
-            children.len()
-        );
+        // log::debug!(
+        //     "load_children_until_depth requested_depth node {} traversed_depth {} Got {} children",
+        //     node,
+        //     traversed_depth,
+        //     children.len()
+        // );
 
         for (_key, child) in children {
             let mut child = child.to_owned();
             // log::debug!(
-            //     "read_children_until_depth {} child: {} -> {}",
+            //     "load_children_until_depth {} child: {} -> {}",
             //     depth,
             //     key,
             //     child
@@ -870,7 +870,7 @@ impl CommitMerkleTree {
                         } else {
                             traversed_depth + 1
                         };
-                        CommitMerkleTree::read_children_until_depth(
+                        CommitMerkleTree::load_children_until_depth(
                             repo,
                             &mut child,
                             requested_depth,
@@ -1040,7 +1040,7 @@ impl CommitMerkleTree {
         self.root.walk_tree_without_leaves(f);
     }
 
-    fn read_children_from_node(
+    fn load_children_from_node(
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
         recurse: bool,
@@ -1055,20 +1055,20 @@ impl CommitMerkleTree {
         }
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("read_children_from_node Got {} children", children.len());
+        // log::debug!("load_children_from_node Got {} children", children.len());
 
         for (_key, child) in children {
             let mut child = child.to_owned();
-            // log::debug!("read_children_from_node child: {} -> {}", key, child);
+            // log::debug!("load_children_from_node child: {} -> {}", key, child);
             match &child.node.node_type() {
                 // Commits, Directories, and VNodes have children
                 MerkleTreeNodeType::Commit
                 | MerkleTreeNodeType::Dir
                 | MerkleTreeNodeType::VNode => {
                     if recurse {
-                        // log::debug!("read_children_from_node recurse: {:?}", child.hash);
-                        // log::debug!("read_children_from_node opened node_db: {:?}", child.hash);
-                        CommitMerkleTree::read_children_from_node(repo, &mut child, recurse)?;
+                        // log::debug!("load_children_from_node recurse: {:?}", child.hash);
+                        // log::debug!("load_children_from_node opened node_db: {:?}", child.hash);
+                        CommitMerkleTree::load_children_from_node(repo, &mut child, recurse)?;
                     }
                     node.children.push(child);
                 }
@@ -1079,7 +1079,7 @@ impl CommitMerkleTree {
             }
         }
 
-        // log::debug!("read_children_from_node done: {:?}", node.hash);
+        // log::debug!("load_children_from_node done: {:?}", node.hash);
 
         Ok(())
     }
