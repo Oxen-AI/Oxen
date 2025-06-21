@@ -944,4 +944,31 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_merge_immediately_after_checkout() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Need to have main branch get ahead of branch so that you can traverse to directory to it, but they
+            // have a common ancestor
+            // 1. Commit something in main branch
+            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            let labels_path = repo.path.join("labels.txt");
+            util::fs::write_to_path(&labels_path, "cat\ndog")?;
+            repositories::add(&repo, &labels_path)?;
+            repositories::commit(&repo, "Add initial labels.txt file with cat and dog")?;
+
+            // 2. Create a new branch
+            let new_branch_name = "new_branch";
+            let new_branch = repositories::branches::create_checkout(&repo, new_branch_name)?;
+
+            // 4. merge main onto new branch
+            let commit = repositories::merge::merge_into_base(&repo, &og_branch, &new_branch)?;
+
+            // 5. There should be no commit
+            assert!(commit.is_none());
+
+            Ok(())
+        })
+        .await
+    }
 }
