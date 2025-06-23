@@ -28,24 +28,23 @@ use super::MerkleTreeNode;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash};
 
-const CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1_000_000).unwrap();
+const CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(10_000_000).unwrap();
+
+// Type aliases for readability
+type NodeCache = Arc<Mutex<LruCache<MerkleHash, Arc<MerkleTreeNode>>>>;
+type ChildrenCache = Arc<Mutex<LruCache<MerkleHash, Arc<Vec<(MerkleHash, MerkleTreeNode)>>>>>;
+type NodeCacheMap = HashMap<PathBuf, NodeCache>;
+type ChildrenCacheMap = HashMap<PathBuf, ChildrenCache>;
 
 // Cache for individual nodes (from_hash results)
-static NODE_CACHES: LazyLock<
-    Mutex<HashMap<PathBuf, Arc<Mutex<LruCache<MerkleHash, Arc<MerkleTreeNode>>>>>>,
-> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static NODE_CACHES: LazyLock<Mutex<NodeCacheMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // Cache for children reads (read_children_from_hash results)
-static CHILDREN_CACHES: LazyLock<
-    Mutex<
-        HashMap<PathBuf, Arc<Mutex<LruCache<MerkleHash, Arc<Vec<(MerkleHash, MerkleTreeNode)>>>>>>,
-    >,
-> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static CHILDREN_CACHES: LazyLock<Mutex<ChildrenCacheMap>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Get or create a node cache for a repository
-pub fn get_node_cache(
-    repo: &LocalRepository,
-) -> Arc<Mutex<LruCache<MerkleHash, Arc<MerkleTreeNode>>>> {
+pub fn get_node_cache(repo: &LocalRepository) -> NodeCache {
     let mut caches = NODE_CACHES.lock();
     caches
         .entry(repo.path.clone())
@@ -54,9 +53,7 @@ pub fn get_node_cache(
 }
 
 /// Get or create a children cache for a repository
-pub fn get_children_cache(
-    repo: &LocalRepository,
-) -> Arc<Mutex<LruCache<MerkleHash, Arc<Vec<(MerkleHash, MerkleTreeNode)>>>>> {
+pub fn get_children_cache(repo: &LocalRepository) -> ChildrenCache {
     let mut caches = CHILDREN_CACHES.lock();
     caches
         .entry(repo.path.clone())
