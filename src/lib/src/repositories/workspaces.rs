@@ -3,7 +3,7 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
-use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
+use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
 use crate::repositories;
 use crate::util;
 
@@ -307,7 +307,8 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
         workspace_dir
     );
 
-    // Clean up database connections before deleting the workspace
+    // Clean up caches before deleting the workspace
+    merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
     match util::fs::remove_dir_all(&workspace_dir) {
         Ok(_) => log::debug!(

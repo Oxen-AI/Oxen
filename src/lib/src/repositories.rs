@@ -10,6 +10,7 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::error::NO_REPO_FOUND;
 use crate::model::file::FileContents;
+use crate::model::merkle_tree;
 use crate::model::repository::local_repository::LocalRepositoryWithEntries;
 use crate::model::Commit;
 use crate::model::MetadataEntry;
@@ -189,6 +190,7 @@ pub fn transfer_namespace(
     }
 
     // ensure DB instance is closed before we move the repo
+    merkle_tree::merkle_tree_node_cache::remove_from_cache(&repo_dir)?;
     core::staged::remove_from_cache_with_children(&repo_dir)?;
     core::refs::remove_from_cache(&repo_dir)?;
 
@@ -318,6 +320,7 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     }
 
     // Close DB instances before trying to delete the directory
+    merkle_tree::merkle_tree_node_cache::remove_from_cache(&repo.path)?;
     core::staged::remove_from_cache_with_children(&repo.path)?;
     core::refs::ref_manager::remove_from_cache(&repo.path)?;
 
