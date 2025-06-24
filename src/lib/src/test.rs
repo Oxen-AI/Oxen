@@ -206,7 +206,7 @@ where
             true
         }
         Err(err) => {
-            eprintln!("Error running test. Err: {err}");
+            eprintln!("Error running test. Err: {err:?}");
             false
         }
     };

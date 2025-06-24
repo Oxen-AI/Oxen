@@ -4,6 +4,11 @@
 //! `from_hash` and `read_children_from_hash` operations. Each repository gets its own set
 //! of caches to avoid cross-repository contamination.
 //!
+//! # Environment Variables
+//!
+//! - `OXEN_MERKLE_CACHE_SIZE`: Set the number of entries per cache (default: 1000)
+//! - `OXEN_DISABLE_MERKLE_CACHE`: Set to any value to disable caching
+//!
 //! # Example
 //!
 //! ```ignore
@@ -28,7 +33,8 @@ use super::MerkleTreeNode;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash};
 
-const CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(10_000_000).unwrap();
+// Default cache size if not specified via environment variable
+const DEFAULT_CACHE_SIZE: usize = 1000;
 
 // Type aliases for readability
 type NodeCache = Arc<Mutex<LruCache<MerkleHash, Arc<MerkleTreeNode>>>>;
@@ -43,12 +49,24 @@ static NODE_CACHES: LazyLock<Mutex<NodeCacheMap>> = LazyLock::new(|| Mutex::new(
 static CHILDREN_CACHES: LazyLock<Mutex<ChildrenCacheMap>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// Cached configuration values - computed once at startup
+static CACHING_DISABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok());
+
+static CACHE_SIZE: LazyLock<NonZeroUsize> = LazyLock::new(|| {
+    std::env::var("OXEN_MERKLE_CACHE_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .and_then(NonZeroUsize::new)
+        .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())
+});
+
 /// Get or create a node cache for a repository
 pub fn get_node_cache(repo: &LocalRepository) -> NodeCache {
     let mut caches = NODE_CACHES.lock();
     caches
         .entry(repo.path.clone())
-        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(CACHE_SIZE))))
+        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(*CACHE_SIZE))))
         .clone()
 }
 
@@ -57,12 +75,15 @@ pub fn get_children_cache(repo: &LocalRepository) -> ChildrenCache {
     let mut caches = CHILDREN_CACHES.lock();
     caches
         .entry(repo.path.clone())
-        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(CACHE_SIZE))))
+        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(*CACHE_SIZE))))
         .clone()
 }
 
 /// Get a node from cache
 pub fn get_cached_node(repo: &LocalRepository, hash: &MerkleHash) -> Option<Arc<MerkleTreeNode>> {
+    if *CACHING_DISABLED {
+        return None;
+    }
     let cache = get_node_cache(repo);
     let mut cache_guard = cache.lock();
     cache_guard.get(hash).cloned()
@@ -75,6 +96,9 @@ pub fn cache_node(
     node: MerkleTreeNode,
 ) -> Arc<MerkleTreeNode> {
     let arc_node = Arc::new(node);
+    if *CACHING_DISABLED {
+        return arc_node;
+    }
     let cache = get_node_cache(repo);
     let mut cache_guard = cache.lock();
     cache_guard.put(hash, arc_node.clone());
@@ -86,6 +110,9 @@ pub fn get_cached_children(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Option<Arc<Vec<(MerkleHash, MerkleTreeNode)>>> {
+    if *CACHING_DISABLED {
+        return None;
+    }
     let cache = get_children_cache(repo);
     let mut cache_guard = cache.lock();
     cache_guard.get(hash).cloned()
@@ -98,6 +125,9 @@ pub fn cache_children(
     children: Vec<(MerkleHash, MerkleTreeNode)>,
 ) -> Arc<Vec<(MerkleHash, MerkleTreeNode)>> {
     let arc_children = Arc::new(children);
+    if *CACHING_DISABLED {
+        return arc_children;
+    }
     let cache = get_children_cache(repo);
     let mut cache_guard = cache.lock();
     cache_guard.put(hash, arc_children.clone());
