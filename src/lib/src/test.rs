@@ -75,10 +75,8 @@ fn create_prefixed_dir(
 ) -> Result<PathBuf, OxenError> {
     let base_dir = base_dir.as_ref();
     let prefix = prefix.as_ref();
-    let repo_name = prefix
-        .join(base_dir)
-        .join(format!("{}", uuid::Uuid::new_v4()));
-    let full_dir = Path::new(base_dir).join(repo_name);
+    let repo_name = format!("{}", uuid::Uuid::new_v4());
+    let full_dir = Path::new(base_dir).join(prefix).join(repo_name);
     util::fs::create_dir_all(&full_dir)?;
     Ok(full_dir)
 }
