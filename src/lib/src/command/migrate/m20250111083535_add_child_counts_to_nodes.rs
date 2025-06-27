@@ -6,6 +6,7 @@ use crate::config::RepositoryConfig;
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::merkle_tree_node_cache;
 use crate::model::merkle_tree::node::vnode::VNodeOpts;
 use crate::model::merkle_tree::node::{
     CommitNode, DirNode, EMerkleTreeNode, MerkleTreeNode, VNode,
@@ -86,11 +87,14 @@ pub fn run_on_all_repos(path: &Path) -> Result<(), OxenError> {
 
 fn run_on_one_repo(repo: &LocalRepository) -> Result<(), OxenError> {
     let commits = repositories::commits::list_all(repo)?;
-    for commit in commits {
-        run_on_commit(repo, &commit)?;
-    }
 
-    Ok(())
+    merkle_tree_node_cache::with_cache_disabled(|| -> Result<(), OxenError> {
+        for commit in commits {
+            run_on_commit(repo, &commit)?;
+        }
+
+        Ok(())
+    })
 }
 
 fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), OxenError> {
@@ -351,6 +355,9 @@ mod tests {
             // Run the migration
             run_on_one_repo(&repo)?;
 
+            // Clear the cache after the migration
+            merkle_tree_node_cache::remove_from_cache(&repo.path)?;
+
             let repo = LocalRepository::from_dir(&repo.path)?;
             let latest_commit = repositories::commits::latest_commit(&repo)?;
             let commit_node_version =
@@ -446,6 +453,9 @@ mod tests {
 
             // Run the migration
             run_on_one_repo(&repo)?;
+
+            // Clear the cache after the migration
+            merkle_tree_node_cache::remove_from_cache(&repo.path)?;
 
             let mut repo = LocalRepository::from_dir(&repo.path)?;
             repo.set_vnode_size(3);
