@@ -37,17 +37,24 @@ use std::path::Path;
 /// # }
 /// ```
 pub fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
-    add_with_version(repo, path, repo.min_version())
+    add_all_with_version(repo, vec![path], repo.min_version())
 }
 
-pub fn add_with_version(
+pub fn add_all<T: AsRef<Path>>(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    paths: impl IntoIterator<Item = T>,
+) -> Result<(), OxenError> {
+    add_all_with_version(repo, paths, repo.min_version())
+}
+
+pub fn add_all_with_version<T: AsRef<Path>>(
+    repo: &LocalRepository,
+    paths: impl IntoIterator<Item = T>,
     version: MinOxenVersion,
 ) -> Result<(), OxenError> {
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::add::add(repo, path),
+        _ => core::v_latest::add::add(repo, paths),
     }
 }
 
