@@ -490,11 +490,7 @@ impl CommitMerkleTree {
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
 
         CommitMerkleTree::load_children_until_depth_children_and_hashes(
-            repo,
-            &mut node,
-            depth,
-            0,
-            hashes,
+            repo, &mut node, depth, 0, hashes,
         )?;
         // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
         Ok(Some(node))
@@ -907,7 +903,6 @@ impl CommitMerkleTree {
                             traversed_depth,
                             hashes,
                         )?;
-                        
                     }
                     node.children.push(child);
                 }
@@ -981,7 +976,7 @@ impl CommitMerkleTree {
 
                         // Here we have to not panic on error, because if we clone a subtree we might not have all of the children nodes of a particular dir
                         // given that we are only loading the nodes that are needed.
-                       CommitMerkleTree::load_children_until_depth_unique_children(
+                        CommitMerkleTree::load_children_until_depth_unique_children(
                             repo,
                             &mut child,
                             new_path,
@@ -991,7 +986,6 @@ impl CommitMerkleTree {
                             shared_hashes,
                             partial_nodes,
                         )?;
-                    
                     }
                     node.children.push(child);
                 }
