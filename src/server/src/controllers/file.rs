@@ -49,11 +49,9 @@ pub async fn get(
         file.into_response(&req)
     } else {
         let entry = repositories::entries::get_file(&repo, &commit, &path)?;
-        log::debug!("entry {:?}", entry);
         let entry = entry.ok_or(OxenError::path_does_not_exist(path.clone()))?;
 
         let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
-        log::debug!("version path {version_path:?}",);
 
         // TODO: refactor out of here and check for type,
         // but seeing if it works to resize the image and cache it to disk if we have a resize query
@@ -67,7 +65,6 @@ pub async fn get(
                 img_resize.width,
                 img_resize.height,
             )?;
-
             util::fs::resize_cache_image(&version_path, &resized_path, img_resize)?;
 
             log::debug!("In the resize cache! {:?}", resized_path);
@@ -83,13 +80,11 @@ pub async fn get(
         );
 
         let file = NamedFile::open(version_path)?;
-
         let mut response = file.into_response(&req);
 
         let last_commit_id = entry.last_commit_id().to_string();
         let meta_entry = repositories::entries::get_meta_entry(&repo, &commit, &path)?;
         let content_length = meta_entry.size.to_string();
-
         response.headers_mut().insert(
             header::HeaderName::from_static("oxen-revision-id"),
             header::HeaderValue::from_str(&last_commit_id).unwrap(),

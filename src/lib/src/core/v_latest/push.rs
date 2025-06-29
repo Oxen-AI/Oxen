@@ -9,6 +9,7 @@ use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
@@ -124,6 +125,7 @@ fn collect_missing_files(
         node.children.len()
     );
     for child in &node.children {
+        // println!("Child: {child:?}");
         if let EMerkleTreeNode::File(file_node) = &child.node {
             if !hashes.contains(&child.hash) {
                 continue;
@@ -222,13 +224,26 @@ async fn push_commits(
         )?;
     }
 
+    let mut shared_hashes = starting_node_hashes.clone();
+    let mut unique_hashes = HashSet::new();
+
     let mut candidate_nodes: HashSet<MerkleTreeNode> = HashSet::new();
     for commit in &missing_commits {
         log::debug!("push_commits adding candidate nodes for commit: {}", commit);
-        let Some(commit_node) = repositories::tree::get_root_with_children(repo, commit)? else {
+        let Some(commit_node) = CommitMerkleTree::get_unique_children_for_commit(
+            repo,
+            commit,
+            &mut shared_hashes,
+            &mut unique_hashes,
+        )?
+        else {
             log::error!("push_commits commit node not found for commit: {}", commit);
             continue;
         };
+
+        shared_hashes.extend(&unique_hashes);
+        unique_hashes = HashSet::new();
+
         candidate_nodes.insert(commit_node.clone());
         commit_node.walk_tree_without_leaves(|node| {
             if !starting_node_hashes.contains(&node.hash) {
@@ -254,10 +269,12 @@ async fn push_commits(
         "Considering {} nodes...",
         candidate_node_hashes.len()
     ));
+
+    log::debug!("Candidate Hashes: {candidate_node_hashes:?}");
     let missing_node_hashes =
         api::client::tree::list_missing_node_hashes(remote_repo, candidate_node_hashes).await?;
     log::debug!(
-        "push_commits missing_node_hashes count: {}",
+        "push_commits missing_node_hashes count: {:?}",
         missing_node_hashes.len()
     );
 
@@ -266,7 +283,10 @@ async fn push_commits(
         .into_iter()
         .filter(|n| missing_node_hashes.contains(&n.hash))
         .collect();
-    log::debug!("push_commits missing_nodes count: {}", missing_nodes.len());
+    log::debug!(
+        "push_commits missing_nodes count: {:?}",
+        missing_nodes.len()
+    );
     progress.set_message(format!("Pushing {} nodes...", missing_nodes.len()));
     api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
 
@@ -283,7 +303,6 @@ async fn push_commits(
     )
     .await?;
     progress.set_message(format!("Pushing {} files...", missing_file_hashes.len()));
-
     let mut missing_files: HashSet<Entry> = HashSet::new();
     for node in missing_nodes {
         collect_missing_files(&node, &missing_file_hashes, &mut missing_files)?;

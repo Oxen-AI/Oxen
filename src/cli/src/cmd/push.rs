@@ -10,7 +10,7 @@ use crate::helpers::{
     check_remote_version, check_remote_version_blocking, check_repo_migration_needed,
     get_scheme_and_host_from_repo,
 };
-use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
+use liboxen::constants::DEFAULT_REMOTE_NAME;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "push";
@@ -31,12 +31,7 @@ impl RunCmd for PushCmd {
                     .default_value(DEFAULT_REMOTE_NAME)
                     .default_missing_value(DEFAULT_REMOTE_NAME),
             )
-            .arg(
-                Arg::new("BRANCH")
-                    .help("Branch name to push to")
-                    .default_value(DEFAULT_BRANCH_NAME)
-                    .default_missing_value(DEFAULT_BRANCH_NAME),
-            )
+            .arg(Arg::new("BRANCH").help("Branch name to push to"))
             .arg(
                 Arg::new("delete")
                     .long("delete")
@@ -52,9 +47,19 @@ impl RunCmd for PushCmd {
             .get_one::<String>("REMOTE")
             .expect("Must supply a remote");
 
-        let branch = args
-            .get_one::<String>("BRANCH")
-            .expect("Must supply a branch");
+        let repo = LocalRepository::from_current_dir()?;
+        let current_branch = repositories::branches::current_branch(&repo)?;
+
+        // Default to CURRENT branch
+        let branch = if let Some(branch) = args.get_one::<String>("BRANCH") {
+            branch
+        } else if current_branch.is_some() {
+            &current_branch.unwrap().name
+        } else {
+            return Err(OxenError::basic_str(
+                "Error: Cannot push from non-existant branch",
+            ));
+        };
 
         // Call into liboxen to push or delete
         if args.get_flag("delete") {

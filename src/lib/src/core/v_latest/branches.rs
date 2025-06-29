@@ -87,6 +87,8 @@ struct CheckoutHashes {
 }
 
 impl CheckoutHashes {
+    // Not currently in use
+    /*
     pub fn new() -> Self {
         CheckoutHashes {
             seen_hashes: HashSet::new(),
@@ -94,6 +96,7 @@ impl CheckoutHashes {
             common_nodes: HashSet::new(),
         }
     }
+    */
 
     pub fn from_hashes(common_nodes: HashSet<MerkleHash>) -> Self {
         CheckoutHashes {
@@ -181,47 +184,48 @@ pub async fn checkout_subtrees(
     depth: i32,
 ) -> Result<(), OxenError> {
     for subtree_path in subtree_paths {
-        let Some(target_root) = repositories::tree::get_subtree_by_depth(
-            repo,
-            to_commit,
-            &Some(subtree_path.to_path_buf()),
-            &Some(depth),
-        )?
-        else {
+        let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
+        let mut target_hashes = HashSet::new();
+        let target_root = if let Some(target_root) =
+            CommitMerkleTree::from_path_depth_children_and_hashes(
+                repo,
+                to_commit,
+                subtree_path.clone(),
+                depth,
+                &mut target_hashes,
+            )? {
+            target_root
+        } else {
             log::error!("Cannot get subtree for commit: {}", to_commit);
             continue;
         };
 
         // Load in the target tree, collecting every dir and vnode hash for comparison with the from tree
-        let mut target_hashes = HashSet::new();
-        CommitMerkleTree::root_with_children_and_hashes(repo, to_commit, &mut target_hashes)?;
         let mut shared_hashes = HashSet::new();
         let mut partial_nodes = HashMap::new();
 
         let maybe_from_commit = repositories::commits::head_commit_maybe(repo)?;
 
-        match maybe_from_commit {
-            Some(ref head_commit) => {
-                CommitMerkleTree::root_with_unique_children(
-                    repo,
-                    head_commit,
-                    &mut target_hashes,
-                    &mut shared_hashes,
-                    &mut partial_nodes,
-                )
-                .map_err(|_| OxenError::basic_str("Cannot get root node for base commit"))?;
-            }
-            None => {
-                log::debug!("head commit missing, might be a clone");
-            }
+        let from_root = if maybe_from_commit.is_some() {
+            log::debug!("from id: {:?}", maybe_from_commit.clone().unwrap().id);
+            log::debug!("to id: {:?}", to_commit.id);
+            CommitMerkleTree::root_with_unique_children(
+                repo,
+                &maybe_from_commit.clone().unwrap(),
+                &mut target_hashes,
+                &mut shared_hashes,
+                &mut partial_nodes,
+            )
+            .map_err(|_| OxenError::basic_str("Cannot get root node for base commit"))?
+        } else {
+            log::warn!("head commit missing, might be a clone");
+            None
         };
 
-        // TODO: The below logic (probably) can be merged with using set_working_repo_to_commit
-        let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
-        let mut results = CheckoutResult::new();
-        let mut hashes = CheckoutHashes::new();
 
+        let mut results = CheckoutResult::new();
+        let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
         r_restore_missing_or_modified_files(
             repo,
             &target_root,
@@ -233,26 +237,18 @@ pub async fn checkout_subtrees(
             depth,
         )?;
 
-        match maybe_from_commit {
-            Some(head_commit) => {
-                match repositories::tree::get_root_with_children(repo, &head_commit)? {
-                    Some(from_root_node) => {
-                        log::debug!("🔥 from node: {:?}", from_root_node);
-                        cleanup_removed_files(repo, &from_root_node, &mut progress, &mut hashes)?;
-                    }
-                    None => {
-                        log::debug!("Cannot get root node for base commit");
-                    }
-                }
-            }
-            None => {
-                log::debug!("head commit missing, might be a clone");
-            }
-        }
+        // If there are conflicts, return an error without restoring anything
         if !results.cannot_overwrite_entries.is_empty() {
             return Err(OxenError::cannot_overwrite_files(
                 &results.cannot_overwrite_entries,
             ));
+        }
+
+        if from_root.is_some() {
+            log::debug!("🔥 from node: {:?}", from_root);
+            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes)?;
+        } else {
+            log::debug!("head commit missing, no cleanup");
         }
 
         let version_store = repo.version_store()?;
@@ -379,6 +375,7 @@ pub async fn set_working_repo_to_commit(
 }
 
 // Only called if checking out from an existant commit
+
 fn cleanup_removed_files(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
@@ -387,14 +384,12 @@ fn cleanup_removed_files(
 ) -> Result<(), OxenError> {
     // Compare the nodes in the from tree to the nodes in the target tree
     // If the file node is in the from tree, but not in the target tree, remove it
-    let from_root_dir_node = repositories::tree::get_root_dir(from_node)?;
-    log::debug!("cleanup_removed_files from_commit {}", from_root_dir_node);
 
     let mut paths_to_remove: Vec<PathBuf> = vec![];
     let mut cannot_overwrite_entries: Vec<PathBuf> = vec![];
     r_remove_if_not_in_target(
         repo,
-        from_root_dir_node,
+        from_node,
         Path::new(""),
         &mut paths_to_remove,
         &mut cannot_overwrite_entries,
@@ -436,6 +431,7 @@ fn r_remove_if_not_in_target(
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);
                 // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
+
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
                     if util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
@@ -488,18 +484,17 @@ fn r_remove_if_not_in_target(
                 paths_to_remove.push(full_dir_path.clone());
             }
         }
-        EMerkleTreeNode::VNode(_) => {
-            // VNodes themselves aren't removed, but their children might be if they are unique to this 'from_node' path
-            for child in &from_node.children {
-                r_remove_if_not_in_target(
-                    repo,
-                    child,
-                    current_path,
-                    paths_to_remove,
-                    cannot_overwrite_entries,
-                    hashes,
-                )?;
-            }
+        EMerkleTreeNode::Commit(_) => {
+            // If we get a commit node, we need to skip to the root directory
+            let root_dir = repositories::tree::get_root_dir(from_node)?;
+            r_remove_if_not_in_target(
+                repo,
+                root_dir,
+                current_path,
+                paths_to_remove,
+                cannot_overwrite_entries,
+                hashes,
+            )?;
         }
         _ => {}
     }

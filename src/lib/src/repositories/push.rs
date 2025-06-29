@@ -135,7 +135,6 @@ mod tests {
             assert_eq!(readme_1_contents, readme_2_contents);
 
             api::client::repositories::delete(&remote_repo).await?;
-
             future::ok::<(), OxenError>(()).await
         })
         .await

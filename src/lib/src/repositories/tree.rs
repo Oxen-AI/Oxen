@@ -620,10 +620,22 @@ pub fn list_missing_node_hashes(
     for hash in hashes {
         let dir_prefix = node_db_path(repo, hash);
 
-        if !(commit_sync_status::commit_is_synced(repo, hash)
-            && dir_prefix.join("node").exists()
-            && dir_prefix.join("children").exists())
-        {
+        if !(dir_prefix.join("node").exists() && dir_prefix.join("children").exists()) {
+            results.insert(*hash);
+        }
+    }
+
+    Ok(results)
+}
+
+// Given a set of commit hashes, return the hashes that are unsynced
+pub fn list_missing_commit_hashes(
+    repo: &LocalRepository,
+    hashes: &HashSet<MerkleHash>,
+) -> Result<HashSet<MerkleHash>, OxenError> {
+    let mut results = HashSet::new();
+    for hash in hashes {
+        if !commit_sync_status::commit_is_synced(repo, hash) {
             results.insert(*hash);
         }
     }
