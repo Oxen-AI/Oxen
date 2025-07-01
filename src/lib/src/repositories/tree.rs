@@ -1351,9 +1351,9 @@ mod tests {
 
     use std::path::PathBuf;
 
-    #[test]
-    fn test_list_tabular_files_in_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_tabular_files_in_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create a deeply nested directory
             let dir_path = repo
                 .path
@@ -1388,7 +1388,7 @@ mod tests {
             util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
 
             // Add and commit all
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit = repositories::commit(&repo, "Adding all the data")?;
 
             // List files
@@ -1402,7 +1402,7 @@ mod tests {
             util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
 
             // Add and commit all
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit = repositories::commit(&repo, "Adding additional file")?;
 
             let files = repositories::tree::list_tabular_files_in_repo(&repo, &commit)?;
@@ -1437,8 +1437,8 @@ mod tests {
             test::write_txt_file_to_path(&path_1, common_contents)?;
             test::write_txt_file_to_path(&path_2, common_contents)?;
 
-            repositories::add(&local_repo, &path_1)?;
-            repositories::add(&local_repo, &path_2)?;
+            repositories::add(&local_repo, &path_1).await?;
+            repositories::add(&local_repo, &path_2).await?;
 
             let status = repositories::status(&local_repo)?;
 
@@ -1467,9 +1467,9 @@ mod tests {
         .await
     }
 
-    #[test]
-    fn test_get_node_hashes_between_commits() -> Result<(), OxenError> {
-        test::run_local_repo_training_data_committed(|repo| {
+    #[tokio::test]
+    async fn test_get_node_hashes_between_commits() -> Result<(), OxenError> {
+        test::run_local_repo_training_data_committed(|repo| async move {
             // Get the initial commit from training data to use as baseline
             let starting_commit = repositories::commits::head_commit(&repo)?;
 
@@ -1481,8 +1481,8 @@ mod tests {
             util::fs::write(&new_file1, "This is new file 1 content")?;
             util::fs::write(&new_file2, "This is new file 2 content")?;
 
-            repositories::add(&repo, &new_file1)?;
-            repositories::add(&repo, &new_file2)?;
+            repositories::add(&repo, &new_file1).await?;
+            repositories::add(&repo, &new_file2).await?;
             let commit1 = repositories::commit(&repo, "Add first batch of new files")?;
 
             // Add more files and make second new commit
@@ -1490,7 +1490,7 @@ mod tests {
             util::fs::create_dir_all(new_file3.parent().unwrap())?;
             util::fs::write(&new_file3, "col1,col2,col3\nval1,val2,val3\n")?;
 
-            repositories::add(&repo, &new_file3)?;
+            repositories::add(&repo, &new_file3).await?;
             let commit2 = repositories::commit(&repo, "Add second batch of new files")?;
 
             // Test get_unique_node_hashes with all commits (baseline + new commits)
@@ -1564,5 +1564,6 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 }

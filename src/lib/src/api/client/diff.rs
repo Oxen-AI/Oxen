@@ -87,7 +87,7 @@ mod tests {
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat image")?;
 
             // Get the current branch
@@ -112,7 +112,7 @@ mod tests {
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding a second cat")?;
 
             // Set the proper remote
@@ -167,7 +167,7 @@ mod tests {
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat image")?;
 
             // Get the current branch
@@ -193,7 +193,7 @@ mod tests {
             let dims = 96;
             util::image::resize_and_save(&repo_filepath, &repo_filepath, dims)?;
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Modifying the cat")?;
 
             // Set the proper remote
@@ -254,7 +254,7 @@ mod tests {
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding initial csv")?;
 
             // Get the current branch
@@ -278,7 +278,7 @@ mod tests {
             let repo_filepath = test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the sky?,blue,trivia")?;
             let repo_filepath = test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the ocean?,blue-ish green sometimes,trivia")?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
 
             // Set the proper remote
@@ -367,7 +367,7 @@ mod tests {
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding initial csv")?;
 
             // Get the current branch
@@ -399,7 +399,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
 ",
             )?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
 
             // Set the proper remote
@@ -505,7 +505,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding initial csv")?;
 
             // Get the current branch
@@ -538,7 +538,7 @@ who won the game?,The packers beat up on the bears,packers
 "#,
             )?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
 
             // Set the proper remote
@@ -646,7 +646,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             let og_commit = repositories::commit(&repo, "Adding initial cat image")?;
 
             // Set the proper remote
@@ -670,7 +670,7 @@ who won the game?,The packers beat up on the bears,packers
             let dims = 96;
             util::image::resize_and_save(&repo_filepath, &repo_filepath, dims)?;
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             let new_commit = repositories::commit(&repo, "Modifying the cat")?;
 
             // Set the proper remote
@@ -731,7 +731,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding test csv with two columns and 9999 rows")?;
 
             // Get the current branch
@@ -743,7 +743,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding train csv with two columns and 50k rows")?;
 
             // Set the proper remote
@@ -766,7 +766,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding title row to csv")?;
 
             // Track train.csv file
@@ -775,7 +775,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding columns to train.csv")?;
 
             // Push it real good
@@ -848,7 +848,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -875,7 +875,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Set the proper remote
@@ -940,7 +940,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &cats_dir)?;
+            repositories::add(&repo, &cats_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -969,7 +969,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &dogs_dir)?;
+            repositories::add(&repo, &dogs_dir).await?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Modify a cat
@@ -981,9 +981,9 @@ who won the game?,The packers beat up on the bears,packers
             util::image::resize_and_save(&repo_filepath, &repo_filepath, dims)?;
 
             // Add the modification
-            repositories::add(&repo, &repo_filepath)?;
+            repositories::add(&repo, &repo_filepath).await?;
 
-            // Remove a cat
+            // Remove a cat 
             let test_file = test::test_img_file_with_name("cat_2.jpg");
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
             util::fs::remove_file(&repo_filepath)?;
@@ -1208,7 +1208,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -1321,7 +1321,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &cats_dir)?;
+            repositories::add(&repo, &cats_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -1350,7 +1350,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, dogs_dir)?;
+            repositories::add(&repo, dogs_dir).await?;
             repositories::commit(&repo, "Adding dog images 🐕")?;
 
             // Set the proper remote
@@ -1452,7 +1452,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &cats_dir)?;
+            repositories::add(&repo, &cats_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -1481,7 +1481,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, dogs_dir)?;
+            repositories::add(&repo, dogs_dir).await?;
             repositories::commit(&repo, "Adding dog images")?;
 
             // Add dwight vince to the cats dir
@@ -1489,7 +1489,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, cats_dir)?;
+            repositories::add(&repo, cats_dir).await?;
             repositories::commit(&repo, "Adding dwight/vince image to cats")?;
 
             // Set the proper remote
@@ -1706,7 +1706,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -1795,7 +1795,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Get the current branch
@@ -1808,7 +1808,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Set the proper remote
@@ -1834,7 +1834,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::image::resize_and_save(&repo_filepath, &repo_filepath, dims)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Resized all the cats")?;
 
             // Remove one of the dogs
@@ -1848,7 +1848,7 @@ who won the game?,The packers beat up on the bears,packers
             let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding dwight and vince")?;
 
             // Push it real good

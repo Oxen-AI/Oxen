@@ -321,9 +321,9 @@ mod tests {
     use crate::util;
     use std::thread;
 
-    #[test]
-    fn test_concurrent_access() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_concurrent_access() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Spawn multiple threads to read/write concurrently
             let mut handles = vec![];
             for i in 0..5 {
@@ -356,16 +356,16 @@ mod tests {
             })?;
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_list_branches() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_branches() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             repositories::branches::create_from_head(&repo, "feature/add-something")?;
@@ -384,22 +384,22 @@ mod tests {
 
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_default_head() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_default_head() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 assert_eq!(manager.read_head_ref()?.unwrap(), DEFAULT_BRANCH_NAME);
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_create_branch_set_head() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_create_branch_set_head() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let branch_name = "experiment/cat-dog";
                 let commit_id = format!("{}", uuid::Uuid::new_v4());
@@ -408,24 +408,24 @@ mod tests {
                 assert_eq!(manager.head_commit_id()?, Some(commit_id));
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_list_branches_empty() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_branches_empty() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 // always start with a default branch
                 let branches = manager.list_branches()?;
                 assert_eq!(branches.len(), 1);
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_list_branches_one() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_branches_one() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let name = "my-branch";
                 let commit_id = format!("{}", uuid::Uuid::new_v4());
@@ -435,12 +435,12 @@ mod tests {
                 assert_eq!(branches.len(), 2);
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_list_branches_many() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_branches_many() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 // we always start with a default branch
                 manager.create_branch("name_1", "1")?;
@@ -450,12 +450,12 @@ mod tests {
                 assert_eq!(branches.len(), 4);
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_create_branch_same_name() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_create_branch_same_name() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 manager.create_branch("my-fun-name", "1")?;
 
@@ -466,12 +466,12 @@ mod tests {
                 assert_eq!(branches.len(), 2);
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_delete_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_delete_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let name = "my-branch-name";
                 manager.create_branch(name, "1234")?;
@@ -486,12 +486,12 @@ mod tests {
                 assert_eq!(branches.len(), og_branch_count - 1);
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_rename_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_rename_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let og_name = "my-branch-name";
                 manager.create_branch(og_name, "1234")?;
@@ -516,17 +516,17 @@ mod tests {
                 assert!(branches.iter().any(|b| b.name == new_name));
                 Ok(())
             })
-        })
+        }).await
     }
 
-    #[test]
-    fn test_invalid_branch_names() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_invalid_branch_names() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let result = manager.create_branch("my name", "1234");
                 assert!(result.is_err());
                 Ok(())
             })
-        })
+        }).await
     }
 }

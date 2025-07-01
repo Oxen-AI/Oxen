@@ -11,7 +11,7 @@ use glob::Pattern;
 
 use crate::util;
 
-pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
+pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     let path = &opts.path;
     let mut paths: HashSet<PathBuf> = HashSet::new();
 
@@ -51,7 +51,7 @@ pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenErro
     for path in paths {
         let mut opts = opts.clone();
         opts.path = path;
-        index::restore::restore(repo, opts)?;
+        index::restore::restore(repo, opts).await?;
     }
 
     Ok(())

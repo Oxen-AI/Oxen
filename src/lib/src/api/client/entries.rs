@@ -663,7 +663,7 @@ mod tests {
             util::fs::write_to_path(&root_file_path, "col1,col2,col3\n1,2,3\n4,5,6")?;
 
             // Commit the changes
-            repositories::add(&local_repo, &root_file_path)?;
+            repositories::add(&local_repo, &root_file_path).await?;
             repositories::commit(&local_repo, "adding sample.csv")?;
 
             // Push the changes to the remote
@@ -687,7 +687,7 @@ mod tests {
             util::fs::write_to_path(&dir_file_path, "col13,col23,col33\n13,23,33\n43,53,63")?;
 
             // Commit the changes
-            repositories::add(&local_repo, &dir_file_path)?;
+            repositories::add(&local_repo, &dir_file_path).await?;
             repositories::commit(&local_repo, "adding bounding_box.csv")?;
 
             // Push the changes to the remote

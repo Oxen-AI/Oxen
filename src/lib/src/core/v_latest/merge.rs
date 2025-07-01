@@ -45,7 +45,7 @@ impl MergeResult {
     }
 }
 
-pub fn has_conflicts(
+pub async fn has_conflicts(
     repo: &LocalRepository,
     base_branch: &Branch,
     merge_branch: &Branch,
@@ -55,7 +55,7 @@ pub fn has_conflicts(
     let merge_commit =
         repositories::commits::get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
 
-    let res = can_merge_commits(repo, &base_commit, &merge_commit)?;
+    let res = can_merge_commits(repo, &base_commit, &merge_commit).await?;
     Ok(!res)
 }
 
@@ -75,7 +75,7 @@ pub fn mark_conflict_as_resolved(repo: &LocalRepository, path: &Path) -> Result<
 
 /// Check if there are conflicts between the merge commit and the base commit
 /// Returns true if there are no conflicts, false if there are conflicts
-pub fn can_merge_commits(
+pub async fn can_merge_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
@@ -94,7 +94,7 @@ pub fn can_merge_commits(
 
     let write_to_disk = false;
     let mut _hashes = HashSet::new();
-    let conflicts = find_merge_conflicts(repo, &merge_commits, write_to_disk, &mut _hashes)?;
+    let conflicts = find_merge_conflicts(repo, &merge_commits, write_to_disk, &mut _hashes).await?;
     Ok(conflicts.is_empty())
 }
 
@@ -156,7 +156,7 @@ pub fn list_commits_between_commits(
     list_between(repo, &lca, head_commit)
 }
 
-pub fn list_conflicts_between_commits(
+pub async fn list_conflicts_between_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
@@ -169,7 +169,7 @@ pub fn list_conflicts_between_commits(
     };
     let write_to_disk = false;
     let mut _hashes = HashSet::new();
-    let conflicts = find_merge_conflicts(repo, &merge_commits, write_to_disk, &mut _hashes)?;
+    let conflicts = find_merge_conflicts(repo, &merge_commits, write_to_disk, &mut _hashes).await?;
     Ok(conflicts
         .iter()
         .map(|c| {
@@ -180,7 +180,7 @@ pub fn list_conflicts_between_commits(
 }
 
 /// Merge a branch into a base branch, returns the merge commit if successful, and None if there is conflicts
-pub fn merge_into_base(
+pub async fn merge_into_base(
     repo: &LocalRepository,
     merge_branch: &Branch,
     base_branch: &Branch,
@@ -213,11 +213,11 @@ pub fn merge_into_base(
         merge: merge_commit,
     };
 
-    merge_commits(repo, &commits)
+    merge_commits(repo, &commits).await
 }
 
 /// Merge into the current branch, returns the merge commit if successful, and None if there is conflicts
-pub fn merge(
+pub async fn merge(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
 ) -> Result<Option<Commit>, OxenError> {
@@ -234,10 +234,10 @@ pub fn merge(
         base: base_commit,
         merge: merge_commit,
     };
-    merge_commits(repo, &commits)
+    merge_commits(repo, &commits).await
 }
 
-pub fn merge_commit_into_base(
+pub async fn merge_commit_into_base(
     repo: &LocalRepository,
     merge_commit: &Commit,
     base_commit: &Commit,
@@ -255,10 +255,10 @@ pub fn merge_commit_into_base(
         merge: merge_commit.to_owned(),
     };
 
-    merge_commits(repo, &commits)
+    merge_commits(repo, &commits).await
 }
 
-pub fn merge_commit_into_base_on_branch(
+pub async fn merge_commit_into_base_on_branch(
     repo: &LocalRepository,
     merge_commit: &Commit,
     base_commit: &Commit,
@@ -279,7 +279,7 @@ pub fn merge_commit_into_base_on_branch(
         merge: merge_commit.to_owned(),
     };
 
-    merge_commits_on_branch(repo, &merge_commits, branch)
+    merge_commits_on_branch(repo, &merge_commits, branch).await
 }
 
 pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> {
@@ -326,7 +326,7 @@ pub fn find_merge_commits<S: AsRef<str>>(
     })
 }
 
-fn merge_commits_on_branch(
+async fn merge_commits_on_branch(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
     branch: &Branch,
@@ -349,7 +349,7 @@ fn merge_commits_on_branch(
 
     // Check which type of merge we need to do
     if merge_commits.is_fast_forward_merge() {
-        let commit = fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge)?;
+        let commit = fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge).await?;
         Ok(Some(commit))
     } else {
         log::debug!(
@@ -361,7 +361,7 @@ fn merge_commits_on_branch(
         let write_to_disk = true;
         let mut shared_hashes = HashSet::new();
         let conflicts =
-            find_merge_conflicts(repo, merge_commits, write_to_disk, &mut shared_hashes)?;
+            find_merge_conflicts(repo, merge_commits, write_to_disk, &mut shared_hashes).await?;
         log::debug!("Got {} conflicts", conflicts.len());
 
         if conflicts.is_empty() {
@@ -414,7 +414,7 @@ pub fn lowest_common_ancestor(
     lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)
 }
 
-fn fast_forward_merge(
+async fn fast_forward_merge(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
@@ -483,7 +483,7 @@ fn fast_forward_merge(
     if base_tree_results.cannot_overwrite_entries.is_empty() {
         let version_store = repo.version_store()?;
         for entry in merge_tree_results.entries_to_restore.iter() {
-            restore::restore_file(repo, &entry.file_node, &entry.path, &version_store)?;
+            restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
         }
 
         // TODO: Make a new struct called 'BaseResults' that's exactly like MergeResults, but with 'entries_to_remove' instead
@@ -688,7 +688,7 @@ fn r_ff_base_dir(
     Ok(())
 }
 
-fn merge_commits(
+async fn merge_commits(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
 ) -> Result<Option<Commit>, OxenError> {
@@ -711,7 +711,7 @@ fn merge_commits(
     // Check which type of merge we need to do
     if merge_commits.is_fast_forward_merge() {
         // User output
-        let commit = fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge)?;
+        let commit = fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge).await?;
         Ok(Some(commit))
     } else {
         log::debug!(
@@ -723,7 +723,7 @@ fn merge_commits(
         let write_to_disk = true;
         let mut shared_hashes = HashSet::new();
         let conflicts =
-            find_merge_conflicts(repo, merge_commits, write_to_disk, &mut shared_hashes)?;
+            find_merge_conflicts(repo, merge_commits, write_to_disk, &mut shared_hashes).await?;
 
         if !conflicts.is_empty() {
             println!(
@@ -863,7 +863,7 @@ pub fn lowest_common_ancestor_from_commits(
 }
 
 /// Will try a three way merge and return conflicts if there are any to indicate that the merge was unsuccessful
-pub fn find_merge_conflicts(
+pub async fn find_merge_conflicts(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
     write_to_disk: bool,
@@ -1033,7 +1033,7 @@ pub fn find_merge_conflicts(
     if cannot_overwrite_entries.is_empty() {
         let version_store = repo.version_store()?;
         for entry in entries_to_restore.iter() {
-            restore::restore_file(repo, &entry.file_node, &entry.path, &version_store)?;
+            restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
         }
     } else {
         // If there are conflicts, return an error without restoring anything

@@ -99,7 +99,7 @@ pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteReposito
     api::client::repositories::create_from_local(repo, repo_new).await
 }
 
-pub fn add_n_files_m_dirs(
+pub async fn add_n_files_m_dirs(
     repo: &LocalRepository,
     num_files: u64,
     num_dirs: u64,
@@ -117,7 +117,7 @@ pub fn add_n_files_m_dirs(
     let readme_file = repo.path.join("README.md");
     util::fs::write_to_path(&readme_file, format!("Repo with {} files", num_files))?;
 
-    repositories::add(repo, &readme_file)?;
+    repositories::add(repo, &readme_file).await?;
 
     // Write files.csv
     let files_csv = repo.path.join("files.csv");
@@ -142,8 +142,8 @@ pub fn add_n_files_m_dirs(
         util::fs::write_to_path(&file_file, format!("File {}", i))?;
     }
 
-    repositories::add(repo, &files_csv)?;
-    repositories::add(repo, &files_dir)?;
+    repositories::add(repo, &files_csv).await?;
+    repositories::add(repo, &files_dir).await?;
 
     Ok(())
 }
@@ -259,12 +259,12 @@ where
     let repo = repositories::init::init_with_version(&repo_dir, version)?;
 
     log::info!(">>>>> run_empty_local_repo_test running test");
-    let result = std::panic::catch_unwind(|| match test(repo) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
             panic!("Error running test. Err: {}", err);
         }
-    });
+    }));
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
@@ -301,7 +301,7 @@ where
     Ok(())
 }
 
-pub fn run_one_commit_local_repo_test<T>(test: T) -> Result<(), OxenError>
+pub async fn run_one_commit_local_repo_test<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
@@ -313,16 +313,16 @@ where
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&repo, &file_path)?;
+    repositories::add(&repo, &file_path).await?;
     repositories::commit(&repo, "Init commit")?;
 
     log::info!(">>>>> run_one_commit_local_repo_test running test");
-    let result = std::panic::catch_unwind(|| match test(repo) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
             panic!("Error running test. Err: {}", err);
         }
-    });
+    }));
 
     // Remove forked dir
     if new_repo_dir.exists() {
@@ -348,7 +348,7 @@ where
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&repo, &file_path)?;
+    repositories::add(&repo, &file_path).await?;
     repositories::commit(&repo, "Init commit")?;
 
     let result = match test(repo).await {
@@ -381,7 +381,7 @@ where
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&local_repo, &file_path)?;
+    repositories::add(&local_repo, &file_path).await?;
     repositories::commit(&local_repo, "Init commit")?;
 
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -444,7 +444,7 @@ where
         // Get random string
         let txt = generate_random_string(20);
         let file_path = add_txt_file_to_dir(&local_repo_dir, &txt)?;
-        repositories::add(&local_repo, &file_path)?;
+        repositories::add(&local_repo, &file_path).await?;
         repositories::commit(&local_repo, &format!("Adding file_{}", i))?;
     }
 
@@ -508,18 +508,18 @@ where
     Ok(())
 }
 
-pub fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenError> {
+pub async fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenError> {
     // Make a few commits before we sync
-    repositories::add(local_repo, local_repo.path.join("train"))?;
+    repositories::add(local_repo, local_repo.path.join("train")).await?;
     repositories::commit(local_repo, "Adding train/")?;
 
-    repositories::add(local_repo, local_repo.path.join("test"))?;
+    repositories::add(local_repo, local_repo.path.join("test")).await?;
     repositories::commit(local_repo, "Adding test/")?;
 
-    repositories::add(local_repo, local_repo.path.join("annotations"))?;
+    repositories::add(local_repo, local_repo.path.join("annotations")).await?;
     repositories::commit(local_repo, "Adding annotations/")?;
 
-    repositories::add(local_repo, local_repo.path.join("nlp"))?;
+    repositories::add(local_repo, local_repo.path.join("nlp")).await?;
     repositories::commit(local_repo, "Adding nlp/")?;
 
     // Remove the test dir to make a more complex history
@@ -533,13 +533,13 @@ pub fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenError> 
     repositories::commit(local_repo, "Removing test/")?;
 
     // Add all the files
-    repositories::add(local_repo, &local_repo.path)?;
+    repositories::add(local_repo, &local_repo.path).await?;
     // Commit all the data locally
     repositories::commit(local_repo, "Adding rest of data")?;
     Ok(())
 }
 
-pub fn run_local_repo_training_data_committed<T>(test: T) -> Result<(), OxenError>
+pub async fn run_local_repo_training_data_committed<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
@@ -550,15 +550,15 @@ where
 
     // Write all the training data files
     populate_dir_with_training_data(&repo_dir)?;
-    make_many_commits(&repo)?;
+    make_many_commits(&repo).await?;
 
     log::info!(">>>>> run_local_repo_training_data_committed running test");
-    let result = std::panic::catch_unwind(|| match test(repo) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
             panic!("Error running test. Err: {}", err);
         }
-    });
+    }));
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
@@ -583,7 +583,7 @@ where
     populate_dir_with_training_data(&repo_dir)?;
 
     // Make commits that add, rm, etc
-    make_many_commits(&local_repo)?;
+    make_many_commits(&local_repo).await?;
 
     // Create remote
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -631,7 +631,7 @@ where
     populate_select_training_data(&repo_dir, data)?;
 
     // Make a few commits before we sync
-    repositories::add(&local_repo, local_repo.path.join(data))?;
+    repositories::add(&local_repo, local_repo.path.join(data)).await?;
     repositories::commit(&local_repo, &format!("Adding {data}"))?;
 
     // Create remote
@@ -798,7 +798,7 @@ where
 
     // Add a README file
     util::fs::write_to_path(local_repo.path.join("README.md"), "Hello World")?;
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path).await?;
     repositories::commit(&local_repo, "Adding README")?;
 
     // Set the proper remote
@@ -899,7 +899,7 @@ where
 
     // Write all the files
     populate_dir_with_training_data(&local_repo.path)?;
-    add_all_data_to_repo(&local_repo)?;
+    add_all_data_to_repo(&local_repo).await?;
     repositories::commit(&local_repo, "Adding all data")?;
 
     // Set the proper remote
@@ -948,7 +948,7 @@ where
 
     // Write all the files
     create_bounding_box_csv(&local_repo.path)?;
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path).await?;
     log::debug!("about to commit bounding box csv");
     repositories::commit(&local_repo, "Adding bounding box csv")?;
     log::debug!("successfully committed bounding box csv");
@@ -999,7 +999,7 @@ where
 
     // Write all the files
     create_embeddings_jsonl(&local_repo.path)?;
-    repositories::add(&local_repo, &local_repo.path)?;
+    repositories::add(&local_repo, &local_repo.path).await?;
     log::debug!("about to commit embeddings jsonl");
     repositories::commit(&local_repo, "Adding embeddings jsonl")?;
     log::debug!("successfully committed embeddings jsonl");
@@ -1152,7 +1152,7 @@ where
     populate_select_training_data(&repo_dir, data)?;
 
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
     log::debug!("about to commit whole repo");
     // commit
     repositories::commit(&repo, "Adding all data")?;
@@ -1239,7 +1239,7 @@ where
     Ok(())
 }
 
-pub fn run_select_data_repo_test_no_commits<T>(data: &str, test: T) -> Result<(), OxenError>
+pub async fn run_select_data_repo_test_no_commits<T>(data: &str, test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
@@ -1253,12 +1253,12 @@ where
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_select_data_repo_test_no_commits running test");
-    let result = std::panic::catch_unwind(|| match test(repo) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
             panic!("Error running test. Err: {}", err);
         }
-    });
+    }));
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
@@ -1284,7 +1284,7 @@ where
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
     log::debug!("about to commit this repo");
     repositories::commit(&repo, "adding all data baby")?;
     log::debug!("successfully committed the repo");
@@ -1323,7 +1323,7 @@ where
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
     log::debug!("about to commit this repo");
     repositories::commit(&repo, "adding all data baby")?;
     log::debug!("successfully committed the repo");
@@ -1398,7 +1398,7 @@ where
     // Write all the files
     create_bounding_box_csv(&repo.path)?;
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
     repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
@@ -1420,7 +1420,7 @@ where
 }
 
 /// Run a test on a repo with just a nested annotations/train/bounding_box.csv file
-pub fn run_bounding_box_csv_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
+pub async fn run_bounding_box_csv_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
@@ -1431,7 +1431,7 @@ where
 
     // Add all the files
     create_bounding_box_csv(&repo.path)?;
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
     repositories::commit(&repo, "adding all data baby")?;
 
     // Run test to see if it panic'd
@@ -1452,7 +1452,7 @@ where
     Ok(())
 }
 
-pub fn run_compare_data_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
+pub async fn run_compare_data_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
@@ -1498,7 +1498,7 @@ where
 71,241,M,1,no",
     )?;
 
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
     repositories::commit(&repo, "adding both csvs for compare")?;
 
     log::info!(">>>>> run_compare_data_repo_test_fully_committed running test");
@@ -1517,52 +1517,52 @@ where
 }
 
 /// Run a test on a repo with a bunch of files
-pub fn run_training_data_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
-where
-    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
-{
-    init_test_env();
-    log::info!("<<<<< run_training_data_repo_test_fully_committed start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
-    // Write all the files
-    populate_dir_with_training_data(&repo_dir)?;
+// pub async fn run_training_data_repo_test_fully_committed<T>(test: T) -> Result<(), OxenError>
+// where
+//     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+// {
+//     init_test_env();
+//     log::info!("<<<<< run_training_data_repo_test_fully_committed start");
+//     let repo_dir = create_repo_dir(test_run_dir())?;
+//     let repo = repositories::init(&repo_dir)?;
+//     // Write all the files
+//     populate_dir_with_training_data(&repo_dir)?;
 
-    // Add all the files
-    repositories::add(&repo, &repo.path)?;
+//     // Add all the files
+//     repositories::add(&repo, &repo.path).await?;
 
-    // Get the status and print it
-    let status = repositories::status(&repo)?;
-    println!("setup status: {status:?}");
-    status.print();
+//     // Get the status and print it
+//     let status = repositories::status(&repo)?;
+//     println!("setup status: {status:?}");
+//     status.print();
 
-    // Commit the data
-    repositories::commit(&repo, "adding all data baby")?;
+//     // Commit the data
+//     repositories::commit(&repo, "adding all data baby")?;
 
-    // Run test to see if it panic'd
-    log::info!(">>>>> run_training_data_repo_test_fully_committed running test");
-    let result = std::panic::catch_unwind(|| match test(repo) {
-        Ok(_) => {}
-        Err(err) => {
-            panic!("Error running test. Err: {}", err);
-        }
-    });
+//     // Run test to see if it panic'd
+//     log::info!(">>>>> run_training_data_repo_test_fully_committed running test");
+//     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
+//         Ok(_) => {}
+//         Err(err) => {
+//             panic!("Error running test. Err: {}", err);
+//         }
+//     }));
 
-    // Remove repo dir
-    maybe_cleanup_repo(&repo_dir)?;
+//     // Remove repo dir
+//     maybe_cleanup_repo(&repo_dir)?;
 
-    // Assert everything okay after we cleanup the repo dir
-    match result {
-        Ok(_) => {}
-        Err(err) => {
-            panic!("Error running test. Err: {:?}", err);
-        }
-    }
-    Ok(())
-}
+//     // Assert everything okay after we cleanup the repo dir
+//     match result {
+//         Ok(_) => {}
+//         Err(err) => {
+//             panic!("Error running test. Err: {:?}", err);
+//         }
+//     }
+//     Ok(())
+// }
 
 /// Run a test on a repo with a bunch of files
-pub fn run_training_data_repo_test_fully_committed_w_version<T>(
+pub async fn run_training_data_repo_test_fully_committed_w_version<T>(
     version: MinOxenVersion,
     test: T,
 ) -> Result<(), OxenError>
@@ -1577,7 +1577,7 @@ where
     populate_dir_with_training_data(&repo_dir)?;
 
     // Add all the files
-    repositories::add(&repo, &repo.path)?;
+    repositories::add(&repo, &repo.path).await?;
 
     // Get the status and print it
     let status = repositories::status(&repo)?;
@@ -1589,12 +1589,12 @@ where
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_training_data_repo_test_fully_committed running test");
-    let result = std::panic::catch_unwind(|| match test(repo) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
             panic!("Error running test. Err: {}", err);
         }
-    });
+    }));
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
@@ -1604,14 +1604,14 @@ where
     Ok(())
 }
 
-fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
-    repositories::add(repo, repo.path.join("train"))?;
-    repositories::add(repo, repo.path.join("test"))?;
-    repositories::add(repo, repo.path.join("annotations"))?;
-    repositories::add(repo, repo.path.join("large_files"))?;
-    repositories::add(repo, repo.path.join("nlp"))?;
-    repositories::add(repo, repo.path.join("labels.txt"))?;
-    repositories::add(repo, repo.path.join("README.md"))?;
+async fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
+    repositories::add(repo, repo.path.join("train")).await?;
+    repositories::add(repo, repo.path.join("test")).await?;
+    repositories::add(repo, repo.path.join("annotations")).await?;
+    repositories::add(repo, repo.path.join("large_files")).await?;
+    repositories::add(repo, repo.path.join("nlp")).await?;
+    repositories::add(repo, repo.path.join("labels.txt")).await?;
+    repositories::add(repo, repo.path.join("README.md")).await?;
 
     Ok(())
 }

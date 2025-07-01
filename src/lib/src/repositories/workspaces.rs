@@ -563,9 +563,9 @@ mod tests {
             let goodbye_file = repo.path.join("goodbye.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
             util::fs::write_to_path(&goodbye_file, "Goodbye")?;
-            repositories::add(&repo, &hello_file)?;
-            repositories::add(&repo, &goodbye_file)?;
-            let commit = repositories::commit(&repo, "Adding hello and goodbye files")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::add(&repo, &goodbye_file).await?;
+            let commit = repositories::commit(&repo, "Adding hello and goodbye files").await?;
 
             {
                 // Create temporary workspace in new scope
@@ -574,7 +574,7 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file)?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -594,7 +594,7 @@ mod tests {
                 // Update the goodbye file in the temporary workspace
                 let workspace_goodbye_file = temp_workspace.dir().join("goodbye.txt");
                 util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file)?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file).await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -619,7 +619,7 @@ mod tests {
             // Both workspaces try to commit the same file
             let hello_file = repo.path.join("greetings").join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file).await?;
             let commit = repositories::commit(&repo, "Adding hello file")?;
 
             {
@@ -629,7 +629,7 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file)?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -649,7 +649,7 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file)?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
                 // Commit the changes to the "main" branch
                 let result = repositories::workspaces::commit(
                     &temp_workspace,
@@ -679,9 +679,9 @@ mod tests {
             let goodbye_file = repo.path.join("greetings").join("goodbye.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
             util::fs::write_to_path(&goodbye_file, "Goodbye")?;
-            repositories::add(&repo, &hello_file)?;
-            repositories::add(&repo, &goodbye_file)?;
-            let commit = repositories::commit(&repo, "Adding hello and goodbye files")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::add(&repo, &goodbye_file).await?;
+            let commit = repositories::commit(&repo, "Adding hello and goodbye files").await?;
 
             {
                 // Create temporary workspace in new scope
@@ -690,7 +690,7 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file)?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -711,7 +711,7 @@ mod tests {
                 let workspace_goodbye_file =
                     temp_workspace.dir().join("greetings").join("goodbye.txt");
                 util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file)?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file).await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -735,8 +735,8 @@ mod tests {
             // Write a test file and commit it
             let test_file = repo.path.join("test.txt");
             util::fs::write_to_path(&test_file, "Hello")?;
-            repositories::add(&repo, &test_file)?;
-            let commit = repositories::commit(&repo, "Adding test file")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file").await?;
             let workspaces_dir = repo.path.join(".oxen").join("workspaces");
 
             {
@@ -775,9 +775,9 @@ mod tests {
             let file2 = repo.path.join("dir2").join("file2.txt");
             util::fs::write_to_path(&file1, "File 1 content")?;
             util::fs::write_to_path(&file2, "File 2 content")?;
-            repositories::add(&repo, &file1)?;
-            repositories::add(&repo, &file2)?;
-            let _commit = repositories::commit(&repo, "Adding initial files")?;
+            repositories::add(&repo, &file1).await?;
+            repositories::add(&repo, &file2).await?;
+            let _commit = repositories::commit(&repo, "Adding initial files").await?;
             repositories::push(&repo).await?;
 
             // Create two workspaces

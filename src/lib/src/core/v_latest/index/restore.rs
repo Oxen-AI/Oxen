@@ -20,7 +20,7 @@ pub struct FileToRestore {
     pub path: PathBuf,
 }
 
-pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
+pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore: start");
     if opts.staged {
         log::debug!("restore::restore: handling staged restore");
@@ -40,7 +40,7 @@ pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenErro
     match dir {
         Some(dir) => {
             log::debug!("restore::restore: restoring directory");
-            restore_dir(repo, dir, &path, &version_store)
+            restore_dir(repo, dir, &path, &version_store).await
         }
         None => {
             log::debug!("restore::restore: restoring file");
@@ -56,7 +56,7 @@ pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenErro
 
                     let child_file = merkle_tree.root.file().unwrap();
 
-                    restore_file(repo, &child_file, &path, &version_store)
+                    restore_file(repo, &child_file, &path, &version_store).await
                 }
                 Err(OxenError::Basic(msg))
                     if msg.to_string().contains("Merkle tree hash not found") =>
@@ -169,7 +169,7 @@ fn open_staged_db(db_path: &Path) -> Result<Option<DBWithThreadMode<SingleThread
     }
 }
 
-fn restore_dir(
+async fn restore_dir(
     repo: &LocalRepository,
     dir: MerkleTreeNode,
     path: &PathBuf,
@@ -197,23 +197,22 @@ fn restore_dir(
         );
     }
 
-    file_nodes_with_paths
-        .iter()
-        .for_each(|(file_node, file_path)| {
-            existing_files.remove(file_path);
+    // Changed from for_each to regular for loop to support async/await
+    for (file_node, file_path) in file_nodes_with_paths.iter() {
+        existing_files.remove(file_path);
 
-            match restore_file(repo, file_node, file_path, version_store) {
-                Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
-                Err(e) => {
-                    log::error!(
-                        "restore::restore_dir: error restoring file {:?}: {:?}",
-                        file_path,
-                        e
-                    );
-                }
+        match restore_file(repo, file_node, file_path, version_store).await {
+            Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
+            Err(e) => {
+                log::error!(
+                    "restore::restore_dir: error restoring file {:?}: {:?}",
+                    file_path,
+                    e
+                );
             }
-            bar.inc(1);
-        });
+        }
+        bar.inc(1);
+    }
 
     for file_to_remove in existing_files {
         fs::remove_file(file_to_remove)?;
@@ -338,7 +337,7 @@ pub fn should_restore_file(
     Ok(true)
 }
 
-pub fn restore_file(
+pub async fn restore_file(
     repo: &LocalRepository,
     file_node: &FileNode,
     path: impl AsRef<Path>,
@@ -355,7 +354,7 @@ pub fn restore_file(
 
     // Use the version store to copy the file to the working path
     let hash_str = file_hash.to_string();
-    version_store.copy_version_to_path(&hash_str, &working_path)?;
+    version_store.copy_version_to_path(&hash_str, &working_path).await?;
 
     let last_modified = std::time::SystemTime::UNIX_EPOCH
         + std::time::Duration::from_secs(last_modified_seconds as u64)

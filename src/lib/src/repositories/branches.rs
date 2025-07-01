@@ -448,9 +448,9 @@ mod tests {
     use crate::test;
     use crate::util;
 
-    #[test]
-    fn test_list_branch_versions_main() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_branch_versions_main() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
@@ -462,7 +462,7 @@ mod tests {
             util::fs::write_to_path(&file_repo_path, "test")?;
 
             // Add the dir
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit_1 = repositories::commit(&repo, "adding test dir")?;
 
             // New file in root
@@ -471,7 +471,7 @@ mod tests {
             util::fs::write_to_path(&file_repo_path_2, "test")?;
 
             // Add the file
-            repositories::add(&repo, &file_repo_path_2)?;
+            repositories::add(&repo, &file_repo_path_2).await?;
             let commit_2 = repositories::commit(&repo, "adding test file")?;
 
             // Now modify both files, add a third
@@ -483,7 +483,7 @@ mod tests {
             util::fs::write_to_path(&file_repo_path, "something different now")?;
 
             // Add-commit all
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
 
             let commit_3 = repositories::commit(&repo, "adding test file 2")?;
 
@@ -520,9 +520,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_list_branch_versions_branch_off_main() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_list_branch_versions_branch_off_main() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir_path = Path::new("test_dir");
             util::fs::create_dir_all(repo.path.join(dir_path))?;
 
@@ -533,19 +533,19 @@ mod tests {
 
             // Write initial file
             util::fs::write_to_path(&file_repo_path, "test")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit_1 = repositories::commit(&repo, "adding test file")?;
 
             // Change it
             util::fs::write_to_path(&file_repo_path, "something different now")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit_2 = repositories::commit(&repo, "adding test file 2")?;
 
             // Add an irrelevant file - aka this isn't changing for commit 3
             let file_path_2 = Path::new("test_file_2.txt");
             let file_repo_path_2 = repo.path.join(file_path_2);
             util::fs::write_to_path(file_repo_path_2, "test")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let _commit_3 = repositories::commit(&repo, "adding test file 3")?;
 
             // Branch off of main
@@ -553,12 +553,12 @@ mod tests {
 
             // Change the file again
             util::fs::write_to_path(&file_repo_path, "something different now again")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit_4 = repositories::commit(&repo, "adding test file 4")?;
 
             // One more time on branch
             util::fs::write_to_path(&file_repo_path, "something different now again again")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit_5 = repositories::commit(&repo, "adding test file 5")?;
 
             // Back to main - hacky to avoid async checkout
@@ -569,7 +569,7 @@ mod tests {
 
             // Another commit
             util::fs::write_to_path(&file_repo_path, "something different now again again again")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
             let commit_6 = repositories::commit(&repo, "adding test file 6")?;
 
             let _main = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?.unwrap();

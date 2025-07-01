@@ -12,10 +12,10 @@ pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, Oxe
     }
 }
 
-pub fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub async fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::add(workspace, path),
+        _ => core::v_latest::workspaces::files::add(workspace, path).await,
     }
 }
 

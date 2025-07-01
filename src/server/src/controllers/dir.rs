@@ -79,7 +79,7 @@ mod tests {
         // add the full dir
         let train_dir = repo.path.join(Path::new("train"));
         let num_entries = util::fs::rcount_files_in_dir(&train_dir);
-        repositories::add(&repo, &train_dir)?;
+        repositories::add(&repo, &train_dir).await?;
 
         // commit the changes
         let commit = repositories::commit(&repo, "adding training dir")?;

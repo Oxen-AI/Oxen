@@ -156,7 +156,7 @@ pub async fn put(
 
     for file in files.iter() {
         log::debug!("file::put add file {:?}", file);
-        let path = repositories::workspaces::files::add(&workspace, file)?;
+        let path = repositories::workspaces::files::add(&workspace, file).await?;
         log::debug!("file::put add file ✅ success! staged file {:?}", path);
     }
 
@@ -321,7 +321,7 @@ mod tests {
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file).await?;
         let _commit = repositories::commit(&repo, "First commit")?;
 
         // Create multipart request data
@@ -389,7 +389,7 @@ mod tests {
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file).await?;
         let _commit = repositories::commit(&repo, "First commit")?;
 
         let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/data");

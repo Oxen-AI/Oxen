@@ -74,7 +74,7 @@ mod tests {
                 let path = dir.join(format!("file_{}.txt", i));
                 util::fs::write_to_path(&path, format!("lol hi {}", i))?;
             }
-            repositories::add(&repo, &dir)?;
+            repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
@@ -121,7 +121,7 @@ mod tests {
             let large_file_data = vec![0u8; large_file_size as usize];
             std::fs::write(&large_file_path, large_file_data)?;
 
-            repositories::add(&repo, &dir)?;
+            repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files and large file")?;
 
             // Set the proper remote
@@ -167,7 +167,7 @@ mod tests {
                 let path = dir.join(format!("file_{}.txt", i));
                 util::fs::write_to_path(&path, format!("lol hi {}", i))?;
             }
-            repositories::add(&repo, &dir)?;
+            repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
@@ -210,7 +210,7 @@ mod tests {
             let file_contents = "Hello World";
             util::fs::write_to_path(local_path, file_contents)?;
 
-            repositories::add(&local_repo, local_path)?;
+            repositories::add(&local_repo, local_path).await?;
             repositories::commit(&local_repo, "Added hello.txt")?;
 
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, cloned_remote.url())?;

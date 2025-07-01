@@ -228,7 +228,7 @@ mod tests {
                     local_repo.path.join(file_path),
                     format!("File content {}", i),
                 )?;
-                repositories::add(&local_repo, &local_repo.path)?;
+                repositories::add(&local_repo, &local_repo.path).await?;
 
                 let commit_message = format!("Commit {}", i);
                 let commit = repositories::commit(&local_repo, &commit_message)?;
@@ -266,7 +266,7 @@ mod tests {
             let full_path = &local_repo.path.join(file_path);
 
             test::write_txt_file_to_path(full_path, "i am the contents of test_me_out.txt")?;
-            repositories::add(&local_repo, &local_repo.path)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
 
             let commit_message = "add test_me_out.txt";
             let new_commit = repositories::commit(&local_repo, commit_message)?;
@@ -317,14 +317,14 @@ mod tests {
             let full_path = &local_repo.path.join(file_path);
 
             test::write_txt_file_to_path(full_path, "image,label\n1,2\n3,4\n5,6")?;
-            repositories::add(&local_repo, &local_repo.path)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
 
             let commit_message = "add test_me_out.csv";
             let og_commit = repositories::commit(&local_repo, commit_message)?;
 
             // Add another row
             test::write_txt_file_to_path(full_path, "image,label\n1,2\n3,4\n5,6\n7,8")?;
-            repositories::add(&local_repo, &local_repo.path)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
             let new_commit = repositories::commit(&local_repo, commit_message)?;
 
             // Set remote
@@ -413,7 +413,7 @@ mod tests {
                 util::fs::create_dir_all(full_path.parent().unwrap())?;
 
                 test::write_txt_file_to_path(full_path, format!("File content {}", i))?;
-                repositories::add(&local_repo, &local_repo.path)?;
+                repositories::add(&local_repo, &local_repo.path).await?;
 
                 let commit_message = format!("Commit {}", i);
                 let commit = repositories::commit(&local_repo, &commit_message)?;
@@ -460,7 +460,7 @@ mod tests {
             test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
             test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
 
-            repositories::add(&local_repo, &local_repo.path)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
 
             repositories::commit(&local_repo, "committing files")?;
 
@@ -561,7 +561,7 @@ mod tests {
             test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
             test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
 
-            repositories::add(&local_repo, &local_repo.path)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "committing files")?;
 
             // set remote
@@ -646,7 +646,7 @@ mod tests {
             // let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8\n0,1,9,2";
 
             test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
-            repositories::add(&local_repo, &local_repo.path)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "committing files")?;
             repositories::push(&local_repo).await?;
 

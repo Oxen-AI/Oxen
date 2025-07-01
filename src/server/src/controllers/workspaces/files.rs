@@ -77,7 +77,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 
     for file in files.iter() {
         log::debug!("add_file file {:?}", file);
-        let path = repositories::workspaces::files::add(&workspace, file)?;
+        let path = repositories::workspaces::files::add(&workspace, file).await?;
         log::debug!("add_file ✅ success! staged file {:?}", path);
         ret_files.push(path);
     }

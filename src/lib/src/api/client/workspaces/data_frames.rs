@@ -867,7 +867,7 @@ mod tests {
             let dst_path = local_repo.path.join(file_name);
             util::fs::copy(&path, &dst_path)?;
 
-            repositories::add(&local_repo, dst_path)?;
+            repositories::add(&local_repo, &dst_path).await?;
             repositories::commit(&local_repo, "add binary column parquet file")?;
             command::config::set_remote(
                 &mut local_repo,

@@ -29,7 +29,7 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Err(OxenHttpError::NotFound);
     }
 
-    let data = repo.version_store()?.get_version(&version_id)?;
+    let data = repo.version_store()?.get_version(&version_id).await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
@@ -55,8 +55,19 @@ pub async fn download(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let version_store = repo.version_store()?;
 
     // TODO: stream the file
-    let file_data = version_store.get_version(&version_id)?;
-    Ok(HttpResponse::Ok().body(file_data))
+    let stream = version_store.get_version_stream(&version_id).await?;
+    
+    // convert the error to actix-web error
+    let byte_stream = stream.map(|result| {
+        result.map_err(|e| {
+            log::error!("Stream error: {}", e);
+            actix_web::error::ErrorInternalServerError(e.to_string())
+        })
+    });
+    
+    Ok(HttpResponse::Ok()
+        .content_type("application/octet-stream")
+        .streaming(byte_stream))
 }
 
 pub async fn batch_upload(
@@ -120,11 +131,11 @@ pub async fn save_multiparts(
                     })
                     .unwrap_or(false);
 
-                let version_store_copy = version_store.clone();
                 let upload_filehash_copy = upload_filehash.clone();
 
-                match actix_web::web::block(move || -> Result<(), OxenError> {
-                    let data_to_store = if is_gzipped {
+                // decompress the data if it is gzipped
+                let data_to_store = match actix_web::web::block(move || -> Result<Vec<u8>, OxenError> {
+                    if is_gzipped {
                         log::debug!(
                             "Decompressing gzipped data for hash: {}",
                             &upload_filehash_copy
@@ -137,25 +148,50 @@ pub async fn save_multiparts(
                                 e
                             ))
                         })?;
-                        decompressed_bytes
+                        Ok(decompressed_bytes)
                     } else {
                         log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
-                        field_bytes
-                    };
-
-                    version_store_copy
-                        .store_version(&upload_filehash_copy, &data_to_store)
-                        .map_err(|e| {
-                            OxenError::basic_str(format!("Failed to store version: {}", e))
-                        })?;
-                    Ok(())
+                        Ok(field_bytes)
+                    }
                 })
                 .await
                 {
-                    Ok(Ok(_)) => {
+                    Ok(Ok(data)) => data,
+                    Ok(Err(e)) => {
+                        log::error!(
+                            "Failed to decompress data for hash {}: {}",
+                            &upload_filehash,
+                            e
+                        );
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.clone(),
+                            None,
+                            format!("Failed to decompress data: {}", e),
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to execute blocking decompression task for hash {}: {}",
+                            &upload_filehash,
+                            e
+                        );
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.clone(),
+                            None,
+                            format!("Failed to execute blocking decompression: {}", e),
+                        );
+                        continue;
+                    }
+                };
+
+                match version_store.store_version(&upload_filehash, &data_to_store).await {
+                    Ok(_) => {
                         log::info!("Successfully stored version for hash: {}", &upload_filehash);
                     }
-                    Ok(Err(e)) => {
+                    Err(e) => {
                         log::error!(
                             "Failed to store version for hash {}: {}",
                             &upload_filehash,
@@ -166,20 +202,6 @@ pub async fn save_multiparts(
                             upload_filehash.clone(),
                             None,
                             format!("Failed to store version: {}", e),
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to execute blocking task when storing version for hash {}: {}",
-                            &upload_filehash,
-                            e
-                        );
-                        record_error_file(
-                            &mut err_files,
-                            upload_filehash.clone(),
-                            None,
-                            format!("Failed to execute blocking when storing version: {}", e),
                         );
                         continue;
                     }
@@ -234,7 +256,7 @@ mod tests {
         let hello_file = repo.path.join("data/hello.txt");
         let file_content = "Hello";
         util::fs::write_to_path(&hello_file, file_content)?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file).await?;
         repositories::commit(&repo, "First commit")?;
 
         // get file version id
@@ -276,7 +298,7 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "first commit")?;
 
         let file_content = "Test Content";
@@ -325,7 +347,7 @@ mod tests {
 
         // verify file is stored correctly
         let version_store = repo.version_store()?;
-        let stored_data = version_store.get_version(&file_hash)?;
+        let stored_data = version_store.get_version(&file_hash).await?;
         assert_eq!(stored_data, file_content.as_bytes());
 
         // cleanup

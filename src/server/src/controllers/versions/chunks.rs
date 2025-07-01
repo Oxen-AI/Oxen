@@ -51,7 +51,7 @@ pub async fn upload(
         let chunk = chunk.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
         buffered.extend_from_slice(&chunk);
     }
-    version_store.store_version_chunk(&version_id, chunk_number, &buffered)?;
+    version_store.store_version_chunk(&version_id, chunk_number, &buffered).await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }
@@ -80,7 +80,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
         log::debug!("Received {} chunks", file.upload_results.len());
         let version_store = repo.version_store()?;
 
-        let chunks = version_store.list_version_chunks(&version_id)?;
+        let chunks = version_store.list_version_chunks(&version_id).await?;
         log::debug!("Found {} chunks", chunks.len());
 
         if chunks.len() != file.upload_results.len() {
@@ -95,7 +95,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         // Combine all the chunks for a version file into a single file
         let cleanup = true;
-        let version_path = version_store.combine_version_chunks(&version_id, cleanup)?;
+        let version_path = version_store.combine_version_chunks(&version_id, cleanup).await?;
 
         // If the workspace id is provided, stage the file
         if let Some(workspace_id) = request.workspace_id {

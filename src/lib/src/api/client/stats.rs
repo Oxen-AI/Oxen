@@ -59,7 +59,7 @@ mod tests {
             let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
             util::fs::copy(from_file, &csv_file)?;
 
-            repositories::add(&local_repo, &csv_file)?;
+            repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
 
             // Set the proper remote

@@ -179,7 +179,7 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     Ok(())
 }
 
-pub fn rename(
+pub async fn rename(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
@@ -203,70 +203,74 @@ pub fn rename(
     util::fs::remove_dir_all(og_db_path_parent)?;
 
     // Use staged_db_manager
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
+    let mut staged_entry = with_staged_db_manager(workspace_repo, |staged_db_manager| {
         // Try to read existing staged entry
-        let mut staged_entry = staged_db_manager.read_from_staged_db(path)?;
+        staged_db_manager.read_from_staged_db(path)?
+    })?;
 
-        if staged_entry.is_none() {
-            let workspace_file_path = workspace.workspace_repo.path.join(new_path);
+    if staged_entry.is_none() {
+        let workspace_file_path = workspace.workspace_repo.path.join(new_path);
 
-            // Export the file from the version path to the new path
-            if let Some(existing_file_node) =
-                repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            {
-                let version_path = util::fs::version_path_from_node(
-                    &workspace.base_repo,
-                    existing_file_node.hash().to_string(),
-                    path,
-                );
-                log::debug!(
-                    "rename: copying version path: {:?} to {:?}",
-                    version_path,
-                    workspace_file_path
-                );
-                util::fs::copy_mkdir(version_path, &workspace_file_path)?;
-            }
-
-            // Check if the new path exists in the merkle tree, if it does, it is modified
-            let is_modified = repositories::tree::get_file_by_path(
+        // Export the file from the version path to the new path
+        if let Some(existing_file_node) =
+            repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
+        {
+            let version_path = util::fs::version_path_from_node(
                 &workspace.base_repo,
-                &workspace.commit,
-                new_path,
-            )?
-            .is_some();
+                existing_file_node.hash().to_string(),
+                path,
+            );
             log::debug!(
-                "rename is_modified: {:?} workspace_file_path: {:?}",
-                is_modified,
+                "rename: copying version path: {:?} to {:?}",
+                version_path,
                 workspace_file_path
             );
-
-            if is_modified {
-                track_modified_data_frame(workspace, new_path)?;
-            } else {
-                add(workspace, &workspace_file_path)?;
-            }
-
-            // Read the staged entry again after adding
-            staged_entry = staged_db_manager.read_from_staged_db(new_path)?;
-            log::debug!("rename: staged_entry after add: {:?}", staged_entry);
+            util::fs::copy_mkdir(version_path, &workspace_file_path)?;
         }
 
-        let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(format!(
-            "rename: staged entry not found: {:?}",
-            path
-        )))?;
+        // Check if the new path exists in the merkle tree, if it does, it is modified
+        let is_modified = repositories::tree::get_file_by_path(
+            &workspace.base_repo,
+            &workspace.commit,
+            new_path,
+        )?
+        .is_some();
+        log::debug!(
+            "rename is_modified: {:?} workspace_file_path: {:?}",
+            is_modified,
+            workspace_file_path
+        );
 
-        // Update the file name in the staged entry
-        if let EMerkleTreeNode::File(file) = &mut new_staged_entry.node.node {
-            file.set_name(new_path.to_str().unwrap());
+        if is_modified {
+            track_modified_data_frame(workspace, new_path)?;
+        } else {
+            add(workspace, &workspace_file_path).await?;
         }
 
-        // Set status to Added since we're moving to a new location
-        new_staged_entry.status = StagedEntryStatus::Added;
+        // Read the staged entry again after adding
+        staged_entry = with_staged_db_manager(workspace_repo, |staged_db_manager| {
+            staged_db_manager.read_from_staged_db(new_path)?
+        })?;
+        log::debug!("rename: staged_entry after add: {:?}", staged_entry);
+    }
 
-        // Get the file node from the staged entry
-        let file_node = new_staged_entry.node.file()?;
+    let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(format!(
+        "rename: staged entry not found: {:?}",
+        path
+    )))?;
 
+    // Update the file name in the staged entry
+    if let EMerkleTreeNode::File(file) = &mut new_staged_entry.node.node {
+        file.set_name(new_path.to_str().unwrap());
+    }
+
+    // Set status to Added since we're moving to a new location
+    new_staged_entry.status = StagedEntryStatus::Added;
+
+    // Get the file node from the staged entry
+    let file_node = new_staged_entry.node.file()?;
+
+    with_staged_db_manager(workspace_repo, |staged_db_manager| {
         // Add the file node at the new path using staged_db_manager
         staged_db_manager.upsert_file_node(new_path, new_staged_entry.status, &file_node)?;
 

@@ -379,10 +379,9 @@ pub async fn multipart_batch_upload(
             continue;
         }
 
-        let reader = version_store.open_version(&file_hash)?;
+        let data = version_store.get_version(&file_hash).await?;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        let mut buf_reader = std::io::BufReader::new(reader);
-        std::io::copy(&mut buf_reader, &mut encoder)?;
+        std::io::copy(&mut data.as_slice(), &mut encoder)?;
         let compressed_bytes = match encoder.finish() {
             Ok(bytes) => bytes,
             Err(e) => {

@@ -1249,7 +1249,7 @@ mod tests {
             // Add and commit a new file
             let file_path = local_repo.path.join("test.txt");
             let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
-            repositories::add(&local_repo, &file_path)?;
+            repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
             let commit_hash = MerkleHash::from_str(&commit.id)?;
 

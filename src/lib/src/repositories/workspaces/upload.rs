@@ -42,7 +42,7 @@ mod tests {
                 let path = dir.join(format!("file_{}.txt", i));
                 util::fs::write_to_path(&path, format!("lol hi {}", i))?;
             }
-            repositories::add(&repo, &dir)?;
+            repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
@@ -101,7 +101,7 @@ mod tests {
                 let path = dir.join(format!("file_{}.txt", i));
                 util::fs::write_to_path(&path, format!("lol hi {}", i))?;
             }
-            repositories::add(&repo, &dir)?;
+            repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
@@ -163,7 +163,7 @@ mod tests {
                 let path = dir.join(format!("file_{}.txt", i));
                 util::fs::write_to_path(&path, format!("lol hi {}", i))?;
             }
-            repositories::add(&repo, &dir)?;
+            repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote

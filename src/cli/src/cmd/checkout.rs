@@ -55,7 +55,7 @@ impl RunCmd for CheckoutCmd {
                 ));
             };
 
-            self.checkout_ours(&repo, name)?
+            self.checkout_ours(&repo, name).await?
         } else if args.get_flag("theirs") {
             let Some(name) = args.get_one::<String>("name") else {
                 return Err(OxenError::basic_str(
@@ -63,7 +63,7 @@ impl RunCmd for CheckoutCmd {
                 ));
             };
 
-            self.checkout_theirs(&repo, name)?
+            self.checkout_theirs(&repo, name).await?
         } else if let Some(name) = args.get_one::<String>("name") {
             self.checkout(&repo, name).await?;
         }
@@ -89,13 +89,13 @@ impl CheckoutCmd {
         }
         Ok(())
     }
-    pub fn checkout_theirs(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
-        repositories::checkout::checkout_theirs(repo, path)?;
+    pub async fn checkout_theirs(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
+        repositories::checkout::checkout_theirs(repo, path).await?;
         Ok(())
     }
 
-    pub fn checkout_ours(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
-        repositories::checkout::checkout_ours(repo, path)?;
+    pub async fn checkout_ours(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
+        repositories::checkout::checkout_ours(repo, path).await?;
         Ok(())
     }
 

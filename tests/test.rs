@@ -6,9 +6,9 @@ use liboxen::error::OxenError;
 use liboxen::repositories;
 use liboxen::test;
 
-#[test]
-fn test_oxen_ignore_file() -> Result<(), OxenError> {
-    test::run_training_data_repo_test_fully_committed(|repo| {
+#[tokio::test]
+async fn test_oxen_ignore_file() -> Result<(), OxenError> {
+    test::run_training_data_repo_test_fully_committed_async(|repo| async move {
         // Add a file that we are going to ignore
         let ignore_filename = "ignoreme.txt";
         let ignore_path = repo.path.join(ignore_filename);
@@ -26,12 +26,12 @@ fn test_oxen_ignore_file() -> Result<(), OxenError> {
         );
 
         Ok(())
-    })
+    }).await
 }
 
-#[test]
-fn test_oxen_ignore_dir() -> Result<(), OxenError> {
-    test::run_training_data_repo_test_fully_committed(|repo| {
+#[tokio::test]
+async fn test_oxen_ignore_dir() -> Result<(), OxenError> {
+    test::run_training_data_repo_test_fully_committed_async(|repo| async move {
         // Add a file that we are going to ignore
         let ignore_dir = "ignoreme/";
         let ignore_path = repo.path.join(ignore_dir);
@@ -51,5 +51,5 @@ fn test_oxen_ignore_dir() -> Result<(), OxenError> {
         );
 
         Ok(())
-    })
+    }).await
 }

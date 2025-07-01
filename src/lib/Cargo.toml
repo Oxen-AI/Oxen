@@ -27,6 +27,7 @@ approx = "0.5.1"
 async-compression = { version = "0.4.0", features = ["futures-io", "gzip"] }
 async-recursion = "1.0.0"
 async-std = { version = "1.12.0", features = ["unstable"] }
+async-trait = "0.1"
 async-tar = "0.5.0"
 arrow-json = "=53.4.0"
 arrow = "=53.4.0"

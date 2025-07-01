@@ -293,7 +293,7 @@ mod tests {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file)?;
+            repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -319,7 +319,7 @@ mod tests {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file)?;
+            repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -348,7 +348,7 @@ mod tests {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file)?;
+            repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -377,7 +377,7 @@ mod tests {
             // add a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file)?;
+            repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // Set proper remote
@@ -418,7 +418,7 @@ mod tests {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file)?;
+            repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -458,7 +458,7 @@ mod tests {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file)?;
+            repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -487,13 +487,13 @@ mod tests {
         .await
     }
 
-    #[test]
-    fn test_rename_current_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_rename_current_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             // Create and checkout branch
@@ -517,6 +517,7 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 
     #[tokio::test]
@@ -603,7 +604,7 @@ mod tests {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let branch_name = "my-branch";
@@ -619,13 +620,13 @@ mod tests {
         .await
     }
 
-    #[test]
-    fn test_cannot_force_delete_branch_you_are_on() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_cannot_force_delete_branch_you_are_on() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let branch_name = "my-branch";
@@ -638,6 +639,7 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 
     #[tokio::test]
@@ -646,7 +648,7 @@ mod tests {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let og_branches = repositories::branches::list(&repo)?;
@@ -657,7 +659,7 @@ mod tests {
 
             // Add another commit on this branch
             let labels_path = repo.path.join("labels.txt");
-            repositories::add(&repo, labels_path)?;
+            repositories::add(&repo, labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
 
             // Checkout main again
@@ -685,7 +687,7 @@ mod tests {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file)?;
+            repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let og_branches = repositories::branches::list(&repo)?;
@@ -696,7 +698,7 @@ mod tests {
 
             // Add another commit on this branch
             let labels_path = repo.path.join("labels.txt");
-            repositories::add(&repo, labels_path)?;
+            repositories::add(&repo, labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
 
             // Checkout main again
@@ -741,7 +743,7 @@ mod tests {
             // Now push a new commit
             let labels_path = repo.path.join("labels.txt");
             test::write_txt_file_to_path(&labels_path, "I am the labels file")?;
-            repositories::add(&repo, labels_path)?;
+            repositories::add(&repo, labels_path).await?;
             repositories::commit(&repo, "adding labels file")?;
             repositories::push(&repo).await?;
 
@@ -857,7 +859,7 @@ mod tests {
 
             // Modify annotations file with new line
             test::append_line_txt_file(&file_repo_path, "test/new_image.jpg,unknown,1.0,1.0,1,1")?;
-            repositories::add(&repo, &file_repo_path)?;
+            repositories::add(&repo, &file_repo_path).await?;
             let commit_2 = repositories::commit(&repo, "adding new annotation")?;
 
             // Push to remote

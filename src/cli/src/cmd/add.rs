@@ -64,7 +64,7 @@ impl RunCmd for AddCmd {
         check_repo_migration_needed(&repository)?;
 
         for path in &opts.paths {
-            repositories::add(&repository, path)?;
+            repositories::add(&repository, path).await?;
         }
 
         Ok(())

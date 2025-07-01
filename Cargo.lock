@@ -3380,6 +3380,7 @@ dependencies = [
  "async-recursion",
  "async-std",
  "async-tar",
+ "async-trait",
  "bincode",
  "blocking",
  "bytecount",

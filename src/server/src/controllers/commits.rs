@@ -522,7 +522,7 @@ pub async fn upload_chunk(
                         size,
                         query.is_compressed,
                         query.filename.to_owned(),
-                    );
+                    ).await;
 
                     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
                 }
@@ -548,7 +548,7 @@ pub async fn upload_chunk(
     }
 }
 
-fn check_if_upload_complete_and_unpack(
+async fn check_if_upload_complete_and_unpack(
     repo: &LocalRepository,
     tmp_dir: PathBuf,
     total_chunks: usize,
@@ -602,7 +602,7 @@ fn check_if_upload_complete_and_unpack(
         // TODO: Cleanup these if / else / match statements
         // Combine into actual file data
         if is_compressed {
-            match unpack_compressed_data(&files, repo) {
+            match unpack_compressed_data(&files, repo).await {
                 Ok(_) => {
                     log::debug!(
                         "check_if_upload_complete_and_unpack unpacked {} files successfully",
@@ -709,7 +709,7 @@ pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError
     }))
 }
 
-fn unpack_compressed_data(files: &[PathBuf], repo: &LocalRepository) -> Result<(), OxenError> {
+async fn unpack_compressed_data(files: &[PathBuf], repo: &LocalRepository) -> Result<(), OxenError> {
     let mut buffer: Vec<u8> = Vec::new();
     for file in files.iter() {
         log::debug!("Reading file bytes {:?}", file);
@@ -721,7 +721,7 @@ fn unpack_compressed_data(files: &[PathBuf], repo: &LocalRepository) -> Result<(
 
     // Unpack tarball to our hidden dir
     let mut archive = Archive::new(GzDecoder::new(&buffer[..]));
-    unpack_entry_tarball(repo, &mut archive)?;
+    unpack_entry_tarball(repo, &mut archive).await?;
 
     Ok(())
 }
@@ -811,7 +811,7 @@ pub async fn upload(
     // Unpack tarball to repo
     let mut archive = Archive::new(GzDecoder::new(&bytes[..]));
     // TODO: we're not handling errors here other than logging them
-    unpack_entry_tarball(&repo, &mut archive)?;
+    unpack_entry_tarball(&repo, &mut archive).await?;
     // });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
@@ -896,7 +896,7 @@ fn unpack_tree_tarball(tmp_dir: &Path, archive: &mut Archive<GzDecoder<&[u8]>>) 
     }
 }
 
-fn unpack_entry_tarball(
+async fn unpack_entry_tarball(
     repo: &LocalRepository,
     archive: &mut Archive<GzDecoder<&[u8]>>,
 ) -> Result<(), OxenError> {
@@ -913,7 +913,7 @@ fn unpack_entry_tarball(
         if path.starts_with("versions") && path.to_string_lossy().contains("files") {
             // Handle version files
             let hash = extract_hash_from_path(&path)?;
-            version_store.store_version_from_reader(&hash, &mut file)?;
+            version_store.store_version_from_reader(&hash, &mut file).await?;
         } else {
             // For non-version files, use filename sent by client
             file.unpack_in(&hidden_dir)
@@ -1006,10 +1006,10 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "first commit")?;
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "second commit")?;
 
         let uri = format!("/oxen/{namespace}/{name}/commits");
@@ -1035,14 +1035,14 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "first commit")?;
 
         let branch_name = "feature/list-commits";
         repositories::branches::create_checkout(&repo, branch_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "second commit")?;
 
         let uri = format!("/oxen/{namespace}/{repo_name}/commits/history/{branch_name}");
@@ -1078,19 +1078,19 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let hello_file = repo.path.join("hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file).await?;
         repositories::commit(&repo, "First commit")?;
         let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "first commit")?;
 
         let branch_name = "feature/list-commits";
         repositories::branches::create_checkout(&repo, branch_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "second commit")?;
 
         // List commits from the first branch
@@ -1130,7 +1130,7 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let hello_file = repo.path.join("hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file)?;
+        repositories::add(&repo, &hello_file).await?;
         let commit = repositories::commit(&repo, "First commit")?;
 
         // create random tarball to post.. currently no validation that it is a valid commit dir

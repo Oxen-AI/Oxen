@@ -84,7 +84,7 @@ pub fn index(
     }
 }
 
-pub fn rename(
+pub async fn rename(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
@@ -93,7 +93,7 @@ pub fn rename(
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str(
             "rename is not supported for this version of oxen",
         )),
-        _ => core::v_latest::workspaces::data_frames::rename(workspace, path, new_path),
+        _ => core::v_latest::workspaces::data_frames::rename(workspace, path, new_path).await,
     }
 }
 
@@ -364,14 +364,14 @@ mod tests {
     use crate::test;
     use crate::{repositories, util};
 
-    #[test]
-    fn test_add_row() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_add_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -409,15 +409,15 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_delete_added_row_with_two_rows() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_delete_added_row_with_two_rows() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -485,17 +485,17 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_clear_changes() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_clear_changes() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -573,17 +573,17 @@ mod tests {
                 _ => panic!("Expected tabular diff result"),
             }
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_delete_committed_row() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_delete_committed_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -663,15 +663,15 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_modify_added_row() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_modify_added_row() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -736,17 +736,17 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_delete_added_single_row() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_delete_added_single_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -801,16 +801,16 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_modify_row_back_to_original_state() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_modify_row_back_to_original_state() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -888,14 +888,14 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
-    #[test]
-    fn test_restore_row_after_modification() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_restore_row_after_modification() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -972,15 +972,15 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_restore_row_delete() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_restore_row_delete() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1039,17 +1039,17 @@ mod tests {
             }
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_commit_tabular_append_invalid_column() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_commit_tabular_append_invalid_column() -> Result<(), OxenError> {
         // Skip if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Try stage an append
             let path = Path::new("annotations")
                 .join("train")
@@ -1067,17 +1067,17 @@ mod tests {
             assert!(result.is_err());
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_commit_tabular_appends_staged() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_commit_tabular_appends_staged() -> Result<(), OxenError> {
         // Skip if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move{
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -1124,7 +1124,7 @@ mod tests {
 └─────────────────┴───────┴───────┴───────┴───────┴────────┘"
             );
             Ok(())
-        })
+        }).await
     }
 
     #[test]

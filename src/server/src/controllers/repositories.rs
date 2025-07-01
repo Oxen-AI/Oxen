@@ -177,7 +177,7 @@ pub async fn create(
                 println!("Failed to parse JSON: {:?}", e);
                 OxenHttpError::BadRequest("Invalid JSON".into())
             })?;
-            return handle_json_creation(app_data, json_data);
+            return handle_json_creation(app_data, json_data).await;
         } else {
             content_type
                 .to_str()
@@ -192,12 +192,12 @@ pub async fn create(
     Err(OxenHttpError::BadRequest("Unsupported Content-Type".into()))
 }
 
-fn handle_json_creation(
+async fn handle_json_creation(
     app_data: &OxenAppData,
     data: RepoNew,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let repo_new_clone = data.clone();
-    match repositories::create(&app_data.path, data) {
+    match repositories::create(&app_data.path, data).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -337,7 +337,7 @@ async fn handle_multipart_creation(
     let repo_data_clone = repo_data.clone();
 
     // Create repository
-    match repositories::create(&app_data.path, repo_data) {
+    match repositories::create(&app_data.path, repo_data).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -415,9 +415,9 @@ pub async fn transfer_namespace(
         to_namespace
     );
 
-    repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
+    repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace).await?;
     let repo =
-        repositories::get_by_namespace_and_name(&app_data.path, &to_namespace, &name)?.unwrap();
+        repositories::get_by_namespace_and_name(&app_data.path, &to_namespace, &name).await?.unwrap();
 
     // Return repository view under new namespace
     Ok(HttpResponse::Ok().json(RepositoryResponse {

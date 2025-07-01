@@ -93,7 +93,7 @@ pub fn delete(
     Ok(result)
 }
 
-pub fn update(
+pub async fn update(
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     column_to_update: &ColumnToUpdate,
@@ -152,12 +152,12 @@ pub fn update(
         &column_after_name,
     )?;
 
-    workspaces::files::add(workspace, file_path)?;
+    repositories::workspaces::files::add(workspace, file_path).await?;
 
     Ok(result)
 }
 
-pub fn restore(
+pub async fn restore(
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     column_to_restore: &ColumnToRestore,
@@ -205,7 +205,7 @@ pub fn restore(
                         ))?
                         .column_name,
                 )?;
-                workspaces::files::add(workspace, file_path)?;
+                repositories::workspaces::files::add(workspace, file_path).await?;
                 Ok(result)
             }
             "deleted" => {
@@ -242,7 +242,7 @@ pub fn restore(
                         ))?
                         .column_name,
                 )?;
-                workspaces::files::add(workspace, file_path)?;
+                repositories::workspaces::files::add(workspace, file_path).await?;
                 Ok(result)
             }
             "modified" => {
@@ -313,7 +313,7 @@ pub fn restore(
                         ))?
                         .column_name,
                 )?;
-                workspaces::files::add(workspace, file_path)?;
+                repositories::workspaces::files::add(workspace, file_path).await?;
                 Ok(result)
             }
             _ => Err(OxenError::UnsupportedOperation(

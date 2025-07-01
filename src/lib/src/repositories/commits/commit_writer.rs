@@ -1247,14 +1247,14 @@ mod tests {
     use crate::test::add_n_files_m_dirs;
     use crate::util;
 
-    #[test]
-    fn test_first_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_first_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
             // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 2)?;
+            add_n_files_m_dirs(&repo, 10, 2).await?;
             let status = repositories::status(&repo)?;
             status.print();
 
@@ -1328,13 +1328,13 @@ mod tests {
             let has_path0 = tree.has_path(Path::new("files/dir_0/file0.txt"))?;
             assert!(has_path0);
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_commit_only_dirs_at_top_level() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_commit_only_dirs_at_top_level() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1342,7 +1342,7 @@ mod tests {
             let new_file = repo.path.join("all_files/dir_0/new_file.txt");
             util::fs::create_dir_all(new_file.parent().unwrap())?;
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &repo.path)?;
+            repositories::add(&repo, &repo.path).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -1357,13 +1357,13 @@ mod tests {
             let has_path0 = tree.has_path(Path::new("all_files/dir_0/new_file.txt"))?;
             assert!(has_path0);
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1371,7 +1371,7 @@ mod tests {
             let new_file = repo.path.join("files/dir_0/new_file.txt");
             util::fs::create_dir_all(new_file.parent().unwrap())?;
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -1386,18 +1386,18 @@ mod tests {
             let has_path0 = tree.has_path(Path::new("files/dir_0/new_file.txt"))?;
             assert!(has_path0);
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_2nd_commit_keeps_num_bytes_and_data_type_counts() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_2nd_commit_keeps_num_bytes_and_data_type_counts() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
             // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 3)?;
+            add_n_files_m_dirs(&repo, 10, 3).await?;
             let status = repositories::status(&repo)?;
             status.print();
 
@@ -1419,7 +1419,7 @@ mod tests {
             // Add a new file to files/dir_1/
             let new_file = repo.path.join("README.md");
             util::fs::write_to_path(&new_file, "Update that README.md")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file).await?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1441,18 +1441,18 @@ mod tests {
             let updated_root_dir_file_count = updated_root_dir.num_files();
             assert_eq!(updated_root_dir_file_count, original_root_dir_file_count);
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_second_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_second_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
             // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 3)?;
+            add_n_files_m_dirs(&repo, 10, 3).await?;
             let status = repositories::status(&repo)?;
             status.print();
 
@@ -1471,7 +1471,7 @@ mod tests {
             // Add a new file to files/dir_1/
             let new_file = repo.path.join("files/dir_1/new_file.txt");
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file).await?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1562,20 +1562,20 @@ mod tests {
             let dir_1_file_count_again = dir_1_node_again.num_files();
             assert_eq!(original_dir_1_file_count, dir_1_file_count_again);
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_commit_configurable_vnode_size() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_commit_configurable_vnode_size() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let mut repo = repositories::init::init(dir)?;
             // Set the vnode size to 5
             repo.set_vnode_size(5);
 
             // Write data to the repo, 23 files in 2 dirs
-            add_n_files_m_dirs(&repo, 23, 2)?;
+            add_n_files_m_dirs(&repo, 23, 2).await?;
             let status = repositories::status(&repo)?;
             status.print();
 
@@ -1608,7 +1608,7 @@ mod tests {
                     .join(format!("dir_{}", dir_num))
                     .join(format!("new_file_{}.txt", i));
                 util::fs::write_to_path(&new_file, format!("New fileeeee {}", i))?;
-                repositories::add(&repo, &new_file)?;
+                repositories::add(&repo, &new_file).await?;
             }
 
             // Commit the data
@@ -1640,20 +1640,20 @@ mod tests {
                 assert!(file_node.is_some());
             }
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_commit_20_files_6_vnode_size() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_commit_20_files_6_vnode_size() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let mut repo = repositories::init::init(dir)?;
             // Set the vnode size to 6
             repo.set_vnode_size(6);
 
             // Write data to the repo, 20 files in 1 dir
-            add_n_files_m_dirs(&repo, 20, 1)?;
+            add_n_files_m_dirs(&repo, 20, 1).await?;
             let status = repositories::status(&repo)?;
             status.print();
 
@@ -1677,7 +1677,7 @@ mod tests {
             // Add a news file
             let new_file = repo.path.join("files/dir_0/new_file.txt");
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file).await?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1709,18 +1709,18 @@ mod tests {
                 .collect();
             assert_eq!(intersection.len(), 3);
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
-    #[test]
-    fn test_third_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+    #[tokio::test]
+    async fn test_third_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
             // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 3)?;
+            add_n_files_m_dirs(&repo, 10, 3).await?;
             let status = repositories::status(&repo)?;
             status.print();
 
@@ -1739,7 +1739,7 @@ mod tests {
             // Update README.md
             let new_file = repo.path.join("README.md");
             util::fs::write_to_path(&new_file, "Update README.md in second commit")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file).await?;
 
             // Commit the data
             let second_commit = super::commit(&repo, "Second commit")?;
@@ -1765,7 +1765,7 @@ mod tests {
             // Write a new file to files/dir_1/
             let new_file = repo.path.join("files/dir_1/new_file.txt");
             util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file)?;
+            repositories::add(&repo, &new_file).await?;
 
             // Commit the data
             let third_commit = super::commit(&repo, "Third commit")?;
@@ -1789,8 +1789,8 @@ mod tests {
                 assert_eq!(node.hash, hash);
             }
 
-            Ok(())
-        })
+            Ok(dir)
+        }).await
     }
 
     /*
@@ -1798,20 +1798,20 @@ mod tests {
     updating the root dir hash of the _initial_ commit to the root dir hash from
     the commit where the directory was removed.
      */
-    #[test]
-    fn test_rm_dir_doesnt_break_tree() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_rm_dir_doesnt_break_tree() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(async |repo| {
             // create initial commit
             let readme = repo.path.join("README.md");
-            repositories::add(&repo, &readme)?;
+            repositories::add(&repo, &readme).await?;
             let first_commit = super::commit(&repo, "Initial commit")?;
 
             let first_tree = CommitMerkleTree::from_commit(&repo, &first_commit)?;
             let first_root_dir_node = first_tree.get_by_path(Path::new(""))?.unwrap();
 
             // add the data
-            repositories::add(&repo, repo.path.join("train"))?;
-            repositories::add(&repo, repo.path.join("test"))?;
+            repositories::add(&repo, repo.path.join("train")).await?;
+            repositories::add(&repo, repo.path.join("test")).await?;
             let second_commit = super::commit(&repo, "Adding the data")?;
 
             let second_tree = CommitMerkleTree::from_commit(&repo, &second_commit)?;
@@ -1834,6 +1834,6 @@ mod tests {
             assert_ne!(first_root_dir_node_2.hash, third_root_dir_node.hash);
 
             Ok(())
-        })
+        }).await
     }
 }

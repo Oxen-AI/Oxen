@@ -46,7 +46,7 @@ mod tests {
 
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, resource_str)?;
-        repositories::add(&repo, path)?;
+        repositories::add(&repo, path).await?;
         repositories::commit(&repo, "first commit")?;
 
         let uri = format!(

@@ -31,7 +31,7 @@ use crate::opts::RestoreOpts;
 /// util::fs::write_to_path(&hello_path, "Hello World");
 ///
 /// // Stage the file
-/// repositories::add(&repo, &hello_path)?;
+/// repositories::add(&repo, &hello_path).await?;
 ///
 /// // Commit staged
 /// let commit = repositories::commit(&repo, "My commit message")?.unwrap();
@@ -46,10 +46,10 @@ use crate::opts::RestoreOpts;
 /// # Ok(())
 /// # }
 /// ```
-pub fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
+pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::restore::restore(repo, opts),
+        _ => core::v_latest::restore::restore(repo, opts).await,
     }
 }
 
@@ -68,16 +68,16 @@ mod tests {
     use crate::test::append_line_txt_file;
     use crate::util;
 
-    #[test]
-    fn test_command_restore_removed_file_from_head() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_command_restore_removed_file_from_head() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_filename = "hello.txt";
             let hello_file = repo.path.join(hello_filename);
             util::fs::write_to_path(&hello_file, "Hello World")?;
 
             // Track the file
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file).await?;
             // Commit the file
             repositories::commit(&repo, "My message")?;
 
@@ -88,43 +88,43 @@ mod tests {
             assert!(!hello_file.exists());
             // Restore takes the filename not the full path to the test repo
             // ie: "hello.txt" instead of data/test/runs/repo_data/test/runs_fc1544ab-cd55-4344-aa13-5360dc91d0fe/hello.txt
-            repositories::restore::restore(&repo, RestoreOpts::from_path(hello_filename))?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path(hello_filename)).await?;
             assert!(hello_file.exists());
 
             Ok(())
         })
     }
 
-    #[test]
-    fn test_command_restore_file_from_commit_id() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn test_command_restore_file_from_commit_id() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_filename = "hello.txt";
             let hello_file = repo.path.join(hello_filename);
             util::fs::write_to_path(&hello_file, "Hello World")?;
 
             // Track the file
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file).await?;
             // Commit the file
             repositories::commit(&repo, "My message")?;
 
             // Modify the file once
             let first_modification = "Hola Mundo";
             let hello_file = test::modify_txt_file(hello_file, first_modification)?;
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file).await?;
             let first_mod_commit = repositories::commit(&repo, "Changing to spanish")?;
 
             // Modify again
             let second_modification = "Bonjour le monde";
             let hello_file = test::modify_txt_file(hello_file, second_modification)?;
-            repositories::add(&repo, &hello_file)?;
+            repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Changing to french")?;
 
             // Restore from the first commit
             repositories::restore::restore(
                 &repo,
                 RestoreOpts::from_path_ref(hello_filename, first_mod_commit.id),
-            )?;
+            ).await?;
             let content = util::fs::read_from_path(&hello_file)?;
             assert!(hello_file.exists());
             assert_eq!(content, first_modification);
@@ -141,13 +141,13 @@ mod tests {
             let file_to_remove = repo.path.join("labels.txt");
 
             // Commit the file
-            repositories::add(&repo, &file_to_remove)?;
+            repositories::add(&repo, &file_to_remove).await?;
             repositories::commit(&repo, "Adding labels file")?;
 
             let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir)?;
+            repositories::add(&repo, train_dir).await?;
             repositories::commit(&repo, "Adding train dir")?;
 
             // Branch
@@ -161,7 +161,7 @@ mod tests {
             assert_eq!(status.removed_files.len(), 1);
 
             // Commit removed file
-            repositories::add(&repo, &file_to_remove)?;
+            repositories::add(&repo, &file_to_remove).await?;
             repositories::commit(&repo, "Removing labels file")?;
 
             // Make sure file is not there
@@ -177,9 +177,9 @@ mod tests {
         .await
     }
 
-    #[test]
-    fn test_restore_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+    #[tokio::test]
+    async fn test_restore_directory() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -204,7 +204,7 @@ mod tests {
             repositories::restore::restore(
                 &repo,
                 RestoreOpts::from_path_ref(annotations_dir, last_commit.id.clone()),
-            )?;
+            ).await?;
 
             // Make sure the removed file is restored
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
@@ -218,9 +218,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+    #[tokio::test]
+    async fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -237,7 +237,7 @@ mod tests {
             repositories::restore::restore(
                 &repo,
                 RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
-            )?;
+            ).await?;
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
             assert_eq!(og_contents, restored_contents);
 
@@ -245,9 +245,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_modified_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+    #[tokio::test]
+    async fn test_restore_modified_tabular_data() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -266,7 +266,7 @@ mod tests {
             repositories::restore::restore(
                 &repo,
                 RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
-            )?;
+            ).await?;
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
             assert_eq!(og_contents, restored_contents);
 
@@ -278,9 +278,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_modified_text_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+    #[tokio::test]
+    async fn test_restore_modified_text_data() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -296,7 +296,7 @@ mod tests {
             repositories::restore::restore(
                 &repo,
                 RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
-            )?;
+            ).await?;
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
             assert_eq!(og_contents, restored_contents);
 
@@ -308,16 +308,16 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_staged_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_restore_staged_file() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let bbox_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_path = repo.path.join(&bbox_file);
 
             // Stage file
-            repositories::add(&repo, bbox_path)?;
+            repositories::add(&repo, bbox_path).await?;
 
             // Make sure is staged
             let status = repositories::status(&repo)?;
@@ -335,10 +335,10 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_data_frame_with_duplicates() -> Result<(), OxenError> {
+    #[tokio::test]
+    async fn test_restore_data_frame_with_duplicates() -> Result<(), OxenError> {
         // THIS ONE FAILS BECAUSE OF THE REPOSITOROIES::COMMIT, IT DOESN'T GET TO RESTORE
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let ann_file = Path::new("nlp")
                 .join("classification")
                 .join("annotations")
@@ -350,14 +350,14 @@ mod tests {
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
             // Commit
-            repositories::add(&repo, &ann_path)?;
+            repositories::add(&repo, &ann_path).await?;
             let commit = repositories::commit(&repo, "adding data with duplicates")?;
 
             // Remove
             util::fs::remove_file(&ann_path)?;
 
             // Restore from commit
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id))?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id)).await?;
 
             // Make sure is same size
             let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
@@ -371,9 +371,9 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+    #[tokio::test]
+    async fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let ann_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -387,7 +387,7 @@ mod tests {
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
             // Commit
-            repositories::add(&repo, &ann_path)?;
+            repositories::add(&repo, &ann_path).await?;
 
             let commit = repositories::commit(&repo, "adding data with duplicates")?;
 
@@ -395,7 +395,7 @@ mod tests {
             util::fs::remove_file(&ann_path)?;
 
             // Restore from commit
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id))?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id)).await?;
 
             // Make sure is same size
             let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
@@ -410,14 +410,14 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_restore_staged_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_restore_staged_directory() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let relative_path = Path::new("annotations");
             let annotations_dir = repo.path.join(relative_path);
 
             // Stage file
-            repositories::add(&repo, annotations_dir)?;
+            repositories::add(&repo, annotations_dir).await?;
 
             // Make sure is staged
             let status = repositories::status(&repo)?;
@@ -426,7 +426,7 @@ mod tests {
             status.print();
 
             // Remove from staged
-            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(relative_path))?;
+            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(relative_path)).await?;
 
             // Make sure is unstaged
             let status = repositories::status(&repo)?;
@@ -437,12 +437,12 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_wildcard_restore_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_wildcard_restore_nested_nlp_dir() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir)?;
+            repositories::add(&repo, repo_dir).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -476,7 +476,7 @@ mod tests {
             assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
             // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*")?;
+            repositories::add(&repo, "nlp/*").await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_dirs.len(), 1);
@@ -501,7 +501,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial cat images")?;
 
             // Add and commit the dogs
@@ -511,7 +511,7 @@ mod tests {
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, &images_dir)?;
+            repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Remove all the things
@@ -521,7 +521,7 @@ mod tests {
                 staged: false,
             };
 
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
 
             // Should now have 7 staged for removal
             let status = repositories::status(&repo)?;
@@ -536,7 +536,7 @@ mod tests {
                 is_remote: false,
             };
 
-            repositories::restore::restore(&repo, restore_opts)?;
+            repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;
 
@@ -551,7 +551,7 @@ mod tests {
                 is_remote: false,
             };
 
-            repositories::restore::restore(&repo, restore_opts)?;
+            repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;
 
@@ -567,7 +567,7 @@ mod tests {
     // FAILS BECAUSE OF STATUS IT SEEMS LIKE
     #[tokio::test]
     async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Make a new dir in the repo - new_annotations
             let new_annotations_dir = repo.path.join("new_annotations");
             // Copy over bounding_box.csv and one_shot.csv to new_annotations
@@ -598,7 +598,7 @@ mod tests {
                 .unwrap();
 
             // Add both files
-            repositories::add(&repo, &new_annotations_dir)?;
+            repositories::add(&repo, &new_annotations_dir).await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 2);
@@ -612,13 +612,13 @@ mod tests {
                 is_remote: false,
             };
 
-            repositories::restore::restore(&repo, restore_opts)?;
+            repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 0);
             assert_eq!(status.staged_schemas.len(), 0);
 
             Ok(())
-        })
+        }).await
     }
 }

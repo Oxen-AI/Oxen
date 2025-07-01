@@ -178,9 +178,9 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
-    #[test]
-    fn test_command_schema_list() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed(|repo| {
+    #[tokio::test]
+    async fn test_command_schema_list() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
             assert_eq!(schemas.len(), 8);
@@ -206,12 +206,12 @@ mod tests {
             assert_eq!(schema.fields[5].dtype, "i64");
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_stage_and_commit_schema() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_stage_and_commit_schema() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_schemas.len(), 0);
@@ -221,7 +221,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(bbox_filename);
-            repositories::add(&repo, bbox_file)?;
+            repositories::add(&repo, bbox_file).await?;
 
             // Make sure it is staged
             let status = repositories::status(&repo)?;
@@ -259,12 +259,12 @@ mod tests {
             assert_eq!(schema.fields[5].dtype, "i64");
 
             Ok(())
-        })
+        }).await
     }
 
-    #[test]
-    fn test_copy_schemas_from_parent() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[tokio::test]
+    async fn test_copy_schemas_from_parent() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_schemas.len(), 0);
@@ -274,7 +274,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(&bbox_filename);
-            repositories::add(&repo, bbox_file)?;
+            repositories::add(&repo, bbox_file).await?;
 
             // Make sure it is staged
             let status = repositories::status(&repo)?;
@@ -290,7 +290,7 @@ mod tests {
             let readme_filename = Path::new("README.md");
             let readme_file = repo.path.join(readme_filename);
             util::fs::write(&readme_file, "Changing the README")?;
-            repositories::add(&repo, readme_file)?;
+            repositories::add(&repo, readme_file).await?;
             let commit = repositories::commit(&repo, "Changing the README")?;
 
             // Fetch schema from HEAD commit, it should still be there in all it's glory
@@ -315,7 +315,7 @@ mod tests {
             assert_eq!(schema.fields[5].dtype, "i64");
 
             Ok(())
-        })
+        }).await
     }
 
     #[tokio::test]
@@ -329,7 +329,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Add the file
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
 
             // Make sure it is staged
             let bbox_file = util::fs::path_relative_to_dir(&bbox_path, &repo.path)?;
@@ -407,7 +407,7 @@ mod tests {
             let min_x_meta = json!({
                 "key": "val"
             });
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             repositories::data_frames::schemas::add_column_metadata(
                 &repo,
                 schema_ref,
@@ -442,7 +442,7 @@ mod tests {
             let bbox_file = util::fs::path_relative_to_dir(&bbox_path, &repo.path)?;
 
             // Add and commit the schema
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             repositories::commit(&repo, "Adding bounding box file")?;
 
             // Add the schema
@@ -473,7 +473,7 @@ mod tests {
             let bbox_file = util::fs::path_relative_to_dir(&bbox_path, &repo.path)?;
 
             // Add and commit the schema
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             repositories::commit(&repo, "Adding bounding box file")?;
 
             // Add the schema metadata
@@ -518,7 +518,7 @@ mod tests {
             let bbox_path = repo.path.join(&bbox_file);
 
             // Stage the file
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
 
             let status = repositories::status(&repo)?;
             println!("status: {:?}", status);
@@ -553,7 +553,7 @@ mod tests {
             let bbox_path = repo.path.join(&bbox_file);
 
             // Add the schema
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             let commit = repositories::commit(&repo, "Adding bounding box file")?;
 
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
@@ -566,7 +566,7 @@ mod tests {
                 "root": "images"
             });
 
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             repositories::data_frames::schemas::add_column_metadata(
                 &repo, &bbox_file, "file", &metadata,
             )?;
@@ -612,7 +612,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Add the schema
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             let commit = repositories::commit(&repo, "Adding bounding box file")?;
 
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
@@ -637,7 +637,7 @@ mod tests {
             command::df::add_column(&bbox_path, "new_column:0:i32")?;
 
             // Stage the file
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
 
             // Make sure the metadata persisted
             let schema =
@@ -667,7 +667,7 @@ mod tests {
             let file_metadata = json!({
                 "root": "images"
             });
-            repositories::add(&repo, &bbox_path)?;
+            repositories::add(&repo, &bbox_path).await?;
             println!("after add initial metadata to: {:?}", bbox_file);
 
             repositories::data_frames::schemas::add_column_metadata(
