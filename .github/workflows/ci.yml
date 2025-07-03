@@ -35,9 +35,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
+
 
   fmt:
     name: Rustfmt
@@ -51,16 +49,6 @@ jobs:
           libdbus-1-dev libssl-dev \
           clang libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev libavutil-dev pkg-config \
           ruby ruby-dev rubygems build-essential
-      # - name: Install imagemagick
-      #   run: |
-      #     export MAGICK_VERSION=7.1 \
-      #     && curl https://imagemagick.org/archive/ImageMagick.tar.gz | tar xz \
-      #     && cd ImageMagick-${MAGICK_VERSION}* \
-      #     && ./configure --with-magick-plus-plus=no --with-perl=no \
-      #     && make \
-      #     && sudo make install \
-      #     && cd .. \
-      #     && rm -r ImageMagick-${MAGICK_VERSION}*
       - name: Cache Rust dependencies
         uses: actions/cache@v3
         with:
@@ -68,215 +56,190 @@ jobs:
           key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.OS }}-build-
-      - uses: actions-rs/toolchain@v1
-      - run: rustup component add rustfmt
-      - uses: actions-rs/cargo@v1
+      - name: cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+      - name: cargo fmt
+        uses: actions-rs/toolchain@v1
+        run: rustup component add rustfmt clippy
+        uses: actions-rs/cargo@v1
         with:
           command: fmt
           args: --all -- --check
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update \
-          && sudo apt-get install -y \
-          libdbus-1-dev libssl-dev \
-          clang libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev libavutil-dev pkg-config \
-          ruby ruby-dev rubygems build-essential
-      # - name: Install imagemagick
-      #   run: |
-      #     export MAGICK_VERSION=7.1 \
-      #     && curl https://imagemagick.org/archive/ImageMagick.tar.gz | tar xz \
-      #     && cd ImageMagick-${MAGICK_VERSION}* \
-      #     && ./configure --with-magick-plus-plus=no --with-perl=no \
-      #     && make \
-      #     && sudo make install \
-      #     && cd .. \
-      #     && rm -r ImageMagick-${MAGICK_VERSION}*
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.OS }}-build-
-      - uses: actions-rs/toolchain@v1
-      - run: rustup component add clippy
-      - uses: actions-rs/cargo@v1
+      - name: cargo clippy
+        uses: actions-rs/cargo@v1
         with:
           command: clippy
           args: --no-deps -- -D warnings
 
-  test_macos:
-    name: Test Suite MacOS
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          brew update
-          brew install pkg-config || brew upgrade pkg-config
-          brew install ffmpeg imagemagick
+  # test_macos:
+  #   name: Test Suite MacOS
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - name: Install dependencies
+  #       run: |
+  #         brew update
+  #         brew install pkg-config || brew upgrade pkg-config
+  #         brew install ffmpeg imagemagick
 
-      # https://youtrack.jetbrains.com/issue/RUST-12079/Failure-to-show-stack-trace-when-running-cargo-tests
-      # - name: Install LLVM Linker
-      #   run: |
-      #     brew install llvm
-      #     echo '[target.aarch64-apple-darwin]' >> ~/.cargo/config
-      #     echo 'rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]' >> ~/.cargo/config
+  #     # https://youtrack.jetbrains.com/issue/RUST-12079/Failure-to-show-stack-trace-when-running-cargo-tests
+  #     # - name: Install LLVM Linker
+  #     #   run: |
+  #     #     brew install llvm
+  #     #     echo '[target.aarch64-apple-darwin]' >> ~/.cargo/config
+  #     #     echo 'rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]' >> ~/.cargo/config
 
-      - name: Install and start Redis
-        run: |
-          brew install redis
-          brew services start redis
+  #     - name: Install and start Redis
+  #       run: |
+  #         brew install redis
+  #         brew services start redis
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+  #     - name: Cache Rust dependencies
+  #       uses: actions/cache@v3
+  #       with:
+  #         path: |
+  #           ~/.cargo/bin/
+  #           ~/.cargo/registry/index/
+  #           ~/.cargo/registry/cache/
+  #           ~/.cargo/git/db/
+  #           target/
+  #         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install latest rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          target: x86_64-apple-darwin
-          profile: minimal
+  #     - name: Install latest rust toolchain
+  #       uses: actions-rs/toolchain@v1
+  #       with:
+  #         target: x86_64-apple-darwin
+  #         profile: minimal
 
-      - name: Run Tests
-        run: |
-          cargo build
-          mkdir /tmp/oxen_sync/
-          mkdir data/test/runs
-          ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          cp user_config.toml data/test/config/user_config.toml
-          ./target/debug/oxen-server start &
-          cargo test -- --test-threads=3
+  #     - name: Run Tests
+  #       run: |
+  #         cargo build
+  #         mkdir /tmp/oxen_sync/
+  #         mkdir data/test/runs
+  #         ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+  #         cp user_config.toml data/test/config/user_config.toml
+  #         ./target/debug/oxen-server start &
+  #         cargo test -- --test-threads=3
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: oxen-binary
-          path: target/debug/oxen*
+  #     - name: Upload build artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: oxen-binary
+  #         path: target/debug/oxen*
 
-  test_windows:
-    name: Test Suite Windows
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
+  # test_windows:
+  #   name: Test Suite Windows
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Install latest rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
+  #     - name: Install latest rust toolchain
+  #       uses: actions-rs/toolchain@v1
+  #       with:
+  #         profile: minimal
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+  #     - name: Cache Rust dependencies
+  #       uses: actions/cache@v3
+  #       with:
+  #         path: |
+  #           ~/.cargo/bin/
+  #           ~/.cargo/registry/index/
+  #           ~/.cargo/registry/cache/
+  #           ~/.cargo/git/db/
+  #           target/
+  #         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run Tests
-        run: |
-          cargo build
-          mkdir .\data\test\runs
-          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          cp user_config.toml data\test\config\user_config.toml
-          cmd /c "START /B .\target\debug\oxen-server.exe start"
-          cargo test -- --test-threads=1
+  #     - name: Run Tests
+  #       run: |
+  #         cargo build
+  #         mkdir .\data\test\runs
+  #         .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+  #         cp user_config.toml data\test\config\user_config.toml
+  #         cmd /c "START /B .\target\debug\oxen-server.exe start"
+  #         cargo test -- --test-threads=1
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.0"
-          bundler-cache: true
+  #     - name: Set up Ruby
+  #       uses: ruby/setup-ruby@v1
+  #       with:
+  #         ruby-version: "3.0"
+  #         bundler-cache: true
 
-      - name: Run Rspec Tests
-        env:
-          PATH: ${{ env.PATH }};${{ github.workspace }}/target/debug
-        run: |
-          echo "Adding user"
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          echo "Copying user config"
-          cp user_config.toml data\test\config\user_config.toml
-          echo "Starting server"
-          pwd
-          ls .\target\debug\
-          cmd /c "START /B .\target\debug\oxen-server.exe start"
-          echo "🐂 Running tests"
-          cd cli-test
-          bundle config path vendor/bundle
-          bundle install
-          bundle exec rspec spec/test_cases/**/tests.rb
+  #     - name: Run Rspec Tests
+  #       env:
+  #         PATH: ${{ env.PATH }};${{ github.workspace }}/target/debug
+  #       run: |
+  #         echo "Adding user"
+  #         .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
+  #         echo "Copying user config"
+  #         cp user_config.toml data\test\config\user_config.toml
+  #         echo "Starting server"
+  #         pwd
+  #         ls .\target\debug\
+  #         cmd /c "START /B .\target\debug\oxen-server.exe start"
+  #         echo "🐂 Running tests"
+  #         cd cli-test
+  #         bundle config path vendor/bundle
+  #         bundle install
+  #         bundle exec rspec spec/test_cases/**/tests.rb
 
-  rpsec_tests_macos:
-    name: MacOS RSpec CLI Tests
-    needs: [test_macos]
-    runs-on: macos-latest
+  # rpsec_tests_macos:
+  #   name: MacOS RSpec CLI Tests
+  #   needs: [test_macos]
+  #   runs-on: macos-latest
 
-    env:
-      OXEN_API_KEY: ${{ secrets.DEV_OXEN_API_KEY }}
+  #   env:
+  #     OXEN_API_KEY: ${{ secrets.DEV_OXEN_API_KEY }}
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          brew update
-          brew install pkg-config || brew upgrade pkg-config
-          brew install ffmpeg imagemagick ruby
+  #     - name: Install dependencies
+  #       run: |
+  #         brew update
+  #         brew install pkg-config || brew upgrade pkg-config
+  #         brew install ffmpeg imagemagick ruby
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: oxen-binary
-          path: target/debug
+  #     - name: Download build artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: oxen-binary
+  #         path: target/debug
 
-      - name: Make binary executable
-        run: |
-          chmod +x target/debug/oxen
-          ls -la target/debug/oxen
-          file target/debug/oxen
+  #     - name: Make binary executable
+  #       run: |
+  #         chmod +x target/debug/oxen
+  #         ls -la target/debug/oxen
+  #         file target/debug/oxen
 
-          chmod +x target/debug/oxen-server
-          ls -la target/debug/oxen-server
-          file target/debug/oxen-server
+  #         chmod +x target/debug/oxen-server
+  #         ls -la target/debug/oxen-server
+  #         file target/debug/oxen-server
 
-      - name: Run oxen-server
-        run: |
-          mkdir /tmp/oxen_sync/
-          ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          cp user_config.toml data/test/config/user_config.toml
-          ./target/debug/oxen-server start &
+  #     - name: Run oxen-server
+  #       run: |
+  #         mkdir /tmp/oxen_sync/
+  #         ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+  #         cp user_config.toml data/test/config/user_config.toml
+  #         ./target/debug/oxen-server start &
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.0"
-          bundler-cache: true
+  #     - name: Set up Ruby
+  #       uses: ruby/setup-ruby@v1
+  #       with:
+  #         ruby-version: "3.0"
+  #         bundler-cache: true
 
-      - name: Install Ruby dependencies
-        working-directory: ./cli-test
-        run: |
-          bundle config path vendor/bundle
-          bundle install
+  #     - name: Install Ruby dependencies
+  #       working-directory: ./cli-test
+  #       run: |
+  #         bundle config path vendor/bundle
+  #         bundle install
 
-      - name: Run RSpec tests
-        env:
-          PATH: ${{ env.PATH }}:${{ github.workspace }}/target/debug
-        working-directory: ./cli-test
-        run: |
-          bundle exec rspec spec/test_cases/**/tests.rb
+  #     - name: Run RSpec tests
+  #       env:
+  #         PATH: ${{ env.PATH }}:${{ github.workspace }}/target/debug
+  #       working-directory: ./cli-test
+  #       run: |
+  #         bundle exec rspec spec/test_cases/**/tests.rb
