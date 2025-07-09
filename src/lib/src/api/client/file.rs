@@ -139,6 +139,7 @@ mod tests {
 
             // Check that the file exists in the local repo after pulling
             let file_path_in_repo = local_repo.path.join(directory_name).join("test.jpeg");
+            println!("file_path_in_repo: {:?}", file_path_in_repo);
             assert!(file_path_in_repo.exists());
 
             Ok(remote_repo)

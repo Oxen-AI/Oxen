@@ -13,7 +13,6 @@ use liboxen::model::diff::tabular_diff::TabularDiffMods;
 use liboxen::model::diff::{ChangeType, DiffResult, TextDiff};
 use liboxen::opts::DiffOpts;
 use liboxen::repositories;
-use liboxen::util;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "diff";
@@ -70,39 +69,12 @@ impl RunCmd for DiffCmd {
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
         let opts = DiffCmd::parse_args(args);
+        let output = opts.output.clone();
 
-        // If the user specifies two files without revisions, we will compare the files on disk
-        let repo_dir = util::fs::get_repo_root_from_current_dir().ok_or(OxenError::basic_str(
-            "repo not found in current working directory",
-        ))?;
-        let mut diff_result =
-            if opts.revision_1.is_none() && opts.revision_2.is_none() && opts.path_2.is_some() {
-                // If we do not have revisions set, just compare the files on disk
-                repositories::diffs::diff(
-                    opts.path_1,
-                    opts.path_2,
-                    opts.keys,
-                    opts.targets,
-                    Some(repo_dir),
-                    opts.revision_1,
-                    opts.revision_2,
-                )?
-            } else {
-                // If we have revisions set, pass in the repo_dir to be able
-                // to compare the files at those revisions within the .oxen repo
-                repositories::diffs::diff(
-                    opts.path_1,
-                    opts.path_2,
-                    opts.keys,
-                    opts.targets,
-                    Some(repo_dir),
-                    opts.revision_1,
-                    opts.revision_2,
-                )?
-            };
+        let mut diff_result = repositories::diffs::diff(opts)?;
 
         DiffCmd::print_diff_result(&diff_result)?;
-        DiffCmd::maybe_save_diff_output(&mut diff_result, opts.output)?;
+        DiffCmd::maybe_save_diff_output(&mut diff_result, output)?;
 
         Ok(())
     }
@@ -141,11 +113,11 @@ impl DiffCmd {
         let output = args.get_one::<String>("output").map(PathBuf::from);
 
         DiffOpts {
+            repo_dir: None,
             path_1: file1,
             path_2: file2,
             keys,
             targets,
-            repo_dir: None,
             revision_1: revision1,
             revision_2: revision2,
             output,
