@@ -4,14 +4,22 @@
 //! `from_hash` and `read_children_from_hash` operations. Each repository gets its own set
 //! of caches to avoid cross-repository contamination.
 //!
-//! # Environment Variables
+//! # Cache Control
 //!
-//! - `OXEN_MERKLE_CACHE_SIZE`: Set the number of entries per cache (default: 1000)
-//! - `OXEN_DISABLE_MERKLE_CACHE`: Set to any value to disable caching
+//! The cache is **disabled by default** to avoid overhead in short-lived CLI operations.
+//! Long-running processes like the server should enable it at startup:
+//!
+//! ```ignore
+//! use oxen::model::merkle_tree::merkle_tree_node_cache;
+//!
+//! // In server main()
+//! merkle_tree_node_cache::enable();
+//! ```
 //!
 //! # Temporarily Disabling Cache
 //!
-//! ## Using a closure:
+//! Even when enabled, you can temporarily disable caching for specific operations:
+//!
 //! ```ignore
 //! use oxen::model::merkle_tree::with_cache_disabled;
 //!
@@ -19,23 +27,12 @@
 //!     migrate_merkle_nodes(&repo)
 //! })?;
 //! ```
-//!
-//! # Example
-//!
-//! ```ignore
-//! use oxen::model::merkle_tree::remove_merkle_tree_node_from_cache;
-//!
-//! // The caching is automatic when using MerkleTreeNode::from_hash
-//! let node = MerkleTreeNode::from_hash(&repo, &hash)?;
-//!
-//! // To clear a repository's cache (e.g., after major operations)
-//! remove_merkle_tree_node_from_cache(&repo.path)?;
-//! ```
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use lru::LruCache;
@@ -48,6 +45,34 @@ use crate::model::{LocalRepository, MerkleHash};
 // Thread-local flag for temporarily disabling cache
 thread_local! {
     static THREAD_CACHE_DISABLED: Cell<bool> = const { Cell::new(false) };
+}
+
+// Global flag for enabling cache - disabled by default
+static CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enable the merkle tree node cache.
+///
+/// The cache is disabled by default. Long-running processes like servers
+/// should call this at startup to improve performance for repeated operations.
+///
+/// # Example
+///
+/// ```ignore
+/// // In server main.rs
+/// use oxen::model::merkle_tree::merkle_tree_node_cache;
+///
+/// fn main() {
+///     merkle_tree_node_cache::enable();
+///     // ... rest of server initialization
+/// }
+/// ```
+pub fn enable() {
+    CACHE_ENABLED.store(true, Ordering::Relaxed);
+}
+
+/// Check if caching is currently enabled
+fn is_cache_enabled() -> bool {
+    CACHE_ENABLED.load(Ordering::Relaxed) && !THREAD_CACHE_DISABLED.with(|c| c.get())
 }
 
 /// Guard that re-enables caching when dropped
@@ -115,24 +140,16 @@ static NODE_CACHES: LazyLock<Mutex<NodeCacheMap>> = LazyLock::new(|| Mutex::new(
 static CHILDREN_CACHES: LazyLock<Mutex<ChildrenCacheMap>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// Cached configuration values - computed once at startup
-static CACHING_DISABLED: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok());
-
-static CACHE_SIZE: LazyLock<NonZeroUsize> = LazyLock::new(|| {
-    std::env::var("OXEN_MERKLE_CACHE_SIZE")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .and_then(NonZeroUsize::new)
-        .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())
-});
-
 /// Get or create a node cache for a repository
 pub fn get_node_cache(repo: &LocalRepository) -> NodeCache {
     let mut caches = NODE_CACHES.lock();
     caches
         .entry(repo.path.clone())
-        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(*CACHE_SIZE))))
+        .or_insert_with(|| {
+            Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap(),
+            )))
+        })
         .clone()
 }
 
@@ -141,13 +158,17 @@ pub fn get_children_cache(repo: &LocalRepository) -> ChildrenCache {
     let mut caches = CHILDREN_CACHES.lock();
     caches
         .entry(repo.path.clone())
-        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(*CACHE_SIZE))))
+        .or_insert_with(|| {
+            Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap(),
+            )))
+        })
         .clone()
 }
 
 /// Get a node from cache
 pub fn get_cached_node(repo: &LocalRepository, hash: &MerkleHash) -> Option<Arc<MerkleTreeNode>> {
-    if *CACHING_DISABLED || THREAD_CACHE_DISABLED.with(|c| c.get()) {
+    if !is_cache_enabled() {
         return None;
     }
     let cache = get_node_cache(repo);
@@ -162,7 +183,7 @@ pub fn cache_node(
     node: MerkleTreeNode,
 ) -> Arc<MerkleTreeNode> {
     let arc_node = Arc::new(node);
-    if *CACHING_DISABLED || THREAD_CACHE_DISABLED.with(|c| c.get()) {
+    if !is_cache_enabled() {
         return arc_node;
     }
     let cache = get_node_cache(repo);
@@ -176,7 +197,7 @@ pub fn get_cached_children(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Option<Arc<Vec<(MerkleHash, MerkleTreeNode)>>> {
-    if *CACHING_DISABLED || THREAD_CACHE_DISABLED.with(|c| c.get()) {
+    if !is_cache_enabled() {
         return None;
     }
     let cache = get_children_cache(repo);
@@ -191,7 +212,7 @@ pub fn cache_children(
     children: Vec<(MerkleHash, MerkleTreeNode)>,
 ) -> Arc<Vec<(MerkleHash, MerkleTreeNode)>> {
     let arc_children = Arc::new(children);
-    if *CACHING_DISABLED || THREAD_CACHE_DISABLED.with(|c| c.get()) {
+    if !is_cache_enabled() {
         return arc_children;
     }
     let cache = get_children_cache(repo);
@@ -220,6 +241,7 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 }
 
 #[cfg(test)]
+#[serial_test::serial]
 mod tests {
     use super::*;
     use crate::{repositories, test};
@@ -227,6 +249,9 @@ mod tests {
     #[test]
     fn test_cache_disable_with_closure() -> Result<(), OxenError> {
         test::run_empty_dir_test(|dir| {
+            // Enable cache for this test
+            enable();
+
             let repo = repositories::init(dir)?;
 
             // Create a dummy node for testing
@@ -257,6 +282,9 @@ mod tests {
             // Cache should work again after closure completes
             assert!(get_cached_node(&repo, &hash).is_some());
 
+            // Reset to disabled for other tests
+            CACHE_ENABLED.store(false, Ordering::Relaxed);
+
             Ok(())
         })
     }
@@ -267,6 +295,9 @@ mod tests {
         use std::thread;
 
         test::run_empty_dir_test(|dir| {
+            // Enable cache for this test
+            enable();
+
             let repo = Arc::new(repositories::init(dir)?);
             let hash = MerkleHash::new(33333);
             let node = MerkleTreeNode::default();
@@ -291,6 +322,38 @@ mod tests {
 
             // Main thread should still have cache disabled
             assert!(get_cached_node(&repo, &hash).is_none());
+
+            // Reset to disabled for other tests
+            CACHE_ENABLED.store(false, Ordering::Relaxed);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_cache_disabled_by_default() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let repo = repositories::init(dir)?;
+            let hash = MerkleHash::new(44444);
+            let node = MerkleTreeNode::default();
+
+            // Cache should be disabled by default
+            assert!(!is_cache_enabled());
+
+            // Try to cache a node - it shouldn't be cached
+            cache_node(&repo, hash, node.clone());
+            assert!(get_cached_node(&repo, &hash).is_none());
+
+            // Enable cache
+            enable();
+            assert!(is_cache_enabled());
+
+            // Now caching should work
+            cache_node(&repo, hash, node.clone());
+            assert!(get_cached_node(&repo, &hash).is_some());
+
+            // Reset to disabled for other tests
+            CACHE_ENABLED.store(false, Ordering::Relaxed);
 
             Ok(())
         })

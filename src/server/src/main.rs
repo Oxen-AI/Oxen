@@ -2,6 +2,7 @@ use dotenv::dotenv;
 use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
+use liboxen::model::merkle_tree::node::merkle_tree_node_cache;
 use liboxen::model::User;
 use liboxen::util;
 
@@ -49,6 +50,9 @@ const SUPPORT: &str = "
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Enable merkle tree node caching for server - improves performance for repeated operations
+    merkle_tree_node_cache::enable();
+
     dotenv().ok();
 
     match from_filename("src/server/.env.local") {
