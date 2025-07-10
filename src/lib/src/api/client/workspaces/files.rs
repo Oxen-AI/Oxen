@@ -12,6 +12,7 @@ use rand::{thread_rng, Rng};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
+use walkdir::WalkDir;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
@@ -36,8 +37,21 @@ pub async fn add(
         return Ok(());
     }
 
+    let mut expanded_paths = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_file() {
+                    expanded_paths.push(entry.path().to_path_buf());
+                }
+            }
+        } else {
+            expanded_paths.push(path);
+        }
+    }
+
     // TODO: add a progress bar
-    upload_multiple_files(remote_repo, workspace_id, directory, paths).await?;
+    upload_multiple_files(remote_repo, workspace_id, directory, expanded_paths).await?;
 
     Ok(())
 }
