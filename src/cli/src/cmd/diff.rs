@@ -111,15 +111,19 @@ impl RunCmd for DiffCmd {
 impl DiffCmd {
     pub fn parse_args(args: &clap::ArgMatches) -> DiffOpts {
         let resource1 = args.get_one::<String>("RESOURCE1").expect("required");
-        let resource2 = args.get_one::<String>("RESOURCE2");
-
+        log::debug!("diff parsing resource1: {}", resource1);
         let (file1, revision1) = DiffCmd::parse_file_and_revision(resource1);
+
+        let resource2 = match args.get_one::<String>("RESOURCE2") {
+            Some(resource) => Some(resource.to_string()),
+            None => Some(format!("{file1}:main")),
+        };
 
         let file1 = PathBuf::from(file1);
 
         let (file2, revision2) = match resource2 {
             Some(resource) => {
-                let (file, revision) = DiffCmd::parse_file_and_revision(resource);
+                let (file, revision) = DiffCmd::parse_file_and_revision(&resource);
                 (Some(PathBuf::from(file)), revision)
             }
             None => (None, None),
