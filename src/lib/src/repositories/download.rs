@@ -18,13 +18,24 @@ pub async fn download(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    download_with_bearer_token(repo, remote_path, local_path, revision, None).await
+}
+
+pub async fn download_with_bearer_token(
+    repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    local_path: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    bearer_token: Option<&str>,
+) -> Result<(), OxenError> {
     // Ping server telling it we are about to download
     api::client::repositories::pre_download(repo).await?;
-    api::client::entries::download_entry(
+    api::client::entries::download_entry_with_bearer_token(
         repo,
         remote_path.as_ref(),
         local_path.as_ref(),
         revision.as_ref(),
+        bearer_token,
     )
     .await?;
     // Ping server telling it we finished downloading

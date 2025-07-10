@@ -75,6 +75,7 @@ mod tests {
                 remote: remote_repo.name.clone(),
                 branch: None,
                 message: "adding new file".to_string(),
+                bearer_token: None,
             };
             upload(&remote_repo, &opts).await?;
 
@@ -130,6 +131,7 @@ mod tests {
                 remote: remote_repo.name.clone(),
                 branch: None,
                 message: "adding new file".to_string(),
+                bearer_token: None,
             };
             upload(&remote_repo, &opts).await?;
 
@@ -197,6 +199,7 @@ mod tests {
                 remote: remote_repo.name.clone(),
                 branch: Some(branch_name.clone()),
                 message: "adding new file".to_string(),
+                bearer_token: None,
             };
             upload(&remote_repo, &opts).await?;
 
