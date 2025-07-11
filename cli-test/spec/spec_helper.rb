@@ -11,7 +11,7 @@ require 'pathname'
 def run_system_command(cmd)
   puts cmd
   unless system(cmd)
-    raise "Command failed with exit status #{$?.exitstatus}: #{cmd}"
+    raise "Command failed: #{cmd}"
   end
 end
 

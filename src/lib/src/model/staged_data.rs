@@ -223,6 +223,22 @@ impl StagedData {
         outputs.push("\n".normal());
     }
 
+    pub fn files_to_stage(&self) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = Vec::new();
+
+        files.extend(self.untracked_dirs.iter().map(|(path, _)| path.clone()));
+        files.extend(self.untracked_files.clone());
+        files.extend(self.modified_files.clone());
+        files.extend(
+            self.moved_files
+                .iter()
+                .map(|(path, _removed_path, _hash)| path.clone()),
+        );
+        files.extend(self.removed_files.clone());
+
+        files
+    }
+
     fn staged_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
         log::debug!("staged_dirs: {:?}", self.staged_dirs);
         let mut dirs: Vec<Vec<ColoredString>> = vec![];

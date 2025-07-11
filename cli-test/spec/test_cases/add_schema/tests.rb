@@ -47,9 +47,7 @@ RSpec.describe 'schemas add - test relative paths', type: :aruba do
       file.puts '1,/path/to/img1.jpg,test image 1'
       file.puts '2,/path/to/img2.jpg,test image 2'
     end
-
     Dir.chdir(data_path)
-
 
     # Add and commit the CSV file
     run_system_command('oxen add test.csv') 
