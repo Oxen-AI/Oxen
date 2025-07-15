@@ -104,6 +104,7 @@ pub async fn entries(
         &base_commit,
         &head_commit,
         PathBuf::from(""),
+        PathBuf::from(""),
         page,
         page_size,
     )?;
@@ -200,6 +201,7 @@ pub async fn dir_entries(
         &repository,
         &base_commit,
         &head_commit,
+        dir.clone(),
         dir.clone(),
         page,
         page_size,

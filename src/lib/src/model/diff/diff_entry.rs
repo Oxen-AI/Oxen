@@ -16,7 +16,7 @@ use super::generic_diff_summary::GenericDiffSummary;
 use super::tabular_diff_summary::TabularDiffWrapper;
 use super::DiffResult;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone)]
 pub struct DiffEntry {
     pub status: String,
     pub data_type: EntryDataType,

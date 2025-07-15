@@ -3,10 +3,11 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Deserialize, Serialize, Debug, Clone, Eq, Hash, PartialEq)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, Eq, Hash, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryDataType {
     Dir,
+    #[default]
     Text,
     Image,
     Video,
