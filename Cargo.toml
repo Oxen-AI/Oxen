@@ -90,7 +90,7 @@ num_cpus = "1.16.0"
 parking_lot = "0.12.1"
 percent-encoding = "2.1"
 pluralizer = "0.4.0"
-polars = { version = "0.45.0", features = [
+polars = { version = "0.49.1", features = [
     "lazy",
     "parquet",
     "json",

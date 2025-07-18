@@ -252,7 +252,7 @@ pub fn n_duped_rows(df: &DataFrame, cols: &[&str]) -> Result<u64, OxenError> {
 
 pub fn row_from_str_and_schema(
     data: impl AsRef<str>,
-    schema: Schema,
+    schema: &Arc<Schema>,
 ) -> Result<DataFrame, OxenError> {
     if serde_json::from_str::<Value>(data.as_ref()).is_ok() {
         return parse_str_to_df(data);

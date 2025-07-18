@@ -431,7 +431,7 @@ impl CompareSummary {
                 removed_rows,
                 modified_rows,
             },
-            schema: Schema::from_polars(&df.schema()),
+            schema: Schema::from_polars(df.schema()),
         })
     }
 }

@@ -382,8 +382,8 @@ pub fn diff_tabular_file_nodes(
     let df_2 =
         tabular::read_df_with_extension(version_path_2, file_2.extension(), &DFOpts::empty())?;
 
-    let schema_1 = Schema::from_polars(&df_1.schema());
-    let schema_2 = Schema::from_polars(&df_2.schema());
+    let schema_1 = Schema::from_polars(df_1.schema());
+    let schema_2 = Schema::from_polars(df_2.schema());
 
     validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
 
@@ -412,8 +412,8 @@ pub fn tabular(
     let df_1 = tabular::read_df(file_1, DFOpts::empty())?;
     let df_2 = tabular::read_df(file_2, DFOpts::empty())?;
 
-    let schema_1 = Schema::from_polars(&df_1.schema());
-    let schema_2 = Schema::from_polars(&df_2.schema());
+    let schema_1 = Schema::from_polars(df_1.schema());
+    let schema_2 = Schema::from_polars(df_2.schema());
 
     validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
 
@@ -987,16 +987,16 @@ pub fn get_cached_diff(
     )?;
 
     let schema_diff = TabularSchemaDiff::from_schemas(
-        &Schema::from_polars(&left_full_df.schema()),
-        &Schema::from_polars(&right_full_df.schema()),
+        &Schema::from_polars(left_full_df.schema()),
+        &Schema::from_polars(right_full_df.schema()),
     )?;
 
     let diff_df = tabular::read_df(get_diff_cache_path(repo, compare_id), DFOpts::empty())?;
 
     let schemas = TabularDiffSchemas {
-        left: Schema::from_polars(&left_full_df.schema()),
-        right: Schema::from_polars(&right_full_df.schema()),
-        diff: Schema::from_polars(&diff_df.schema()),
+        left: Schema::from_polars(left_full_df.schema()),
+        right: Schema::from_polars(right_full_df.schema()),
+        diff: Schema::from_polars(diff_df.schema()),
     };
 
     let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;

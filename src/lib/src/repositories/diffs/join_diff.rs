@@ -55,7 +55,7 @@ pub fn diff(
     let display: Vec<&str> = display.iter().map(|k| k.as_ref()).collect();
 
     let output_columns = get_output_columns(
-        &Schema::from_polars(&df_2.schema()),
+        &Schema::from_polars(df_2.schema()),
         keys.clone(),
         targets.clone(),
         display.clone(),
@@ -119,9 +119,9 @@ pub fn diff(
     };
 
     let schemas = TabularDiffSchemas {
-        left: Schema::from_polars(&df_1.schema()),
-        right: Schema::from_polars(&df_2.schema()),
-        diff: Schema::from_polars(&joined_df.schema()),
+        left: Schema::from_polars(df_1.schema()),
+        right: Schema::from_polars(df_2.schema()),
+        diff: Schema::from_polars(joined_df.schema()),
     };
 
     let diff = TabularDiff {

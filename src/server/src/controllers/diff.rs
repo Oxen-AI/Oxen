@@ -565,7 +565,7 @@ pub async fn get_derived_df(
     // controllers::df::get logic
 
     let df = tabular::read_df(derived_df_path, DFOpts::empty())?;
-    let og_schema = Schema::from_polars(&df.schema());
+    let og_schema = Schema::from_polars(df.schema());
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);
@@ -605,7 +605,7 @@ pub async fn get_derived_df(
             };
 
             // Merge the metadata from the original schema
-            let mut view_schema = Schema::from_polars(&paginated_df.schema());
+            let mut view_schema = Schema::from_polars(paginated_df.schema());
             log::debug!("OG schema {:?}", og_schema);
             log::debug!("Pre-Slice schema {:?}", view_schema);
             view_schema.update_metadata_from_schema(&og_schema);
