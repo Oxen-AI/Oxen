@@ -237,6 +237,12 @@ impl RunCmd for DFCmd {
                 .help("The quote character to use when reading the file. Default is '\"'")
                 .action(clap::ArgAction::Set),
         )
+        .arg(
+            Arg::new("bearer_token")
+                .long("bearer-token")
+                .help("Bearer token for authentication. If not provided, the config file will be used.")
+                .action(clap::ArgAction::Set),
+        )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -296,6 +302,7 @@ impl DFCmd {
             at: args
                 .get_one::<String>("at")
                 .map(|x| x.parse::<usize>().expect("at must be valid int")),
+            bearer_token: args.get_one::<String>("bearer_token").map(String::from),
             columns: args.get_one::<String>("columns").map(String::from),
             delete_row: args.get_one::<String>("delete-row").map(String::from),
             delimiter: args.get_one::<String>("delimiter").map(String::from),
@@ -343,5 +350,139 @@ impl DFCmd {
             vstack,
             write: write_path,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::ArgMatches;
+    use std::ffi::OsString;
+
+    fn create_df_args_with_bearer_token(
+        path: &str,
+        host: Option<&str>,
+        bearer_token: Option<&str>,
+        sql: Option<&str>,
+    ) -> ArgMatches {
+        let mut args = vec![
+            OsString::from("df"),
+            OsString::from(path),
+        ];
+
+        if let Some(h) = host {
+            args.push(OsString::from("--host"));
+            args.push(OsString::from(h));
+        }
+
+        if let Some(token) = bearer_token {
+            args.push(OsString::from("--bearer-token"));
+            args.push(OsString::from(token));
+        }
+
+        if let Some(q) = sql {
+            args.push(OsString::from("--sql"));
+            args.push(OsString::from(q));
+        }
+
+        DFCmd.args().try_get_matches_from(args).unwrap()
+    }
+
+    #[test]
+    fn test_df_cmd_args_with_bearer_token() {
+        let cmd = DFCmd;
+        let command = cmd.args();
+
+        // Test that --bearer-token argument is present
+        let bearer_token_arg = command.get_arguments().find(|arg| {
+            arg.get_id() == "bearer_token"
+        });
+        assert!(bearer_token_arg.is_some());
+
+        let arg = bearer_token_arg.unwrap();
+        assert_eq!(arg.get_long(), Some("bearer-token"));
+        assert!(arg.get_help().unwrap().to_string().contains("Bearer token"));
+    }
+
+    #[test]
+    fn test_df_cmd_parse_args_with_bearer_token() {
+        let args = create_df_args_with_bearer_token(
+            "data.csv",
+            Some("test.example.com"),
+            Some("test_bearer_token_123"),
+            Some("SELECT * FROM data"),
+        );
+
+        // Verify args are parsed correctly
+        assert_eq!(args.get_one::<String>("PATH").unwrap(), "data.csv");
+        assert_eq!(args.get_one::<String>("host").unwrap(), "test.example.com");
+        assert_eq!(args.get_one::<String>("bearer_token").unwrap(), "test_bearer_token_123");
+        assert_eq!(args.get_one::<String>("sql").unwrap(), "SELECT * FROM data");
+    }
+
+    #[test]
+    fn test_df_cmd_parse_args_without_bearer_token() {
+        let args = create_df_args_with_bearer_token(
+            "data.csv",
+            None,
+            None,
+            None,
+        );
+
+        // Verify args are parsed correctly
+        assert_eq!(args.get_one::<String>("PATH").unwrap(), "data.csv");
+        assert!(args.get_one::<String>("host").is_none());
+        assert!(args.get_one::<String>("bearer_token").is_none());
+        assert!(args.get_one::<String>("sql").is_none());
+    }
+
+    #[test]
+    fn test_df_cmd_args_help_contains_bearer_token() {
+        let cmd = DFCmd;
+        let help_text = cmd.args().render_help().to_string();
+        
+        assert!(help_text.contains("--bearer-token"));
+        assert!(help_text.contains("Bearer token for authentication"));
+        assert!(help_text.contains("config file will be used"));
+    }
+
+    #[test]
+    fn test_df_cmd_bearer_token_is_optional() {
+        // Should be able to create args without bearer token
+        let args = create_df_args_with_bearer_token("data.csv", None, None, None);
+        assert!(args.get_one::<String>("bearer_token").is_none());
+
+        // Should be able to create args with bearer token
+        let args = create_df_args_with_bearer_token("data.csv", None, Some("token123"), None);
+        assert!(args.get_one::<String>("bearer_token").is_some());
+    }
+
+    #[test]
+    fn test_df_cmd_all_options_together() {
+        let args = create_df_args_with_bearer_token(
+            "remote_data.csv",
+            Some("custom.host.com"),
+            Some("bearer_token_xyz"),
+            Some("SELECT * FROM remote_data WHERE id > 10"),
+        );
+
+        assert_eq!(args.get_one::<String>("PATH").unwrap(), "remote_data.csv");
+        assert_eq!(args.get_one::<String>("host").unwrap(), "custom.host.com");
+        assert_eq!(args.get_one::<String>("bearer_token").unwrap(), "bearer_token_xyz");
+        assert_eq!(args.get_one::<String>("sql").unwrap(), "SELECT * FROM remote_data WHERE id > 10");
+    }
+
+    #[test]
+    fn test_df_cmd_parse_df_args_includes_bearer_token() {
+        let args = create_df_args_with_bearer_token(
+            "test.csv",
+            Some("test.host.com"),
+            Some("test_token_123"),
+            None,
+        );
+
+        let opts = DFCmd::parse_df_args(&args);
+        assert_eq!(opts.bearer_token, Some("test_token_123".to_string()));
+        assert_eq!(opts.host, Some("test.host.com".to_string()));
     }
 }

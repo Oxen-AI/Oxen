@@ -1,6 +1,7 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param};
+use crate::auth::access_keys::AccessKeyManager;
 
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
@@ -142,21 +143,64 @@ pub async fn put(
             resource.version.to_string_lossy(),
         ))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
-    // Make sure the resource path is not already a file
+    
+    // Extract claimed commit hash from HTTP header
+    let claimed_commit_hash = req.headers()
+        .get("oxen-based-on")
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.to_string());
+    
+    // Check if the resource path is a file and handle conflicts
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
-    if node.is_some() && node.unwrap().is_file() {
-        return Err(OxenHttpError::BasicError(
-            format!(
-                "Target path must be a directory: {}",
-                resource.path.display()
-            )
-            .into(),
-        ));
+    if let Some(node) = node {
+        if node.is_file() {
+            // Get current commit hash for the file
+            let current_commit_hash = node.latest_commit_id()?.to_string();
+            
+            // Only fail if claimed hash is provided but doesn't match current hash
+            if let Some(claimed_hash) = claimed_commit_hash {
+                if current_commit_hash != claimed_hash {
+                    return Err(OxenHttpError::BasicError(
+                        format!(
+                            "File has been modified since claimed revision. Current: {}, Claimed: {}. Your changes would overwrite another change without that being from a merge",
+                            current_commit_hash, claimed_hash
+                        )
+                        .into(),
+                    ));
+                }
+            }
+        }
     }
 
-    let (name, email, message, temp_files) = parse_multipart_fields(payload).await?;
+    // Try to get commit message from header first (for backwards compatibility)
+    let header_message = req.headers().get("oxen-commit-message")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    
+    // Optional commit info from headers
+    let header_author = req.headers().get("oxen-commit-author")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let header_email = req.headers().get("oxen-commit-email")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    
+    // Parse multipart fields
+    let (message, temp_files) = parse_multipart_fields(payload).await?;
+    
+    // Get authenticated user from bearer token
+    let authenticated_user = get_authenticated_user(&req)?;
+    
+    // If header message is provided, it's required (backwards compatibility)
+    if req.headers().contains_key("oxen-commit-message") && header_message.is_none() {
+        return Err(OxenHttpError::BadRequest("Invalid oxen-commit-message header value".into()));
+    }
 
-    let user = create_user_from_options(name.clone(), email.clone())?;
+    // Use authenticated user if available, otherwise require authentication
+    let user = match authenticated_user {
+        Some(user) => user,
+        None => return Err(OxenHttpError::BadRequest("Bearer token required for PUT operations".into())),
+    };
 
     let mut files: Vec<FileNew> = vec![];
     for temp_file in temp_files {
@@ -178,9 +222,9 @@ pub async fn put(
 
     // Commit workspace
     let commit_body = NewCommitBody {
-        author: name.clone().unwrap_or("".to_string()),
-        email: email.clone().unwrap_or("".to_string()),
-        message: message.clone().unwrap_or(format!(
+        author: header_author.unwrap_or(user.name.clone()),
+        email: header_email.unwrap_or(user.email.clone()),
+        message: header_message.or(message).unwrap_or(format!(
             "Auto-commit files to {}",
             &resource.path.to_string_lossy()
         )),
@@ -211,9 +255,14 @@ async fn handle_initial_put_empty_repo(
         .to_string_lossy()
         .to_string();
 
-    let (name, email, _message, temp_files) = parse_multipart_fields(payload).await?;
+    let (_message, temp_files) = parse_multipart_fields(payload).await?;
 
-    let user = create_user_from_options(name.clone(), email.clone())?;
+    // Get authenticated user from bearer token
+    let authenticated_user = get_authenticated_user(&req)?;
+    let user = match authenticated_user {
+        Some(user) => user,
+        None => return Err(OxenHttpError::BadRequest("Bearer token required for PUT operations".into())),
+    };
 
     // Convert temporary files to FileNew with the complete user information
     let mut files: Vec<FileNew> = vec![];
@@ -358,19 +407,42 @@ pub async fn import(
     }))
 }
 
+// Helper function to extract authenticated user from bearer token
+fn get_authenticated_user(req: &HttpRequest) -> Result<Option<User>, OxenHttpError> {
+    // Extract bearer token from Authorization header
+    let auth_header = req.headers().get("authorization");
+    if let Some(auth_value) = auth_header {
+        if let Ok(auth_str) = auth_value.to_str() {
+            if auth_str.starts_with("Bearer ") {
+                let token = &auth_str[7..]; // Remove "Bearer " prefix
+                let app_data = app_data(req)?;
+                
+                match AccessKeyManager::new_read_only(&app_data.path) {
+                    Ok(keygen) => {
+                        if let Ok(Some(claim)) = keygen.get_claim(token) {
+                            return Ok(Some(User {
+                                name: claim.name().to_string(),
+                                email: claim.email().to_string(),
+                            }));
+                        }
+                    }
+                    Err(_) => return Err(OxenHttpError::InternalServerError),
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 async fn parse_multipart_fields(
     mut payload: Multipart,
 ) -> actix_web::Result<
     (
         Option<String>,
-        Option<String>,
-        Option<String>,
         Vec<TempFileNew>,
     ),
     OxenHttpError,
 > {
-    let mut name: Option<String> = None;
-    let mut email: Option<String> = None;
     let mut message: Option<String> = None;
     let mut temp_files: Vec<TempFileNew> = vec![];
 
@@ -387,21 +459,13 @@ async fn parse_multipart_fields(
 
         match field_name.as_str() {
             "name" | "email" => {
-                let mut bytes = Vec::new();
-                while let Some(chunk) = field
+                // Skip name and email fields - they come from authenticated user
+                while let Some(_chunk) = field
                     .try_next()
                     .await
                     .map_err(OxenHttpError::MultipartError)?
                 {
-                    bytes.extend_from_slice(&chunk);
-                }
-                let value = String::from_utf8(bytes)
-                    .map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
-
-                if field_name == "name" {
-                    name = Some(value);
-                } else {
-                    email = Some(value);
+                    // Just consume the field data
                 }
             }
             "message" => {
@@ -441,19 +505,9 @@ async fn parse_multipart_fields(
         }
     }
 
-    Ok((name, email, message, temp_files))
+    Ok((message, temp_files))
 }
 
-// Helper function for user creation
-fn create_user_from_options(
-    name: Option<String>,
-    email: Option<String>,
-) -> actix_web::Result<User, OxenHttpError> {
-    Ok(User {
-        name: name.ok_or(OxenHttpError::BadRequest("Name is required".into()))?,
-        email: email.ok_or(OxenHttpError::BadRequest("Email is required".into()))?,
-    })
-}
 
 // Helper function for processing files and adding to repo/workspace
 async fn process_and_add_files(
