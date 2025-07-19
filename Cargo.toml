@@ -15,6 +15,7 @@ categories = [
     "database",
     "computer-vision",
 ]
+autotests = false
 
 [features]
 default = ["duckdb/bundled"]
@@ -185,3 +186,12 @@ criterion = { version = "2.10.1", package = "codspeed-criterion-compat", feature
 name = "oxen"
 path = "src/benches/oxen.rs"
 harness = false
+
+[[test]]
+name = "unit_tests"
+path = "tests/test.rs"
+
+[[test]]
+name = "integration_tests"
+path = "itests/http_tests.rs"
+
