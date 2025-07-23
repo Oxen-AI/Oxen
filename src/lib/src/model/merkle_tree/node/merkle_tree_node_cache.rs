@@ -16,6 +16,15 @@
 //! merkle_tree_node_cache::enable();
 //! ```
 //!
+//! # Cache Size Configuration
+//!
+//! The default cache size can be configured using the `OXEN_DEFAULT_MERKLE_CACHE_SIZE`
+//! environment variable. If not set or invalid, it defaults to 1000 entries per cache.
+//!
+//! ```bash
+//! export OXEN_DEFAULT_MERKLE_CACHE_SIZE=5000
+//! ```
+//!
 //! # Temporarily Disabling Cache
 //!
 //! Even when enabled, you can temporarily disable caching for specific operations:
@@ -127,6 +136,15 @@ where
 // Default cache size if not specified via environment variable
 const DEFAULT_CACHE_SIZE: usize = 1000;
 
+/// Cache size configured at startup from environment variable
+static CACHE_SIZE: LazyLock<NonZeroUsize> = LazyLock::new(|| {
+    std::env::var("OXEN_DEFAULT_MERKLE_CACHE_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .and_then(NonZeroUsize::new)
+        .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())
+});
+
 // Type aliases for readability
 type NodeCache = Arc<Mutex<LruCache<MerkleHash, Arc<MerkleTreeNode>>>>;
 type ChildrenCache = Arc<Mutex<LruCache<MerkleHash, Arc<Vec<(MerkleHash, MerkleTreeNode)>>>>>;
@@ -145,11 +163,7 @@ pub fn get_node_cache(repo: &LocalRepository) -> NodeCache {
     let mut caches = NODE_CACHES.lock();
     caches
         .entry(repo.path.clone())
-        .or_insert_with(|| {
-            Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap(),
-            )))
-        })
+        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(*CACHE_SIZE))))
         .clone()
 }
 
@@ -158,11 +172,7 @@ pub fn get_children_cache(repo: &LocalRepository) -> ChildrenCache {
     let mut caches = CHILDREN_CACHES.lock();
     caches
         .entry(repo.path.clone())
-        .or_insert_with(|| {
-            Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap(),
-            )))
-        })
+        .or_insert_with(|| Arc::new(Mutex::new(LruCache::new(*CACHE_SIZE))))
         .clone()
 }
 
