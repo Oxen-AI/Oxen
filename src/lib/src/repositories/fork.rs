@@ -150,15 +150,15 @@ fn copy_dir_recursive(
         } else {
             fs::copy(&path, &dest_path)?;
             *copied_items += 1.0;
-
-            let progress = if total_items > 0.0 {
-                (*copied_items / total_items) * 100.0
-            } else {
-                100.0 // Assume completion if there are no items to copy
-            };
-            write_status(status_repo, &ForkStatus::InProgress(progress))?;
         }
     }
+
+    let progress = if total_items > 0.0 {
+        (*copied_items / total_items) * 100.0
+    } else {
+        100.0 // Assume completion if there are no items to copy
+    };
+    write_status(status_repo, &ForkStatus::InProgress(progress))?;
     Ok(())
 }
 
@@ -173,11 +173,9 @@ fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Resu
             count_items(&path, status_repo, current_count)?;
         } else {
             *current_count += 1;
-            if *current_count % 10 == 0 {
-                write_status(status_repo, &ForkStatus::Counting(*current_count))?;
-            }
         }
     }
+    write_status(status_repo, &ForkStatus::Counting(*current_count))?;
     Ok(*current_count)
 }
 
@@ -216,10 +214,10 @@ mod tests {
                 start_fork(original_repo_path.clone(), forked_repo_path.clone())?;
                 let mut current_status = "in_progress".to_string();
                 let mut attempts = 0;
-                const MAX_ATTEMPTS: u32 = 50; // 5 seconds timeout (50 * 100ms)
+                const MAX_ATTEMPTS: u32 = 10; // 10 seconds timeout (10 * 1s)
 
                 while current_status == "in_progress" && attempts < MAX_ATTEMPTS {
-                    tokio::time::sleep(Duration::from_millis(1000)).await; // Wait for 100 milliseconds
+                    tokio::time::sleep(Duration::from_millis(1000)).await; // Wait for 1 second
                     current_status = match get_fork_status(&forked_repo_path) {
                         Ok(status) => status.status,
                         Err(e) => {
