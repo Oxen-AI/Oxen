@@ -137,7 +137,7 @@ where
 const DEFAULT_CACHE_SIZE: usize = 1000;
 
 /// Cache size configured at startup from environment variable
-static CACHE_SIZE: LazyLock<NonZeroUsize> = LazyLock::new(|| {
+pub static CACHE_SIZE: LazyLock<NonZeroUsize> = LazyLock::new(|| {
     std::env::var("OXEN_DEFAULT_MERKLE_CACHE_SIZE")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
