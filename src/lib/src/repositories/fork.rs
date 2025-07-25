@@ -1,9 +1,8 @@
 use crate::error::OxenError;
 use crate::util::fs as oxen_fs;
 use crate::view::fork::{ForkStartResponse, ForkStatus, ForkStatusFile, ForkStatusResponse};
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread;
+use std::{fs, thread};
 use toml;
 
 pub const FORK_STATUS_FILE: &str = ".oxen/fork_status.toml";
@@ -69,6 +68,7 @@ pub fn start_fork(
     thread::spawn(move || {
         let total_items = match count_items(&original_path, &new_path, &mut current_count) {
             Ok(count) => count as f32,
+
             Err(e) => {
                 log::error!("Failed to count items: {}", e);
                 write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(|e| {
@@ -238,8 +238,8 @@ mod tests {
                 }
 
                 let file_path = original_repo_path.clone().join("dir/test_file.txt");
-
                 assert!(forked_repo_path.exists());
+
                 // Verify that the content of .oxen/config.toml is the same in both repos
                 let new_file_path = forked_repo_path.join("dir/test_file.txt");
                 let original_content = fs::read_to_string(&file_path)?;

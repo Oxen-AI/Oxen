@@ -28,11 +28,15 @@ use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
 pub fn test_run_dir() -> PathBuf {
-    PathBuf::from("data").join("test").join("runs")
+    PathBuf::from("data")
+        .join("test")
+        .join("runs")
+        .join(Uuid::new_v4().to_string())
 }
 
 pub fn test_host() -> String {
