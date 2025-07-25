@@ -63,7 +63,7 @@ pub fn get_slice(
     };
 
     // Update the schema metadata from the source schema
-    let mut slice_schema = Schema::from_polars(&df.schema());
+    let mut slice_schema = Schema::from_polars(df.schema());
     slice_schema.update_metadata_from_schema(&source_schema);
     log::debug!("get_slice slice_schema {:?}", slice_schema);
     // Return a DataFrameSlice
@@ -120,10 +120,10 @@ fn handle_sql_querying(
         {
             schema
         } else {
-            Schema::from_polars(&paginated_df.schema())
+            Schema::from_polars(paginated_df.schema())
         };
 
-        let mut slice_schema = Schema::from_polars(&df.schema());
+        let mut slice_schema = Schema::from_polars(df.schema());
         slice_schema.update_metadata_from_schema(&source_schema);
 
         return Ok(DataFrameSlice {

@@ -149,7 +149,7 @@ pub async fn get(
     {
         schema
     } else {
-        Schema::from_polars(&df.schema())
+        Schema::from_polars(df.schema())
     };
 
     df_schema.update_metadata_from_schema(&og_schema);
@@ -463,7 +463,7 @@ pub async fn diff(
     {
         schema
     } else {
-        Schema::from_polars(&df.schema())
+        Schema::from_polars(df.schema())
     };
 
     df_schema.update_metadata_from_schema(&og_schema);

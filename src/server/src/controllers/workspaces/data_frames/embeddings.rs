@@ -106,7 +106,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     {
         schema
     } else {
-        Schema::from_polars(&df.schema())
+        Schema::from_polars(df.schema())
     };
 
     df_schema.update_metadata_from_schema(&og_schema);

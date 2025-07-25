@@ -355,6 +355,6 @@ impl TabularDiffView {
     }
 
     pub fn maybe_get_schema(df: &Option<DataFrame>) -> Option<Schema> {
-        df.as_ref().map(|df| Schema::from_polars(&df.schema()))
+        df.as_ref().map(|df| Schema::from_polars(df.schema()))
     }
 }

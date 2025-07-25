@@ -39,7 +39,7 @@ impl JsonDataFrame {
     }
 
     pub fn from_df(df: &mut DataFrame) -> JsonDataFrame {
-        let schema = Schema::from_polars(&df.schema());
+        let schema = Schema::from_polars(df.schema());
         JsonDataFrame {
             schema: schema.to_owned(),
             view_schema: schema.to_owned(),
@@ -65,11 +65,11 @@ impl JsonDataFrame {
         let start = if page == 0 { 0 } else { page_size * (page - 1) };
         let end = page_size * page;
 
-        let schema = Schema::from_polars(&df.schema());
+        let schema = Schema::from_polars(df.schema());
         let mut opts = DFOpts::empty();
         opts.slice = Some(format!("{}..{}", start, end));
         let mut view_df = tabular::transform(df, opts).unwrap();
-        let view_schema = Schema::from_polars(&view_df.schema());
+        let view_schema = Schema::from_polars(view_df.schema());
 
         JsonDataFrame {
             schema,
@@ -90,9 +90,9 @@ impl JsonDataFrame {
         let full_height = df.height();
         let full_width = df.width();
 
-        let schema = Schema::from_polars(&df.schema());
+        let schema = Schema::from_polars(df.schema());
         let mut view_df = tabular::transform(df, opts).unwrap();
-        let view_schema = Schema::from_polars(&view_df.schema());
+        let view_schema = Schema::from_polars(view_df.schema());
 
         JsonDataFrame {
             schema,

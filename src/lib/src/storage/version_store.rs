@@ -163,14 +163,27 @@ pub fn create_version_store(
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     // Handle async initialization in sync context
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // Use thread spawn - works in both single and multi-threaded runtimes
+        // Try to use block_in_place for multi-threaded runtime
         let path = path.as_ref().to_path_buf();
         let storage_config = storage_config.cloned();
-        std::thread::spawn(move || {
-            handle.block_on(create_version_store_async(&path, storage_config.as_ref()))
-        })
-        .join()
-        .map_err(|_| OxenError::basic_str("Failed to join thread"))?
+        
+        // Try block_in_place first, fall back to thread spawn if it fails
+        match std::panic::catch_unwind(|| {
+            tokio::task::block_in_place(|| {
+                handle.block_on(create_version_store_async(&path, storage_config.as_ref()))
+            })
+        }) {
+            Ok(result) => result,
+            Err(_) => {
+                // block_in_place failed, likely single-threaded runtime
+                // Use thread spawn as fallback
+                std::thread::spawn(move || {
+                    handle.block_on(create_version_store_async(&path, storage_config.as_ref()))
+                })
+                .join()
+                .map_err(|_| OxenError::basic_str("Failed to join thread"))?
+            }
+        }
     } else {
         // If not in tokio runtime, use futures' block_on
         tokio::runtime::Builder::new_current_thread()

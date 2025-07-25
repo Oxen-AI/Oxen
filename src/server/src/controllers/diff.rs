@@ -289,17 +289,28 @@ pub async fn create_df_diff(
     _query: web::Query<DFOptsQuery>,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::info!("🚀 Starting create_df_diff function");
+
+    log::debug!("📥 Extracting request data");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    log::info!("🏢 Got namespace: {}, repo name: {}", namespace, name);
 
+    log::debug!("📂 Getting repository");
+    let repository = get_repo(&app_data.path, namespace, name)?;
+    log::info!("✅ Successfully retrieved repository at path: {}", repository.path.display());
+
+    log::debug!("📝 Parsing request body JSON");
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
-        Ok(data) => data,
+        Ok(data) => {
+            log::info!("✨ Successfully parsed tabular comparison data");
+            data
+        },
         Err(err) => {
             log::error!(
-                "unable to parse tabular comparison data. Err: {}\n{}",
+                "❌ unable to parse tabular comparison data. Err: {}\n{}",
                 err,
                 body
             );
@@ -307,39 +318,69 @@ pub async fn create_df_diff(
         }
     };
 
-    let resource_1 = PathBuf::from(data.left.path);
-    let resource_2 = PathBuf::from(data.right.path);
-    let keys = data.keys;
-    let targets = data.compare;
-    let display = data.display;
+    log::debug!("🔄 Extracting data fields");
+    let resource_1 = PathBuf::from(data.left.path.clone());
+    let resource_2 = PathBuf::from(data.right.path.clone());
+    let keys = data.keys.clone();
+    let targets = data.compare.clone();
+    let display = data.display.clone();
 
-    log::debug!("display is {:?}", display);
+    log::info!("📁 Left resource: {}, Right resource: {}", data.left.path, data.right.path);
+    log::info!("🔑 Number of keys: {}", keys.len());
+    log::info!("🎯 Number of targets: {}", targets.len());
+    log::info!("👁️ Display configuration: {:?}", display);
 
     let display_by_column = get_display_by_columns(display);
 
-    log::debug!("display by col is {:?}", display_by_column);
+    log::debug!("🏷️ Display by column: {:?}", display_by_column);
 
-    let compare_id = data.compare_id;
+    let compare_id = data.compare_id.clone();
+    log::info!("🆔 Compare ID: {}", compare_id);
+
+    log::debug!("🔍 Resolving commit revisions");
+    log::info!("📍 Left version: {}, Right version: {}", data.left.version, data.right.version);
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
-        .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
-    let commit_2 = repositories::revisions::get(&repository, &data.right.version)?
-        .ok_or_else(|| OxenError::revision_not_found(data.right.version.into()))?;
+        .ok_or_else(|| {
+            log::error!("💥 Failed to find left commit revision: {}", data.left.version);
+            OxenError::revision_not_found(data.left.version.into())
+        })?;
+    log::info!("✅ Found left commit: {}", commit_1);
 
+    let commit_2 = repositories::revisions::get(&repository, &data.right.version)?
+        .ok_or_else(|| {
+            log::error!("💥 Failed to find right commit revision: {}", data.right.version);
+            OxenError::revision_not_found(data.right.version.into())
+        })?;
+    log::info!("✅ Found right commit: {}", commit_2);
+
+    log::debug!("📄 Getting file nodes from commits");
     let node_1 =
         repositories::entries::get_file(&repository, &commit_1, &resource_1)?.ok_or_else(|| {
+            log::error!("💥 Failed to find left file: {}@{}", resource_1.display(), commit_1);
             OxenError::ResourceNotFound(format!("{}@{}", resource_1.display(), commit_1).into())
         })?;
+    log::info!("✅ Got left file node: {}", resource_1.display());
+
     let node_2 =
         repositories::entries::get_file(&repository, &commit_2, &resource_2)?.ok_or_else(|| {
+            log::error!("💥 Failed to find right file: {}@{}", resource_2.display(), commit_2);
             OxenError::ResourceNotFound(format!("{}@{}", resource_2.display(), commit_2).into())
         })?;
+    log::info!("✅ Got right file node: {}", resource_2.display());
 
+    log::debug!("🔧 Processing keys and targets");
     // TODO: Remove the next two lines when we want to allow mapping
     // different keys and targets from left and right file.
-    let keys = keys.iter().map(|k| k.left.clone()).collect();
+    let keys: Vec<String> = keys.iter().map(|k| {
+        log::trace!("🔑 Processing key: {}", k.left);
+        k.left.clone()
+    }).collect();
     let targets = get_targets_from_req(targets);
+    log::info!("🎯 Processed {} keys and {} targets", keys.len(), targets.len());
 
+    log::info!("⚙️ Starting tabular diff computation");
+    log::debug!("🔀 Calling diff_tabular_file_nodes with display_by_column: {:?}", display_by_column);
     let diff_result = repositories::diffs::diff_tabular_file_nodes(
         &repository,
         &node_1,
@@ -348,10 +389,15 @@ pub async fn create_df_diff(
         targets,
         display_by_column, // TODONOW: add display handling here
     )?;
+    log::info!("🎉 Tabular diff computation completed successfully");
 
+    log::debug!("💾 Preparing to cache diff results");
     // Cache the diff on the server
     let entry_1 = CommitEntry::from_file_node(&node_1);
     let entry_2 = CommitEntry::from_file_node(&node_2);
+    log::debug!("📦 Created commit entries from file nodes");
+
+    log::info!("💽 Caching tabular diff with compare_id: {}", compare_id);
     repositories::diffs::cache_tabular_diff(
         &repository,
         &compare_id,
@@ -359,20 +405,30 @@ pub async fn create_df_diff(
         entry_2,
         &diff_result,
     )?;
+    log::info!("✅ Successfully cached tabular diff");
 
+    log::debug!("📊 Processing diff summary and messages");
     let mut messages: Vec<OxenMessage> = vec![];
 
     if diff_result.summary.dupes.left > 0 || diff_result.summary.dupes.right > 0 {
+        log::warn!("⚠️ Found duplicates - Left: {}, Right: {}",
+                  diff_result.summary.dupes.left,
+                  diff_result.summary.dupes.right);
         let cdupes = CompareDupes::from_tabular_diff_dupes(&diff_result.summary.dupes);
         messages.push(cdupes.to_message());
+        log::debug!("📝 Added duplicate warning message");
+    } else {
+        log::info!("👍 No duplicates found in diff");
     }
 
+    log::debug!("🏗️ Building response view");
     let view = CompareTabularResponse {
         status: StatusMessage::resource_found(),
         dfs: CompareTabular::from(diff_result),
         messages,
     };
 
+    log::info!("🎯 create_df_diff completed successfully, returning response");
     Ok(HttpResponse::Ok().json(view))
 }
 
@@ -565,7 +621,7 @@ pub async fn get_derived_df(
     // controllers::df::get logic
 
     let df = tabular::read_df(derived_df_path, DFOpts::empty())?;
-    let og_schema = Schema::from_polars(&df.schema());
+    let og_schema = Schema::from_polars(df.schema());
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);
@@ -605,7 +661,7 @@ pub async fn get_derived_df(
             };
 
             // Merge the metadata from the original schema
-            let mut view_schema = Schema::from_polars(&paginated_df.schema());
+            let mut view_schema = Schema::from_polars(paginated_df.schema());
             log::debug!("OG schema {:?}", og_schema);
             log::debug!("Pre-Slice schema {:?}", view_schema);
             view_schema.update_metadata_from_schema(&og_schema);
