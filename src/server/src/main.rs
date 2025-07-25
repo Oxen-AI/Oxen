@@ -2,6 +2,7 @@ use dotenv::dotenv;
 use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
+use liboxen::model::merkle_tree::merkle_tree_node_cache;
 use liboxen::model::User;
 use liboxen::util;
 
@@ -142,6 +143,19 @@ async fn main() -> std::io::Result<()> {
                     println!("{SUPPORT}");
                     println!("Running on {host}:{port}");
                     println!("Syncing to directory: {sync_dir}");
+
+                    // Configure merkle tree node caching
+                    if env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok() {
+                        log::info!("Merkle tree node caching disabled");
+                    } else {
+                        log::info!("Merkle tree node caching enabled");
+                        merkle_tree_node_cache::enable();
+                        log::info!(
+                            "Merkle tree node cache size: {}",
+                            merkle_tree_node_cache::CACHE_SIZE.get()
+                        );
+                    }
+
                     let enable_auth = sub_matches.get_flag("auth");
                     let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
 
