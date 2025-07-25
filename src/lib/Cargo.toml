@@ -105,7 +105,7 @@ reqwest = { version = "0.12.2", features = [
     "gzip",
     "stream",
 ] }
-rocksdb = { version = "0.22.0", default-features = false, features = [
+rocksdb = { version = "0.23.0", default-features = false, features = [
     "lz4",
     "snappy",
     "multi-threaded-cf",

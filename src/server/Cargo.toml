@@ -47,7 +47,7 @@ polars = { version = "0.45.0", features = [
 r2d2 = "0.8.10"
 rand = "0.8.0"
 regex = "1.10.2"
-rocksdb = { version = "0.22.0", default-features = false, features = [
+rocksdb = { version = "0.23.0", default-features = false, features = [
     "lz4",
     "snappy",
     "multi-threaded-cf",
