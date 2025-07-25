@@ -286,18 +286,14 @@ mod tests {
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            println!("results: {:?}", results);
             assert_eq!(results.len(), 1);
             let first = results.first().unwrap();
             assert_eq!(first.name, PathBuf::from(""));
             assert_eq!(first.status, DiffEntryStatus::Modified);
             assert_eq!(first.children.len(), 0);
-
             let results =
                 api::client::compare::entries(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            println!("results: {:?}", results);
-            assert_eq!(results.entries.len(), 1);
             let first = results.entries.first().unwrap();
             assert_eq!(first.filename, "test_me_out.txt");
             assert_eq!(first.status, "added");

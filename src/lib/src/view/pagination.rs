@@ -1,7 +1,7 @@
 use crate::opts::PaginateOpts;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone)]
 pub struct Pagination {
     pub page_size: usize,
     pub page_number: usize,

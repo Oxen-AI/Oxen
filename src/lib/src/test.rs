@@ -1467,7 +1467,7 @@ where
     };
 
     // Remove repo dir
-    maybe_cleanup_repo(&repo_dir)?;
+    // maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);

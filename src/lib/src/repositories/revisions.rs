@@ -12,6 +12,11 @@ use crate::repositories;
 /// Returns Ok(None) if the revision does not exist
 pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<Commit>, OxenError> {
     let revision = revision.as_ref();
+    if revision == "HEAD" {
+        let commit = repositories::commits::head_commit(repo)?;
+        return Ok(Some(commit));
+    }
+
     if repositories::branches::exists(repo, revision)? {
         log::debug!("revision is a branch: {}", revision);
         let branch = repositories::branches::get_by_name(repo, revision)?;

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{constants::DIFF_STATUS_COL, error::OxenError};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct AddRemoveModifyCounts {
     pub added: usize,
     pub removed: usize,

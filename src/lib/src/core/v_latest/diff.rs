@@ -14,173 +14,33 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-// Filters out the entries that are not direct children of the provided dir, but
-// still provides accurate recursive counts -
-// TODO: can de-dup this with list_diff_entries somewhat
-//       don't love that this is pretty specific to our UI...but will leave for now
-pub fn list_diff_entries_in_dir_top_level(
-    repo: &LocalRepository,
-    dir: PathBuf,
-    base_commit: &Commit,
-    head_commit: &Commit,
-    page: usize,
-    page_size: usize,
-) -> Result<DiffEntriesCounts, OxenError> {
-    log::debug!(
-        "list_top_level_diff_entries base_commit: '{}', head_commit: '{}'",
-        base_commit,
-        head_commit
-    );
-
-    // Load the trees into memory starting at the given dir
-    let Some(base_tree) =
-        repositories::tree::get_node_by_path_with_children(repo, base_commit, &dir)?
-    else {
-        return Err(OxenError::basic_str(format!(
-            "Failed to get base tree for commit: {}",
-            base_commit
-        )));
-    };
-    let Some(head_tree) =
-        repositories::tree::get_node_by_path_with_children(repo, head_commit, &dir)?
-    else {
-        return Err(OxenError::basic_str(format!(
-            "Failed to get head tree for commit: {}",
-            head_commit
-        )));
-    };
-
-    let (head_files, head_dirs) = repositories::tree::list_files_and_dirs(&head_tree)?;
-    let (base_files, base_dirs) = repositories::tree::list_files_and_dirs(&base_tree)?;
-
-    log::debug!("Collected {} head_files", head_files.len());
-    log::debug!("Collected {} head_dirs", head_dirs.len());
-    log::debug!("Collected {} base_files", base_files.len());
-    log::debug!("Collected {} base_dirs", base_dirs.len());
-
-    // TODO TBD: If the logic is an exact match, this can be deduped with list_diff_entries
-    let mut dir_entries: Vec<DiffEntry> = vec![];
-    collect_added_directories(
-        repo,
-        &base_dirs,
-        base_commit,
-        &head_dirs,
-        head_commit,
-        &mut dir_entries,
-        &dir,
-    )?;
-
-    collect_removed_directories(
-        repo,
-        &base_dirs,
-        base_commit,
-        &head_dirs,
-        head_commit,
-        &mut dir_entries,
-        &dir,
-    )?;
-
-    collect_modified_directories(
-        repo,
-        &base_dirs,
-        base_commit,
-        &head_dirs,
-        head_commit,
-        &mut dir_entries,
-        &dir,
-    )?;
-
-    log::debug!("Collected {} dir_entries", dir_entries.len());
-    dir_entries = subset_dir_diffs_to_direct_children(dir_entries, dir.clone())?;
-    log::debug!("Filtered to {} dir_entries", dir_entries.len());
-
-    dir_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
-
-    let mut added_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_added_entries(&base_files, &head_files, &mut added_commit_entries, &dir)?;
-
-    let mut removed_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_removed_entries(&base_files, &head_files, &mut removed_commit_entries, &dir)?;
-
-    let mut modified_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_modified_entries(&base_files, &head_files, &mut modified_commit_entries, &dir)?;
-
-    let counts = AddRemoveModifyCounts {
-        added: added_commit_entries.len(),
-        removed: removed_commit_entries.len(),
-        modified: modified_commit_entries.len(),
-    };
-
-    let mut combined: Vec<_> = added_commit_entries
-        .into_iter()
-        .chain(removed_commit_entries)
-        .chain(modified_commit_entries)
-        .collect();
-
-    // Filter out the entries that are not direct children of the provided dir
-    log::debug!("Combined {} combined", combined.len());
-    combined = subset_file_diffs_to_direct_children(combined, dir)?;
-    log::debug!("Filtered to {} combined", combined.len());
-
-    combined.sort_by(|a, b| a.path.cmp(&b.path));
-
-    let (files, pagination) =
-        util::paginate::paginate_files_assuming_dirs(&combined, dir_entries.len(), page, page_size);
-
-    let diff_entries: Vec<DiffEntry> = files
-        .into_iter()
-        .map(|entry| {
-            DiffEntry::from_file_nodes(
-                repo,
-                entry.path,
-                entry.base_entry,
-                base_commit,
-                entry.head_entry,
-                head_commit,
-                entry.status,
-                false,
-                None,
-            )
-        })
-        .collect::<Result<Vec<DiffEntry>, OxenError>>()?;
-
-    let (dirs, _) =
-        util::paginate::paginate_dirs_assuming_files(&dir_entries, combined.len(), page, page_size);
-
-    let all = dirs.into_iter().chain(diff_entries).collect();
-
-    Ok(DiffEntriesCounts {
-        entries: all,
-        counts,
-        pagination,
-    })
-}
-
 pub fn list_diff_entries(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
-    dir: PathBuf,
+    base_path: PathBuf,
+    head_path: PathBuf,
     page: usize,
     page_size: usize,
 ) -> Result<DiffEntriesCounts, OxenError> {
     log::debug!(
-        "list_diff_entries dir: '{:?}', base_commit: '{}', head_commit: '{}'",
-        dir,
+        "list_diff_entries base_dir: '{:?}', head_dir: '{:?}' base_commit: '{}', head_commit: '{}'",
+        base_path,
+        head_path,
         base_commit,
         head_commit
     );
-    // Load the trees into memory starting at the given dir
     let Some(base_tree) =
-        repositories::tree::get_node_by_path_with_children(repo, base_commit, &dir)?
+        repositories::tree::get_node_by_path_with_children(repo, base_commit, &base_path)?
     else {
         return Err(OxenError::basic_str(format!(
             "Failed to get base tree for commit: {}",
             base_commit
         )));
     };
+
     let Some(head_tree) =
-        repositories::tree::get_node_by_path_with_children(repo, head_commit, &dir)?
+        repositories::tree::get_node_by_path_with_children(repo, head_commit, &head_path)?
     else {
         return Err(OxenError::basic_str(format!(
             "Failed to get head tree for commit: {}",
@@ -188,27 +48,86 @@ pub fn list_diff_entries(
         )));
     };
 
-    let (head_files, head_dirs) = repositories::tree::list_files_and_dirs(&head_tree)?;
-    let (base_files, base_dirs) = repositories::tree::list_files_and_dirs(&base_tree)?;
+    let (base_files, base_dirs, head_files, head_dirs) =
+        match (base_path.clone().is_file(), head_path.clone().is_file()) {
+            (true, true) => {
+                let mut base_files: HashSet<FileNodeWithDir> = HashSet::new();
+                let mut head_files: HashSet<FileNodeWithDir> = HashSet::new();
+                let mut base_dirs: HashSet<DirNodeWithPath> = HashSet::new();
+                let mut head_dirs: HashSet<DirNodeWithPath> = HashSet::new();
 
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} head_files",
-        dir,
-        head_files.len()
-    );
+                base_files.insert(FileNodeWithDir {
+                    file_node: base_tree.file()?,
+                    dir: base_path.parent().unwrap().to_owned(),
+                });
+
+                let Some(base_dir_node) = repositories::tree::get_node_by_path_with_children(
+                    repo,
+                    base_commit,
+                    base_path.parent().unwrap(),
+                )?
+                else {
+                    return Err(OxenError::basic_str(format!(
+                        "Failed to get base tree for commit: {}",
+                        base_commit
+                    )));
+                };
+
+                base_dirs.insert(DirNodeWithPath {
+                    dir_node: base_dir_node.dir()?,
+                    path: base_path.clone(),
+                });
+
+                head_files.insert(FileNodeWithDir {
+                    file_node: head_tree.file()?,
+                    dir: head_path.parent().unwrap().to_owned(),
+                });
+
+                let Some(head_dir_node) = repositories::tree::get_node_by_path(
+                    repo,
+                    head_commit,
+                    head_path.parent().unwrap(),
+                )?
+                else {
+                    return Err(OxenError::basic_str(format!(
+                        "Failed to get head tree for commit: {}",
+                        head_commit
+                    )));
+                };
+
+                head_dirs.insert(DirNodeWithPath {
+                    dir_node: head_dir_node.dir()?,
+                    path: head_path.clone(),
+                });
+
+                (base_files, base_dirs, head_files, head_dirs)
+            }
+            _ => {
+                let (base_files, base_dirs) = repositories::tree::list_files_and_dirs(&base_tree)?;
+                let (head_files, head_dirs) = repositories::tree::list_files_and_dirs(&head_tree)?;
+
+                (base_files, base_dirs, head_files, head_dirs)
+            }
+        };
+
+    // log::debug!(
+    //     "list_diff_entries base_dir: '{:?}' collected {} head_files",
+    //     base_path,
+    //     head_files.len()
+    // );
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} head_dirs",
-        dir,
+        base_path,
         head_dirs.len()
     );
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} base_files",
-        dir,
+        base_path,
         base_files.len()
     );
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} base_dirs",
-        dir,
+        base_path,
         base_dirs.len()
     );
 
@@ -220,11 +139,11 @@ pub fn list_diff_entries(
         &head_dirs,
         head_commit,
         &mut dir_entries,
-        &dir,
+        &base_path,
     )?;
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} added_dirs dir_entries",
-        dir,
+        base_path,
         dir_entries.len()
     );
     collect_removed_directories(
@@ -234,11 +153,11 @@ pub fn list_diff_entries(
         &head_dirs,
         head_commit,
         &mut dir_entries,
-        &dir,
+        &base_path,
     )?;
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} removed_dirs dir_entries",
-        dir,
+        base_path,
         dir_entries.len()
     );
     collect_modified_directories(
@@ -248,38 +167,53 @@ pub fn list_diff_entries(
         &head_dirs,
         head_commit,
         &mut dir_entries,
-        &dir,
+        &base_path,
     )?;
     dir_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} modified_dirs dir_entries",
-        dir,
+        base_path,
         dir_entries.len()
     );
 
     // the DiffEntry takes a little bit of time to compute, so want to just find the commit entries
     // then filter them down to the ones we need
     let mut added_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_added_entries(&base_files, &head_files, &mut added_commit_entries, &dir)?;
+    collect_added_entries(
+        &base_files,
+        &head_files,
+        &mut added_commit_entries,
+        &base_path,
+    )?;
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} collect_added_entries",
-        dir,
+        base_path,
         added_commit_entries.len()
     );
 
     let mut removed_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_removed_entries(&base_files, &head_files, &mut removed_commit_entries, &dir)?;
+    collect_removed_entries(
+        &base_files,
+        &head_files,
+        &mut removed_commit_entries,
+        &base_path,
+    )?;
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} collect_removed_entries",
-        dir,
+        base_path,
         removed_commit_entries.len()
     );
 
     let mut modified_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_modified_entries(&base_files, &head_files, &mut modified_commit_entries, &dir)?;
+    collect_modified_entries(
+        &base_files,
+        &head_files,
+        &mut modified_commit_entries,
+        &base_path,
+    )?;
     log::debug!(
         "list_diff_entries dir: '{:?}' collected {} collect_modified_entries",
-        dir,
+        base_path,
         modified_commit_entries.len()
     );
     let counts = AddRemoveModifyCounts {
@@ -296,7 +230,7 @@ pub fn list_diff_entries(
 
     log::debug!(
         "list_diff_entries dir: '{:?}' got {} combined files",
-        dir,
+        base_path,
         combined.len()
     );
 
@@ -304,12 +238,12 @@ pub fn list_diff_entries(
         util::paginate::paginate_files_assuming_dirs(&combined, dir_entries.len(), page, page_size);
     log::debug!(
         "list_diff_entries dir: '{:?}' got {} initial dirs",
-        dir,
+        base_path,
         dir_entries.len()
     );
     log::debug!(
         "list_diff_entries dir: '{:?}' got {} files",
-        dir,
+        base_path,
         files.len()
     );
     let file_entries: Vec<DiffEntry> = files
@@ -333,12 +267,12 @@ pub fn list_diff_entries(
         util::paginate::paginate_dirs_assuming_files(&dir_entries, combined.len(), page, page_size);
     log::debug!(
         "list_diff_entries dir: '{:?}' got {} filtered dirs",
-        dir,
+        base_path,
         dirs.len()
     );
     log::debug!(
         "list_diff_entries dir: '{:?}' Page num {} Page size {}",
-        dir,
+        base_path,
         page,
         page_size
     );
@@ -736,6 +670,7 @@ fn collect_modified_entries(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn subset_dir_diffs_to_direct_children(
     entries: Vec<DiffEntry>,
     dir: PathBuf,
@@ -773,6 +708,7 @@ fn subset_dir_diffs_to_direct_children(
     Ok(filtered_entries)
 }
 
+#[allow(dead_code)]
 fn subset_file_diffs_to_direct_children(
     entries: Vec<DiffFileNode>,
     dir: PathBuf,

@@ -23,10 +23,13 @@ use crate::model::diff::tabular_diff::{
     TabularDiffSummary, TabularSchemaDiff,
 };
 
+use crate::model::staged_data::StagedDataOpts;
 use crate::model::{
-    Commit, CommitEntry, DataFrameDiff, DiffEntry, EntryDataType, LocalRepository, Schema,
+    Commit, CommitEntry, DataFrameDiff, DiffEntry, EntryDataType, LocalRepository, ParsedResource,
+    Schema,
 };
 
+use crate::view::Pagination;
 use crate::{constants, repositories, util};
 
 use polars::prelude::DataFrame;
@@ -41,7 +44,7 @@ use crate::model::diff::schema_diff::SchemaDiff;
 use crate::model::diff::AddRemoveModifyCounts;
 use crate::model::diff::DiffResult;
 
-use crate::opts::DFOpts;
+use crate::opts::{DFOpts, DiffOpts};
 
 pub mod join_diff;
 pub mod utf8_diff;
@@ -57,168 +60,186 @@ fn is_files_utf8(file_1: impl AsRef<Path>, file_2: impl AsRef<Path>) -> bool {
     util::fs::is_utf8(file_1.as_ref()) && util::fs::is_utf8(file_2.as_ref())
 }
 
-pub fn diff(
-    path_1: impl AsRef<Path>,
-    path_2: Option<PathBuf>,
-    keys: Vec<String>,
-    targets: Vec<String>,
-    repo_dir: Option<PathBuf>,
-    revision_1: Option<String>,
-    revision_2: Option<String>,
-) -> Result<Vec<DiffResult>, OxenError> {
+pub fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
     log::debug!(
-        "diff called with keys: {:?} and targets: {:?}",
-        keys,
-        targets,
+        "Starting diff function with keys: {:?} and targets: {:?}",
+        opts.keys,
+        opts.targets
     );
 
-    // If the user specifies two files without revisions, we will compare the files on disk
-    if revision_1.is_none() && revision_2.is_none() && path_2.is_some() {
-        // If we do not have revisions set, just compare the files on disk
-        let result = diff_files(path_1, path_2.unwrap(), keys, targets, vec![])?;
-        return Ok(vec![result]);
-    }
-
-    // Make sure we have a repository to look up the revisions
-    let Some(repo_dir) = repo_dir else {
-        return Err(OxenError::basic_str(
-            "Specifying a revision requires a repository",
-        ));
+    let repo = match &opts.repo_dir {
+        Some(dir) => {
+            log::debug!("dir: {:?}", dir);
+            LocalRepository::from_dir(dir)
+        }
+        None => {
+            log::debug!("current dir");
+            LocalRepository::from_current_dir()
+        }
     };
 
-    let repository = LocalRepository::from_dir(&repo_dir)?;
+    if repo.is_err() {
+        let result = diff_files(
+            opts.path_1,
+            opts.path_2.unwrap(),
+            opts.keys.clone(),
+            opts.targets.clone(),
+            vec![],
+        )?;
+        return Ok(vec![result]);
+    }
+    let repo = repo.unwrap();
 
     log::debug!(
-        "part_2: {path_2:?} revision_1: {revision_1:?} revision_2:{revision_2:?}, path_1: {:?}",
-        path_1.as_ref()
+        "Processing paths and revisions - path_2: {:?}, revision_1: {:?}, revision_2: {:?}, path_1: {:?}",
+        opts.path_2,
+        opts.revision_1,
+        opts.revision_2,
+        opts.path_1
     );
 
-    // Handle directory diff between two commits
-    if path_1.as_ref().is_dir() && path_2.is_some() && revision_1.is_some() && revision_2.is_some()
-    {
-        // Safe to unwrap due to the checks in the `if` condition
-        let rev_1 = revision_1.as_ref().unwrap();
-        let rev_2 = revision_2.as_ref().unwrap();
+    match (&opts.path_2, &opts.revision_1, &opts.revision_2) {
+        (Some(path_2), Some(rev_1), Some(rev_2)) => {
+            diff_revs(&repo, rev_1, &opts.path_1.clone(), rev_2, path_2, &opts)
+        }
 
-        let commit_1 = repositories::revisions::get(&repository, rev_1)?
-            .ok_or_else(|| OxenError::revision_not_found(rev_1.to_string().into()))?;
-        let commit_2 = repositories::revisions::get(&repository, rev_2)?
-            .ok_or_else(|| OxenError::revision_not_found(rev_2.to_string().into()))?;
+        // Compare same path with two revisions
+        (None, Some(rev_1), Some(rev_2)) => diff_revs(
+            &repo,
+            rev_1,
+            &opts.path_1.clone(),
+            rev_2,
+            &opts.path_1.clone(),
+            &opts,
+        ),
 
-        // Get the structural diff of the directory first
-        let dir_diff = diff_directory(&repository, &commit_1, &commit_2, &path_1, 0, 100)?;
-        log::debug!(
-            "Directory structural diff found {} entries",
-            dir_diff.entries.len()
-        );
+        // Compare rev_1 with current changes.
+        // (Some(path_2), Some(rev_1), None) => {
 
-        // This vector will hold the content diff for each modified file
-        let mut content_diffs = vec![];
+        //     // diff_uncommitted(&repo, rev_1, &opts.path_1.clone(), path_2, &opts)
+        // }
 
-        for entry in dir_diff.entries {
-            // We only want to compare the content of files that were modified.
-            // TODO: Represent added/removed files in the final result as well.
-            if let (Some(head_res), Some(base_res)) = (entry.head_resource, entry.base_resource) {
-                log::debug!(
-                    "Computing content diff for modified file: {:?}",
-                    head_res.path
-                );
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: head_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: base_res.path,
-                };
+        // Compare HEAD with current changes
+        (None, Some(rev_1), None) => diff_uncommitted(&repo, rev_1, &opts.path_1.clone(), &opts),
 
-                // Compute the content diff for the individual file
-                match diff_commits(
-                    &repository,
-                    cpath_1,
-                    cpath_2,
-                    keys.clone(),
-                    targets.clone(),
-                    vec![],
-                ) {
-                    Ok(result) => {
-                        log::debug!("content diff success for file: {:?}", head_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        // Log error and continue to the next file
-                        log::error!(
-                            "Could not compute diff for file {:?}: {}",
-                            head_res.path,
-                            err
-                        );
-                    }
+        (Some(path_2), None, None) => {
+            // Direct file comparison mode
+
+            let result = diff_files(
+                opts.path_1,
+                path_2,
+                opts.keys.clone(),
+                opts.targets.clone(),
+                vec![],
+            )?;
+            log::debug!("🚀 Direct file comparison completed successfully");
+            Ok(vec![result])
+        }
+
+        _ => Err(OxenError::basic_str(
+            "Single file comparison mode not supported",
+        )),
+    }
+}
+
+pub fn diff_uncommitted(
+    repo: &LocalRepository,
+    rev_1: &str,
+    path_1: &Path,
+    opts: &DiffOpts,
+) -> Result<Vec<DiffResult>, OxenError> {
+    let status_opts = StagedDataOpts::from_paths(&[path_1.to_path_buf()]);
+    let status = repositories::status::status_from_opts(repo, &status_opts)?;
+    let unstaged_files = status.unstaged_files();
+    let commit_1 = repositories::revisions::get(repo, rev_1)?
+        .ok_or_else(|| OxenError::revision_not_found(rev_1.to_string().into()))?;
+    let mut diff_result = Vec::new();
+
+    for file in unstaged_files {
+        let node_1 =
+            repositories::entries::get_file(repo, &commit_1, file.as_path())?.ok_or_else(|| {
+                OxenError::ResourceNotFound(format!("{}@{}", file.display(), commit_1.id).into())
+            })?;
+        diff_result.push(diff_file_and_node(
+            repo,
+            &node_1,
+            file.as_path(),
+            opts.keys.clone(),
+            opts.targets.clone(),
+            vec![],
+        )?);
+    }
+
+    Ok(diff_result)
+}
+
+pub fn diff_revs(
+    repo: &LocalRepository,
+    rev_1: &str,
+    path_1: &Path,
+    rev_2: &str,
+    path_2: &Path,
+    opts: &DiffOpts,
+) -> Result<Vec<DiffResult>, OxenError> {
+    log::debug!(
+        "Comparing revisions: {}:{} with {}:{}",
+        rev_1,
+        path_1.display(),
+        rev_2,
+        path_2.display()
+    );
+    let commit_1 = repositories::revisions::get(repo, rev_1)?
+        .ok_or_else(|| OxenError::revision_not_found(rev_1.to_string().into()))?;
+    let commit_2 = repositories::revisions::get(repo, rev_2)?
+        .ok_or_else(|| OxenError::revision_not_found(rev_2.to_string().into()))?;
+
+    let dir_diff = diff_path(repo, &commit_1, &commit_2, path_1, path_2, opts)?;
+    log::debug!(
+        "Directory structural diff found {} entries",
+        dir_diff.entries.len()
+    );
+
+    let mut content_diffs = vec![];
+
+    for entry in dir_diff.entries {
+        if let (Some(head_res), Some(base_res)) = (entry.head_resource, entry.base_resource) {
+            log::debug!("Computing content diff for file: {:?}", head_res.path);
+            let cpath_1 = CommitPath {
+                commit: Some(commit_1.clone()),
+                path: head_res.path.clone(),
+            };
+            let cpath_2 = CommitPath {
+                commit: Some(commit_2.clone()),
+                path: base_res.path,
+            };
+
+            match diff_commits(
+                repo,
+                cpath_1,
+                cpath_2,
+                opts.keys.clone(),
+                opts.targets.clone(),
+                vec![],
+            ) {
+                Ok(result) => {
+                    log::debug!("Content diff successful for file: {:?}", head_res.path);
+                    content_diffs.push(result);
+                }
+                Err(err) => {
+                    log::error!(
+                        "Failed to compute diff for file {:?}: {}",
+                        head_res.path,
+                        err
+                    );
                 }
             }
         }
-
-        // If no content diffs were generated (e.g., only additions/deletions),
-        // we can return an empty text diff as a placeholder.
-        return Ok(content_diffs);
     }
-
-    // TODO: might be able to clean this logic up - pull out into function so we can early return and be less confusing
-    let (cpath_1, cpath_2) = if let Some(path_2) = path_2 {
-        let cpath_1 = if let Some(revison) = revision_1 {
-            let commit_1 = repositories::revisions::get(&repository, revison)?;
-            CommitPath {
-                commit: commit_1,
-                path: path_1.as_ref().to_path_buf(),
-            }
-        } else {
-            CommitPath {
-                commit: None,
-                path: path_1.as_ref().to_path_buf(),
-            }
-        };
-
-        let cpath_2 = if let Some(revison) = revision_2 {
-            let commit = repositories::revisions::get(&repository, revison)?;
-
-            CommitPath {
-                commit,
-                path: path_2.clone(),
-            }
-        } else {
-            CommitPath {
-                commit: None,
-                path: path_2.clone(),
-            }
-        };
-
-        (cpath_1, cpath_2)
-    } else {
-        // If no file2, compare with file1 at head.
-        let Some(commit) = repositories::commits::head_commit_maybe(&repository)? else {
-            let error = "Error: head commit not found".to_string();
-            return Err(OxenError::basic_str(error));
-        };
-
-        let file_node = repositories::entries::get_file(&repository, &commit, &path_1)?
-            .ok_or_else(|| {
-                OxenError::ResourceNotFound(
-                    format!("Error: file {} not committed", path_1.as_ref().display()).into(),
-                )
-            })?;
-
-        let hash = file_node.hash().to_string();
-
-        let committed_file = util::fs::version_path_from_node(&repository, &hash, &path_1);
-        // log::debug!("committed file: {:?}", committed_file);
-        let result =
-            repositories::diffs::diff_files(committed_file, path_1, keys, targets, vec![])?;
-
-        return Ok(vec![result]);
-    };
-
-    let result = diff_commits(&repository, cpath_1, cpath_2, keys, targets, vec![])?;
-
-    Ok(vec![result])
+    log::debug!(
+        "Directory diff completed with {} content diffs",
+        content_diffs.len()
+    );
+    Ok(content_diffs)
 }
 
 pub fn diff_commits(
@@ -235,72 +256,121 @@ pub fn diff_commits(
         cpath_2
     );
 
-    // TODO - anything we can clean up with this mut initialization?
-    let mut node_1: Option<FileNode> = None;
-    let mut node_2: Option<FileNode> = None;
+    let (node_1, node_2) = match (cpath_1.commit, cpath_2.commit) {
+        (Some(commit_1), Some(commit_2)) => {
+            let node_1 = Some(
+                repositories::entries::get_file(repo, &commit_1, &cpath_1.path)?.ok_or_else(
+                    || {
+                        OxenError::ResourceNotFound(
+                            format!("{}@{}", cpath_1.path.display(), commit_1.id).into(),
+                        )
+                    },
+                )?,
+            );
 
-    if let Some(commit_1) = cpath_1.commit {
-        node_1 = Some(
-            repositories::entries::get_file(repo, &commit_1, &cpath_1.path)?.ok_or_else(|| {
-                OxenError::ResourceNotFound(
-                    format!("{}@{}", cpath_1.path.display(), commit_1.id).into(),
-                )
-            })?,
-        );
-    };
+            let merger = EntryMergeConflictReader::new(repo)?;
 
-    if let Some(mut commit_2) = cpath_2.commit {
-        // if there are merge conflicts, compare against the conflict commit instead
+            let node_2 = match merger.has_conflicts()? {
+                true => {
+                    let merger = EntryMergeConflictReader::new(repo)?;
+                    Some(
+                        repositories::entries::get_file(
+                            repo,
+                            &merger.get_conflict_commit()?.unwrap(),
+                            &cpath_2.path,
+                        )?
+                        .ok_or_else(|| {
+                            OxenError::ResourceNotFound(
+                                format!("{}@{}", cpath_2.path.display(), commit_2.id).into(),
+                            )
+                        })?,
+                    )
+                }
+                false => Some(
+                    repositories::entries::get_file(repo, &commit_2, &cpath_2.path)?.ok_or_else(
+                        || {
+                            OxenError::ResourceNotFound(
+                                format!("{}@{}", cpath_2.path.display(), commit_2.id).into(),
+                            )
+                        },
+                    )?,
+                ),
+            };
 
-        let merger = EntryMergeConflictReader::new(repo)?;
-
-        if merger.has_conflicts()? {
-            commit_2 = merger.get_conflict_commit()?.unwrap();
+            (node_1, node_2)
         }
-
-        node_2 = Some(
-            repositories::entries::get_file(repo, &commit_2, &cpath_2.path)?.ok_or_else(|| {
-                OxenError::ResourceNotFound(
-                    format!("{}@{}", cpath_2.path.display(), commit_2.id).into(),
-                )
-            })?,
-        );
+        _ => (None, None),
     };
 
-    if node_1.is_none() || node_2.is_none() {
-        return Err(OxenError::basic_str(
+    match (node_1, node_2) {
+        (Some(node_1), Some(node_2)) => {
+            let compare_result = repositories::diffs::diff_file_nodes(
+                repo, &node_1, &node_2, keys, targets, display,
+            )?;
+
+            log::debug!("compare result: {:?}", compare_result);
+
+            Ok(compare_result)
+        }
+        _ => Err(OxenError::basic_str(
             "Could not find one or both of the files to compare",
-        ));
+        )),
     }
-
-    let node_1 = node_1.unwrap();
-    let node_2 = node_2.unwrap();
-
-    let compare_result =
-        repositories::diffs::diff_file_nodes(repo, &node_1, &node_2, keys, targets, display)?;
-
-    log::debug!("compare result: {:?}", compare_result);
-
-    Ok(compare_result)
 }
 
 /// Diffs a directory between two commits, returning a summary of changes.
-pub fn diff_directory(
+pub fn diff_path(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
-    dir: impl AsRef<Path>,
-    page: usize,
-    page_size: usize,
+    base_path: impl AsRef<Path>,
+    head_path: impl AsRef<Path>,
+    opts: &DiffOpts,
 ) -> Result<DiffEntriesCounts, OxenError> {
-    list_diff_entries(
-        repo,
-        base_commit,
-        head_commit,
-        dir.as_ref().to_path_buf(),
-        page,
-        page_size,
-    )
+    match (base_path.as_ref().is_file(), head_path.as_ref().is_file()) {
+        (true, true) => {
+            let diff_entry = DiffEntry {
+                filename: head_path.as_ref().to_string_lossy().to_string(),
+                head_resource: Some(ParsedResource {
+                    commit: Some(head_commit.clone()),
+                    path: head_path.as_ref().to_path_buf(),
+                    ..ParsedResource::default() //TODO: Fill in other fields as well
+                }),
+                base_resource: Some(ParsedResource {
+                    commit: Some(base_commit.clone()),
+                    path: base_path.as_ref().to_path_buf(),
+                    ..ParsedResource::default() //TODO: Fill in other fields as well
+                }),
+                ..DiffEntry::default()
+            };
+
+            let diff_entries = DiffEntriesCounts {
+                entries: vec![diff_entry],
+                counts: AddRemoveModifyCounts {
+                    added: 0,
+                    removed: 0,
+                    modified: 1, // Since we are comparing two files
+                },
+                pagination: Pagination::default(), // Assuming no pagination needed for file diff
+            };
+            Ok(diff_entries)
+        }
+        (false, false) => list_diff_entries(
+            repo,
+            base_commit,
+            head_commit,
+            base_path.as_ref().to_path_buf(),
+            head_path.as_ref().to_path_buf(),
+            opts.page,
+            opts.page_size,
+        ),
+        _ => {
+            println!("Unable to compare directory and file");
+            Err(OxenError::basic_str(
+                "Cannot compare a directory with a file",
+            ))
+        }
+    }
 }
 
 pub fn diff_files(
@@ -330,6 +400,34 @@ pub fn diff_files(
     }
 }
 
+// TODO: merge this and diff_file_and_node
+pub fn diff_file_and_node(
+    repo: &LocalRepository,
+    file_node: &FileNode,
+    file_path: impl AsRef<Path>,
+    keys: Vec<String>,
+    targets: Vec<String>,
+    display: Vec<String>,
+) -> Result<DiffResult, OxenError> {
+    match file_node.data_type() {
+        EntryDataType::Tabular => {
+            let result = diff_tabular_file_and_file_node(
+                repo, file_node, file_path, keys, targets, display,
+            )?;
+            Ok(DiffResult::Tabular(result))
+        }
+        EntryDataType::Text => {
+            let result = diff_text_file_and_node(repo, file_node, file_path)?;
+            Ok(result)
+        }
+        _ => Err(OxenError::invalid_file_type(format!(
+            "Compare not supported for files, found {:?} and {:?}",
+            file_path.as_ref(),
+            file_node.hash().to_string()
+        ))),
+    }
+}
+
 pub fn diff_file_nodes(
     repo: &LocalRepository,
     file_1: &FileNode,
@@ -342,7 +440,7 @@ pub fn diff_file_nodes(
     let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
 
     log::debug!(
-        "😇 version_path_1: {:?}",
+        " version_path_1: {:?}",
         *file_1.data_type() == EntryDataType::Tabular
             && *file_2.data_type() == EntryDataType::Tabular
     );
@@ -367,6 +465,27 @@ pub fn diff_file_nodes(
     }
 }
 
+pub fn diff_tabular_file_and_file_node(
+    repo: &LocalRepository,
+    file_node: &FileNode,
+    file_1_path: impl AsRef<Path>,
+    keys: Vec<String>,
+    targets: Vec<String>,
+    display: Vec<String>,
+) -> Result<TabularDiff, OxenError> {
+    let file_node_path = util::fs::version_path_from_hash(repo, file_node.hash().to_string());
+
+    let df_1 = tabular::read_df(file_node_path, DFOpts::empty())?;
+    let df_2 = tabular::read_df(file_1_path, DFOpts::empty())?;
+
+    let schema_1 = Schema::from_polars(&df_1.schema());
+    let schema_2 = Schema::from_polars(&df_2.schema());
+
+    validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
+
+    diff_dfs(&df_1, &df_2, keys, targets, display)
+}
+
 pub fn diff_tabular_file_nodes(
     repo: &LocalRepository,
     file_1: &FileNode,
@@ -388,6 +507,16 @@ pub fn diff_tabular_file_nodes(
     validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
 
     diff_dfs(&df_1, &df_2, keys, targets, display)
+}
+
+pub fn diff_text_file_and_node(
+    repo: &LocalRepository,
+    file_node: &FileNode,
+    file_path: impl AsRef<Path>,
+) -> Result<DiffResult, OxenError> {
+    let version_path = util::fs::version_path_from_hash(repo, file_node.hash().to_string());
+    let result = utf8_diff::diff(&version_path, file_path)?;
+    Ok(DiffResult::Text(result))
 }
 
 pub fn diff_text_file_nodes(
@@ -861,30 +990,6 @@ pub fn diff_entries(
     }
 }
 
-// Filters out the entries that are not direct children of the provided dir, but
-// still provides accurate recursive counts -
-// TODO: can de-dup this with list_diff_entries somewhat
-pub fn list_diff_entries_in_dir_top_level(
-    repo: &LocalRepository,
-    dir: PathBuf,
-    base_commit: &Commit,
-    head_commit: &Commit,
-    page: usize,
-    page_size: usize,
-) -> Result<DiffEntriesCounts, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::diff::list_diff_entries_in_dir_top_level(
-            repo,
-            dir,
-            base_commit,
-            head_commit,
-            page,
-            page_size,
-        ),
-    }
-}
-
 pub fn list_changed_dirs(
     repo: &LocalRepository,
     base_commit: &Commit,
@@ -1039,7 +1144,8 @@ pub fn list_diff_entries(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
-    dir: PathBuf,
+    base_dir: PathBuf,
+    head_dir: PathBuf,
     page: usize,
     page_size: usize,
 ) -> Result<DiffEntriesCounts, OxenError> {
@@ -1049,7 +1155,8 @@ pub fn list_diff_entries(
             repo,
             base_commit,
             head_commit,
-            dir,
+            base_dir,
+            head_dir,
             page,
             page_size,
         ),
@@ -1168,6 +1275,7 @@ mod tests {
 
     use crate::error::OxenError;
     use crate::model::diff::diff_entry_status::DiffEntryStatus;
+    use crate::opts::DiffOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
@@ -1200,6 +1308,7 @@ mod tests {
                 &repo,
                 &base_commit,
                 &head_commit,
+                PathBuf::from(""),
                 PathBuf::from(""),
                 0,
                 10,
@@ -1244,6 +1353,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 &base_commit,
                 &head_commit,
                 PathBuf::from(""),
+                PathBuf::from(""),
                 0,
                 10,
             )?;
@@ -1283,6 +1393,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 &repo,
                 &base_commit,
                 &head_commit,
+                PathBuf::from(""),
                 PathBuf::from(""),
                 0,
                 10,
@@ -1375,6 +1486,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 &base_commit,
                 &head_commit,
                 PathBuf::from(""),
+                PathBuf::from(""),
                 0,
                 10,
             )?;
@@ -1437,22 +1549,24 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             repositories::rm(&repo, &opts)?;
             repositories::add(&repo, &repo.path).await?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
-            let entries = repositories::diffs::list_diff_entries_in_dir_top_level(
+            let entries = repositories::diffs::list_diff_entries(
                 &repo,
-                PathBuf::from(""),
                 &base_commit,
                 &head_commit,
+                PathBuf::from(""),
+                PathBuf::from(""),
                 0,
                 10,
             )?;
 
             let entries = entries.entries;
 
-            let annotation_diff_entries = repositories::diffs::list_diff_entries_in_dir_top_level(
+            let annotation_diff_entries = repositories::diffs::list_diff_entries(
                 &repo,
-                PathBuf::from("annotations"),
                 &base_commit,
                 &head_commit,
+                PathBuf::from("annotations"),
+                PathBuf::from("annotations"),
                 0,
                 10,
             )?;
@@ -1462,11 +1576,17 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             // 2. The addition of the README.md file
             log::debug!("Got entries: {:?}", entries);
 
-            assert_eq!(3, entries.len());
+            assert_eq!(9, entries.len());
 
             assert_eq!(entries[0].status, DiffEntryStatus::Modified.to_string());
             assert_eq!(entries[1].status, DiffEntryStatus::Added.to_string());
-            assert_eq!(entries[2].status, DiffEntryStatus::Added.to_string());
+            assert_eq!(entries[2].status, DiffEntryStatus::Modified.to_string());
+            assert_eq!(entries[3].status, DiffEntryStatus::Added.to_string());
+            assert_eq!(entries[4].status, DiffEntryStatus::Added.to_string());
+            assert_eq!(entries[5].status, DiffEntryStatus::Added.to_string());
+            assert_eq!(entries[6].status, DiffEntryStatus::Removed.to_string());
+            assert_eq!(entries[7].status, DiffEntryStatus::Added.to_string());
+            assert_eq!(entries[8].status, DiffEntryStatus::Added.to_string());
 
             // 1. Schmannotations dir added
             // 2. Train dir modified
@@ -1476,7 +1596,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 annotation_diff_entries.entries
             );
 
-            assert_eq!(2, annotation_diff_entries.entries.len());
+            assert_eq!(5, annotation_diff_entries.entries.len());
 
             assert_eq!(
                 annotation_diff_entries.entries[0].status,
@@ -1485,6 +1605,18 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             assert_eq!(
                 annotation_diff_entries.entries[1].status,
                 DiffEntryStatus::Modified.to_string()
+            );
+            assert_eq!(
+                annotation_diff_entries.entries[2].status,
+                DiffEntryStatus::Added.to_string()
+            );
+            assert_eq!(
+                annotation_diff_entries.entries[3].status,
+                DiffEntryStatus::Removed.to_string()
+            );
+            assert_eq!(
+                annotation_diff_entries.entries[4].status,
+                DiffEntryStatus::Added.to_string()
             );
 
             Ok(())
@@ -1509,11 +1641,12 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let opts = RmOpts::from_path(&bbox_filename);
             repositories::rm(&repo, &opts)?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
-            let entries = repositories::diffs::list_diff_entries_in_dir_top_level(
+            let entries = repositories::diffs::list_diff_entries(
                 &repo,
-                PathBuf::from(""),
                 &base_commit,
                 &head_commit,
+                PathBuf::from(""),
+                PathBuf::from(""),
                 0,
                 10,
             )?;
@@ -1530,8 +1663,8 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 println!("entry {}: {:?}", entry.0, entry.1);
             }
 
-            // We are just listing top level entries, so only one directory
-            assert_eq!(1, entries.len());
+            // we removed a file that is in the annotations/train dir, so we should have 3 entries (bounding_box.csv)
+            assert_eq!(3, entries.len());
 
             // Dir is modified because a child was removed
             assert_eq!(entries[0].status, DiffEntryStatus::Modified.to_string());
@@ -1546,19 +1679,28 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         test::run_empty_dir_test(|dir| {
             let file1 = dir.join("file1.txt");
             let file2 = dir.join("file2.txt");
+            println!("file1: {:?}", file1);
+            println!("file2: {:?}", file2);
 
             util::fs::write_to_path(&file1, "hello\nhi\nhow are you?")?;
             util::fs::write_to_path(&file2, "hello\nhi\nhow are you doing?")?;
-            println!("!!!!");
-            let diff = repositories::diffs::diff(
-                &file1,
-                Some(file2),
-                vec![],
-                vec![],
-                Some(dir.canonicalize()?),
-                None,
-                None,
-            )?;
+
+            let opts = DiffOpts {
+                repo_dir: Some(dir.canonicalize()?),
+                path_1: file1,
+                path_2: Some(file2),
+                keys: vec![],
+                targets: vec![],
+                revision_1: None,
+                revision_2: None,
+                output: None,
+                page: 0,
+                page_size: 10,
+            };
+
+            println!("!!!!!!!!!");
+            let diff = repositories::diffs::diff(opts)?;
+
             match diff.first() {
                 Some(DiffResult::Text(ref result)) => {
                     let lines = &result.lines;

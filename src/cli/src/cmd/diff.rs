@@ -13,10 +13,10 @@ use liboxen::model::diff::tabular_diff::TabularDiffMods;
 use liboxen::model::diff::{ChangeType, DiffResult, TextDiff};
 use liboxen::opts::DiffOpts;
 use liboxen::repositories;
-use liboxen::util;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "diff";
+pub const DIFFSEP: &str = "..";
 pub struct DiffCmd;
 
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
@@ -35,74 +35,56 @@ impl RunCmd for DiffCmd {
     fn args(&self) -> Command {
         // Setups the CLI args for the command
         Command::new(NAME)
-            .about("Compare two files against each other or against versions. The two resource paramaters can be specified by filepath or `file:revision` syntax.")
-            .arg(Arg::new("RESOURCE1")
-                .required(true)
-                .help("First resource, in format `file` or `file:revision`")
-                .index(1)
+            .about("Show changes between commits, commit and working tree, etc")
+            .arg(
+                Arg::new("commits_or_files")
+                    .help(format!("Commits, commit ranges (commit1{DIFFSEP}commit2)"))
+                    .num_args(0..)
+                    .action(clap::ArgAction::Append)
+                    .value_name("revision | commit | branch"),
             )
-            .arg(Arg::new("RESOURCE2")
-                .required(false)
-                .help("Second resource, in format `file` or `file:revision`. If left blank, RESOURCE1 will be compared with HEAD.")
-                .index(2))
-            .arg(Arg::new("keys")
-                .required(false)
-                .long("keys")
-                .short('k')
-                .help("Comma-separated list of columns to compare on. If not specified, all columns are used for keys.")
-                .use_value_delimiter(true)
-                .action(clap::ArgAction::Set))
-            .arg(Arg::new("compares")
-                .required(false)
-                .long("compares")
-                .short('c')
-                .help("Comma-separated list of columns to compare changes between. If not specified, all columns  that are not keys are compares.")
-                .use_value_delimiter(true)
-                .action(clap::ArgAction::Set))
-            .arg(Arg::new("output")
-                .required(false)
-                .long("output")
-                .short('o')
-                .help("Output directory path to write the results of the comparison. Will write both match.csv (rows with same keys and compares) and diff.csv (rows with different compares between files.")
-                .action(clap::ArgAction::Set))
+            .arg(
+                Arg::new("paths")
+                    .help("Limit diff to specific paths")
+                    .num_args(0..)
+                    .last(true)
+                    .action(clap::ArgAction::Append)
+                    .value_name("path"),
+            )
+            .arg(
+                Arg::new("keys")
+                    .long("keys")
+                    .short('k')
+                    .help("Comma-separated list of columns to compare on")
+                    .use_value_delimiter(true)
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("compares")
+                    .long("compares")
+                    .short('c')
+                    .help("Comma-separated list of columns to compare changes between")
+                    .use_value_delimiter(true)
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("output")
+                    .long("output")
+                    .short('o')
+                    .help("Output directory path to write the results")
+                    .action(clap::ArgAction::Set),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
         let opts = DiffCmd::parse_args(args);
+        let output = opts.output.clone();
 
-        // If the user specifies two files without revisions, we will compare the files on disk
-        let repo_dir = util::fs::get_repo_root_from_current_dir().ok_or(OxenError::basic_str(
-            "repo not found in current working directory",
-        ))?;
-        let mut diff_result =
-            if opts.revision_1.is_none() && opts.revision_2.is_none() && opts.path_2.is_some() {
-                // If we do not have revisions set, just compare the files on disk
-                repositories::diffs::diff(
-                    opts.path_1,
-                    opts.path_2,
-                    opts.keys,
-                    opts.targets,
-                    Some(repo_dir),
-                    opts.revision_1,
-                    opts.revision_2,
-                )?
-            } else {
-                // If we have revisions set, pass in the repo_dir to be able
-                // to compare the files at those revisions within the .oxen repo
-                repositories::diffs::diff(
-                    opts.path_1,
-                    opts.path_2,
-                    opts.keys,
-                    opts.targets,
-                    Some(repo_dir),
-                    opts.revision_1,
-                    opts.revision_2,
-                )?
-            };
+        let mut diff_result = repositories::diffs::diff(opts)?;
 
         DiffCmd::print_diff_result(&diff_result)?;
-        DiffCmd::maybe_save_diff_output(&mut diff_result, opts.output)?;
+        DiffCmd::maybe_save_diff_output(&mut diff_result, output)?;
 
         Ok(())
     }
@@ -110,54 +92,124 @@ impl RunCmd for DiffCmd {
 
 impl DiffCmd {
     pub fn parse_args(args: &clap::ArgMatches) -> DiffOpts {
-        let resource1 = args.get_one::<String>("RESOURCE1").expect("required");
-        let resource2 = args.get_one::<String>("RESOURCE2");
+        let commits_or_files: Vec<String> = args
+            .get_many::<String>("commits_or_files")
+            .map(|values| values.cloned().collect())
+            .unwrap_or_default();
 
-        let (file1, revision1) = DiffCmd::parse_file_and_revision(resource1);
+        let paths: Vec<String> = args
+            .get_many::<String>("paths")
+            .map(|values| values.cloned().collect())
+            .unwrap_or_default();
 
-        let file1 = PathBuf::from(file1);
-
-        let (file2, revision2) = match resource2 {
-            Some(resource) => {
-                let (file, revision) = DiffCmd::parse_file_and_revision(resource);
-                (Some(PathBuf::from(file)), revision)
+        // Parse the different forms of diff commands
+        let (file1, file2, revision1, revision2) = match commits_or_files.len() {
+            0 => {
+                // oxen diff [--] [<path>…​] - compare working tree with HEAD
+                let path = if !paths.is_empty() {
+                    PathBuf::from(&paths[0])
+                } else {
+                    PathBuf::from("")
+                };
+                (path, None, Some("HEAD".to_string()), None)
             }
-            None => (None, None),
+            1 => {
+                let arg = &commits_or_files[0];
+                if arg.contains(DIFFSEP) {
+                    // oxen diff <commit>..<commit> [--] [<path>…​]
+                    let parts: Vec<&str> = arg.split(DIFFSEP).collect();
+                    if parts.len() == 2 {
+                        let path = if !paths.is_empty() {
+                            PathBuf::from(&paths[0])
+                        } else {
+                            PathBuf::from("")
+                        };
+                        (
+                            path.clone(),
+                            Some(path),
+                            Some(parts[0].to_string()),
+                            Some(parts[1].to_string()),
+                        )
+                    } else {
+                        // Invalid range format, treat as single commit
+                        let path = if !paths.is_empty() {
+                            PathBuf::from(&paths[0])
+                        } else {
+                            PathBuf::from("")
+                        };
+                        (path, None, Some(arg.clone()), Some("HEAD".to_string()))
+                    }
+                } else {
+                    // oxen diff <revision1> [--] [<path>…​] - compare revision1 with HEAD
+                    let path = if !paths.is_empty() {
+                        PathBuf::from(&paths[0])
+                    } else {
+                        PathBuf::from("")
+                    };
+                    (path, None, Some("HEAD".to_string()), Some(arg.clone()))
+                }
+            }
+            2 => {
+                // Check if both arguments are local files
+                let arg1_path = PathBuf::from(&commits_or_files[0]);
+                let arg2_path = PathBuf::from(&commits_or_files[1]);
+
+                if arg1_path.exists() && arg2_path.exists() {
+                    // oxen diff file1 file2 - compare two local files
+                    (arg1_path, Some(arg2_path), None, None)
+                } else {
+                    // oxen diff revision1 revision2 [--] [<path>…​] - compare two revisions
+                    let path = if !paths.is_empty() {
+                        PathBuf::from(&paths[0])
+                    } else {
+                        PathBuf::from("")
+                    };
+                    (
+                        path.clone(),
+                        Some(path),
+                        Some(commits_or_files[0].clone()),
+                        Some(commits_or_files[1].clone()),
+                    )
+                }
+            }
+            _ => {
+                // Too many arguments, use first two as revisions
+                let path = if !paths.is_empty() {
+                    PathBuf::from(&paths[0])
+                } else {
+                    PathBuf::from("")
+                };
+                (
+                    path.clone(),
+                    Some(path),
+                    Some(commits_or_files[0].clone()),
+                    Some(commits_or_files[1].clone()),
+                )
+            }
         };
 
-        let keys: Vec<String> = match args.get_many::<String>("keys") {
-            Some(values) => values.cloned().collect(),
-            None => Vec::new(),
-        };
+        let keys: Vec<String> = args
+            .get_many::<String>("keys")
+            .map(|values| values.cloned().collect())
+            .unwrap_or_default();
 
-        // We changed the external name to compares, need to refactor internals still
-        let maybe_targets = args.get_many::<String>("compares");
-
-        let targets = match maybe_targets {
-            Some(values) => values.cloned().collect(),
-            None => Vec::new(),
-        };
+        let targets: Vec<String> = args
+            .get_many::<String>("compares")
+            .map(|values| values.cloned().collect())
+            .unwrap_or_default();
 
         let output = args.get_one::<String>("output").map(PathBuf::from);
 
         DiffOpts {
+            repo_dir: None,
             path_1: file1,
             path_2: file2,
             keys,
             targets,
-            repo_dir: None,
             revision_1: revision1,
             revision_2: revision2,
             output,
-        }
-    }
-
-    fn parse_file_and_revision(file_revision: &str) -> (String, Option<String>) {
-        let parts: Vec<&str> = file_revision.split(':').collect();
-        if parts.len() == 2 {
-            (parts[0].to_string(), Some(parts[1].to_string()))
-        } else {
-            (parts[0].to_string(), None)
+            ..Default::default()
         }
     }
 
