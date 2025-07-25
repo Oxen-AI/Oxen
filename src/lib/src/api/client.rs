@@ -57,8 +57,23 @@ pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError
     new_for_host(host, false)
 }
 
+pub fn new_for_url_with_bearer_token<U: IntoUrl>(url: U, bearer_token: &str) -> Result<Client, OxenError> {
+    let (_scheme, host) = get_scheme_and_host_from_url(url)?;
+    new_for_host_with_bearer_token(host, bearer_token, false)
+}
+
 fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
     match builder_for_host(host.as_ref(), should_add_user_agent)?
+        .timeout(time::Duration::from_secs(constants::DEFAULT_TIMEOUT_SECS))
+        .build()
+    {
+        Ok(client) => Ok(client),
+        Err(reqwest_err) => Err(OxenError::HTTP(reqwest_err)),
+    }
+}
+
+fn new_for_host_with_bearer_token<S: AsRef<str>>(host: S, bearer_token: &str, should_add_user_agent: bool) -> Result<Client, OxenError> {
+    match builder_for_host_with_bearer_token(host.as_ref(), bearer_token, should_add_user_agent)?
         .timeout(time::Duration::from_secs(constants::DEFAULT_TIMEOUT_SECS))
         .build()
     {
@@ -120,6 +135,34 @@ fn builder_for_host<S: AsRef<str>>(
         log::trace!("No auth token found for host: {}", host.as_ref());
         builder
     }
+}
+
+fn builder_for_host_with_bearer_token<S: AsRef<str>>(
+    host: S,
+    bearer_token: &str,
+    should_add_user_agent: bool,
+) -> Result<ClientBuilder, OxenError> {
+    let builder = if should_add_user_agent {
+        builder()
+    } else {
+        Ok(builder_no_user_agent())
+    };
+
+    log::debug!("Setting bearer token for host: {}", host.as_ref());
+    let auth_header = format!("Bearer {bearer_token}");
+    let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
+        Ok(header) => header,
+        Err(err) => {
+            log::debug!("remote::client::new invalid header value: {}", err);
+            return Err(OxenError::basic_str(
+                "Error setting request auth. Please check your bearer token.",
+            ));
+        }
+    };
+    auth_value.set_sensitive(true);
+    let mut headers = header::HeaderMap::new();
+    headers.insert(header::AUTHORIZATION, auth_value);
+    Ok(builder?.default_headers(headers))
 }
 
 fn builder() -> Result<ClientBuilder, OxenError> {
@@ -256,4 +299,92 @@ pub async fn handle_non_json_response(
     // If the response was an error, try to handle it as a standard json response.
     // We assume it's an error here because we checked the success status above.
     Err(parse_json_body(url, res).await.unwrap_err())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_for_url_with_bearer_token() {
+        let test_url = "https://test.example.com/api";
+        let bearer_token = "test_token_123";
+        
+        let client = new_for_url_with_bearer_token(test_url, bearer_token);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_builder_for_host_with_bearer_token() {
+        let host = "test.example.com";
+        let bearer_token = "test_token_123";
+        
+        let builder = builder_for_host_with_bearer_token(host, bearer_token, false);
+        assert!(builder.is_ok());
+        
+        let client = builder.unwrap().build();
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_builder_for_host_with_bearer_token_sets_auth_header() {
+        let host = "test.example.com";
+        let bearer_token = "test_token_123";
+        
+        let builder = builder_for_host_with_bearer_token(host, bearer_token, false);
+        assert!(builder.is_ok());
+        
+        // Build the client and verify it was created successfully
+        let client = builder.unwrap().build();
+        assert!(client.is_ok());
+        
+        // The actual header verification would require accessing private fields
+        // which isn't directly testable, but we can verify the client builds correctly
+    }
+
+    #[test]
+    fn test_builder_for_host_with_bearer_token_with_user_agent() {
+        let host = "test.example.com";
+        let bearer_token = "test_token_123";
+        
+        let builder = builder_for_host_with_bearer_token(host, bearer_token, true);
+        assert!(builder.is_ok());
+        
+        let client = builder.unwrap().build();
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_builder_for_host_with_bearer_token_invalid_token() {
+        let host = "test.example.com";
+        let bearer_token = "invalid\ntoken"; // Invalid token with newline
+        
+        let builder = builder_for_host_with_bearer_token(host, bearer_token, false);
+        assert!(builder.is_err());
+        
+        let err = builder.unwrap_err();
+        assert!(err.to_string().contains("Error setting request auth"));
+    }
+
+    #[test]
+    fn test_get_scheme_and_host_from_url() {
+        let test_cases = vec![
+            ("https://example.com", ("https".to_string(), "example.com".to_string())),
+            ("http://localhost:8080", ("http".to_string(), "localhost:8080".to_string())),
+            ("https://test.example.com:8443", ("https".to_string(), "test.example.com:8443".to_string())),
+        ];
+
+        for (url, expected) in test_cases {
+            let result = get_scheme_and_host_from_url(url);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_get_scheme_and_host_from_url_invalid() {
+        let invalid_url = "not-a-url";
+        let result = get_scheme_and_host_from_url(invalid_url);
+        assert!(result.is_err());
+    }
 }

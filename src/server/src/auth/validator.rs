@@ -18,9 +18,12 @@ pub async fn validate(
                 Err((actix_web::error::ErrorUnauthorized("unauthorized"), req))
             }
         }
-        Err(err) => Err((
-            actix_web::error::ErrorInternalServerError(format!("Err could not get keygen: {err}")),
-            req,
-        )),
+        Err(err) => {
+            log::error!("AUTH DEBUG: Failed to create AccessKeyManager: {:?}", err);
+            Err((
+                actix_web::error::ErrorInternalServerError(format!("Err could not get keygen: {err}")),
+                req,
+            ))
+        }
     }
 }

@@ -257,6 +257,22 @@ ulimit -n 10240
 cargo test -- --test-threads=$(nproc)
 ```
 
+## Run Integration Tests Only
+
+Integration tests are located in the `integration_tests/` directory and don't require a running oxen server:
+
+```
+cargo test --tests -- --nocapture
+```
+
+## Run Unit Tests Only
+
+Unit tests are located in `src/` and can be run with:
+
+```
+cargo test --lib --bins
+```
+
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```

@@ -180,6 +180,47 @@ pub async fn get_repo_data_by_remote(
     }
 }
 
+pub async fn create_empty_with_bearer_token(repo: RepoNew, bearer_token: &str) -> Result<RemoteRepository, OxenError> {
+    let namespace = repo.namespace.as_ref();
+    let repo_name = repo.name.as_ref();
+    let host = repo.host();
+    let scheme = repo.scheme();
+
+    let url = api::endpoint::url_from_host_and_scheme(&host, "", &scheme);
+    let params = json!({
+        "name": repo_name,
+        "namespace": namespace,
+        "description": repo.description,
+        "is_public": repo.is_public(),
+    });
+    log::debug!("Create remote: {} {}\n{}", url, repo.repo_id(), params);
+
+    let client = client::new_for_url_with_bearer_token(&url, bearer_token)?;
+    log::debug!("client: {:?}", client);
+    match client.post(&url).json(&params).send().await {
+        Ok(res) => {
+            let body = client::parse_json_body(&url, res).await?;
+
+            log::debug!("repositories::create response {}", body);
+            let response: RepositoryCreationResponse = serde_json::from_str(&body)?;
+            Ok(RemoteRepository::from_creation_view(
+                &response.repository,
+                &Remote {
+                    url: api::endpoint::remote_url_from_namespace_name_scheme(
+                        &host, namespace, repo_name, &scheme,
+                    ),
+                    name: String::from("origin"),
+                },
+            ))
+        }
+        Err(err) => {
+            log::error!("Failed to create remote url {url}\n{err:?}");
+            let err = format!("Create repository could not connect to {url}. Make sure you have the correct server and that it is running.");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
 pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> {
     let namespace = repo.namespace.as_ref();
     let repo_name = repo.name.as_ref();
@@ -219,6 +260,48 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
             let err = format!("Create repository could not connect to {url}. Make sure you have the correct server and that it is running.");
             Err(OxenError::basic_str(err))
         }
+    }
+}
+
+pub async fn create_with_bearer_token(repo_new: RepoNew, bearer_token: &str) -> Result<RemoteRepository, OxenError> {
+    let host = repo_new.host();
+    let scheme = repo_new.scheme();
+    let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
+
+    // convert repo_new to json with serde
+    log::debug!("Create remote: {}\n{:?}", url, repo_new);
+
+    let client = client::new_for_url_with_bearer_token(&url, bearer_token)?;
+    if let Ok(res) = client.post(&url).json(&repo_new).send().await {
+        let body = client::parse_json_body(&url, res).await?;
+
+        log::debug!("repositories::create response {}", body);
+        let response: Result<RepositoryCreationResponse, serde_json::Error> =
+            serde_json::from_str(&body);
+        match response {
+            Ok(response) => Ok(RemoteRepository::from_creation_view(
+                &response.repository,
+                &Remote {
+                    url: api::endpoint::remote_url_from_namespace_name_scheme(
+                        &host,
+                        &repo_new.namespace,
+                        &repo_new.name,
+                        &repo_new.scheme(),
+                    ),
+                    name: String::from(DEFAULT_REMOTE_NAME),
+                },
+            )),
+            Err(err) => {
+                let err = format!(
+                    "Could not create or find repository [{}]: {err}\n{body}",
+                    repo_new.repo_id()
+                );
+                Err(OxenError::basic_str(err))
+            }
+        }
+    } else {
+        let err = format!("Create repository could not connect to {url}. Make sure you have the correct server and that it is running.");
+        Err(OxenError::basic_str(err))
     }
 }
 
@@ -815,6 +898,244 @@ mod tests {
             // Delete repo - cleanup + check for correct remote namespace transfer
             api::client::repositories::delete(&new_repository).await?;
 
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_empty_with_bearer_token() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let namespace = constants::DEFAULT_NAMESPACE;
+            let name = local_repo.dirname();
+            let bearer_token = "test_bearer_token_123";
+
+            // Mock the create repository endpoint
+            let mock_create = server
+                .mock("POST", "/api/repos")
+                .match_header("authorization", format!("Bearer {}", bearer_token).as_str())
+                .with_status(200)
+                .with_body(format!(
+                    r#"{{
+                        "status": "success",
+                        "status_message": "Repository created successfully",
+                        "repository": {{
+                            "id": "test-id",
+                            "namespace": "{}",
+                            "name": "{}",
+                            "is_public": false,
+                            "description": null
+                        }}
+                    }}"#,
+                    namespace, name
+                ))
+                .create_async()
+                .await;
+
+            // Extract host from server URL
+            let url = reqwest::Url::parse(&server_url)?;
+            let host = url.host_str().unwrap();
+            let port = url.port().unwrap_or(80);
+            let host_with_port = format!("{}:{}", host, port);
+
+            let mut repo_new = RepoNew::from_namespace_name(namespace, &name);
+            repo_new.host = Some(host_with_port);
+            repo_new.scheme = Some("http".to_string());
+            repo_new.is_public = Some(false);
+
+            let result = super::create_empty_with_bearer_token(repo_new, bearer_token).await;
+            assert!(result.is_ok());
+            
+            let repository = result.unwrap();
+            assert_eq!(repository.namespace, namespace);
+            assert_eq!(repository.name, name);
+
+            mock_create.assert();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_with_bearer_token() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let namespace = constants::DEFAULT_NAMESPACE;
+            let name = local_repo.dirname();
+            let bearer_token = "test_bearer_token_123";
+
+            // Mock the create repository endpoint
+            let mock_create = server
+                .mock("POST", "/api/repos")
+                .match_header("authorization", format!("Bearer {}", bearer_token).as_str())
+                .with_status(200)
+                .with_body(format!(
+                    r#"{{
+                        "status": "success",
+                        "status_message": "Repository created successfully",
+                        "repository": {{
+                            "id": "test-id",
+                            "namespace": "{}",
+                            "name": "{}",
+                            "is_public": false,
+                            "description": null
+                        }}
+                    }}"#,
+                    namespace, name
+                ))
+                .create_async()
+                .await;
+
+            // Extract host from server URL
+            let url = reqwest::Url::parse(&server_url)?;
+            let host = url.host_str().unwrap();
+            let port = url.port().unwrap_or(80);
+            let host_with_port = format!("{}:{}", host, port);
+
+            let user = crate::model::User {
+                name: "Test User".to_string(),
+                email: "test@example.com".to_string(),
+            };
+            let files: Vec<FileNew> = vec![FileNew {
+                path: PathBuf::from("README.md"),
+                contents: FileContents::Text(format!("# {}\nTest repository", name)),
+                user,
+            }];
+
+            let mut repo_new = RepoNew::from_files(namespace, &name, files);
+            repo_new.host = Some(host_with_port);
+            repo_new.scheme = Some("http".to_string());
+            repo_new.is_public = Some(false);
+
+            let result = super::create_with_bearer_token(repo_new, bearer_token).await;
+            assert!(result.is_ok());
+            
+            let repository = result.unwrap();
+            assert_eq!(repository.namespace, namespace);
+            assert_eq!(repository.name, name);
+
+            mock_create.assert();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_empty_with_bearer_token_unauthorized() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let namespace = constants::DEFAULT_NAMESPACE;
+            let name = local_repo.dirname();
+            let bearer_token = "invalid_token";
+
+            // Mock the create repository endpoint to return unauthorized
+            let mock_create = server
+                .mock("POST", "/api/repos")
+                .match_header("authorization", format!("Bearer {}", bearer_token).as_str())
+                .with_status(401)
+                .with_body(r#"{"status": "error", "status_message": "Unauthorized"}"#)
+                .create_async()
+                .await;
+
+            // Extract host from server URL
+            let url = reqwest::Url::parse(&server_url)?;
+            let host = url.host_str().unwrap();
+            let port = url.port().unwrap_or(80);
+            let host_with_port = format!("{}:{}", host, port);
+
+            let mut repo_new = RepoNew::from_namespace_name(namespace, &name);
+            repo_new.host = Some(host_with_port);
+            repo_new.scheme = Some("http".to_string());
+
+            let result = super::create_empty_with_bearer_token(repo_new, bearer_token).await;
+            assert!(result.is_err());
+            
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("Unauthorized"));
+
+            mock_create.assert();
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_empty_with_bearer_token_connection_error() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let namespace = constants::DEFAULT_NAMESPACE;
+            let name = local_repo.dirname();
+            let bearer_token = "test_token";
+
+            // Use a non-existent host to simulate connection error
+            let mut repo_new = RepoNew::from_namespace_name(namespace, &name);
+            repo_new.host = Some("nonexistent-host:9999".to_string());
+            repo_new.scheme = Some("http".to_string());
+
+            let result = super::create_empty_with_bearer_token(repo_new, bearer_token).await;
+            assert!(result.is_err());
+            
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("could not connect"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_with_bearer_token_vs_config_auth() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let mut server = mockito::Server::new_async().await;
+            let server_url = server.url();
+
+            let namespace = constants::DEFAULT_NAMESPACE;
+            let name = local_repo.dirname();
+            let bearer_token = "explicit_bearer_token";
+
+            // Mock should only match the explicit bearer token, not config auth
+            let mock_create = server
+                .mock("POST", "/api/repos")
+                .match_header("authorization", format!("Bearer {}", bearer_token).as_str())
+                .with_status(200)
+                .with_body(format!(
+                    r#"{{
+                        "status": "success",
+                        "status_message": "Repository created successfully",
+                        "repository": {{
+                            "id": "test-id",
+                            "namespace": "{}",
+                            "name": "{}",
+                            "is_public": false,
+                            "description": null
+                        }}
+                    }}"#,
+                    namespace, name
+                ))
+                .create_async()
+                .await;
+
+            // Extract host from server URL
+            let url = reqwest::Url::parse(&server_url)?;
+            let host = url.host_str().unwrap();
+            let port = url.port().unwrap_or(80);
+            let host_with_port = format!("{}:{}", host, port);
+
+            let mut repo_new = RepoNew::from_namespace_name(namespace, &name);
+            repo_new.host = Some(host_with_port);
+            repo_new.scheme = Some("http".to_string());
+
+            // Test with explicit bearer token
+            let result = super::create_empty_with_bearer_token(repo_new, bearer_token).await;
+            assert!(result.is_ok());
+
+            mock_create.assert();
             Ok(())
         })
         .await
