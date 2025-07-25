@@ -1,5 +1,5 @@
 use filetime::FileTime;
-use futures::stream::{self, Stream};
+use futures::stream::{self, Stream, StreamExt};
 use glob::glob;
 use par_stream::prelude::*;
 use parking_lot::Mutex;
@@ -36,6 +36,8 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
 };
+
+const FILE_BATCH_SIZE: usize = 64;
 
 #[derive(Clone, Debug)]
 pub struct FileStatus {
@@ -407,11 +409,11 @@ pub async fn process_add_dir(
 
                     let entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
 
-                    // Convert the file entries to a stream
-                    let file_stream = stream::iter(entries);
+                    // Convert the file entries to a stream and batch them
+                    let file_stream = stream::iter(entries).chunks(FILE_BATCH_SIZE);
 
                     file_stream
-                        .par_for_each(num_cpus::get() * 2, move |dir_entry| {
+                        .par_for_each(num_cpus::get() * 2, move |batch| {
                             let repo = Arc::clone(&repo);
                             let repo_path = Arc::clone(&repo_path);
                             let staged_db = Arc::clone(&staged_db);
@@ -430,77 +432,102 @@ pub async fn process_add_dir(
                             let dir_node = Arc::clone(&dir_node);
 
                             async move {
-                                let process_file = move || async move {
-                                    log::debug!("Dir Entry is: {dir_entry:?}");
-                                    let path = dir_entry.path();
+                                for dir_entry in batch {
+                                    let repo = Arc::clone(&repo);
+                                    let repo_path = Arc::clone(&repo_path);
+                                    let staged_db = Arc::clone(&staged_db);
+                                    let byte_counter_clone = Arc::clone(&byte_counter_clone);
+                                    let added_file_counter_clone =
+                                        Arc::clone(&added_file_counter_clone);
+                                    let unchanged_file_counter_clone =
+                                        Arc::clone(&unchanged_file_counter_clone);
 
-                                    let total_bytes = byte_counter_clone.load(Ordering::Relaxed);
-                                    let duration = start.elapsed().as_secs_f32();
-                                    let mbps = (total_bytes as f32 / duration) / 1_000_000.0;
+                                    let conflicts = Arc::clone(&conflicts);
+                                    let version_store = Arc::clone(&version_store);
+                                    let progress_1 = Arc::clone(&progress_1);
+                                    let start = Arc::clone(&start);
+                                    let gitignore = Arc::clone(&gitignore);
 
-                                    progress_1.set_message(format!(
-                                        "🐂 add {} files, {} unchanged ({}) {:.2} MB/s",
-                                        added_file_counter_clone.load(Ordering::Relaxed),
-                                        unchanged_file_counter_clone.load(Ordering::Relaxed),
-                                        bytesize::ByteSize::b(total_bytes),
-                                        mbps
-                                    ));
+                                    let seen_dirs_clone = Arc::clone(&seen_dirs_clone);
+                                    let dir_node = Arc::clone(&dir_node);
+                                    let process_file = move || async move {
+                                        log::debug!("Dir Entry is: {dir_entry:?}");
+                                        let path = dir_entry.path();
 
-                                    if path.is_dir()
-                                        || oxenignore::is_ignored(&path, &gitignore, path.is_dir())
-                                    {
-                                        return Ok::<(), OxenError>(());
-                                    }
+                                        let total_bytes =
+                                            byte_counter_clone.load(Ordering::Relaxed);
+                                        let duration = start.elapsed().as_secs_f32();
+                                        let mbps = (total_bytes as f32 / duration) / 1_000_000.0;
 
-                                    let file_name =
-                                        &path.file_name().unwrap_or_default().to_string_lossy();
-                                    let file_status = core::v_latest::add::determine_file_status(
-                                        &dir_node, file_name, &path,
-                                    )?;
+                                        progress_1.set_message(format!(
+                                            "🐂 add {} files, {} unchanged ({}) {:.2} MB/s",
+                                            added_file_counter_clone.load(Ordering::Relaxed),
+                                            unchanged_file_counter_clone.load(Ordering::Relaxed),
+                                            bytesize::ByteSize::b(total_bytes),
+                                            mbps
+                                        ));
 
-                                    match process_add_file(
-                                        &repo,
-                                        &repo_path,
-                                        &file_status,
-                                        &staged_db,
-                                        &path,
-                                        &seen_dirs_clone,
-                                        &conflicts,
-                                    ) {
-                                        Ok(Some(node)) => {
-                                            version_store
-                                                .store_version_from_path(
-                                                    &file_status.hash.to_string(),
-                                                    &path,
-                                                )
-                                                .await?;
+                                        if path.is_dir()
+                                            || oxenignore::is_ignored(
+                                                &path,
+                                                &gitignore,
+                                                path.is_dir(),
+                                            )
+                                        {
+                                            return Ok::<(), OxenError>(());
+                                        }
 
-                                            if let EMerkleTreeNode::File(file_node) =
-                                                &node.node.node
-                                            {
-                                                byte_counter_clone.fetch_add(
-                                                    file_node.num_bytes(),
-                                                    Ordering::Relaxed,
-                                                );
-                                                added_file_counter_clone
+                                        let file_name =
+                                            &path.file_name().unwrap_or_default().to_string_lossy();
+                                        let file_status =
+                                            core::v_latest::add::determine_file_status(
+                                                &dir_node, file_name, &path,
+                                            )?;
+
+                                        match process_add_file(
+                                            &repo,
+                                            &repo_path,
+                                            &file_status,
+                                            &staged_db,
+                                            &path,
+                                            &seen_dirs_clone,
+                                            &conflicts,
+                                        ) {
+                                            Ok(Some(node)) => {
+                                                version_store
+                                                    .store_version_from_path(
+                                                        &file_status.hash.to_string(),
+                                                        &path,
+                                                    )
+                                                    .await?;
+
+                                                if let EMerkleTreeNode::File(file_node) =
+                                                    &node.node.node
+                                                {
+                                                    byte_counter_clone.fetch_add(
+                                                        file_node.num_bytes(),
+                                                        Ordering::Relaxed,
+                                                    );
+                                                    added_file_counter_clone
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
+                                            }
+                                            Ok(None) => {
+                                                unchanged_file_counter_clone
                                                     .fetch_add(1, Ordering::Relaxed);
                                             }
+                                            Err(e) => {
+                                                log::error!("Error adding file: {:?}", e);
+                                            }
                                         }
-                                        Ok(None) => {
-                                            unchanged_file_counter_clone
-                                                .fetch_add(1, Ordering::Relaxed);
-                                        }
-                                        Err(e) => {
-                                            log::error!("Error adding file: {:?}", e);
-                                        }
+
+                                        Ok::<(), OxenError>(())
+                                    };
+
+                                    // Capture errors in process_file
+                                    if let Err(e) = process_file().await {
+                                        log::error!("Error processing file: {}", e);
                                     }
-
-                                    Ok::<(), OxenError>(())
-                                };
-
-                                // Capture errors in process_file
-                                if let Err(e) = process_file().await {
-                                    log::error!("Error processing file: {}", e);
                                 }
                             }
                         })

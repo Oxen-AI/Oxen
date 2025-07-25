@@ -37,6 +37,7 @@ async fn setup_repo_for_add_benchmark(
     base_dir: &Path,
     repo_size: usize,
     num_files_to_add_in_benchmark: usize,
+    dir_size: usize,
 ) -> Result<(LocalRepository, Vec<PathBuf>, PathBuf), OxenError> {
     let repo_dir = base_dir.join(format!("repo_{}", num_files_to_add_in_benchmark));
     if repo_dir.exists() {
@@ -51,7 +52,7 @@ async fn setup_repo_for_add_benchmark(
     let mut rng = rand::thread_rng();
 
     // Create a number of directories up to 4 levels deep
-    let mut dirs: Vec<PathBuf> = (0..20)
+    let mut dirs: Vec<PathBuf> = (0..dir_size)
         .map(|_| {
             let mut path = files_dir.clone();
             let depth = rng.gen_range(1..=4);
@@ -119,19 +120,32 @@ fn add_benchmark(c: &mut Criterion) {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("add");
-    for repo_size in [1000, 10000, 100000].iter() {
-        let num_files_to_add = repo_size / 100;
+    group.sample_size(10);
+    let params = [
+        (1000, 20),
+        (10000, 20),
+        (100000, 20),
+        (100000, 100),
+        (100000, 1000),
+        (1000000, 1000),
+    ];
+    for &(repo_size, dir_size) in params.iter() {
+        let num_files_to_add = repo_size / 1000;
         let (repo, _, file_dir) = rt
             .block_on(setup_repo_for_add_benchmark(
                 &base_dir,
-                *repo_size,
+                repo_size,
                 num_files_to_add,
+                dir_size,
             ))
             .unwrap();
 
         group.bench_with_input(
-            BenchmarkId::from_parameter(num_files_to_add),
-            repo_size,
+            BenchmarkId::new(
+                format!("{}k_files_in_{}dirs", num_files_to_add, dir_size),
+                format!("{:?}", (num_files_to_add, dir_size)),
+            ),
+            &(num_files_to_add, dir_size),
             |b, _| {
                 // Run in async executor
                 b.to_async(&rt).iter(|| async {
