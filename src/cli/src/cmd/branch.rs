@@ -105,7 +105,12 @@ impl RunCmd for BranchCmd {
         } else if args.get_flag("show-current") {
             self.show_current_branch(&repo)
         } else {
-            self.list_branches(&repo)
+            // If in remote mode, include the head commit id for each branch
+            if repo.is_remote_mode() {
+                self.list_branches_with_commits(&repo)
+            } else {
+                self.list_branches(&repo)
+            }
         }
     }
 }
@@ -131,6 +136,22 @@ impl BranchCmd {
                 println!("{branch_str}")
             } else {
                 println!("  {}", branch.name)
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn list_branches_with_commits(&self, repo: &LocalRepository) -> Result<(), OxenError> {
+        let branches = repositories::branches::list_with_commits(repo)?;
+        let current_branch = repositories::branches::current_branch(repo)?;
+
+        for (branch, commit) in branches.iter() {
+            if current_branch.is_some() && current_branch.as_ref().unwrap().name == branch.name {
+                let combined_str = format!("* {}: {}", branch.name, commit.id).green();
+                println!("{combined_str}")
+            } else {
+                println!("  {}: {}", branch.name, commit.id);
             }
         }
 

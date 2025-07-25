@@ -228,6 +228,8 @@ pub async fn checkout_subtrees(
 
         let mut results = CheckoutResult::new();
         let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
+        let version_store = repo.version_store()?;
+
         r_restore_missing_or_modified_files(
             repo,
             &target_root,
@@ -248,20 +250,36 @@ pub async fn checkout_subtrees(
 
         if from_root.is_some() {
             log::debug!("🔥 from node: {:?}", from_root);
-            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes)?;
+            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
 
-        let version_store = repo.version_store()?;
-        for file_to_restore in results.files_to_restore {
-            restore::restore_file(
-                repo,
-                &file_to_restore.file_node,
-                &file_to_restore.path,
-                &version_store,
-            )
-            .await?;
+        if repo.is_remote_mode() {
+            for file_to_restore in results.files_to_restore {
+                //let file_hash = format!("{}", &file_to_restore.file_node.hash());
+
+                // In remote-mode repos, only restore files that are present in version store
+                if version_store.version_exists(&file_to_restore.file_node.hash().to_string())? {
+                    restore::restore_file(
+                        repo,
+                        &file_to_restore.file_node,
+                        &file_to_restore.path,
+                        &version_store,
+                    )
+                    .await?;
+                }
+            }
+        } else {
+            for file_to_restore in results.files_to_restore {
+                restore::restore_file(
+                    repo,
+                    &file_to_restore.file_node,
+                    &file_to_restore.path,
+                    &version_store,
+                )
+                .await?;
+            }
         }
     }
 
@@ -337,6 +355,7 @@ pub async fn set_working_repo_to_commit(
 
     let mut results = CheckoutResult::new();
     let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
+    let version_store = repo.version_store()?;
 
     log::debug!("restore_missing_or_modified_files");
     // Restore files present in the target commit
@@ -361,10 +380,9 @@ pub async fn set_working_repo_to_commit(
     // Cleanup files if checking out from another commit
     if maybe_from_commit.is_some() {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes)?;
+        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes).await?;
     }
 
-    let version_store = repo.version_store()?;
     for file_to_restore in results.files_to_restore {
         restore::restore_file(
             repo,
@@ -380,7 +398,7 @@ pub async fn set_working_repo_to_commit(
 
 // Only called if checking out from an existant commit
 
-fn cleanup_removed_files(
+async fn cleanup_removed_files(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
     progress: &mut CheckoutProgressBar,
@@ -390,18 +408,31 @@ fn cleanup_removed_files(
     // If the file node is in the from tree, but not in the target tree, remove it
 
     let mut paths_to_remove: Vec<PathBuf> = vec![];
+    let mut files_to_store: Vec<(MerkleHash, PathBuf)> = vec![];
     let mut cannot_overwrite_entries: Vec<PathBuf> = vec![];
+
     r_remove_if_not_in_target(
         repo,
         from_node,
         Path::new(""),
         &mut paths_to_remove,
+        &mut files_to_store,
         &mut cannot_overwrite_entries,
         hashes,
     )?;
 
     if !cannot_overwrite_entries.is_empty() {
         return Err(OxenError::cannot_overwrite_files(&cannot_overwrite_entries));
+    }
+
+    // If in remote mode, need to store committed paths before removal
+    if repo.is_remote_mode() {
+        let version_store = repo.version_store()?;
+        for (hash, full_path) in files_to_store {
+            version_store
+                .store_version_from_path(&hash.to_string(), &full_path)
+                .await?;
+        }
     }
 
     for full_path in paths_to_remove {
@@ -419,11 +450,14 @@ fn cleanup_removed_files(
     Ok(())
 }
 
+// Note: If we're willing to duplicate the recursive logic, we could make synchronous version for regular repos
+// And have the async only for remote-mode repos
 fn r_remove_if_not_in_target(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
     current_path: &Path,
     paths_to_remove: &mut Vec<PathBuf>,
+    files_to_store: &mut Vec<(MerkleHash, PathBuf)>,
     cannot_overwrite_entries: &mut Vec<PathBuf>,
     hashes: &mut CheckoutHashes,
 ) -> Result<(), OxenError> {
@@ -440,6 +474,11 @@ fn r_remove_if_not_in_target(
                     if util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
+                        // If in remote mode, save file to version store before removing
+                        if repo.is_remote_mode() {
+                            files_to_store.push((from_node.hash, full_path.clone()))
+                        }
+
                         paths_to_remove.push(full_path.clone());
                     }
                 }
@@ -473,6 +512,7 @@ fn r_remove_if_not_in_target(
                     child,
                     &dir_path,
                     paths_to_remove,
+                    files_to_store,
                     cannot_overwrite_entries,
                     hashes,
                 )?;
@@ -496,6 +536,7 @@ fn r_remove_if_not_in_target(
                 root_dir,
                 current_path,
                 paths_to_remove,
+                files_to_store,
                 cannot_overwrite_entries,
                 hashes,
             )?;
@@ -588,6 +629,7 @@ fn r_restore_missing_or_modified_files(
 
                 if working_hash == from_hash {
                     log::debug!("Updating modified file: {:?}", file_path);
+
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),

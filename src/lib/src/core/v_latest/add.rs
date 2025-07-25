@@ -42,6 +42,7 @@ pub struct FileStatus {
     pub data_path: PathBuf,
     pub status: StagedEntryStatus,
     pub hash: MerkleHash,
+
     pub num_bytes: u64,
     pub mtime: FileTime,
     pub previous_metadata: Option<GenericMetadata>,
@@ -588,7 +589,7 @@ fn maybe_load_directory(
     }
 }
 
-fn get_file_node(
+pub fn get_file_node(
     dir_node: &Option<MerkleTreeNode>,
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
@@ -667,6 +668,7 @@ pub fn determine_file_status(
             file_node,
             data_path
         );
+
         // first check if the file timestamp is different
         let metadata = util::fs::metadata(data_path)?;
         let mtime = FileTime::from_last_modification_time(&metadata);

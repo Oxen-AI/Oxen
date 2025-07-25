@@ -41,8 +41,6 @@ pub async fn fetch_remote_branch(
     };
 
     // We may not have a head commit if the repo is empty (initial clone)
-    // TODO: I don't believe there's any equivalent to the starting hash logic here...
-    // That can be the next optimization
     if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
         log::debug!("Head commit: {}", head_commit);
         log::debug!("Remote branch commit: {}", remote_branch.commit_id);
@@ -83,6 +81,15 @@ pub async fn fetch_remote_branch(
             )
             .await?;
         }
+    }
+
+    // Early exit for remote repo
+    if repo.is_remote_mode() {
+        // Write the new branch commit id to the local repo
+        if fetch_opts.should_update_branch_head {
+            repositories::branches::update(repo, &fetch_opts.branch, &remote_branch.commit_id)?;
+        }
+        return Ok(remote_branch);
     }
 
     // If all, fetch all the missing entries from all the commits
@@ -177,7 +184,6 @@ async fn sync_from_head(
             fetch_opts,
         )
         .await?;
-        // TODO: are we also pulling too many dir hashes?
         api::client::commits::download_base_head_dir_hashes(
             remote_repo,
             &head_commit.id,

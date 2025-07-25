@@ -56,6 +56,14 @@ pub async fn checkout(
             .await?;
         repositories::branches::update(repo, value, &commit.id)?;
         repositories::branches::set_head(repo, value)?;
+
+        if repo.is_remote_mode() {
+            // Set workspace_name to new branch name
+            let mut mut_repo = repo.clone();
+            mut_repo.set_workspace(value)?;
+            mut_repo.save()?;
+        }
+
         Ok(None)
     }
 }

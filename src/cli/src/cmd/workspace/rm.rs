@@ -5,12 +5,12 @@ use clap::{Arg, ArgGroup, ArgMatches, Command};
 
 use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
 
-use crate::cmd::{add::add_args, RunCmd};
-pub const NAME: &str = "add";
-pub struct WorkspaceAddCmd;
+use crate::cmd::{rm::rm_args, RunCmd};
+pub const NAME: &str = "rm";
+pub struct WorkspaceRmCmd;
 
 #[async_trait]
-impl RunCmd for WorkspaceAddCmd {
+impl RunCmd for WorkspaceRmCmd {
     fn name(&self) -> &str {
         NAME
     }
@@ -22,7 +22,7 @@ impl RunCmd for WorkspaceAddCmd {
             Err(_) => false,
         };
 
-        add_args()
+        rm_args()
             .arg(
                 Arg::new("workspace-id")
                     .long("workspace-id")
@@ -62,7 +62,7 @@ impl RunCmd for WorkspaceAddCmd {
 
         let repository = LocalRepository::from_current_dir()?;
 
-        let (workspace_identifier, directory) = if repository.is_remote_mode() {
+        let (workspace_identifier, _directory) = if repository.is_remote_mode() {
             (&repository.workspace_name.clone().unwrap(), ".")
         } else {
             let directory = args.get_one::<String>("directory").unwrap(); // safe to unwrap because we have a default value
@@ -95,12 +95,22 @@ impl RunCmd for WorkspaceAddCmd {
         // If no paths left after filtering, return early
         if paths.is_empty() {
             return Err(OxenError::basic_str(
-                "No files to add after filtering with .oxenignore.",
+                "No files to remove after filtering with .oxenignore.",
             ));
         }
 
-        api::client::workspaces::files::add(&remote_repo, workspace_identifier, directory, paths)
+        // TODO: Use directory
+        if args.get_flag("staged") {
+            api::client::workspaces::files::rm_files_from_staged(
+                &remote_repo,
+                workspace_identifier,
+                paths,
+            )
             .await?;
+        } else {
+            api::client::workspaces::files::rm_files(&remote_repo, workspace_identifier, paths)
+                .await?;
+        }
 
         Ok(())
     }

@@ -120,8 +120,6 @@ impl CommitMerkleTree {
         )
     }
 
-    // MODULARIZE: We don't need to use this, we can route through repositories::tree
-    // *** NOTE: Unless, that is, we actually need the CommitMerkle
     pub fn from_commit(repo: &LocalRepository, commit: &Commit) -> Result<Self, OxenError> {
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.

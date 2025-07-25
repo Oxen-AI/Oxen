@@ -229,7 +229,6 @@ async fn push_commits(
     let mut shared_hashes = starting_node_hashes.clone();
     let mut unique_hashes = HashSet::new();
 
-    // TODO: One-step collection
     let mut candidate_nodes: HashSet<MerkleTreeNode> = HashSet::new();
     for commit in &missing_commits {
         log::debug!("push_commits adding candidate nodes for commit: {}", commit);

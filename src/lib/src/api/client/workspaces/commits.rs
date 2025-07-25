@@ -50,6 +50,8 @@ pub async fn commit(
             };
             api::client::commits::post_push_complete(remote_repo, &branch, &commit.id).await?;
             api::client::repositories::post_push(remote_repo, &branch, &commit.id).await?;
+
+            println!("🐂 commit {} complete!", commit);
             Ok(commit)
         }
         Err(err) => Err(OxenError::basic_str(format!(

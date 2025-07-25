@@ -51,18 +51,20 @@ async fn _clone(
         url: url.as_ref().to_string(),
         dst: dst.as_ref().to_owned(),
         fetch_opts,
+        is_remote: false,
     };
     clone(&opts).await
 }
 
 async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenError> {
     log::debug!(
-        "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {}",
+        "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {} -> is remote? {}",
         opts.url,
         opts.dst,
         opts.fetch_opts.subtree_paths,
         opts.fetch_opts.depth,
-        opts.fetch_opts.all
+        opts.fetch_opts.all,
+        opts.is_remote,
     );
 
     let remote = Remote {
@@ -77,17 +79,33 @@ async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenE
     // whether to clean it up or not in the case of an error.
     let dst_exists_before_clone = opts.dst.exists();
 
-    match clone_repo(remote_repo, opts).await {
-        Ok(repo) => Ok(Some(repo)),
-        Err(err) => {
-            if !dst_exists_before_clone && opts.dst.exists() {
-                // Cleanup the destination directory if it wasn't there before cloning
-                // Close DB instances before we delete it.
-                core::staged::remove_from_cache_with_children(&opts.dst)?;
-                core::refs::remove_from_cache(&opts.dst)?;
-                util::fs::remove_dir_all(&opts.dst)?;
+    if opts.is_remote {
+        match clone_repo_remote_mode(remote_repo, opts).await {
+            Ok(repo) => Ok(Some(repo)),
+            Err(err) => {
+                if !dst_exists_before_clone && opts.dst.exists() {
+                    // Cleanup the destination directory if it wasn't there before cloning
+                    // Close DB instances before we delete it.
+                    core::staged::remove_from_cache_with_children(&opts.dst)?;
+                    core::refs::remove_from_cache(&opts.dst)?;
+                    util::fs::remove_dir_all(&opts.dst)?;
+                }
+                Err(err)
             }
-            Err(err)
+        }
+    } else {
+        match clone_repo(remote_repo, opts).await {
+            Ok(repo) => Ok(Some(repo)),
+            Err(err) => {
+                if !dst_exists_before_clone && opts.dst.exists() {
+                    // Cleanup the destination directory if it wasn't there before cloning
+                    // Close DB instances before we delete it.
+                    core::staged::remove_from_cache_with_children(&opts.dst)?;
+                    core::refs::remove_from_cache(&opts.dst)?;
+                    util::fs::remove_dir_all(&opts.dst)?;
+                }
+                Err(err)
+            }
         }
     }
 }
@@ -100,6 +118,17 @@ async fn clone_repo(
     match remote_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::clone::clone_repo(remote_repo, opts).await,
+    }
+}
+
+async fn clone_repo_remote_mode(
+    remote_repo: RemoteRepository,
+    opts: &CloneOpts,
+) -> Result<LocalRepository, OxenError> {
+    println!("🐂 cloning repo {}", remote_repo.url());
+    match remote_repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::clone::clone_repo_remote_mode(remote_repo, opts).await,
     }
 }
 
@@ -739,6 +768,79 @@ mod tests {
                     .join("annotations")
                     .join("train")
                     .exists());
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            let local_head_commit = repositories::commits::head_commit(&local_repo)?;
+            let local_root =
+                repositories::tree::get_root_with_children(&local_repo, &local_head_commit)?;
+
+            test::run_empty_dir_test_async(|repo_dir| async move {
+                // Clone repo in remote mode
+                let mut clone_opts =
+                    CloneOpts::new(&remote_repo.remote.url, repo_dir.join("new_repo"));
+                clone_opts.is_remote = true;
+
+                let cloned_repo = repositories::clone(&clone_opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                // Merkle tree matches original local repo
+                let cloned_head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                let cloned_root =
+                    repositories::tree::get_root_with_children(&cloned_repo, &cloned_head_commit)?;
+                assert_eq!(local_root, cloned_root);
+
+                // Versions dir is empty
+                let versions_dir = util::fs::oxen_hidden_dir(&cloned_repo.path)
+                    .join(constants::VERSIONS_DIR)
+                    .join(constants::OBJECT_FILES_DIR);
+                let mut versions_iter = std::fs::read_dir(versions_dir)?;
+                assert!(versions_iter.next().is_none());
+
+                // Workspace was initialized
+                let workspace_name = cloned_repo.workspace_name;
+                assert!(workspace_name.is_some());
+
+                let workspace_name = workspace_name.unwrap();
+                let workspace =
+                    api::client::workspaces::get_by_name(&remote_repo, &workspace_name).await?;
+
+                // Workspaces initialized by remote-mode clone are named
+                assert!(workspace.is_some());
+
+                let workspace = workspace.unwrap();
+                assert!(workspace.name.is_some());
+                assert_eq!(workspace.name.unwrap(), workspace_name);
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_cloned_repos_not_set_as_remote_mode_by_default() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|mut _local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            test::run_empty_dir_test_async(|repo_dir| async move {
+                let new_repo_dir = repo_dir.join(PathBuf::from("new"));
+                let cloned_repo =
+                    repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
+                assert!(!cloned_repo.is_remote_mode());
 
                 Ok(())
             })

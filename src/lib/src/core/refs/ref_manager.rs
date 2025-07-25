@@ -10,7 +10,7 @@ use rocksdb::{IteratorMode, DB};
 use crate::constants::{HEAD_FILE, REFS_DIR};
 use crate::core::db;
 use crate::error::OxenError;
-use crate::model::{Branch, LocalRepository};
+use crate::model::{Branch, Commit, LocalRepository};
 use crate::repositories;
 use crate::util;
 
@@ -176,6 +176,43 @@ impl RefManager {
                                 name: ref_name,
                                 commit_id: id,
                             });
+                        }
+                    }
+                    _ => {
+                        return Err(OxenError::basic_str("Could not read utf8 val..."));
+                    }
+                },
+                Err(err) => {
+                    let err = format!("Error reading refs db\nErr: {err}");
+                    return Err(OxenError::basic_str(err));
+                }
+            }
+        }
+        Ok(branch_names)
+    }
+
+    pub fn list_branches_with_commits(&self) -> Result<Vec<(Branch, Commit)>, OxenError> {
+        let mut branch_names: Vec<(Branch, Commit)> = vec![];
+        let maybe_head_ref = self.read_head_ref()?;
+        let iter = self.refs_db.iterator(IteratorMode::Start);
+        for item in iter {
+            match item {
+                Ok((key, value)) => match (str::from_utf8(&key), str::from_utf8(&value)) {
+                    (Ok(key_str), Ok(value)) => {
+                        if maybe_head_ref.is_some() {
+                            let ref_name = String::from(key_str);
+                            let id = String::from(value);
+                            let ref_commit = repositories::commits::get_commit_or_head(
+                                &self.repository,
+                                Some(ref_name.clone()),
+                            )?;
+                            branch_names.push((
+                                Branch {
+                                    name: ref_name,
+                                    commit_id: id,
+                                },
+                                ref_commit,
+                            ));
                         }
                     }
                     _ => {

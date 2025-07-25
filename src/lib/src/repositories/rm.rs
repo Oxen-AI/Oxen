@@ -674,7 +674,6 @@ mod tests {
             std::fs::remove_file(repo.path.join("images").join("dog_1.jpg"))?;
 
             let status = repositories::status(&repo)?;
-            println!("PRE-REMOVE");
             println!("status: {:?}", status);
             status.print();
             assert_eq!(status.removed_files.len(), 3);
@@ -690,7 +689,6 @@ mod tests {
             repositories::rm(&repo, &rm_opts)?;
 
             let status = repositories::status(&repo)?;
-            println!("POST-REMOVE");
             println!("status: {:?}", status);
             status.print();
             // Should now have 7 staged for removal
@@ -706,7 +704,6 @@ mod tests {
 
             repositories::rm(&repo, &rm_opts)?;
             let status = repositories::status(&repo)?;
-            log::debug!("POST-REMOVE-STAGED");
             log::debug!("status: {:?}", status);
             status.print();
 

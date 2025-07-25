@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::process::ExitCode;
 
+use crate::cmd::RemoteModeCmd;
+use crate::cmd::WorkspaceCmd;
 use clap::Command;
+use liboxen::model::LocalRepository;
 use liboxen::util;
 // use env_logger::Env;
 
@@ -78,6 +81,11 @@ async fn main() -> ExitCode {
         runners.insert(cmd.name().to_string(), cmd);
     }
 
+    let is_remote_repo = match LocalRepository::from_current_dir() {
+        Ok(repo) => repo.is_remote_mode(),
+        Err(_) => false,
+    };
+
     // Parse the command line args and run the appropriate command
     let matches = command.get_matches();
     match matches.subcommand() {
@@ -85,6 +93,41 @@ async fn main() -> ExitCode {
         Some((command, args)) => {
             // Lookup command in runners and run on args
             if let Some(runner) = runners.get(command) {
+                // If in a remote-mode repo, re-route to correct command
+                if is_remote_repo {
+                    match command {
+                        // Workspace commands
+                        "add" | "df" | "diff" | "restore" | "rm" => {
+                            match WorkspaceCmd::run_subcommands(command, args).await {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    eprintln!("{err}");
+                                    return ExitCode::FAILURE;
+                                }
+                            }
+
+                            return ExitCode::SUCCESS;
+                        }
+                        // Remote-mode specific commands
+                        "commit" | "checkout" | "status" => {
+                            match RemoteModeCmd::run_subcommands(command, args).await {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    eprintln!("{err}");
+                                    return ExitCode::FAILURE;
+                                }
+                            }
+                            return ExitCode::SUCCESS;
+                        }
+                        // Disallowed commands
+                        "embeddings" | "merge" | "push" | "pull" | "schemas" | "workspace" => {
+                            eprintln!("Command `oxen {command}` not implemented for remote-mode repositories");
+                            return ExitCode::FAILURE;
+                        }
+                        _ => {} // All other commands behave as normal
+                    }
+                }
+
                 match runner.run(args).await {
                     Ok(_) => {}
                     Err(err) => {

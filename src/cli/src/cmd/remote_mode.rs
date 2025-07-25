@@ -1,38 +1,11 @@
-pub mod add;
-pub use add::WorkspaceAddCmd;
+pub mod status;
+pub use status::RemoteModeStatusCmd;
 
-pub mod clear;
-pub use clear::WorkspaceClearCmd;
-
-pub mod create;
-pub use create::WorkspaceCreateCmd;
+pub mod checkout;
+pub use checkout::RemoteModeCheckoutCmd;
 
 pub mod commit;
-pub use commit::WorkspaceCommitCmd;
-
-pub mod diff;
-pub use diff::WorkspaceDiffCmd;
-
-pub mod df;
-pub use df::WorkspaceDfCmd;
-
-pub mod delete;
-pub use delete::WorkspaceDeleteCmd;
-
-pub mod download;
-pub use download::WorkspaceDownloadCmd;
-
-pub mod list;
-pub use list::WorkspaceListCmd;
-
-pub mod restore;
-pub use restore::WorkspaceRestoreCmd;
-
-pub mod rm;
-pub use rm::WorkspaceRmCmd;
-
-pub mod status;
-pub use status::WorkspaceStatusCmd;
+pub use commit::RemoteModeCommitCmd;
 
 use async_trait::async_trait;
 use clap::Command;
@@ -41,11 +14,11 @@ use liboxen::error::OxenError;
 use std::collections::HashMap;
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "workspace";
-pub struct WorkspaceCmd;
+pub const NAME: &str = "remote_mode";
+pub struct RemoteModeCmd;
 
 #[async_trait]
-impl RunCmd for WorkspaceCmd {
+impl RunCmd for RemoteModeCmd {
     fn name(&self) -> &str {
         NAME
     }
@@ -53,12 +26,10 @@ impl RunCmd for WorkspaceCmd {
     fn args(&self) -> Command {
         // Setups the CLI args for the command
         let mut command = Command::new(NAME)
-            .about("Manage workspaces")
+            .about("Remote mode operations")
             .subcommand_required(true)
             .arg_required_else_help(true);
 
-        // These are all the subcommands for the schemas command
-        // including `create`, `add`, `rm`, `commit`, and `status`
         let sub_commands = Self::get_subcommands();
         for cmd in sub_commands.values() {
             command = command.subcommand(cmd.args());
@@ -66,13 +37,15 @@ impl RunCmd for WorkspaceCmd {
         command
     }
 
+    // Note: Currently, you can't run `oxen remote-mode status` or other subcommand from the command line
+    // They're only accessible via their aliases in remote-mode repos
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                eprintln!("Unknown schema subcommand {name}");
+                eprintln!("Unknown remote mode subcommand {name}");
                 return Err(OxenError::basic_str(format!(
-                    "Unknown schema subcommand {name}"
+                    "Unknown remote mode subcommand {name}"
                 )));
             };
 
@@ -85,20 +58,13 @@ impl RunCmd for WorkspaceCmd {
     }
 }
 
-impl WorkspaceCmd {
+impl RemoteModeCmd {
     fn get_subcommands() -> HashMap<String, Box<dyn RunCmd>> {
         let commands: Vec<Box<dyn RunCmd>> = vec![
-            Box::new(WorkspaceAddCmd),
-            Box::new(WorkspaceClearCmd),
-            Box::new(WorkspaceCommitCmd),
-            Box::new(WorkspaceCreateCmd),
-            Box::new(WorkspaceDfCmd),
-            Box::new(WorkspaceDiffCmd),
-            Box::new(WorkspaceDeleteCmd),
-            Box::new(WorkspaceListCmd),
-            Box::new(WorkspaceRmCmd),
-            Box::new(WorkspaceStatusCmd),
-            Box::new(WorkspaceDownloadCmd),
+            Box::new(RemoteModeCheckoutCmd),
+            Box::new(RemoteModeCommitCmd),
+            // Box::new(RemoteModeListCmd),
+            Box::new(RemoteModeStatusCmd),
         ];
         let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
         for cmd in commands {
@@ -114,7 +80,7 @@ impl WorkspaceCmd {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
             return Err(OxenError::basic_str(format!(
-                "Command `oxen {name}` not available for workspaces"
+                "Command `oxen {name}` not available for remote mode"
             )));
         };
 

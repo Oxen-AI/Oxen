@@ -12,14 +12,9 @@ use crate::cmd::RunCmd;
 pub const NAME: &str = "restore";
 pub struct RestoreCmd;
 
-#[async_trait]
-impl RunCmd for RestoreCmd {
-    fn name(&self) -> &str {
-        NAME
-    }
-
-    fn args(&self) -> Command {
-        Command::new(NAME)
+pub fn restore_args() -> Command {
+    // Setups the CLI args for the restore command
+    Command::new(NAME)
         .about("Restore specified paths in the working tree with some contents from a restore source.")
         .arg(Arg::new("PATH")
             .help("The files or directory to restore")
@@ -39,6 +34,16 @@ impl RunCmd for RestoreCmd {
                 .action(clap::ArgAction::SetTrue)
                 .requires("PATH"),
         )
+}
+
+#[async_trait]
+impl RunCmd for RestoreCmd {
+    fn name(&self) -> &str {
+        NAME
+    }
+
+    fn args(&self) -> Command {
+        restore_args()
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
@@ -61,6 +66,13 @@ impl RunCmd for RestoreCmd {
         };
 
         let repository = LocalRepository::from_current_dir()?;
+
+        // Don't allow in remote mode
+        if repository.is_remote_mode() {
+            return Err(OxenError::basic_str(
+                "Error: Command 'oxen restore' not implemented for remote mode repositories",
+            ));
+        }
 
         check_repo_migration_needed(&repository)?;
         repositories::restore::restore(&repository, opts).await?;

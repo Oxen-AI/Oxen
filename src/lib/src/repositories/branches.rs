@@ -18,6 +18,11 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
     with_ref_manager(repo, |manager| manager.list_branches())
 }
 
+/// List all the local branches within a repo along with their head commits
+pub fn list_with_commits(repo: &LocalRepository) -> Result<Vec<(Branch, Commit)>, OxenError> {
+    with_ref_manager(repo, |manager| manager.list_branches_with_commits())
+}
+
 /// Get a branch by name
 pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {
     with_ref_manager(repo, |manager| manager.get_branch_by_name(name))
@@ -444,9 +449,7 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::refs::with_ref_manager;
     use crate::error::OxenError;
-    use crate::repositories;
-    use crate::test;
-    use crate::util;
+    use crate::{repositories, test, util};
 
     #[tokio::test]
     async fn test_list_branch_versions_main() -> Result<(), OxenError> {

@@ -14,6 +14,29 @@ use crate::cmd::RunCmd;
 pub const NAME: &str = "rm";
 pub struct RmCmd;
 
+pub fn rm_args() -> Command {
+    Command::new(NAME)
+        .about("Removes the specified files from the index")
+        .arg(
+            Arg::new("files")
+                .required(true)
+                .action(clap::ArgAction::Append),
+        )
+        .arg(
+            Arg::new("staged")
+                .long("staged")
+                .help("Removes the file from the staging area.")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("recursive")
+                .long("recursive")
+                .short('r')
+                .help("Recursively removes directory.")
+                .action(clap::ArgAction::SetTrue),
+        )
+}
+
 #[async_trait]
 impl RunCmd for RmCmd {
     fn name(&self) -> &str {
@@ -21,26 +44,7 @@ impl RunCmd for RmCmd {
     }
 
     fn args(&self) -> Command {
-        Command::new(NAME)
-            .about("Removes the specified files from the index")
-            .arg(
-                Arg::new("files")
-                    .required(true)
-                    .action(clap::ArgAction::Append),
-            )
-            .arg(
-                Arg::new("staged")
-                    .long("staged")
-                    .help("Removes the file from the staging area.")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("recursive")
-                    .long("recursive")
-                    .short('r')
-                    .help("Recursively removes directory.")
-                    .action(clap::ArgAction::SetTrue),
-            )
+        rm_args()
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {

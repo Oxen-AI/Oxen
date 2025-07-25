@@ -17,7 +17,7 @@ pub const ADD: &str = "add";
 pub struct AddCmd;
 
 pub fn add_args() -> Command {
-    // Setups the CLI args for the init command
+    // Setups the CLI args for the add command
     Command::new(ADD)
         .about("Adds the specified files or directories")
         .arg(
@@ -60,11 +60,11 @@ impl RunCmd for AddCmd {
         };
 
         // Recursively look up from the current dir for .oxen directory
-        let repository = LocalRepository::from_current_dir()?;
-        check_repo_migration_needed(&repository)?;
+        let repo = LocalRepository::from_current_dir()?;
+        check_repo_migration_needed(&repo)?;
 
         for path in &opts.paths {
-            repositories::add(&repository, path).await?;
+            repositories::add(&repo, path).await?;
         }
 
         Ok(())

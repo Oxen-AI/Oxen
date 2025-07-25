@@ -12,8 +12,7 @@ use liboxen::error::OxenError;
 use liboxen::model::diff::tabular_diff::TabularDiffMods;
 use liboxen::model::diff::{ChangeType, DiffResult, TextDiff};
 use liboxen::opts::DiffOpts;
-use liboxen::repositories;
-use liboxen::util;
+use liboxen::{repositories, util};
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "diff";
@@ -34,6 +33,7 @@ impl RunCmd for DiffCmd {
 
     fn args(&self) -> Command {
         // Setups the CLI args for the command
+
         Command::new(NAME)
             .about("Compare two files against each other or against versions. The two resource paramaters can be specified by filepath or `file:revision` syntax.")
             .arg(Arg::new("RESOURCE1")
@@ -75,6 +75,7 @@ impl RunCmd for DiffCmd {
         let repo_dir = util::fs::get_repo_root_from_current_dir().ok_or(OxenError::basic_str(
             "repo not found in current working directory",
         ))?;
+
         let mut diff_result =
             if opts.revision_1.is_none() && opts.revision_2.is_none() && opts.path_2.is_some() {
                 // If we do not have revisions set, just compare the files on disk

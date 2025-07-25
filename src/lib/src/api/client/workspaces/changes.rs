@@ -43,6 +43,7 @@ pub async fn list(
     }
 }
 
+// TODO: Consolidate this with api::client::workspaces::files to have only one workspace rm API
 pub async fn rm(
     remote_repo: &RemoteRepository,
     workspace_id: &str,

@@ -23,6 +23,7 @@ use crate::view::tree::merkle_hashes::NodeHashes;
 use crate::view::tree::MerkleHashResponse;
 use crate::view::{MerkleHashesResponse, StatusMessage};
 use crate::{api, util};
+use reqwest::Client;
 
 /// Check if a node exists in the remote repository merkle tree by hash
 pub async fn has_node(
@@ -367,7 +368,10 @@ async fn node_download_request(
     url: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let url = url.as_ref();
-    let client = client::new_for_url(url)?;
+
+    let client = Client::builder()
+        .timeout(time::Duration::from_secs(12000))
+        .build()?;
     log::debug!("node_download_request about to send request {}", url);
     let res = client.get(url).send().await?;
     let res = client::handle_non_json_response(url, res).await?;
@@ -473,12 +477,14 @@ pub async fn list_missing_file_hashes_from_nodes(
         false,
     );
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    let client = client::new_for_url(&url)?;
+
     let node_hashes = NodeHashes {
         commit_hashes: commit_ids,
         dir_hashes,
     };
-
+    let client = client::builder_for_url(&url)?
+        .timeout(time::Duration::from_secs(12000))
+        .build()?;
     let res = client.post(&url).json(&node_hashes).send().await?;
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);

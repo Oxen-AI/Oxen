@@ -5,16 +5,17 @@ use liboxen::api;
 use liboxen::config::UserConfig;
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, NewCommitBody};
+use liboxen::opts::FetchOpts;
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 use crate::helpers::check_repo_migration_needed;
 
 pub const NAME: &str = "commit";
-pub struct WorkspaceCommitCmd;
+pub struct RemoteModeCommitCmd;
 
 #[async_trait]
-impl RunCmd for WorkspaceCommitCmd {
+impl RunCmd for RemoteModeCommitCmd {
     fn name(&self) -> &str {
         NAME
     }
@@ -23,20 +24,6 @@ impl RunCmd for WorkspaceCommitCmd {
         // Setups the CLI args for the command
         Command::new(NAME)
             .about("Commit the staged files to the repository.")
-            .arg(
-                Arg::new("workspace-id")
-                    .long("workspace-id")
-                    .short('w')
-                    .required_unless_present("workspace-name")
-                    .help("The workspace_id of the workspace"),
-            )
-            .arg(
-                Arg::new("workspace-name")
-                    .long("workspace-name")
-                    .short('n')
-                    .required_unless_present("workspace-id")
-                    .help("The name of the workspace"),
-            )
             .arg(
                 Arg::new("message")
                     .help("The message for the commit. Should be descriptive about what changed.")
@@ -60,21 +47,9 @@ impl RunCmd for WorkspaceCommitCmd {
         let workspace_identifier = if repo.is_remote_mode() {
             &repo.workspace_name.clone().unwrap()
         } else {
-            let workspace_name = args.get_one::<String>("workspace-name");
-            let workspace_id = args.get_one::<String>("workspace-id");
-            match workspace_id {
-                Some(id) => id,
-                None => {
-                    // If no ID is provided, try to get the workspace by name
-                    if let Some(name) = workspace_name {
-                        name
-                    } else {
-                        return Err(OxenError::basic_str(
-                            "Either workspace-id or workspace-name must be provided.",
-                        ));
-                    }
-                }
-            }
+            return Err(OxenError::basic_str(
+                "Error: Cannot run remote mode commands outside remote mode repo",
+            ));
         };
 
         check_repo_migration_needed(&repo)?;
@@ -82,7 +57,7 @@ impl RunCmd for WorkspaceCommitCmd {
         println!("Committing to remote with message: {message}");
         let branch = repositories::branches::current_branch(&repo)?;
         if branch.is_none() {
-            log::error!("Workspace commit No current branch found");
+            log::error!("Remote-mode commit No current branch found");
             return Err(OxenError::must_be_on_valid_branch());
         }
         let branch = branch.unwrap();
@@ -96,6 +71,10 @@ impl RunCmd for WorkspaceCommitCmd {
         };
         api::client::workspaces::commit(&remote_repo, &branch.name, workspace_identifier, &body)
             .await?;
+
+        // Update local tree
+        let fetch_opts = FetchOpts::from_branch(&branch.name);
+        repositories::fetch::fetch_branch(&repo, &fetch_opts).await?;
 
         Ok(())
     }

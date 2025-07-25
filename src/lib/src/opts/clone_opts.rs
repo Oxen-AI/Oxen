@@ -10,6 +10,8 @@ pub struct CloneOpts {
     pub dst: PathBuf,
     // FetchOpts
     pub fetch_opts: FetchOpts,
+    // Flag for remote mode
+    pub is_remote: bool,
 }
 
 impl CloneOpts {
@@ -19,6 +21,7 @@ impl CloneOpts {
             url: url.as_ref().to_string(),
             dst: dst.as_ref().to_path_buf(),
             fetch_opts: FetchOpts::new(),
+            is_remote: false,
         }
     }
 
@@ -29,6 +32,7 @@ impl CloneOpts {
     ) -> CloneOpts {
         CloneOpts {
             fetch_opts: FetchOpts::from_branch(branch.as_ref()),
+            is_remote: false,
             ..CloneOpts::new(url, dst)
         }
     }

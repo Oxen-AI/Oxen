@@ -15,7 +15,8 @@ use zip::ZipArchive;
 use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_status_and_add_file, process_add_file_with_staged_db_manager,
+    add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
+    process_add_file_with_staged_db_manager,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
@@ -41,6 +42,21 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
     // Stage the file using the repositories::add method
     let commit = workspace.commit.clone();
     p_add_file(base_repo, workspace_repo, &Some(commit), filepath).await?;
+
+    // Return the relative path of the file in the workspace
+    let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
+    Ok(relative_path)
+}
+
+// TODO: Support for removing dirs
+// p_rm_file cannot remove dirs
+pub async fn rm(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+    let filepath = filepath.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let base_repo = &workspace.base_repo;
+
+    // Stage the file using the repositories::rm method
+    p_rm_file(base_repo, workspace_repo, filepath).await?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -127,6 +143,25 @@ pub fn track_modified_data_frame(
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
     Ok(relative_path)
+}
+
+pub async fn remove_files_from_staged_db(
+    workspace: &Workspace,
+    paths: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, OxenError> {
+    let mut err_files = vec![];
+
+    for path in paths {
+        match delete(workspace, &path) {
+            Ok(_) => {}
+            Err(e) => {
+                log::debug!("Error removing file path {path:?}: {:?}", e);
+                err_files.push(path);
+            }
+        }
+    }
+
+    Ok(err_files)
 }
 
 pub fn delete(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
@@ -500,7 +535,7 @@ async fn p_add_file(
     // See if this is a new file or a modified file
     let file_status =
         core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, &full_path)?;
-
+    log::debug!("File status: {file_status:?}");
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();
     version_store
@@ -522,6 +557,31 @@ async fn p_add_file(
         &seen_dirs,
         &conflicts,
     )
+}
+
+// TODO: Make separate method for removing dirs
+async fn p_rm_file(
+    base_repo: &LocalRepository,
+    workspace_repo: &LocalRepository,
+    path: &Path,
+) -> Result<(), OxenError> {
+    let head_commit = repositories::commits::head_commit(base_repo)?;
+    let parent_path = path.parent().unwrap_or(Path::new(""));
+    let maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, &head_commit, parent_path)?;
+
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+
+    // Get file node to remove
+    let file_node = get_file_node(&maybe_dir_node, path)?;
+    let Some(file_node) = file_node else {
+        return Err(OxenError::basic_str(format!(
+            "Error: Cannot remove file `{path:?}` because it is not committed"
+        )));
+    };
+
+    core::v_latest::rm::remove_file(workspace_repo, &relative_path, &file_node)?;
+
+    Ok(())
 }
 
 fn p_modify_file(
