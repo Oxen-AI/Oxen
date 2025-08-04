@@ -1,7 +1,8 @@
 use futures::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -16,6 +17,14 @@ use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
+use derive_more::FromStr;
+
+// Struct to track node parents for dir-level sync
+#[derive(Eq, Hash, PartialEq)]
+pub struct EntryWithParent {
+    pub commit_entry: Entry,
+    pub parent_id: MerkleHash,
+}
 
 pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
     let Some(current_branch) = repositories::branches::current_branch(repo)? else {
@@ -117,8 +126,9 @@ async fn push_to_new_branch(
 fn collect_missing_files(
     node: &MerkleTreeNode,
     hashes: &HashSet<MerkleHash>,
-    entries: &mut HashSet<Entry>,
+    entries: &mut HashSet<EntryWithParent>,
     total_bytes: &mut u64,
+    total_children: &mut usize,
 ) -> Result<(), OxenError> {
     log::debug!(
         "collect_missing_files node: {} children: {}",
@@ -126,20 +136,26 @@ fn collect_missing_files(
         node.children.len()
     );
     for child in &node.children {
-        // println!("Child: {child:?}");
         if let EMerkleTreeNode::File(file_node) = &child.node {
             if !hashes.contains(&child.hash) {
                 continue;
             }
             *total_bytes += file_node.num_bytes();
-            entries.insert(Entry::CommitEntry(CommitEntry {
-                commit_id: file_node.last_commit_id().to_string(),
-                path: PathBuf::from(file_node.name()),
-                hash: child.hash.to_string(),
-                num_bytes: file_node.num_bytes(),
-                last_modified_seconds: file_node.last_modified_seconds(),
-                last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
-            }));
+            // Empty entries aren't pushed to the remote, so don't count them in total children
+            if file_node.num_bytes() > 0 {
+                *total_children += 1;
+            }
+            entries.insert(EntryWithParent {
+                commit_entry: Entry::CommitEntry(CommitEntry {
+                    commit_id: file_node.last_commit_id().to_string(),
+                    path: PathBuf::from(file_node.name()),
+                    hash: child.hash.to_string(),
+                    num_bytes: file_node.num_bytes(),
+                    last_modified_seconds: file_node.last_modified_seconds(),
+                    last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
+                }),
+                parent_id: node.hash,
+            });
         }
     }
     Ok(())
@@ -280,7 +296,7 @@ async fn push_commits(
         candidate_node_hashes.len()
     ));
 
-    log::debug!("Candidate Hashes: {candidate_node_hashes:?}");
+    // log::debug!("Candidate Hashes: {candidate_node_hashes:?}");
     let missing_node_hashes =
         api::client::tree::list_missing_node_hashes(remote_repo, candidate_node_hashes).await?;
     log::debug!(
@@ -300,11 +316,6 @@ async fn push_commits(
         }
     }
 
-    // As well, don't collect anything in the
-    log::debug!(
-        "push_commits missing_nodes count: {:?}",
-        missing_nodes.len()
-    );
     progress.set_message(format!("Pushing {} nodes...", missing_nodes.len()));
     api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
 
@@ -323,32 +334,83 @@ async fn push_commits(
     )
     .await?;
     progress.set_message(format!("Pushing {} files...", missing_file_hashes.len()));
-    let mut missing_files: HashSet<Entry> = HashSet::new();
+    let mut missing_files: HashSet<EntryWithParent> = HashSet::new();
     let mut total_bytes = 0;
+
+    // Tracking variables for dir-level sync
+    let mut node_parents: HashMap<MerkleHash, MerkleHash> = HashMap::new();
+    let mut node_child_count: HashMap<MerkleHash, AtomicUsize> = HashMap::new();
+    let mut total_files: usize = 0;
+
     for node in missing_nodes {
         collect_missing_files(
             &node,
             &missing_file_hashes,
             &mut missing_files,
             &mut total_bytes,
+            &mut total_files,
         )?;
+
+        log::debug!(
+            "children for node {:?}: {:?}",
+            node.hash,
+            node.children.len()
+        );
+
+        // Track each dir/vnode's parents and children to determine when to mark as synced
+        node_child_count.insert(node.hash, AtomicUsize::new(total_files));
+        if let Some(parent_hash) = node.parent_id {
+            node_parents.insert(node.hash, parent_hash);
+        }
+
+        total_files = 0;
     }
 
-    let missing_files: Vec<Entry> = missing_files.into_iter().collect();
+    // Add nodes with files to push to their parents' child count
+    // Mark nodes without files to push as synced immediately
+
+    // Note: This logic relies on all children appearing before their parents in missing_nodes
+    // This should always happen with the current walk_tree_without_leaves implementation
+
+    let mut empty_nodes: HashSet<MerkleHash> = HashSet::new();
+    for (node_hash, parent_hash) in &node_parents {
+        if let Some(child_count) = node_child_count.get(node_hash) {
+            if child_count.load(Ordering::SeqCst) > 0 {
+                if let Some(parent_count) = node_child_count.get(parent_hash) {
+                    parent_count.fetch_add(1, Ordering::SeqCst);
+                }
+            } else {
+                empty_nodes.insert(*node_hash);
+            }
+        }
+    }
+
+    api::client::tree::mark_nodes_as_synced(remote_repo, empty_nodes).await?;
+
+    let missing_files: Vec<EntryWithParent> = missing_files.into_iter().collect();
     progress.finish();
     let progress = Arc::new(PushProgress::new_with_totals(
         missing_files.len() as u64,
         total_bytes,
     ));
     log::debug!("pushing {} entries", missing_files.len());
+
     let commit = &history.last().unwrap();
-    push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
+    let node_child_count = Arc::new(node_child_count);
+
+    push_entries(
+        repo,
+        remote_repo,
+        &node_child_count,
+        &node_parents,
+        &missing_files,
+        commit,
+        &progress,
+    )
+    .await?;
 
     // Mark commits as synced on the server
     api::client::commits::mark_commits_as_synced(remote_repo, missing_commit_hashes).await?;
-
-    // Mark dirs/vnodes as synced on the server
-    // TODO
 
     progress.finish();
 
@@ -358,7 +420,9 @@ async fn push_commits(
 pub async fn push_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: &[Entry],
+    node_child_count: &Arc<HashMap<MerkleHash, AtomicUsize>>,
+    node_parents: &HashMap<MerkleHash, MerkleHash>,
+    entries: &[EntryWithParent],
     commit: &Commit,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
@@ -368,57 +432,246 @@ pub async fn push_entries(
         commit.id,
         commit.message
     );
-    // Some files may be much larger than others....so we can't just zip them up and send them
-    // since bodies will be too big. Hence we chunk and send the big ones, and bundle and send the small ones
 
-    // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
-    let smaller_entries: Vec<Entry> = entries
-        .iter()
-        .filter(|e| e.num_bytes() <= AVG_CHUNK_SIZE)
-        .map(|e| e.to_owned())
-        .collect();
-
-    // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and send the chunks in parallel
-    let larger_entries: Vec<Entry> = entries
-        .iter()
-        .filter(|e| e.num_bytes() > AVG_CHUNK_SIZE)
-        .map(|e| e.to_owned())
-        .collect();
-
-    let large_entries_sync = chunk_and_send_large_entries(
-        local_repo,
-        remote_repo,
-        larger_entries,
-        commit,
-        AVG_CHUNK_SIZE,
-        progress,
-    );
-    let small_entries_sync = bundle_and_send_small_entries(
-        local_repo,
-        remote_repo,
-        smaller_entries,
-        commit,
-        AVG_CHUNK_SIZE,
-        progress,
+    use tokio::time::sleep;
+    type PieceOfWork = (
+        Entry,
+        MerkleHash,
+        LocalRepository,
+        Commit,
+        RemoteRepository,
+        Arc<reqwest::Client>,
     );
 
-    match tokio::join!(large_entries_sync, small_entries_sync) {
-        (Ok(_), Ok(_)) => {
-            log::debug!("Moving on to post-push validation");
-            Ok(())
-        }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            Err(OxenError::basic_str(err))
-        }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            Err(OxenError::basic_str(err))
-        }
-        _ => Err(OxenError::basic_str("Unknown error syncing entries")),
+    type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
+    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
+
+    // Create a client for uploading chunks
+    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+
+    log::debug!(
+        "Splitting {} entries into pieces of work for upload",
+        entries.len()
+    );
+    let entries: Vec<PieceOfWork> = entries
+        .iter()
+        .map(|e| {
+            (
+                e.commit_entry.to_owned(),
+                e.parent_id.to_owned(),
+                local_repo.to_owned(),
+                commit.to_owned(),
+                remote_repo.to_owned(),
+                client.clone(),
+            )
+        })
+        .collect();
+
+    if entries.is_empty() {
+        log::debug!("No entries to push. Exiting immediately");
+        return Ok(());
     }
+
+    let queue = Arc::new(TaskQueue::new(entries.len()));
+    let finished_queue = Arc::new(FinishedTaskQueue::new(entries.len()));
+    for entry in entries.iter() {
+        queue.try_push(entry.to_owned()).unwrap();
+        finished_queue.try_push(false).unwrap();
+    }
+
+    let worker_count = concurrency::num_threads_for_items(entries.len());
+    log::debug!(
+        "worker_count {} entries len {}",
+        worker_count,
+        entries.len()
+    );
+
+    for worker in 0..worker_count {
+        let queue = queue.clone();
+        let finished_queue = finished_queue.clone();
+        let bar = Arc::clone(progress);
+        let node_parents = node_parents.clone();
+
+        let node_child_count_copy = Arc::clone(node_child_count);
+        let mut small_entries_chunk: Vec<Entry> = vec![];
+        let mut files_to_push: Vec<(MerkleHash, MerkleHash)> = vec![];
+        let mut current_size: u64 = 0;
+        let mut synced_nodes: HashSet<MerkleHash> = HashSet::new();
+
+        let local_repo_copy = local_repo.clone();
+        let remote_repo_copy = remote_repo.clone();
+        let client_copy = client.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let Some((entry, parent_id, repo, commit, remote_repo, client)) = queue.try_pop()
+                else {
+                    break;
+                };
+
+                log::debug!("worker[{}] processing task...", worker);
+
+                if entry.num_bytes() >= AVG_CHUNK_SIZE {
+                    upload_large_file_chunks(
+                        entry.clone(),
+                        repo,
+                        commit,
+                        remote_repo,
+                        AVG_CHUNK_SIZE,
+                        &bar,
+                    )
+                    .await;
+
+                    // Decrement child count for parent hash
+
+                    let entry_hash = match MerkleHash::from_str(&entry.hash()) {
+                        Ok(hash) => hash,
+                        Err(_) => {
+                            log::error!("{}", format_args!("Error: cannot get hash from entry {entry:?}. Skipping decrement"));
+                            continue;
+                        }
+                    };
+
+                    let to_decrement = vec![(entry_hash, parent_id)];
+                    match decrement_child_count(
+                        &node_child_count_copy,
+                        &node_parents,
+                        &to_decrement,
+                        &mut synced_nodes,
+                    ) {
+                        Ok(_) => {}
+                        // TODO: How to handle errors with this?
+                        Err(e) => log::debug!("Error updating count: {}", e),
+                    }
+
+                    finished_queue.pop().await;
+                    // synced_nodes.clear();
+                } else {
+                    // If the next entry would breach the average chunk size, push the current chunk
+                    if current_size + entry.num_bytes() > AVG_CHUNK_SIZE {
+                        match api::client::versions::multipart_batch_upload_with_retry(
+                            &repo,
+                            &remote_repo,
+                            &small_entries_chunk,
+                            &client,
+                            &synced_nodes,
+                        )
+                        .await
+                        {
+                            Ok(_err_files) => {
+                                // TODO: return err files info to the user
+                                log::debug!("Successfully uploaded data!")
+                            }
+                            Err(e) => {
+                                // TODO: Surface the error to the user
+                                log::error!("Error uploading chunk: {:?}", e)
+                            }
+                        }
+
+                        // Decrement child count for each parent hash
+                        // TODO: Handle err_files differently; probably shouldn't decrement their parents' count until they're actually uploaded
+                        synced_nodes.clear();
+                        match decrement_child_count(
+                            &node_child_count_copy,
+                            &node_parents,
+                            &files_to_push,
+                            &mut synced_nodes,
+                        ) {
+                            Ok(_) => {}
+                            // TODO: How to handle errors with this?
+                            Err(e) => log::debug!("Error updating count: {}", e),
+                        }
+
+                        // Update progress bar
+                        bar.add_bytes(current_size);
+                        bar.add_files(small_entries_chunk.len() as u64);
+
+                        // Update finished queue
+                        for _ in 0..small_entries_chunk.len() {
+                            finished_queue.pop().await;
+                        }
+
+                        // Reset tracking variables
+                        small_entries_chunk.clear();
+                        files_to_push.clear();
+                        current_size = 0;
+                    }
+
+                    // Add the current entry
+                    small_entries_chunk.push(entry.clone());
+                    let entry_hash = match MerkleHash::from_str(&entry.hash()) {
+                        Ok(hash) => hash,
+                        Err(_) => {
+                            log::error!("{}", format_args!("Error: cannot get hash from entry {entry:?}. Skipping decrement"));
+                            continue;
+                        }
+                    };
+
+                    files_to_push.push((entry_hash, parent_id));
+                    current_size += entry.num_bytes();
+                }
+            }
+
+            // Upload the remaining small entries
+            if !small_entries_chunk.is_empty() || !synced_nodes.is_empty() {
+                log::debug!(
+                    "Worker[{}] uploading remaining small entries chunk...",
+                    worker
+                );
+
+                // Decrement child_count before pushing to ensure all nodes get marked as synced
+                match decrement_child_count(
+                    &node_child_count_copy,
+                    &node_parents,
+                    &files_to_push,
+                    &mut synced_nodes,
+                ) {
+                    Ok(_) => {}
+                    Err(e) => log::debug!("Error updating count: {}", e),
+                }
+                log::debug!("synced_nodes for final upload: {synced_nodes:?}");
+                match api::client::versions::multipart_batch_upload_with_retry(
+                    &local_repo_copy,
+                    &remote_repo_copy,
+                    &small_entries_chunk,
+                    &client_copy,
+                    &synced_nodes.clone(),
+                )
+                .await
+                {
+                    Ok(_err_files) => {
+                        log::debug!("Successfully uploaded remaining data!");
+                    }
+                    Err(e) => {
+                        log::error!("Error uploading remaining chunk: {:?}", e);
+                    }
+                }
+
+                // Update progress bar
+                bar.add_bytes(current_size);
+                bar.add_files(small_entries_chunk.len() as u64);
+
+                // Update finished queue
+                for _ in 0..small_entries_chunk.len() {
+                    finished_queue.pop().await;
+                }
+            }
+        });
+    }
+
+    while !finished_queue.is_empty() {
+        // log::debug!("Before waiting for {} workers to finish...", queue.len());
+        sleep(Duration::from_secs(1)).await;
+    }
+    log::debug!("All file tasks done. :-)");
+
+    // Sleep again to let things sync...
+    sleep(Duration::from_millis(100)).await;
+
+    Ok(())
 }
 
+/*
 async fn chunk_and_send_large_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -489,6 +742,7 @@ async fn chunk_and_send_large_entries(
 
     Ok(())
 }
+    */
 
 /// Chunk and send large file in parallel
 async fn upload_large_file_chunks(
@@ -653,6 +907,7 @@ async fn upload_large_file_chunks(
                 };
 
                 let is_compressed = false;
+
                 match api::client::commits::upload_data_chunk_to_server_with_retry(
                     &client,
                     &remote_repo,
@@ -699,6 +954,7 @@ async fn upload_large_file_chunks(
     progress.add_files(1);
 }
 
+/*
 /// Sends entries in tarballs of size ~chunk size
 async fn bundle_and_send_small_entries(
     local_repo: &LocalRepository,
@@ -712,7 +968,7 @@ async fn bundle_and_send_small_entries(
         return Ok(());
     }
 
-    // Compute size for this subset of entries
+
     let total_size = repositories::entries::compute_generic_entries_size(&entries)?;
     let num_chunks = ((total_size / avg_chunk_size) + 1) as usize;
 
@@ -777,11 +1033,13 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
+                let _synced_nodes = HashSet::new();
                 match api::client::versions::multipart_batch_upload_with_retry(
                     &repo,
                     &remote_repo,
                     &chunk,
                     &client,
+                    &_synced_nodes,
                 )
                 .await
                 {
@@ -812,6 +1070,7 @@ async fn bundle_and_send_small_entries(
 
     Ok(())
 }
+*/
 
 async fn find_latest_remote_commit(
     repo: &LocalRepository,
@@ -848,4 +1107,41 @@ async fn find_latest_remote_commit(
         // No branches found
         Ok(None)
     }
+}
+
+fn decrement_child_count(
+    node_child_count: &Arc<HashMap<MerkleHash, AtomicUsize>>,
+    parent_map: &HashMap<MerkleHash, MerkleHash>,
+    pushed_files: &Vec<(MerkleHash, MerkleHash)>,
+    synced_nodes: &mut HashSet<MerkleHash>,
+) -> Result<(), OxenError> {
+    for (_, dir_hash) in pushed_files {
+        if let Some(count) = node_child_count.get(dir_hash) {
+            // Atomically fetch and subtract from count
+            let prev_count = count.fetch_sub(1, Ordering::SeqCst);
+            // If prev_count is one, all the node's children have been pushed
+            if prev_count == 1 {
+                log::debug!("Dir node {:?} fully synced", dir_hash);
+                synced_nodes.insert(*dir_hash);
+
+                if let Some(dir_parent) = parent_map.get(dir_hash) {
+                    let synced_dir: Vec<(MerkleHash, MerkleHash)> =
+                        vec![(dir_hash.to_owned(), dir_parent.to_owned())];
+                    return decrement_child_count(
+                        node_child_count,
+                        parent_map,
+                        &synced_dir,
+                        synced_nodes,
+                    );
+                }
+            }
+        } else {
+            return Err(OxenError::basic_str(format!(
+                "Parent hash {:?} not found in node_child_count",
+                dir_hash
+            )));
+        }
+    }
+
+    Ok(())
 }
