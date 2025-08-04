@@ -10,13 +10,13 @@ use std::str::FromStr;
 use tar::Archive;
 
 use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR, NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
-use crate::core::commit_sync_status;
 use crate::core::db;
 use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
+use crate::core::{commit_sync_status, node_sync_status};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{
     CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
@@ -701,9 +701,7 @@ pub fn list_missing_node_hashes(
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let mut results = HashSet::new();
     for hash in hashes {
-        let dir_prefix = node_db_path(repo, hash);
-
-        if !(dir_prefix.join("node").exists() && dir_prefix.join("children").exists()) {
+        if !node_sync_status::node_is_synced(repo, hash) {
             results.insert(*hash);
         }
     }
@@ -712,7 +710,7 @@ pub fn list_missing_node_hashes(
 }
 
 // Given a set of commit hashes, return the hashes that are unsynced
-pub fn list_missing_commit_hashes(
+pub fn list_unsynced_commit_hashes(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
