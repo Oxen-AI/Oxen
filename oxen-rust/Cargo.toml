@@ -146,7 +146,7 @@ pathdiff = "0.2.3"
 
 
 [workspace]
-members = ["src/cli", "src/lib", "src/server"]
+members = ["src/cli", "src/lib", "src/server", "src/watcher"]
 
 [profile.release]
 codegen-units = 1
