@@ -107,7 +107,8 @@ pub async fn entries(
         PathBuf::from(""),
         page,
         page_size,
-    )?;
+    )
+    .await?;
 
     let entries = entries_diff.entries;
     let pagination = entries_diff.pagination;
@@ -205,7 +206,8 @@ pub async fn dir_entries(
         dir.clone(),
         page,
         page_size,
-    )?;
+    )
+    .await?;
 
     log::debug!("entries_diff: {:?}", entries_diff);
 
@@ -277,7 +279,8 @@ pub async fn file(
         head_entry,
         &head_commit,
         opts,
-    )?;
+    )
+    .await?;
 
     let view = CompareEntryResponse {
         status: StatusMessage::resource_found(),
@@ -294,6 +297,7 @@ pub async fn create_df_diff(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
+
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
@@ -309,22 +313,19 @@ pub async fn create_df_diff(
         }
     };
 
-    let resource_1 = PathBuf::from(data.left.path);
-    let resource_2 = PathBuf::from(data.right.path);
-    let keys = data.keys;
-    let targets = data.compare;
-    let display = data.display;
-
-    log::debug!("display is {:?}", display);
+    let resource_1 = PathBuf::from(data.left.path.clone());
+    let resource_2 = PathBuf::from(data.right.path.clone());
+    let keys = data.keys.clone();
+    let targets = data.compare.clone();
+    let display = data.display.clone();
 
     let display_by_column = get_display_by_columns(display);
 
-    log::debug!("display by col is {:?}", display_by_column);
-
-    let compare_id = data.compare_id;
+    let compare_id = data.compare_id.clone();
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
         .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
+
     let commit_2 = repositories::revisions::get(&repository, &data.right.version)?
         .ok_or_else(|| OxenError::revision_not_found(data.right.version.into()))?;
 
@@ -332,6 +333,7 @@ pub async fn create_df_diff(
         repositories::entries::get_file(&repository, &commit_1, &resource_1)?.ok_or_else(|| {
             OxenError::ResourceNotFound(format!("{}@{}", resource_1.display(), commit_1).into())
         })?;
+
     let node_2 =
         repositories::entries::get_file(&repository, &commit_2, &resource_2)?.ok_or_else(|| {
             OxenError::ResourceNotFound(format!("{}@{}", resource_2.display(), commit_2).into())
@@ -339,21 +341,27 @@ pub async fn create_df_diff(
 
     // TODO: Remove the next two lines when we want to allow mapping
     // different keys and targets from left and right file.
-    let keys = keys.iter().map(|k| k.left.clone()).collect();
+    let keys: Vec<String> = keys.iter().map(|k| k.left.clone()).collect();
     let targets = get_targets_from_req(targets);
 
+    let repo = repository.clone();
+    let node_1_copy = node_1.clone();
+    let node_2_copy = node_2.clone();
+
     let diff_result = repositories::diffs::diff_tabular_file_nodes(
-        &repository,
-        &node_1,
-        &node_2,
+        &repo,
+        &node_1_copy,
+        &node_2_copy,
         keys,
         targets,
         display_by_column, // TODONOW: add display handling here
-    )?;
+    )
+    .await?;
 
     // Cache the diff on the server
     let entry_1 = CommitEntry::from_file_node(&node_1);
     let entry_2 = CommitEntry::from_file_node(&node_2);
+
     repositories::diffs::cache_tabular_diff(
         &repository,
         &compare_id,
@@ -364,10 +372,8 @@ pub async fn create_df_diff(
 
     let mut messages: Vec<OxenMessage> = vec![];
 
-    if diff_result.summary.dupes.left > 0 || diff_result.summary.dupes.right > 0 {
-        let cdupes = CompareDupes::from_tabular_diff_dupes(&diff_result.summary.dupes);
-        messages.push(cdupes.to_message());
-    }
+    let cdupes = CompareDupes::from_tabular_diff_dupes(&diff_result.summary.dupes);
+    messages.push(cdupes.to_message());
 
     let view = CompareTabularResponse {
         status: StatusMessage::resource_found(),
@@ -439,7 +445,8 @@ pub async fn update_df_diff(
         keys,
         targets,
         display_by_column, // TODONOW: add display handling here
-    )?;
+    )
+    .await?;
 
     let entry_1 = CommitEntry::from_file_node(&node_1);
     let entry_2 = CommitEntry::from_file_node(&node_2);
@@ -510,7 +517,8 @@ pub async fn get_df_diff(
         &compare_id,
         Some(left_entry.clone()),
         Some(right_entry.clone()),
-    )?;
+    )
+    .await?;
 
     if let Some(diff) = maybe_cached_diff {
         let mut messages: Vec<OxenMessage> = vec![];
@@ -566,7 +574,8 @@ pub async fn get_derived_df(
     // TODO: If this structure holds for diff + query, there is some amt of reusability with
     // controllers::df::get logic
 
-    let df = tabular::read_df(derived_df_path, DFOpts::empty())?;
+    let df = tabular::read_df(derived_df_path, DFOpts::empty()).await?;
+
     let og_schema = Schema::from_polars(df.schema());
 
     let mut opts = DFOpts::empty();
@@ -588,7 +597,7 @@ pub async fn get_derived_df(
     let opts_view = DFOptsView::from_df_opts(&opts);
 
     // We have to run the query param transforms, then paginate separately
-    match tabular::transform(df, opts) {
+    match tabular::transform(df, opts).await {
         Ok(view_df) => {
             log::debug!("View df {:?}", view_df);
 
@@ -598,7 +607,7 @@ pub async fn get_derived_df(
             // Paginate after transform
             let mut paginate_opts = DFOpts::empty();
             paginate_opts.slice = Some(format!("{}..{}", start, end));
-            let mut paginated_df = tabular::transform(view_df, paginate_opts)?;
+            let mut paginated_df = tabular::transform(view_df, paginate_opts).await?;
 
             let total_pages = (view_height as f64 / page_size as f64).ceil() as usize;
             let source_size = DataFrameSize {

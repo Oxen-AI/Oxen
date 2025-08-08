@@ -637,7 +637,7 @@ mod tests {
             repositories::commit(&repo, "Adding metadata to file column")?;
 
             // Add a new column to the data frame
-            command::df::add_column(&bbox_path, "new_column:0:i32")?;
+            command::df::add_column(&bbox_path, "new_column:0:i32").await?;
 
             // Stage the file
             repositories::add(&repo, &bbox_path).await?;

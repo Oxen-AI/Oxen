@@ -343,12 +343,13 @@ mod tests {
             }
 
             let diff = compare.diff.as_ref().unwrap();
+            println!("diff: {:#?}", diff);
             match diff {
                 GenericDiff::TabularDiff(diff) => {
-                    assert_eq!(diff.tabular.added_rows.as_ref().unwrap().view_size.height, 2);
                     assert!(diff.tabular.added_cols.as_ref().is_none());
                     assert!(diff.tabular.removed_cols.as_ref().is_none());
-                    assert!(diff.tabular.removed_rows.as_ref().is_none());
+                    assert_eq!(diff.tabular.added_rows.as_ref().unwrap().view_size.height, 2);
+                    assert_eq!(diff.tabular.removed_rows.as_ref().unwrap().view_size.height, 0);
                 }
                 _ => panic!("Wrong summary type"),
             }

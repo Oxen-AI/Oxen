@@ -104,7 +104,7 @@ impl RunCmd for WorkspaceDFGetCmd {
                 &opts,
             )
             .await?;
-            let df = tabular::read_df(output, opts.clone())?;
+            let df = tabular::read_df(output, opts.clone()).await?;
             println!("{:?}", df);
             return Ok(());
         }
@@ -115,7 +115,7 @@ impl RunCmd for WorkspaceDFGetCmd {
         {
             Ok(response) => {
                 if let Some(data_frame) = response.data_frame {
-                    let df = data_frame.view.to_df();
+                    let df = data_frame.view.to_df().await;
                     let df = tabular::strip_excluded_cols(df)?;
                     println!("{:?}", df);
                     println!("Query took: {:?}", start.elapsed());

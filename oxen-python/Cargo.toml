@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 [dependencies]
 liboxen = { path = "../oxen-rust/src/lib" }
 
-pyo3 = { version = "0.23" }
-pyo3-async-runtimes = { version = "0.23", features = [
+pyo3 = { version = "0.25" }
+pyo3-async-runtimes = { version = "0.25", features = [
     "attributes",
     "async-std-runtime",
     "tokio-runtime",
@@ -22,7 +22,7 @@ pyo3-async-runtimes = { version = "0.23", features = [
 log = "0.4.17"
 pyo3-log = "0.12"
 tokio = { version = "1", features = ["full"] }
-pyo3-polars = { version = "0.20", features = ["dtype-full"] }
+pyo3-polars = { version = "0.22", features = ["dtype-full"] }
 # polars = { version = "0.45.0", features = [
 #     "lazy",
 #     "parquet",

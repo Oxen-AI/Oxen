@@ -112,10 +112,10 @@ pub struct DerivedDFResource {
 }
 
 impl WorkspaceJsonDataFrameViewResponse {
-    pub fn empty() -> WorkspaceJsonDataFrameViewResponse {
+    pub async fn empty() -> WorkspaceJsonDataFrameViewResponse {
         WorkspaceJsonDataFrameViewResponse {
             status: StatusMessage::resource_found(),
-            data_frame: Some(JsonDataFrameViews::empty()),
+            data_frame: Some(JsonDataFrameViews::empty().await),
             commit: None,
             resource: None,
             derived_resource: None,
@@ -125,8 +125,9 @@ impl WorkspaceJsonDataFrameViewResponse {
 }
 
 impl JsonDataFrameViews {
-    pub fn empty() -> JsonDataFrameViews {
+    pub async fn empty() -> JsonDataFrameViews {
         JsonDataFrameViews::from_df_and_opts(DataFrame::empty(), Schema::empty(), &DFOpts::empty())
+            .await
     }
 }
 
@@ -135,7 +136,11 @@ impl JsonDataFrameView {
         JsonDataFrameView::empty_with_schema(&Schema::empty(), 0, &DFOpts::empty())
     }
 
-    pub fn from_df_opts(df: DataFrame, og_schema: Schema, opts: &DFOpts) -> JsonDataFrameView {
+    pub async fn from_df_opts(
+        df: DataFrame,
+        og_schema: Schema,
+        opts: &DFOpts,
+    ) -> JsonDataFrameView {
         let full_width = df.width();
         let full_height = df.height();
 
@@ -155,7 +160,7 @@ impl JsonDataFrameView {
 
         opts.slice = Some(format!("{}..{}", start, end));
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts).unwrap();
+        let mut sliced_df = tabular::transform(df, opts).await.unwrap();
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
@@ -178,7 +183,7 @@ impl JsonDataFrameView {
         }
     }
 
-    pub fn from_df_opts_unpaginated(
+    pub async fn from_df_opts_unpaginated(
         df: DataFrame,
         og_schema: Schema,
         og_height: usize,
@@ -192,7 +197,7 @@ impl JsonDataFrameView {
         opts.slice = None;
 
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts.clone()).unwrap();
+        let mut sliced_df = tabular::transform(df, opts.clone()).await.unwrap();
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
@@ -223,7 +228,7 @@ impl JsonDataFrameView {
         }
     }
 
-    pub fn to_df(&self) -> DataFrame {
+    pub async fn to_df(&self) -> DataFrame {
         if self.data == serde_json::Value::Null {
             DataFrame::empty()
         } else {
@@ -240,7 +245,7 @@ impl JsonDataFrameView {
                         let df = JsonReader::new(content).finish().unwrap();
 
                         let opts = DFOpts::from_column_names(columns);
-                        tabular::transform(df, opts).unwrap()
+                        tabular::transform(df, opts).await.unwrap()
                     } else {
                         let cols = columns
                             .iter()
@@ -306,22 +311,27 @@ impl JsonDataFrameView {
 }
 
 impl JsonDataFrameViews {
-    pub fn from_df_and_opts(df: DataFrame, og_schema: Schema, opts: &DFOpts) -> JsonDataFrameViews {
+    pub async fn from_df_and_opts(
+        df: DataFrame,
+        og_schema: Schema,
+        opts: &DFOpts,
+    ) -> JsonDataFrameViews {
         let source = DataFrameSchemaSize::from_df(&df, &og_schema);
-        let view = JsonDataFrameView::from_df_opts(df, og_schema, opts);
+        let view = JsonDataFrameView::from_df_opts(df, og_schema, opts).await;
         JsonDataFrameViews { source, view }
     }
 
     // To avoid duplicate pagination when the pagination has already been applied
     // most commonly from duckdb / other sql
-    pub fn from_df_and_opts_unpaginated(
+    pub async fn from_df_and_opts_unpaginated(
         df: DataFrame,
         og_schema: Schema,
         og_height: usize,
         opts: &DFOpts,
     ) -> JsonDataFrameViews {
         let source = DataFrameSchemaSize::from_df(&df, &og_schema);
-        let view = JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts);
+        let view =
+            JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts).await;
         JsonDataFrameViews { source, view }
     }
 }

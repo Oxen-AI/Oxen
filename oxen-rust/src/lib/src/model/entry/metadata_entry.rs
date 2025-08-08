@@ -74,13 +74,15 @@ pub struct WorkspaceChanges {
 }
 
 impl MetadataEntry {
-    pub fn from_commit_entry(
+    pub async fn from_commit_entry(
         repo: &LocalRepository,
         entry: Option<CommitEntry>,
         commit: &Commit,
     ) -> Option<MetadataEntry> {
         entry.as_ref()?;
-        repositories::metadata::from_commit_entry(repo, &entry.unwrap(), commit).ok()
+        repositories::metadata::from_commit_entry(repo, &entry.unwrap(), commit)
+            .await
+            .ok()
     }
 
     pub fn from_file_node(

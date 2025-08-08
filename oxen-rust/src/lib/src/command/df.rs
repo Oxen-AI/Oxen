@@ -13,8 +13,8 @@ use crate::opts::DFOpts;
 use crate::{repositories, util};
 
 /// Interact with DataFrames
-pub fn df(input: impl AsRef<Path>, opts: DFOpts) -> Result<(), OxenError> {
-    let mut df = tabular::show_path(input, opts.clone())?;
+pub async fn df(input: impl AsRef<Path>, opts: DFOpts) -> Result<(), OxenError> {
+    let mut df = tabular::show_path(input, opts.clone()).await?;
 
     if let Some(write) = opts.write {
         println!("Writing {write:?}");
@@ -29,7 +29,7 @@ pub fn df(input: impl AsRef<Path>, opts: DFOpts) -> Result<(), OxenError> {
     Ok(())
 }
 
-pub fn df_revision(
+pub async fn df_revision(
     repo: &LocalRepository,
     input: impl AsRef<Path>,
     revision: impl AsRef<str>,
@@ -40,7 +40,7 @@ pub fn df_revision(
     ))?;
     let path = input.as_ref();
     let tree = CommitMerkleTree::from_path(repo, &commit, path, false)?;
-    let mut df = tabular::show_node(repo.clone(), &tree.root, opts.clone())?;
+    let mut df = tabular::show_node(repo.clone(), &tree.root, opts.clone()).await?;
 
     if let Some(output) = opts.output {
         println!("Writing {output:?}");
@@ -56,12 +56,12 @@ pub fn schema<P: AsRef<Path>>(input: P, flatten: bool, opts: DFOpts) -> Result<S
 }
 
 /// Add a row to a dataframe
-pub fn add_row(path: &Path, data: &str) -> Result<(), OxenError> {
+pub async fn add_row(path: &Path, data: &str) -> Result<(), OxenError> {
     if util::fs::is_tabular(path) {
         let mut opts = DFOpts::empty();
         opts.add_row = Some(data.to_string());
         opts.output = Some(path.to_path_buf());
-        df(path, opts)
+        df(path, opts).await
     } else {
         let err = format!("{} is not a tabular file", path.display());
         Err(OxenError::basic_str(err))
@@ -69,12 +69,12 @@ pub fn add_row(path: &Path, data: &str) -> Result<(), OxenError> {
 }
 
 /// Add a column to a dataframe
-pub fn add_column(path: &Path, data: &str) -> Result<(), OxenError> {
+pub async fn add_column(path: &Path, data: &str) -> Result<(), OxenError> {
     if util::fs::is_tabular(path) {
         let mut opts = DFOpts::empty();
         opts.add_col = Some(data.to_string());
         opts.output = Some(path.to_path_buf());
-        df(path, opts)
+        df(path, opts).await
     } else {
         let err = format!("{} is not a tabular file", path.display());
         Err(OxenError::basic_str(err))

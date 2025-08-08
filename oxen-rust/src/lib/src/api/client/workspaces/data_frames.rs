@@ -449,7 +449,7 @@ mod tests {
             )
             .await?;
 
-            let og_row_count = original_df.data_frame.view.to_df().height();
+            let og_row_count = original_df.data_frame.view.to_df().await.height();
             let new_row = r#"{"file": "train/dog_4.jpg", "label": "dog", "min_x": 15.0, "min_y": 20.0, "width": 300, "height": 400}"#;
 
 
@@ -495,7 +495,7 @@ mod tests {
             )
             .await?;
             assert_eq!(edited_df.status.status_message, "resource_found");
-            let new_row_count = edited_df.data_frame.view.to_df().height();
+            let new_row_count = edited_df.data_frame.view.to_df().await.height();
             assert_eq!(new_row_count, og_row_count + 1);
 
             // Verify that the original data frame still exists
@@ -506,7 +506,7 @@ mod tests {
                 DFOpts::empty(),
             )
             .await?;
-            assert_eq!(original_df.data_frame.view.to_df().height(), og_row_count);
+            assert_eq!(original_df.data_frame.view.to_df().await.height(), og_row_count);
             assert_eq!(original_df.status.status_message, "resource_found");
 
             Ok(remote_repo)
@@ -548,7 +548,7 @@ mod tests {
             )
             .await?;
 
-            let og_row_count = original_df.data_frame.view.to_df().height();
+            let og_row_count = original_df.data_frame.view.to_df().await.height();
             let new_row = r#"{"file": "train/dog_4.jpg", "label": "dog", "min_x": 15.0, "min_y": 20.0, "width": 300, "height": 400}"#;
 
 
@@ -595,7 +595,7 @@ mod tests {
             )
             .await?;
             assert_eq!(edited_df.status.status_message, "resource_found");
-            let new_row_count = edited_df.data_frame.view.to_df().height();
+            let new_row_count = edited_df.data_frame.view.to_df().await.height();
             assert_eq!(new_row_count, og_row_count + 1);
 
             // Verify that the original data frame still exists
@@ -606,7 +606,7 @@ mod tests {
                 DFOpts::empty(),
             )
             .await?;
-            assert_eq!(original_df.data_frame.view.to_df().height(), og_row_count);
+            assert_eq!(original_df.data_frame.view.to_df().await.height(), og_row_count);
             assert_eq!(original_df.status.status_message, "resource_found");
 
             Ok(remote_repo)
@@ -644,7 +644,7 @@ mod tests {
 
                 // There should be 4 rows with label = dog
                 let df = df.data_frame.unwrap();
-                let view_df = df.view.to_df();
+                let view_df = df.view.to_df().await;
                 assert_eq!(view_df.height(), 4);
 
                 Ok(())
@@ -729,8 +729,8 @@ mod tests {
                 assert!(output_path.exists());
 
                 // Check the file contents are the same
-                let og_df = tabular::read_df(local_repo.path.join(path), DFOpts::empty())?;
-                let download_df = tabular::read_df(&output_path, DFOpts::empty())?;
+                let og_df = tabular::read_df(local_repo.path.join(path), DFOpts::empty()).await?;
+                let download_df = tabular::read_df(&output_path, DFOpts::empty()).await?;
                 assert_eq!(og_df.height(), download_df.height());
                 assert_eq!(og_df.width(), download_df.width());
 
@@ -774,7 +774,7 @@ mod tests {
                 assert!(output_path.exists());
 
                 // There should be 4 rows with label = dog
-                let df = tabular::read_df(&output_path, DFOpts::empty())?;
+                let df = tabular::read_df(&output_path, DFOpts::empty()).await?;
                 assert_eq!(df.height(), 4);
                 assert_eq!(df.width(), 6);
 
@@ -818,7 +818,7 @@ mod tests {
                 assert!(output_path.exists());
 
                 // There should be 2 rows by 2 columns
-                let df = tabular::read_df(&output_path, DFOpts::empty())?;
+                let df = tabular::read_df(&output_path, DFOpts::empty()).await?;
                 println!("{df}");
                 assert_eq!(df.height(), 2);
                 assert_eq!(df.width(), 2);
@@ -1163,7 +1163,7 @@ mod tests {
                     .join("train")
                     .join("bounding_box.csv");
                 let bbox_file = cloned_repo.path.join(&bbox_filename);
-                let og_df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+                let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
 
                 // Update the file on the remote repo
                 let user = UserConfig::get()?.to_user();
@@ -1198,7 +1198,7 @@ mod tests {
 
                 // Check that we have the new data
                 let bbox_file = cloned_repo.path.join(&bbox_filename);
-                let df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+                let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
                 assert_eq!(df.height(), og_df.height() + 1);
 
                 // Add a more rows on this branch
@@ -1233,7 +1233,7 @@ mod tests {
 
                 // Check that we have the new data
                 let bbox_file = cloned_repo.path.join(&bbox_filename);
-                let df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+                let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
                 assert_eq!(df.height(), og_df.height() + 2);
 
                 Ok(())
@@ -1257,7 +1257,7 @@ mod tests {
                 // Read the initial data
                 let prompts_filename = Path::new("prompts.jsonl");
                 let prompts_file = cloned_repo.path.join(prompts_filename);
-                let og_df = tabular::read_df(&prompts_file, DFOpts::empty())?;
+                let og_df = tabular::read_df(&prompts_file, DFOpts::empty()).await?;
 
                 // Update the file on the remote repo
                 let user = UserConfig::get()?.to_user();
@@ -1305,7 +1305,7 @@ mod tests {
 
                 // Check that we have the new data
                 let prompts_file = cloned_repo.path.join(prompts_filename);
-                let df = tabular::read_df(&prompts_file, DFOpts::empty())?;
+                let df = tabular::read_df(&prompts_file, DFOpts::empty()).await?;
                 assert_eq!(df.height(), og_df.height() + 1);
 
                 // Add a more rows on this branch
@@ -1354,7 +1354,7 @@ mod tests {
 
                 // Check that we have the new data
                 let prompts_file = cloned_repo.path.join(prompts_filename);
-                let df = tabular::read_df(&prompts_file, DFOpts::empty())?;
+                let df = tabular::read_df(&prompts_file, DFOpts::empty()).await?;
                 assert_eq!(df.height(), og_df.height() + 2);
 
                 Ok(())

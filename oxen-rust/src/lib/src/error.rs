@@ -11,6 +11,7 @@ use std::num::ParseIntError;
 use std::path::Path;
 use std::path::PathBuf;
 use std::path::StripPrefixError;
+use tokio::task::JoinError;
 
 use crate::model::Schema;
 use crate::model::Workspace;
@@ -675,6 +676,12 @@ impl From<StripPrefixError> for OxenError {
 }
 impl From<ParseIntError> for OxenError {
     fn from(error: ParseIntError) -> Self {
+        OxenError::basic_str(error.to_string())
+    }
+}
+
+impl From<JoinError> for OxenError {
+    fn from(error: JoinError) -> Self {
         OxenError::basic_str(error.to_string())
     }
 }

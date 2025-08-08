@@ -102,7 +102,7 @@ pub async fn delete(
     log::debug!("rm_df_mod got body: {}", body);
     let response: Result<JsonDataFrameRowResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(val) => Ok(val.data_frame.view.to_df()),
+        Ok(val) => Ok(val.data_frame.view.to_df().await),
         Err(err) => {
             let err = format!("api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}");
             Err(OxenError::basic_str(err))
@@ -140,7 +140,7 @@ pub async fn add(
             let response: Result<JsonDataFrameRowResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
-                Ok(val) => Ok((val.data_frame.view.to_df(), val.row_id)),
+                Ok(val) => Ok((val.data_frame.view.to_df().await, val.row_id)),
                 Err(err) => {
                     let err = format!("api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}");
                     Err(OxenError::basic_str(err))

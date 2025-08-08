@@ -91,7 +91,7 @@ parking_lot = "0.12.1"
 par-stream = { version = "0.10.2", features = ["runtime-tokio"] }
 percent-encoding = "2.1"
 pluralizer = "0.4.0"
-polars = { version = "0.46.0", features = [
+polars = { version = "0.49.0", features = [
     "lazy",
     "parquet",
     "json",
@@ -143,6 +143,7 @@ walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = "2.4.1"
 pathdiff = "0.2.3"
+async-recursion = "1.1.1"
 
 
 [workspace]

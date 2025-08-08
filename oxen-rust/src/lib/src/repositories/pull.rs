@@ -1259,7 +1259,7 @@ mod tests {
             // Track a file
             let filename = "annotations/train/bounding_box.csv";
             let file_path = repo.path.join(filename);
-            let og_df = tabular::read_df(&file_path, DFOpts::empty())?;
+            let og_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
             let og_contents = util::fs::read_from_path(&file_path)?;
 
             repositories::add(&repo, &file_path).await?;
@@ -1282,7 +1282,7 @@ mod tests {
                     repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
                 let file_path = cloned_repo.path.join(filename);
 
-                let cloned_df = tabular::read_df(&file_path, DFOpts::empty())?;
+                let cloned_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
                 let cloned_contents = util::fs::read_from_path(&file_path)?;
                 assert_eq!(og_df.height(), cloned_df.height());
                 assert_eq!(og_df.width(), cloned_df.width());
@@ -1316,7 +1316,7 @@ mod tests {
                 .join("annotations")
                 .join("train.tsv");
             let file_path = repo.path.join(filename);
-            let og_df = tabular::read_df(&file_path, DFOpts::empty())?;
+            let og_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
             let og_sentiment_contents = util::fs::read_from_path(&file_path)?;
 
             let commit = repositories::commits::head_commit(&repo)?;
@@ -1344,7 +1344,7 @@ mod tests {
                     .join("annotations")
                     .join("train.tsv");
                 let file_path = cloned_repo.path.join(&filename);
-                let cloned_df = tabular::read_df(&file_path, DFOpts::empty())?;
+                let cloned_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
                 let cloned_contents = util::fs::read_from_path(&file_path)?;
                 assert_eq!(og_df.height(), cloned_df.height());
                 assert_eq!(og_df.width(), cloned_df.width());

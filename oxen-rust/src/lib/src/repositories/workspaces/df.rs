@@ -39,7 +39,7 @@ pub async fn df(
         match val {
             Ok(val) => {
                 if let Some(data_frame) = val.data_frame {
-                    let mut df = data_frame.view.to_df();
+                    let mut df = data_frame.view.to_df().await;
                     if let Some(output) = output {
                         println!("Writing {output:?}");
                         tabular::write_df(&mut df, output)?;
@@ -89,7 +89,7 @@ pub async fn staged_df<P: AsRef<Path>>(
 
         if let Ok(val) = val {
             if let Some(data_frame) = val.data_frame {
-                let mut df = data_frame.view.to_df();
+                let mut df = data_frame.view.to_df().await;
                 if let Some(output) = output {
                     println!("Writing {output:?}");
                     tabular::write_df(&mut df, output)?;
@@ -164,7 +164,7 @@ pub async fn get_row(
         row_id,
     )
     .await?;
-    let df = df_json.data_frame.view.to_df();
+    let df = df_json.data_frame.view.to_df().await;
     println!("{:?}", df);
     Ok(df)
 }

@@ -68,13 +68,13 @@ pub fn add(
     Ok(result)
 }
 
-pub fn restore(
+pub async fn restore(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     row_id: impl AsRef<str>,
 ) -> Result<DataFrame, OxenError> {
     let row_id = row_id.as_ref();
-    let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id)?;
+    let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id).await?;
     let diff = repositories::workspaces::data_frames::full_diff(workspace, path.as_ref())?;
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
@@ -249,7 +249,7 @@ pub fn batch_update(
     Ok(results)
 }
 
-pub fn prepare_modified_or_removed_row(
+pub async fn prepare_modified_or_removed_row(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
@@ -283,11 +283,9 @@ pub fn prepare_modified_or_removed_row(
     );
 
     // TODONOW should not be using all rows - just need to parse delim
-    let lazy_df = tabular::read_df_with_extension(
-        committed_df_path,
-        file_node.extension(),
-        &DFOpts::empty(),
-    )?;
+    let lazy_df =
+        tabular::read_df_with_extension(committed_df_path, file_node.extension(), &DFOpts::empty())
+            .await?;
 
     // Get the row by index
     let mut row = lazy_df.slice(row_idx_og, 1_usize);
@@ -303,7 +301,7 @@ pub fn prepare_modified_or_removed_row(
     Ok(row)
 }
 
-pub fn restore_row_in_db(
+pub async fn restore_row_in_db(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     row_id: impl AsRef<str>,
@@ -341,7 +339,8 @@ pub fn restore_row_in_db(
                 &workspace.commit,
                 path.as_ref(),
                 &row,
-            )?;
+            )
+            .await?;
             log::debug!("restore_row() insert_row: {:?}", insert_row);
             rows::revert_row_changes(&db, row_id.to_owned())?;
             log::debug!("restore_row() after revert");

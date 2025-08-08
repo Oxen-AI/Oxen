@@ -40,7 +40,7 @@ pub async fn create(
             let response: Result<JsonDataFrameColumnResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
-                Ok(val) => Ok(val.data_frame.view.to_df()),
+                Ok(val) => Ok(val.data_frame.view.to_df().await),
                 Err(err) => {
                     let err = format!("api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}");
                     Err(OxenError::basic_str(err))
@@ -81,7 +81,7 @@ pub async fn delete(
             let response: Result<JsonDataFrameColumnResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
-                Ok(val) => Ok(val.data_frame.view.to_df()),
+                Ok(val) => Ok(val.data_frame.view.to_df().await),
                 Err(err) => {
                     let err = format!("api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}");
                     Err(OxenError::basic_str(err))

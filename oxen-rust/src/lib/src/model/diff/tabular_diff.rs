@@ -7,26 +7,26 @@ use serde::{Deserialize, Serialize};
 
 use super::AddRemoveModifyCounts;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TabularSchemaDiff {
     pub added: Vec<Field>,
     pub removed: Vec<Field>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabularDiffMods {
     pub row_counts: AddRemoveModifyCounts,
     pub col_changes: TabularSchemaDiff,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabularDiffSummary {
     pub modifications: TabularDiffMods,
     pub schemas: TabularDiffSchemas,
     pub dupes: TabularDiffDupes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabularDiff {
     pub filename1: Option<String>,
     pub filename2: Option<String>,
@@ -35,14 +35,14 @@ pub struct TabularDiff {
     pub contents: DataFrame,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabularDiffSchemas {
     pub left: Schema,
     pub right: Schema,
     pub diff: Schema,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabularDiffParameters {
     pub keys: Vec<String>,
     pub targets: Vec<String>,

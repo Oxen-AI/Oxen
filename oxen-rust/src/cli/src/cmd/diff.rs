@@ -82,7 +82,7 @@ impl RunCmd for DiffCmd {
         let opts = DiffCmd::parse_args(args);
         let output = opts.output.clone();
 
-        let mut diff_result = repositories::diffs::diff(opts)?;
+        let mut diff_result = repositories::diffs::diff(opts).await?;
 
         DiffCmd::print_diff_result(&diff_result)?;
         DiffCmd::maybe_save_diff_output(&mut diff_result, output)?;

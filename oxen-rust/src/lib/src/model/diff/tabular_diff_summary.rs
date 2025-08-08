@@ -150,7 +150,7 @@ impl TabularDiffWrapper {
         }
     }
 
-    pub fn maybe_get_df_from_file_node(
+    pub async fn maybe_get_df_from_file_node(
         repo: &LocalRepository,
         node: &Option<FileNode>,
     ) -> Option<DataFrame> {
@@ -158,20 +158,21 @@ impl TabularDiffWrapper {
             Some(node) => {
                 let version_path = util::fs::version_path_from_hash(repo, node.hash().to_string());
                 tabular::read_df_with_extension(version_path, node.extension(), &DFOpts::empty())
+                    .await
                     .ok()
             }
             None => None,
         }
     }
 
-    pub fn maybe_get_df_from_commit_entry(
+    pub async fn maybe_get_df_from_commit_entry(
         repo: &LocalRepository,
         entry: &Option<CommitEntry>,
     ) -> Option<DataFrame> {
         match entry {
             Some(entry) => {
                 let version_path = util::fs::version_path(repo, entry);
-                tabular::read_df(version_path, DFOpts::empty()).ok()
+                tabular::read_df(version_path, DFOpts::empty()).await.ok()
             }
             None => None,
         }

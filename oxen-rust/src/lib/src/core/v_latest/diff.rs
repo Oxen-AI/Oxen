@@ -9,12 +9,13 @@ use crate::model::{Commit, DiffEntry, LocalRepository};
 use crate::opts::DFOpts;
 use crate::repositories;
 use crate::util;
+use futures::{stream, StreamExt, TryStreamExt};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-pub fn list_diff_entries(
+pub async fn list_diff_entries(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
@@ -246,9 +247,8 @@ pub fn list_diff_entries(
         base_path,
         files.len()
     );
-    let file_entries: Vec<DiffEntry> = files
-        .into_iter()
-        .map(|entry| {
+    let file_entries: Vec<DiffEntry> = stream::iter(files)
+        .map(|entry| async move {
             DiffEntry::from_file_nodes(
                 repo,
                 entry.path,
@@ -260,8 +260,11 @@ pub fn list_diff_entries(
                 false,
                 None,
             )
+            .await
         })
-        .collect::<Result<Vec<DiffEntry>, OxenError>>()?;
+        .buffer_unordered(10) // TODO: make this configurable?
+        .try_collect::<Vec<DiffEntry>>()
+        .await?;
 
     let (dirs, _) =
         util::paginate::paginate_dirs_assuming_files(&dir_entries, combined.len(), page, page_size);
@@ -421,7 +424,7 @@ pub fn get_dir_diff_entry_with_summary(
     }
 }
 
-pub fn diff_entries(
+pub async fn diff_entries(
     repo: &LocalRepository,
     file_path: impl AsRef<Path>,
     base_entry: Option<FileNode>,
@@ -461,7 +464,8 @@ pub fn diff_entries(
         status,
         should_do_full_diff,
         Some(df_opts),
-    )?;
+    )
+    .await?;
 
     Ok(entry)
 }

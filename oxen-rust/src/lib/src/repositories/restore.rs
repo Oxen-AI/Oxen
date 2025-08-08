@@ -267,7 +267,7 @@ mod tests {
 
             let mut opts = DFOpts::empty();
             opts.add_row = Some("{\"file\": \"train/dog_99.jpg\", \"label\": \"dog\", \"min_x\": 101.5, \"min_y\": 32.0, \"width\": 385, \"height\": 330}".to_string());
-            let mut df = tabular::read_df(&bbox_path, opts)?;
+            let mut df = tabular::read_df(&bbox_path, opts).await?;
             tabular::write_df(&mut df, &bbox_path)?;
 
             repositories::restore::restore(
@@ -356,7 +356,7 @@ mod tests {
             let ann_path = repo.path.join(&ann_file);
             let new_line = "new_data,123,456,789";
             append_line_txt_file(&ann_path, new_line)?;
-            let orig_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
             // Commit
@@ -371,7 +371,7 @@ mod tests {
                 .await?;
 
             // Make sure is same size
-            let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());
 
@@ -394,7 +394,7 @@ mod tests {
             let new_line = "new_data,123,456,789";
             append_line_txt_file(&ann_path, new_line)?;
 
-            let orig_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
 
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
@@ -411,7 +411,7 @@ mod tests {
                 .await?;
 
             // Make sure is same size
-            let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
 
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());

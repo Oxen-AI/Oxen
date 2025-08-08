@@ -413,7 +413,7 @@ mod tests {
                 let mut opts = DFOpts::empty();
                 opts.add_col = Some("is_something:n/a:str".to_string());
                 opts.output = Some(full_path.to_path_buf()); // write back to same path
-                command::df(&full_path, opts)?;
+                command::df(&full_path, opts).await?;
                 repositories::add(&cloned_repo, &full_path).await?;
 
                 // Commit and push the changed schema
@@ -433,7 +433,6 @@ mod tests {
                     &body,
                 )
                 .await;
-                println!("{:?}", result);
                 assert!(result.is_err());
 
                 // Status should have one modified file

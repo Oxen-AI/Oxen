@@ -656,7 +656,8 @@ mod tests {
             util::fs::copy(&file_2, &file_2_csv)?;
             log::debug!("copied file 2 to {:?}", file_2_csv);
             let diff_result =
-                repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])?;
+                repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])
+                    .await?;
 
             log::debug!("diff result is {:?}", diff_result);
             match diff_result {
@@ -960,7 +961,8 @@ mod tests {
                 &workspace,
                 &file_path,
                 &id_to_modify,
-            )?;
+            )
+            .await?;
 
             log::debug!("res is... {:?}", res);
 
@@ -1029,7 +1031,8 @@ mod tests {
             }
 
             // Now restore the row
-            workspaces::data_frames::rows::restore(&repo, &workspace, &file_path, &id_to_delete)?;
+            workspaces::data_frames::rows::restore(&repo, &workspace, &file_path, &id_to_delete)
+                .await?;
 
             let status = workspaces::status::status(&workspace)?;
             println!("status: {:?}", status);
@@ -1116,7 +1119,7 @@ mod tests {
             let version_file = util::fs::version_path(&repo, &entry);
             let extension = entry.path.extension().unwrap().to_str().unwrap();
             let data_frame =
-                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty())?;
+                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty()).await?;
             println!("{data_frame}");
             assert_eq!(
                 format!("{data_frame}"),

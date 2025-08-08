@@ -160,7 +160,7 @@ impl DiffEntry {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn from_file_nodes(
+    pub async fn from_file_nodes(
         repo: &LocalRepository,
         file_path: impl AsRef<Path>,
         base_entry: Option<FileNode>,
@@ -216,7 +216,7 @@ impl DiffEntry {
             if data_type == EntryDataType::Tabular && should_do_full_diff {
                 log::debug!("doing full diff for tabular");
                 let diff =
-                    TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts);
+                    TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts).await;
                 return Ok(DiffEntry {
                     status: status.to_string(),
                     data_type: data_type.clone(),

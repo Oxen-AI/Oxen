@@ -809,8 +809,8 @@ mod tests {
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
-            repositories::checkout::checkout_combine(&repo, bbox_filename)?;
-            let df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+            repositories::checkout::checkout_combine(&repo, bbox_filename).await?;
+            let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
 
             // This doesn't guarantee order, but let's make sure we have 7 annotations now
             assert_eq!(df.height(), 8);
@@ -837,7 +837,7 @@ mod tests {
             // Add in a column in this branch
             let mut opts = DFOpts::empty();
             opts.add_col = Some(String::from("random_col:unknown:str"));
-            let mut df = tabular::read_df(&bbox_file, opts)?;
+            let mut df = tabular::read_df(&bbox_file, opts).await?;
             println!("WRITE DF IN BRANCH {df:?}");
             tabular::write_df(&mut df, &bbox_file)?;
 
@@ -862,7 +862,7 @@ mod tests {
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Run repositories::checkout::checkout_theirs() and make sure we cannot
-            let result = repositories::checkout::checkout_combine(&repo, bbox_filename);
+            let result = repositories::checkout::checkout_combine(&repo, bbox_filename).await;
             println!("{result:?}");
             assert!(result.is_err());
 
@@ -903,7 +903,7 @@ mod tests {
                         .join("train")
                         .join("bounding_box.csv");
                     let bbox_file = cloned_repo_a.path.join(&bbox_filename);
-                    let og_df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+                    let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
                     let bbox_file = test::append_line_txt_file(
                         bbox_file,
                         "train/cat_3.jpg,cat,41.0,31.5,410,427",
@@ -918,7 +918,7 @@ mod tests {
 
                     // Check that we have the new data
                     let bbox_file = cloned_repo_b.path.join(&bbox_filename);
-                    let df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+                    let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
                     assert_eq!(df.height(), og_df.height() + 1);
 
                     // make the changes again from repo_a
@@ -944,7 +944,7 @@ mod tests {
 
                     // Check that we have the new data
                     let bbox_file = cloned_repo_b.path.join(&bbox_filename);
-                    let df = tabular::read_df(&bbox_file, DFOpts::empty())?;
+                    let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
                     assert_eq!(df.height(), og_df.height() + 2);
 
                     Ok(())

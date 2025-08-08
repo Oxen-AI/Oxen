@@ -73,9 +73,9 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     )?;
 
     let opts = DFOpts::empty();
-    let column_schema = Schema::from_polars(&column_df.schema().clone());
+    let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
-    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts);
+    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
     let diff =
         repositories::workspaces::data_frames::columns::get_column_diff(&workspace, &file_path)?;
 
@@ -149,9 +149,9 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     };
 
     let opts = DFOpts::empty();
-    let column_schema = Schema::from_polars(&column_df.schema().clone());
+    let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
-    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts);
+    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
 
     let mut df_views = JsonDataFrameViews {
         source: column_df_source,
@@ -260,9 +260,9 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     .await?;
 
     let opts = DFOpts::empty();
-    let column_schema = Schema::from_polars(&column_df.schema().clone());
+    let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
-    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts);
+    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
 
     let mut df_views = JsonDataFrameViews {
         source: column_df_source,
@@ -384,7 +384,7 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     let mut df_views = JsonDataFrameViews {
         source: DataFrameSchemaSize::from_df(&restored_column, &schema),
-        view: JsonDataFrameView::from_df_opts(restored_column, schema, &DFOpts::empty()),
+        view: JsonDataFrameView::from_df_opts(restored_column, schema, &DFOpts::empty()).await,
     };
 
     repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(

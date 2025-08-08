@@ -128,7 +128,10 @@ pub async fn checkout_ours(
 
 /// # Combine Conflicting Tabular Data Files
 /// This overwrites the current file with the changes in their file
-pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Result<(), OxenError> {
+pub async fn checkout_combine<P: AsRef<Path>>(
+    repo: &LocalRepository,
+    path: P,
+) -> Result<(), OxenError> {
     let conflicts = repositories::merge::list_conflicts(repo)?;
 
     log::debug!(
@@ -153,7 +156,8 @@ pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Resu
                 &conflict.base_entry.path,
                 &conflict.base_entry.commit_id,
                 &DFOpts::empty(),
-            )?;
+            )
+            .await?;
             let df_merge_path = util::fs::version_path_from_hash_and_filename(
                 repo,
                 &conflict.merge_entry.hash,
@@ -165,7 +169,8 @@ pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Resu
                 &conflict.merge_entry.path,
                 &conflict.merge_entry.commit_id,
                 &DFOpts::empty(),
-            )?;
+            )
+            .await?;
 
             log::debug!("GOT DF HEAD {}", df_base);
             log::debug!("GOT DF MERGE {}", df_merge);

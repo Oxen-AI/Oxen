@@ -72,7 +72,7 @@ pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
     })
 }
 
-pub fn from_commit_entry(
+pub async fn from_commit_entry(
     repo: &LocalRepository,
     entry: &CommitEntry,
     commit: &Commit,
@@ -230,8 +230,8 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
-    #[test]
-    fn test_get_metadata_audio_flac() {
+    #[tokio::test]
+    async fn test_get_metadata_audio_flac() {
         let file = test::test_audio_file_with_name("121-121726-0005.flac");
         let metadata = repositories::metadata::get(file).unwrap();
 

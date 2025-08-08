@@ -42,6 +42,7 @@ pub async fn create_compare(
     };
 
     let uri = "/compare/data_frames".to_string();
+
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -85,11 +86,10 @@ pub async fn update_compare(
     };
 
     let uri = format!("/compare/data_frames/{compare_id}");
+
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
-
-    // let params =
 
     if let Ok(res) = client.put(&url).json(&json!(req_body)).send().await {
         let body = client::parse_json_body(&url, res).await?;
@@ -98,11 +98,11 @@ pub async fn update_compare(
         match response {
             Ok(tabular_compare) => Ok(tabular_compare.dfs),
             Err(err) => Err(OxenError::basic_str(format!(
-                "create_compare() Could not deserialize response [{err}]\n{body}"
+                "update_compare() Could not deserialize response [{err}]\n{body}"
             ))),
         }
     } else {
-        Err(OxenError::basic_str("create_compare() Request failed"))
+        Err(OxenError::basic_str("update_compare() Request failed"))
     }
 }
 
@@ -511,7 +511,7 @@ mod tests {
             let derived_df =
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
-            let df = derived_df.to_df();
+            let df = derived_df.to_df().await;
             println!("df: {:?}", df);
 
             assert_eq!(df.height(), 3);
@@ -558,6 +558,7 @@ mod tests {
             test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
+
             repositories::commit(&local_repo, "committing files")?;
 
             // set remote
@@ -567,6 +568,7 @@ mod tests {
                 constants::DEFAULT_REMOTE_NAME,
                 &remote_repo.remote.url,
             )?;
+
             repositories::push(&local_repo).await?;
 
             let compare_id = "abcdefgh";
@@ -607,11 +609,10 @@ mod tests {
             )
             .await?;
 
-            // Now get the derived df
             let derived_df =
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
-            let df = derived_df.to_df();
+            let df = derived_df.to_df().await;
 
             assert_eq!(df.height(), 3);
 
@@ -642,17 +643,18 @@ mod tests {
             // let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8\n0,1,9,2";
 
             test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
+
             repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "committing files")?;
             repositories::push(&local_repo).await?;
 
-            // Now get the derived df
             let derived_df =
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
-            let new_df = derived_df.to_df();
+            let new_df = derived_df.to_df().await;
 
             // Nothing should've changed! Compare wasn't updated.
+            assert!(new_df == df);
             assert_eq!(new_df, df);
 
             // Now, update the compare - using the exact same body as before, only the commits have changed
@@ -693,11 +695,11 @@ mod tests {
             )
             .await?;
 
-            // Get derived df again
             let derived_df =
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
-            let new_df = derived_df.to_df();
+            let new_df = derived_df.to_df().await;
+            assert!(new_df != df);
 
             assert_ne!(new_df, df);
             assert_eq!(new_df.height(), 2);

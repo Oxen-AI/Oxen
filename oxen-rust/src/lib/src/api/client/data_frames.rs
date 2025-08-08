@@ -534,7 +534,7 @@ mod tests {
             )
             .await?;
 
-            let p_df = df.data_frame.view.to_df();
+            let p_df = df.data_frame.view.to_df().await;
             println!("{:?}", p_df);
 
             // Original DF
@@ -603,7 +603,7 @@ mod tests {
             )
             .await?;
 
-            let p_df = df.data_frame.view.to_df();
+            let p_df = df.data_frame.view.to_df().await;
             println!("{:?}", p_df);
 
             // Original DF
@@ -665,7 +665,7 @@ mod tests {
             )
             .await?;
 
-            let p_df = df.data_frame.view.to_df();
+            let p_df = df.data_frame.view.to_df().await;
             println!("{:?}", p_df);
 
             // Original DF

@@ -62,7 +62,7 @@ pub async fn get(
 
     opts.path = Some(resource.path.clone());
     let data_frame_slice =
-        repositories::data_frames::get_slice(&repo, &commit, &resource.path, &opts)?;
+        repositories::data_frames::get_slice(&repo, &commit, &resource.path, &opts).await?;
 
     let mut df = data_frame_slice.slice;
     let view_height = if opts.has_filter_transform() {

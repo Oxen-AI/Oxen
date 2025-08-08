@@ -155,7 +155,7 @@ pub async fn get(
     df_schema.update_metadata_from_schema(&og_schema);
 
     let mut df_views =
-        JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts);
+        JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
 
     repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
         &workspace,
@@ -468,7 +468,7 @@ pub async fn diff(
 
     df_schema.update_metadata_from_schema(&og_schema);
 
-    let mut df_views = JsonDataFrameViews::from_df_and_opts(diff_df, df_schema, &opts);
+    let mut df_views = JsonDataFrameViews::from_df_and_opts(diff_df, df_schema, &opts).await;
 
     repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
         &workspace,
