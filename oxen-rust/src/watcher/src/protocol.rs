@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+#[path = "protocol_test.rs"]
+mod protocol_test;
+
 /// Request messages sent from CLI to Watcher
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WatcherRequest {

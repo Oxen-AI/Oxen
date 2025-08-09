@@ -122,7 +122,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
 
             // Convert Oxen status to our format
             for path in status.modified_files {
-                if let Ok(metadata) = std::fs::metadata(&repo_path.join(&path)) {
+                if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone())) {
                     file_statuses.push(crate::protocol::FileStatus {
                         path: path.clone(),
                         mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
@@ -149,7 +149,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
                     }
                 };
 
-                let (mtime, size) = if let Ok(metadata) = std::fs::metadata(&repo_path.join(&path))
+                let (mtime, size) = if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone()))
                 {
                     (
                         metadata.modified().unwrap_or(std::time::SystemTime::now()),
@@ -170,7 +170,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
             }
 
             for path in status.untracked_files {
-                if let Ok(metadata) = std::fs::metadata(&repo_path.join(&path)) {
+                if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone())) {
                     file_statuses.push(crate::protocol::FileStatus {
                         path: path.clone(),
                         mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
