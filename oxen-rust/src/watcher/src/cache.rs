@@ -7,9 +7,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
+#[path = "cache_test.rs"]
+mod cache_test;
+
 /// Memory-only status cache for fast access
 pub struct StatusCache {
-    repo: LocalRepository,
     /// In-memory cache
     cache: Arc<RwLock<MemoryCache>>,
 }
@@ -27,7 +29,8 @@ struct MemoryCache {
 impl StatusCache {
     /// Create a new status cache for a repository
     pub fn new(repo_path: &Path) -> Result<Self, WatcherError> {
-        let repo = LocalRepository::from_dir(repo_path)?;
+        // Verify it's a valid repository
+        let _repo = LocalRepository::from_dir(repo_path)?;
         
         // Initialize memory cache
         let cache = Arc::new(RwLock::new(MemoryCache {
@@ -39,7 +42,7 @@ impl StatusCache {
             last_update: SystemTime::now(),
         }));
         
-        Ok(Self { repo, cache })
+        Ok(Self { cache })
     }
     
     /// Get the current status, optionally filtered by paths
@@ -87,6 +90,7 @@ impl StatusCache {
     }
     
     /// Update a file's status in the cache
+    #[allow(dead_code)]  // Used in tests
     pub async fn update_file_status(&self, status: FileStatus) -> Result<(), WatcherError> {
         let mut cache = self.cache.write().await;
         
@@ -164,6 +168,7 @@ impl StatusCache {
     }
     
     /// Clear the entire cache
+    #[allow(dead_code)]  // Used in tests
     pub async fn clear(&self) -> Result<(), WatcherError> {
         let mut cache = self.cache.write().await;
         cache.modified.clear();
