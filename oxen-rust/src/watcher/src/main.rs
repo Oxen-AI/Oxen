@@ -8,7 +8,7 @@ mod protocol;
 
 use clap::Parser;
 use log::info;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::Args;
 use crate::error::WatcherError;
@@ -77,7 +77,7 @@ async fn check_status(repo_path: PathBuf) -> Result<(), WatcherError> {
     Ok(())
 }
 
-async fn is_watcher_running(repo_path: &PathBuf) -> Result<bool, WatcherError> {
+async fn is_watcher_running(repo_path: &Path) -> Result<bool, WatcherError> {
     let socket_path = repo_path.join(".oxen/watcher.sock");
     
     // Try to ping the watcher

@@ -21,6 +21,7 @@ pub enum WatcherError {
     RepositoryNotFound(String),
     
     #[error("Watcher already running")]
+    #[allow(dead_code)]  // Will be used when we implement multiple watcher prevention
     AlreadyRunning,
     
     #[error("Failed to communicate with watcher: {0}")]

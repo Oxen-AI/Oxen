@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time;
 
+#[path = "event_processor_test.rs"]
+mod event_processor_test;
+
 /// Processes filesystem events and updates the cache
 pub struct EventProcessor {
     cache: Arc<StatusCache>,

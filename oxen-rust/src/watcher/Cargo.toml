@@ -11,6 +11,10 @@ repository = "https://github.com/Oxen-AI/Oxen"
 name = "oxen-watcher"
 path = "src/main.rs"
 
+[lib]
+name = "oxen_watcher"
+path = "src/lib.rs"
+
 [dependencies]
 liboxen = { path = "../lib" }
 notify = "6.1"
@@ -23,3 +27,7 @@ log = "0.4"
 env_logger = "0.11"
 chrono = "0.4"
 thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4"
