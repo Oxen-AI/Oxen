@@ -451,6 +451,7 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
     let mut retry_count: usize = 0;
 
     while (first_try || !result.err_files.is_empty()) && retry_count < MAX_RETRIES {
+        println!("Uploading versions. Retry count is {retry_count}");
         first_try = false;
         retry_count += 1;
 
@@ -480,7 +481,7 @@ pub async fn workspace_multipart_batch_upload_versions(
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     // keep track of the files hash
     let mut files_to_add: Vec<FileWithHash> = vec![];
-    log::debug!("Uploading {} files to {}", paths.len(), remote_repo.url());
+    println!("Uploading {} files to {}", paths.len(), remote_repo.url());
 
     // generate retry hashes if it's not the first try
     let retry_hashes: std::collections::HashSet<String> = if result.err_files.is_empty() {
@@ -564,6 +565,7 @@ pub async fn workspace_multipart_batch_upload_versions(
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
+    println!("Exponential backoff got called with base_wait_time {base_wait_time}. n {n}, and max {max}");
     (base_wait_time + n.pow(2) + jitter()).min(max)
 }
 

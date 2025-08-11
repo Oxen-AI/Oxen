@@ -46,6 +46,7 @@ async fn main() -> ExitCode {
         Box::new(cmd::InitCmd),
         Box::new(cmd::LoadCmd),
         Box::new(cmd::LogCmd),
+        Box::new(cmd::LsCmd),
         Box::new(cmd::MergeCmd),
         Box::new(cmd::MigrateCmd),
         Box::new(cmd::MooCmd),
@@ -109,7 +110,7 @@ async fn main() -> ExitCode {
                             return ExitCode::SUCCESS;
                         }
                         // Remote-mode specific commands
-                        "commit" | "checkout" | "status" => {
+                        "commit" | "checkout" | "pull" | "status" => {
                             match RemoteModeCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
@@ -120,7 +121,7 @@ async fn main() -> ExitCode {
                             return ExitCode::SUCCESS;
                         }
                         // Disallowed commands
-                        "embeddings" | "merge" | "push" | "pull" | "schemas" | "workspace" => {
+                        "embeddings" | "merge" | "push" | "schemas" | "workspace" => {
                             eprintln!("Command `oxen {command}` not implemented for remote-mode repositories");
                             return ExitCode::FAILURE;
                         }

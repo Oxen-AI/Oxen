@@ -152,6 +152,30 @@ pub async fn list_missing_hashes(
     }
 }
 
+pub async fn get_files(
+    remote_repo: &RemoteRepository,
+    commit_hashes: HashSet<MerkleHash>,
+) -> Result<HashSet<MerkleHash>, OxenError> {
+    let uri = "/commits/missing".to_string();
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let client = client::new_for_url(&url)?;
+    let res = client
+        .post(&url)
+        .json(&MerkleHashes {
+            hashes: commit_hashes,
+        })
+        .send()
+        .await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(response) => Ok(response.hashes),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
+        ))),
+    }
+}
+
 pub async fn mark_commits_as_synced(
     remote_repo: &RemoteRepository,
     commit_hashes: HashSet<MerkleHash>,

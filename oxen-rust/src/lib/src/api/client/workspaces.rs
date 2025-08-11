@@ -145,6 +145,49 @@ pub async fn create_with_path(
     }
 }
 
+// Creates a new branch on the remote and instantiates a workspace 
+pub async fn create_with_new_branch(
+    remote_repo: &RemoteRepository,
+    branch_name: impl AsRef<str>,
+    workspace_id: impl AsRef<str>,
+    path: impl AsRef<Path>,
+    workspace_name: Option<String>,
+) -> Result<WorkspaceResponseWithStatus, OxenError> {
+    let branch_name = branch_name.as_ref();
+    let workspace_id = workspace_id.as_ref();
+    let path = path.as_ref();
+    let url = api::endpoint::url_from_repo(remote_repo, "/workspaces/{workspace_id}/new")?;
+    log::debug!("create workspace {} with new branch {}\n", url, branch_name);
+
+    let body = NewWorkspace {
+        branch_name: branch_name.to_string(),
+        workspace_id: workspace_id.to_string(),
+        // These two are needed for the oxen hub right now, ignored by the server
+        resource_path: Some(path.to_str().unwrap().to_string()),
+        entity_type: Some("user".to_string()),
+        name: workspace_name,
+        force: Some(true),
+    };
+
+    let client = client::new_for_url(&url)?;
+    let res = client.put(&url).json(&body).send().await?;
+
+    let body = client::parse_json_body(&url, res).await?;
+    log::debug!("create_workspace_with_new_branch got body: {}", body);
+    let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(val) => Ok(WorkspaceResponseWithStatus {
+            id: val.workspace.id,
+            name: val.workspace.name,
+            commit: val.workspace.commit,
+            status: val.status.status_message,
+        }),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+        ))),
+    }
+}
+
 pub async fn delete(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,

@@ -8,6 +8,8 @@ use crate::model::{
     SummarizedStagedDirStats,
 };
 
+// TODO: Display if in Remote mode repo;
+
 pub const MSG_CLEAN_REPO: &str = "nothing to commit, working tree clean\n";
 pub const MSG_OXEN_ADD_FILE_EXAMPLE: &str =
     "  (use \"oxen add <file>...\" to update what will be committed)\n";
@@ -40,6 +42,14 @@ impl StagedDataOpts {
     pub fn from_paths(paths: &[PathBuf]) -> StagedDataOpts {
         StagedDataOpts {
             paths: paths.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    pub fn from_paths_remote_mode(paths: &[PathBuf]) -> StagedDataOpts {
+        StagedDataOpts {
+            paths: paths.to_owned(),
+            is_remote: true,
             ..Default::default()
         }
     }
@@ -78,6 +88,8 @@ pub struct StagedData {
     pub staged_schemas: HashMap<PathBuf, StagedSchema>, // All the staged entrisumes will be in here
     pub untracked_dirs: Vec<(PathBuf, usize)>,
     pub untracked_files: Vec<PathBuf>,
+    pub unsynced_dirs: Vec<(PathBuf, usize)>,
+    pub unsynced_files: Vec<PathBuf>,
     pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
     pub removed_files: HashSet<PathBuf>,
@@ -92,6 +104,8 @@ impl StagedData {
             staged_schemas: HashMap::new(),
             untracked_dirs: vec![],
             untracked_files: vec![],
+            unsynced_dirs: vec![],
+            unsynced_files: vec![],
             modified_files: HashSet::new(),
             removed_files: HashSet::new(),
             moved_files: vec![],
@@ -99,6 +113,7 @@ impl StagedData {
         }
     }
 
+    // Unsynced dirs and files not included
     pub fn is_clean(&self) -> bool {
         self.staged_files.is_empty()
             && self.staged_dirs.is_empty()
@@ -113,6 +128,10 @@ impl StagedData {
 
     pub fn has_added_entries(&self) -> bool {
         !self.staged_dirs.is_empty() || !self.staged_files.is_empty()
+    }
+
+    pub fn has_unsynced_entries(&self) -> bool {
+        !self.unsynced_dirs.is_empty() || !self.unsynced_files.is_empty()
     }
 
     pub fn has_modified_entries(&self) -> bool {

@@ -106,6 +106,7 @@ pub fn add_version_files(
             let version_path = version_store.get_version_path(&item.hash)?;
             let target_path = PathBuf::from(directory).join(&item.path);
 
+            
             match get_status_and_add_file(
                 workspace_repo,
                 &version_path,
