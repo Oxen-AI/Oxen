@@ -3,23 +3,17 @@ use clap::{Arg, ArgMatches, Command};
 
 use liboxen::api;
 use liboxen::error;
+use liboxen::repositories;
 use liboxen::error::OxenError;
 use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::LocalRepository;
-use liboxen::model::RemoteRepository;
-use liboxen::model::StagedData;
-use liboxen::model::StagedEntry;
-use liboxen::model::StagedEntryStatus;
 use liboxen::util;
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 
 use crate::helpers::{
     check_remote_version, check_remote_version_blocking, get_scheme_and_host_from_repo,
 };
-
-use liboxen::core::v_latest::status::status_from_opts_and_staged_data;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "status";
@@ -98,8 +92,8 @@ impl RunCmd for RemoteModeStatusCmd {
             .unwrap_or_else(|| vec![repository.path.clone()]);
 
         // Get workspace status
-        let mut is_remote = true;
-        let remote_opts = StagedDataOpts {
+        let is_remote = true;
+        let opts = StagedDataOpts {
             paths: paths.clone(),
             skip,
             limit,
@@ -117,77 +111,12 @@ impl RunCmd for RemoteModeStatusCmd {
         let directory = PathBuf::from(".");
 
         let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
-        let mut repo_status =
-            Self::status(&remote_repo, &workspace_id, &directory, &remote_opts).await?;
-
-        // Get local status
-        is_remote = false;
-        let local_opts = StagedDataOpts {
-            paths: paths.clone(),
-            skip,
-            limit,
-            print_all,
-            is_remote,
-            ignore: None,
-        };
-
-        status_from_opts_and_staged_data(&repository, &local_opts, &mut repo_status)?;
+        let repo_status =
+            repositories::remote_mode::status(&repository, &remote_repo, &workspace_id, &directory, &opts).await?;
 
         // TODO: Make custom status message clarifying 'untracked' dirs and files
-        repo_status.print_with_params(&local_opts);
+        repo_status.print_with_params(&opts);
 
         Ok(())
-    }
-}
-
-impl RemoteModeStatusCmd {
-    async fn status(
-        remote_repo: &RemoteRepository,
-        workspace_id: &str,
-        directory: impl AsRef<Path>,
-        opts: &StagedDataOpts,
-    ) -> Result<StagedData, OxenError> {
-        let page_size = opts.limit;
-        let page_num = opts.skip / page_size;
-
-        let remote_status = api::client::workspaces::changes::list(
-            remote_repo,
-            workspace_id,
-            directory,
-            page_num,
-            page_size,
-        )
-        .await?;
-
-        let mut status = StagedData::empty();
-        status.staged_dirs = remote_status.added_dirs;
-        let added_files: HashMap<PathBuf, StagedEntry> =
-            HashMap::from_iter(remote_status.added_files.entries.into_iter().map(|e| {
-                (
-                    PathBuf::from(e.filename()),
-                    StagedEntry::empty_status(StagedEntryStatus::Added),
-                )
-            }));
-        let added_mods: HashMap<PathBuf, StagedEntry> =
-            HashMap::from_iter(remote_status.modified_files.entries.into_iter().map(|e| {
-                (
-                    PathBuf::from(e.filename()),
-                    StagedEntry::empty_status(StagedEntryStatus::Modified),
-                )
-            }));
-        let staged_removals: HashMap<PathBuf, StagedEntry> =
-            HashMap::from_iter(remote_status.removed_files.entries.into_iter().map(|e| {
-                (
-                    PathBuf::from(e.filename()),
-                    StagedEntry::empty_status(StagedEntryStatus::Removed),
-                )
-            }));
-        status.staged_files = added_files
-            .into_iter()
-            .chain(added_mods)
-            .chain(staged_removals)
-            .collect();
-
-        Ok(status)
     }
 }

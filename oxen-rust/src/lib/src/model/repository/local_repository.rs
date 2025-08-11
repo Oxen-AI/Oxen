@@ -12,6 +12,7 @@ use crate::view::RepositoryView;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -351,13 +352,13 @@ impl LocalRepository {
         let workspace_name = name.as_ref();
         let workspaces = self.workspaces.clone().unwrap_or_default();
 
-        let mut new_workspaces = vec![];
+        let mut new_workspaces = HashSet::new();
         for workspace in workspaces {
-            new_workspaces.push(workspace.clone());
+            new_workspaces.insert(workspace.clone());
         }
 
-        new_workspaces.push(workspace_name.to_string());
-        self.workspaces = Some(new_workspaces);
+        new_workspaces.insert(workspace_name.to_string());
+        self.workspaces = Some(new_workspaces.iter().cloned().collect());
     }
 
     pub fn delete_workspace(&mut self, name: impl AsRef<str>) -> Result<(), OxenError> {
@@ -399,8 +400,7 @@ impl LocalRepository {
                 .contains(&workspace_name.to_string())
     }
 
-    // TODO: Right ow, this doesn't need to return a result
-    // Define setting a workspace that's not in the workspaces vec to be an error?
+    // TODO: Should we define setting a workspace that's not in the workspaces vec to be an error?
     pub fn set_workspace(&mut self, name: impl AsRef<str>) -> Result<(), OxenError> {
         let workspace_name = name.as_ref();
 
@@ -417,6 +417,14 @@ impl LocalRepository {
             self.workspace_name = Some(workspace_name.to_string());
         }
         Ok(())
+    }
+
+    pub fn num_workspaces(&self) -> usize {
+        if let Some(workspaces) = &self.workspaces {
+           workspaces.len() 
+        } else {
+            0
+        }
     }
 
     pub fn write_is_shallow(&self, shallow: bool) -> Result<(), OxenError> {
@@ -496,6 +504,21 @@ mod tests {
 
         repo.set_workspace(sample_name)?;
         assert_eq!(repo.workspace_name, Some(sample_name.to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cannot_add_repeat_workspace() -> Result<(), OxenError> {
+        let repo_path = PathBuf::from("repo_path");
+        let mut repo = LocalRepository::new(repo_path)?;
+
+        let sample_name = "sample";
+        repo.add_workspace(sample_name);
+
+        // Add the same workspace again
+        repo.add_workspace(sample_name);
+        assert_eq!(repo.num_workspaces(), 1);
 
         Ok(())
     }

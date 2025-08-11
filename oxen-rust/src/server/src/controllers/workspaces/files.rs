@@ -107,7 +107,7 @@ pub async fn add_version_files(
     };
 
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-
+    println!("Calling add version files from the core workspace logic with {} files", files_with_hash.len());
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,

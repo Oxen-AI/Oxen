@@ -66,9 +66,11 @@ mod tests {
 
     use crate::error::OxenError;
     use crate::opts::clone_opts::CloneOpts;
+    use crate::model::staged_data::StagedDataOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::api;
 
     #[tokio::test]
     async fn test_clone_root_subtree_depth_1_add_file() -> Result<(), OxenError> {
@@ -571,6 +573,83 @@ A: Oxen.ai
                 .contains_key(&PathBuf::from("annotations/train/one_shot.csv")));
 
             Ok(())
+        })
+        .await
+    
+    
+    }
+
+    #[tokio::test]
+    async fn test_remote_mode_add_after_modified_file_in_subdirectory() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                // Clone repo in remote mode
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+
+                let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                let workspace_id = cloned_repo.workspace_name.clone().unwrap();
+                let file_path = PathBuf::from("annotations").join("train").join("new_file.csv");
+                let full_path = cloned_repo.path.join(&file_path);
+
+                // Create new file locally 
+                let file_contents = "New file contents!";
+                util::fs::write_to_path(&full_path, file_contents)?;
+
+                // Status displays only the untracked file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[file_path.clone()]);
+                let directory = String::from(".");
+
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &PathBuf::from("."), &status_opts).await?;
+
+                status.print_with_params(&status_opts);
+
+                assert_eq!(status.staged_files.len(), 0);
+                assert_eq!(status.modified_files.len(), 0);
+                assert_eq!(status.untracked_files.len(), 1);
+                assert_eq!(status.removed_files.len(), 0);
+
+                // Add the new file 
+                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![full_path.clone()]).await?;
+
+                // Status displays only the staged file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[file_path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
+                
+                 status.print_with_params(&status_opts);
+                 
+                assert_eq!(status.staged_files.len(), 1);
+                assert_eq!(status.modified_files.len(), 0);
+                assert_eq!(status.untracked_files.len(), 0);
+                assert_eq!(status.removed_files.len(), 0);
+                assert!(status.staged_files.contains_key(&file_path));
+
+                // Modify the file
+                let file_contents = "file,label\ntrain/cat_1.jpg,1000";
+                test::modify_txt_file(&full_path, file_contents)?;
+
+                // Add the modified file
+                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![full_path.clone()]).await?;
+
+                // Status now displays only the modified file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[file_path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
+
+                assert_eq!(status.staged_files.len(), 0);
+                assert_eq!(status.modified_files.len(), 1);
+                assert_eq!(status.untracked_files.len(), 0);
+                assert_eq!(status.removed_files.len(), 0);
+                assert!(status.staged_files.contains_key(&file_path));
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
         })
         .await
     }

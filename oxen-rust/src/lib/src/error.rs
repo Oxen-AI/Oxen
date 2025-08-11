@@ -58,6 +58,9 @@ pub enum OxenError {
     RemoteBranchLocked(StringError),
     UpstreamMergeConflict(StringError),
 
+    // Remote Mode
+    // RemoteModeCommandNotAvailable(StringError),
+
     // Branches/Commits
     BranchNotFound(Box<StringError>),
     RevisionNotFound(Box<StringError>),
