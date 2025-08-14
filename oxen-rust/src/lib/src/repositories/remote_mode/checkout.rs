@@ -20,8 +20,7 @@ pub async fn checkout(
             println!("Checked out branch: {}", branch.name);
 
         }
-        // TODO: Should create workspace on this commit
-        // Make unit test for it as well
+        // TODO: This should create a workspace on this commit
         Ok(None) => {
             //println!("Checked out commit: {}", name);
             
@@ -119,6 +118,11 @@ pub async fn create_checkout_branch(
     Ok(workspace_name)
 }
 
+// Actual bugs uncovered:
+
+// 1: Properly return error when checking out current branch
+//
+
 
 #[cfg(test)]
 mod tests {
@@ -134,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_current_branch_name_does_nothing() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             
             test::run_empty_dir_test_async(|dir| async move {
@@ -146,7 +150,7 @@ mod tests {
                 let branch_name = "feature".to_string();
 
                 // TODO: Assert is_err()
-                repositories::remote_mode::create_checkout_branch(&mut cloned_repo, &branch_name).await?;
+                repositories::remote_mode::create_checkout(&mut cloned_repo, &branch_name).await?;
                 let initial_workspace = cloned_repo.workspace_name.clone();
 
                 repositories::remote_mode::checkout(&mut cloned_repo, &branch_name).await?;
@@ -162,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_changes_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -178,14 +182,14 @@ mod tests {
 
                 // Create and checkout a new branch
                 let new_branch_name = "feature/workspace-change";
-                remote_mode::create_checkout_branch(&mut cloned_repo, new_branch_name).await?;
+                remote_mode::create_checkout(&mut cloned_repo, new_branch_name).await?;
 
                 // Verify the workspace name has changed
                 let new_workspace_name = cloned_repo.workspace_name.clone().unwrap();
                 assert_ne!(orig_workspace_name, new_workspace_name);
 
                 // Checkout the original branch
-                repositories::checkout(&mut cloned_repo, &orig_branch_name).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &orig_branch_name).await?;
 
                 // Verify the workspace name has reverted to the original
                 assert_eq!(cloned_repo.workspace_name.clone().unwrap(), orig_workspace_name);
@@ -197,6 +201,7 @@ mod tests {
 
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 api::client::workspaces::files::add(
+                    &cloned_repo, 
                     &remote_repo,
                     &current_workspace_id,
                     &directory,
@@ -221,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_added_file_and_workspace() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             
             test::run_empty_dir_test_async(|dir| async move {
@@ -229,6 +234,8 @@ mod tests {
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
+
+                let main_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
 
                 // Write the first file and commit to the main branch
                 let hello_file = cloned_repo.path.join("hello.txt");
@@ -238,27 +245,27 @@ mod tests {
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
 
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![hello_file.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![hello_file.clone()]).await?;
                 
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Added hello.txt");
-                let initial_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
+                let _initial_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 
                 // Create a new branch and checkout
                 let branch_name = "feature";
 
-                repositories::remote_mode::create_checkout_branch(&mut cloned_repo, branch_name).await?;
+                repositories::remote_mode::create_checkout(&mut cloned_repo, branch_name).await?;
                 let branch_workspace = cloned_repo.workspace_name.clone();
 
                 // Add a new file to the new branch and commit
                 let world_file = cloned_repo.path.join("world.txt");
                 util::fs::write_to_path(&world_file, "World")?;
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
-                api::client::workspaces::files::add(&remote_repo, &current_workspace_id, &directory, vec![world_file.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &current_workspace_id, &directory, vec![world_file.clone()]).await?;
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Added world.txt");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 
                 // Go back to the main branch
-                repositories::checkout(&mut cloned_repo, &initial_commit.id).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name).await?;
 
                 // Assert the workspace name changed
                 assert_ne!(cloned_repo.workspace_name, branch_workspace);
@@ -268,7 +275,7 @@ mod tests {
                 assert!(!world_file.exists());
 
                 // Go back to the world branch
-                repositories::checkout(&mut cloned_repo, &branch_name).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &branch_name).await?;
                 assert_eq!(cloned_repo.workspace_name, branch_workspace);
                 assert!(hello_file.exists());
                 assert!(world_file.exists());
@@ -282,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_added_file_keep_untracked() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             
             test::run_empty_dir_test_async(|dir| async move {
@@ -290,6 +297,8 @@ mod tests {
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
+                
+                let main_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
 
                 // Write the first file and commit to the main branch
                 let hello_file = cloned_repo.path.join("hello.txt");
@@ -298,10 +307,10 @@ mod tests {
 
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![hello_file.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![hello_file.clone()]).await?;
                 
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Added hello.txt");
-                let initial_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
+                let _initial_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
 
                 // Create an untracked file that should persist
                 let keep_file = cloned_repo.path.join("keep_me.txt");
@@ -309,20 +318,20 @@ mod tests {
 
                 // Create a new branch and checkout
                 let branch_name = "feature";
-                repositories::remote_mode::create_checkout_branch(&mut cloned_repo, branch_name).await?;
+                repositories::remote_mode::create_checkout(&mut cloned_repo, branch_name).await?;
 
                 // Add a second file to the new branch and commit
                 let world_file = cloned_repo.path.join("world.txt");
                 util::fs::write_to_path(&world_file, "World")?;
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
 
-                api::client::workspaces::files::add(&remote_repo, &current_workspace_id, &directory, vec![world_file.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &current_workspace_id, &directory, vec![world_file.clone()]).await?;
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Added world.txt");
 
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 
                 // Go back to the main branch
-                repositories::checkout(&mut cloned_repo, &initial_commit.id).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name).await?;
 
                 // Assert that the untracked file still exists
                 assert!(keep_file.exists());
@@ -330,7 +339,7 @@ mod tests {
                 assert!(!world_file.exists());
 
                 // Go back to the new branch
-                repositories::checkout(&mut cloned_repo, &branch_name).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &branch_name).await?;
                 assert!(keep_file.exists());
                 assert!(hello_file.exists());
                 assert!(world_file.exists());
@@ -344,7 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_modified_file() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             
             test::run_empty_dir_test_async(|dir| async move {
@@ -352,6 +361,9 @@ mod tests {
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
+
+                // Get main branch
+                let main_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
 
                 // Write and commit the first file to the main branch
                 let hello_file = cloned_repo.path.join("hello.txt");
@@ -361,33 +373,33 @@ mod tests {
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
 
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![hello_file.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![hello_file.clone()]).await?;
                 
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Added hello.txt");
-                let initial_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
+                let _initial_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 assert_eq!(util::fs::read_from_path(&hello_file)?, initial_content);
 
                 // Create a new branch and checkout
                 let branch_name = "feature";
-                repositories::remote_mode::create_checkout_branch(&mut cloned_repo, branch_name).await?;
+                repositories::remote_mode::create_checkout(&mut cloned_repo, branch_name).await?;
                 
                 // Modify the file content on the new branch and commit
                 let modified_content = "World";
                 test::modify_txt_file(&hello_file, modified_content)?;
 
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
-                api::client::workspaces::files::add(&remote_repo, &current_workspace_id, &directory, vec![hello_file.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &current_workspace_id, &directory, vec![hello_file.clone()]).await?;
 
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Changed file to world");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 assert_eq!(util::fs::read_from_path(&hello_file)?, modified_content);
 
                 // Go back to the main branch
-                repositories::checkout(&mut cloned_repo, &initial_commit.id).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name).await?;
                 assert_eq!(util::fs::read_from_path(&hello_file)?, initial_content);
                 
-                // Go back to the new branch
-                repositories::checkout(&mut cloned_repo, &branch_name).await?;
+                // Checkout the new branch
+                repositories::remote_mode::checkout(&mut cloned_repo, &branch_name).await?;
                 assert_eq!(util::fs::read_from_path(&hello_file)?, modified_content);
 
                 Ok(())

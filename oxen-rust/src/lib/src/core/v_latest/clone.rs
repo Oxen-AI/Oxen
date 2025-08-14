@@ -89,8 +89,6 @@ pub async fn clone_repo_remote_mode(
     local_repo.set_min_version(remote_repo.min_version());
     local_repo.set_remote_mode(Some(true));
 
-    println!("More");
-
     let workspace = api::client::workspaces::create_with_new_branch(
         &remote_repo,
         &branch_name,
@@ -99,8 +97,6 @@ pub async fn clone_repo_remote_mode(
         Some(name.clone()),
     )
     .await?;
-
-        println!("workspace");
 
     // TODO: Different messages here? Still colorize?
     match workspace.status.as_str() {
@@ -138,8 +134,6 @@ pub async fn clone_repo_remote_mode(
         println!("The remote repository is empty. Oxen has configured the local repository, but there are no files yet.");
         return Ok(local_repo);
     }
-
-    println!("End");
 
     // Fetch Merkle tree for commit
     repositories::fetch::fetch_branch(&local_repo, &opts.fetch_opts).await?;

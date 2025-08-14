@@ -225,7 +225,6 @@ pub async fn checkout_subtrees(
         };
 
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
-
         let mut results = CheckoutResult::new();
         let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
         let version_store = repo.version_store()?;
@@ -258,9 +257,9 @@ pub async fn checkout_subtrees(
         if repo.is_remote_mode() {
             for file_to_restore in results.files_to_restore {
                 //let file_hash = format!("{}", &file_to_restore.file_node.hash());
-
                 // In remote-mode repos, only restore files that are present in version store
                 if version_store.version_exists(&file_to_restore.file_node.hash().to_string())? {
+                    // println!("Version exists for file_node: {:?}", file_to_restore.file_node);
                     restore::restore_file(
                         repo,
                         &file_to_restore.file_node,
@@ -450,8 +449,6 @@ async fn cleanup_removed_files(
     Ok(())
 }
 
-// Note: If we're willing to duplicate the recursive logic, we could make synchronous version for regular repos
-// And have the async only for remote-mode repos
 fn r_remove_if_not_in_target(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
@@ -465,13 +462,17 @@ fn r_remove_if_not_in_target(
     match &from_node.node {
         EMerkleTreeNode::File(file_node) => {
             // Only consider files not seen while traversing the target tree
+            // println!("Node: {file_node:?}");
             if !hashes.seen_hashes.contains(&from_node.hash) {
+           
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);
                 // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
-
+                // println!("file_path: {file_path:?}");
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
-                    if util::fs::is_modified_from_node(&full_path, file_node)? {
+                    if util::fs::is_modified_from_node(&full_path, file_node)? 
+                    {
+                  
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
                         // If in remote mode, save file to version store before removing
@@ -569,6 +570,7 @@ fn r_restore_missing_or_modified_files(
         EMerkleTreeNode::File(file_node) => {
             let file_path = path.join(file_node.name());
             let full_path = repo.path.join(&file_path);
+            // println!("File path: {file_path:?}");
 
             // Collect hash and path for matching in r_remove_if_not_in_target
             hashes.seen_hashes.insert(target_node.hash);
@@ -587,7 +589,7 @@ fn r_restore_missing_or_modified_files(
                 // First check last modified times
                 let meta = util::fs::metadata(&full_path)?;
                 let last_modified = Some(FileTime::from_last_modification_time(&meta));
-
+            
                 // If last_modified matches the target, do nothing
                 let target_last_modified = util::fs::last_modified_time(
                     file_node.last_modified_seconds(),
@@ -596,7 +598,7 @@ fn r_restore_missing_or_modified_files(
                 if last_modified == Some(target_last_modified) {
                     return Ok(());
                 }
-
+                
                 // If last_modified matches a corresponding from_node, stage it to be restored
                 let (from_node, from_last_modified) =
                     if let Some(from_node) = partial_nodes.get(&file_path) {
@@ -606,7 +608,6 @@ fn r_restore_missing_or_modified_files(
                     };
 
                 if last_modified == from_last_modified {
-                    log::debug!("Updating modified file: {:?}", file_path);
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),
@@ -628,8 +629,6 @@ fn r_restore_missing_or_modified_files(
                 //log::debug!("from hash: {from_hash:?}");
 
                 if working_hash == from_hash {
-                    log::debug!("Updating modified file: {:?}", file_path);
-
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),

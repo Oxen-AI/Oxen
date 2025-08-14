@@ -581,7 +581,7 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_remote_mode_add_after_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -614,7 +614,7 @@ A: Oxen.ai
                 assert_eq!(status.removed_files.len(), 0);
 
                 // Add the new file 
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![full_path.clone()]).await?;
+                api::client::workspaces::files::add(&local_repo, &remote_repo, &workspace_id, &directory, vec![full_path.clone()]).await?;
 
                 // Status displays only the staged file
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[file_path.clone()]);
@@ -633,7 +633,7 @@ A: Oxen.ai
                 test::modify_txt_file(&full_path, file_contents)?;
 
                 // Add the modified file
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![full_path.clone()]).await?;
+                api::client::workspaces::files::add(&local_repo, &remote_repo, &workspace_id, &directory, vec![full_path.clone()]).await?;
 
                 // Status now displays only the modified file
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[file_path.clone()]);

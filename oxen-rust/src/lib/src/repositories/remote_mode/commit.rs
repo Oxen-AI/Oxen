@@ -35,6 +35,8 @@ pub async fn commit(local_repo: &LocalRepository, commit_body: &NewCommitBody) -
     Ok(commit)
 } 
 
+// Actual bugs uncovered:
+// 1: The same add one with the untracked files is happenieng here
 #[cfg(test)]
 mod tests {
 
@@ -51,7 +53,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_file() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -62,12 +64,12 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 // Create new file in repo
-                let file_path = PathBuf::from("new_file.csv");
+                let file_path = test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
 
                 // Add file 
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                api::client::workspaces::files::add(&remote_repo, &workspace_identifier, &directory, vec![file_path]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![file_path]).await?;
 
                 // Commit
                 let cfg = UserConfig::get()?;
@@ -77,15 +79,17 @@ mod tests {
                     email: cfg.email,
                 };
 
-                repositories::remote_mode::commit(&cloned_repo, &body).await?;
+                let commit = repositories::remote_mode::commit(&cloned_repo, &body).await?;
                 
                 // Verify repo is clean
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
                 assert!(status.is_clean());
 
-                // Verify commit exists locally
-                assert!(repositories::commits::head_commit_maybe(&cloned_repo)?.is_some());
+                // Verify head commit exists and is updated locally
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                assert_eq!(head_commit.id, commit.id);
 
 
                 Ok(())
@@ -97,7 +101,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_several_times() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -114,7 +118,7 @@ mod tests {
                 let mut files_in_tree = repositories::tree::list_all_files(&commit_root, &PathBuf::from("."))?;   
                 let mut previous_head_commit = head_commit;
 
-                assert_eq!(files_in_tree.len(), 0);
+                assert_eq!(files_in_tree.len(), 1);
 
                 // Perform several sequential commits and store the commit objects
                 let mut commits = vec![];
@@ -125,10 +129,15 @@ mod tests {
                     let file_content = format!("This is the content for file {}", i);
 
                     test::write_txt_file_to_path(&full_path, &file_content)?;
-                    api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![file_path.clone()]).await?;
+                    api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![file_path.clone()]).await?;
 
+                    let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
+                    status.print();
+                    
                     let commit_message = format!("Adding {}", &filename);
                     let commit_body = NewCommitBody::from_config(&UserConfig::get()?, &commit_message);
+
                     let new_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                     commits.push(new_commit.clone());
 
@@ -197,7 +206,7 @@ mod tests {
                 test::modify_txt_file(&full_path, new_contents)?;
 
                 // Add and commit modified file
-                api::client::workspaces::files::add(&remote_repo, &workspace_identifier, &directory, vec![full_path]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![full_path]).await?;
                 let cfg = UserConfig::get()?;
                 let body = NewCommitBody {
                     message: "Modifying bounding_box.csv".to_string(),
@@ -269,7 +278,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_removed_file() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -287,7 +296,7 @@ mod tests {
                 test::write_txt_file_to_path(&full_path, "Hello World")?;
                 
                 // Add the file, which uploads its content to the remote workspace
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![hello_file_path.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![hello_file_path.clone()]).await?;
                 
                 // Remove the file locally from the working directory
                 util::fs::remove_file(&full_path)?;
@@ -296,22 +305,22 @@ mod tests {
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "My message");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 
-                // Verify the head commit has one entry
+                // Verify the head commit has two entries
                 let head = repositories::commits::head_commit(&cloned_repo)?;
                 let commit_list = repositories::entries::list_for_commit(&cloned_repo, &head)?;
-                assert_eq!(commit_list.len(), 1);
+                assert_eq!(commit_list.len(), 2);
 
-                // Add the removed file to stage the deletion
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![hello_file_path.clone()]).await?;
+                // Stage the deletion
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_id, vec![hello_file_path.clone()]).await?;
                 
                 // Commit the deletion
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Second Message");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 
-                // Verify no entries remain in the head commit
+                // Verify only the orignal bounding box file remains
                 let head = repositories::commits::head_commit(&cloned_repo)?;
                 let commit_list = repositories::entries::list_for_commit(&cloned_repo, &head)?;
-                assert_eq!(commit_list.len(), 0);
+                assert_eq!(commit_list.len(), 1);
 
                 Ok(())
             }).await?;
@@ -322,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_removed_dir() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             
             test::run_empty_dir_test_async(|dir| async move {
@@ -340,10 +349,10 @@ mod tests {
                 util::fs::create_dir_all(&full_dir_path)?;
                 let _ = test::add_txt_file_to_dir(&full_dir_path, "file1.txt")?;
                 let _ = test::add_txt_file_to_dir(&full_dir_path, "file2.txt")?;
-                let og_file_count = util::fs::rcount_files_in_dir(&full_dir_path);
+                let og_file_count = util::fs::rcount_files_in_dir(&full_dir_path) + 1; // +1 for the original bounding box
                 
                 // Add the directory, which stages its contents remotely
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![dir_to_remove.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![dir_to_remove.clone()]).await?;
                 
                 // Commit the new directory and its contents
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Adding train directory");
@@ -358,16 +367,16 @@ mod tests {
                 util::fs::remove_dir_all(&full_dir_path)?;
                 
                 // Add the deletion to stage the removal
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![dir_to_remove.clone()]).await?;
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_id, vec![dir_to_remove.clone()]).await?;
 
                 // Commit the deletion
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Removing train directory");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
                 
-                // Verify no entries remain in the head commit
+                // Verify no entries remain in the head commit except the original bounding box
                 let head = repositories::commits::head_commit(&cloned_repo)?;
                 let commit_list = repositories::entries::list_for_commit(&cloned_repo, &head)?;
-                assert_eq!(commit_list.len(), 0);
+                assert_eq!(commit_list.len(), 1);
 
                 Ok(())
             }).await?;
@@ -378,7 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_invalid_parquet_file() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             
             test::run_empty_dir_test_async(|dir| async move {
@@ -396,7 +405,7 @@ mod tests {
                 util::fs::copy(&invalid_parquet_file, &full_path)?;
                 
                 let file_path = PathBuf::from("invalid.parquet");
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, &directory, vec![file_path.clone()]).await?;
+                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_id, &directory, vec![file_path.clone()]).await?;
                 
                 // Commit the file
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Adding invalid parquet file");

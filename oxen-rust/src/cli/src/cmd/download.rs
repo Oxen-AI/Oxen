@@ -5,8 +5,7 @@ use clap::{Arg, Command};
 
 use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_HOST, DEFAULT_SCHEME};
 use liboxen::error::OxenError;
-use liboxen::model::LocalRepository;
-use liboxen::{api, util};
+use liboxen::api;
 use std::path::PathBuf;
 
 use liboxen::repositories;
@@ -58,13 +57,6 @@ impl RunCmd for DownloadCmd {
                 .value_parser(["http", "https"])
                 .action(clap::ArgAction::Set),
         )
-        .arg(
-            // TODO: Better help message
-            Arg::new("remote")
-                .long("remote")
-                .help("Download files from the current workspace in remote-mode repositories. This flag can only be used within a remote-mode repository.")
-                .action(clap::ArgAction::SetTrue),
-        )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -106,16 +98,15 @@ impl RunCmd for DownloadCmd {
         check_remote_version_blocking(scheme.clone(), host.clone()).await?;
 
         // If remote flag is set and there's a remote-mode repository in scope, run workspace download
-        if let Ok(repo) = LocalRepository::from_current_dir() {
+        /*if let Ok(repo) = LocalRepository::from_current_dir() {
             if args.get_flag("remote") && repo.is_remote_mode() {
                 let remote_repo = api::client::repositories::get_default_remote(&repo).await?;
                 let cwd = std::env::current_dir()?;
                 for path in paths {
-                    let file_path = util::fs::path_relative_to_dir(&cwd, &path)?;
                     api::client::workspaces::files::download(
                         &remote_repo,
                         &repo.workspace_name.clone().unwrap(),
-                        file_path.to_str().unwrap(),
+                        path.to_str().unwrap(),
                         Some(&dst),
                     )
                     .await?;
@@ -131,7 +122,7 @@ impl RunCmd for DownloadCmd {
                     "Error: 'remote' flag can only be used in remote-mode repositories",
                 ));
             }
-        }
+        }*/
 
         // Check if the first path is a valid remote repo
         if let Some(remote_repo) =

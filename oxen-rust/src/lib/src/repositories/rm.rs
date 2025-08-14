@@ -40,8 +40,6 @@ fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Resu
     Ok(())
 }
 
-// TODO: Should removing dirs from staged require -r?
-// Collect paths for removal. Returns error if dir found and -r not set
 fn parse_glob_path(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
     let mut paths: HashSet<PathBuf> = HashSet::new();
     log::debug!("Parsing paths: {path:?}");

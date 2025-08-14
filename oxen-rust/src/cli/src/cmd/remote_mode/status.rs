@@ -10,6 +10,7 @@ use liboxen::model::LocalRepository;
 use liboxen::util;
 
 use std::path::{PathBuf};
+use colored::Colorize;
 
 use crate::helpers::{
     check_remote_version, check_remote_version_blocking, get_scheme_and_host_from_repo,
@@ -114,7 +115,12 @@ impl RunCmd for RemoteModeStatusCmd {
         let repo_status =
             repositories::remote_mode::status(&repository, &remote_repo, &workspace_id, &directory, &opts).await?;
 
-        // TODO: Make custom status message clarifying 'untracked' dirs and files
+        let remote_mode_message = "\nRemote-Mode Repository".to_string().green().bold();
+        let remote_mode_sub_message = "This is a remote-mode repository. File contents may not be present for all files\n".to_string().normal();
+        
+        println!("{}", remote_mode_message);
+        println!("{}", remote_mode_sub_message);
+
         repo_status.print_with_params(&opts);
 
         Ok(())

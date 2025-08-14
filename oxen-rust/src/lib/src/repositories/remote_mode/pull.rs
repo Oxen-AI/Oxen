@@ -1,10 +1,7 @@
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::{api, repositories};
+use crate::{repositories};
 
-use colored::Colorize;
-use std::path::Path;
-use uuid::Uuid;
 
 pub async fn pull(
     repo: &mut LocalRepository,
@@ -23,6 +20,8 @@ pub async fn pull(
 
     Ok(())
 }
+
+// TODO: Make tests...
 
 #[cfg(test)]
 mod tests {
