@@ -1,13 +1,16 @@
-use crate::cache::StatusCache;
-use crate::error::WatcherError;
-use crate::event_processor::EventProcessor;
-use crate::ipc::IpcServer;
-use liboxen::model::LocalRepository;
 use log::{error, info, warn};
 use notify::{Event, RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+use liboxen::core;
+use liboxen::model::LocalRepository;
+
+use crate::cache::StatusCache;
+use crate::error::WatcherError;
+use crate::event_processor::EventProcessor;
+use crate::ipc::IpcServer;
 
 /// Main filesystem watcher that coordinates all components
 pub struct FileSystemWatcher {
@@ -149,16 +152,16 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
                     }
                 };
 
-                let (mtime, size) = if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone()))
-                {
-                    (
-                        metadata.modified().unwrap_or(std::time::SystemTime::now()),
-                        metadata.len(),
-                    )
-                } else {
-                    // File might not exist if it was removed
-                    (std::time::SystemTime::now(), 0)
-                };
+                let (mtime, size) =
+                    if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone())) {
+                        (
+                            metadata.modified().unwrap_or(std::time::SystemTime::now()),
+                            metadata.len(),
+                        )
+                    } else {
+                        // File might not exist if it was removed
+                        (std::time::SystemTime::now(), 0)
+                    };
 
                 file_statuses.push(crate::protocol::FileStatus {
                     path: path.clone(),
@@ -194,5 +197,9 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
         }
     }
 
+    // Remove cached ref DB connection so it doesn't block other connections
+    // TODO: update the ref_manager with the option to NOT cache the connection,
+    // similar to how we configure the merkle tree node cache
+    core::refs::remove_from_cache(repo.path)?;
     Ok(())
 }

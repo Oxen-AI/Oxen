@@ -173,6 +173,11 @@ name = "oxen-server"
 path = "src/server/src/main.rs"
 bench = false
 
+# [[bin]]
+# name = "oxen-watcher"
+# path = "src/watcher/src/main.rs"
+# bench = false
+
 [package.metadata.docs.rs]
 default-target = "x86_64-unknown-linux-gnu"
 features = ["duckdb"]                       # this is without "duckdb/bundled"
