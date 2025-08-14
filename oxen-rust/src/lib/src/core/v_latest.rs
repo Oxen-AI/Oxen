@@ -23,6 +23,7 @@ pub mod revisions;
 pub mod rm;
 pub mod stats;
 pub mod status;
+pub mod watcher_client;
 pub mod workspaces;
 
 pub use add::add;
