@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use clap::{Arg, ArgGroup, ArgMatches, Command};
 
-use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
+use liboxen::{api, util, core::oxenignore, error::OxenError, model::LocalRepository};
 
 use crate::cmd::{rm::rm_args, RunCmd};
 pub const NAME: &str = "rm";
@@ -108,8 +108,9 @@ impl RunCmd for WorkspaceRmCmd {
             )
             .await?;
         } else {
-            api::client::workspaces::files::rm_files(&remote_repo, workspace_identifier, paths)
+            api::client::workspaces::files::rm_files(&repository, &remote_repo, workspace_identifier, paths)
                 .await?;
+            
         }
 
         Ok(())

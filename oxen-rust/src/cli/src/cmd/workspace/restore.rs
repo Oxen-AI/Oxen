@@ -50,10 +50,14 @@ impl RunCmd for WorkspaceRestoreCmd {
         check_repo_migration_needed(&repository)?;
 
         let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
-        let workspace_id = UserConfig::identifier()?;
+        let workspace_identifier = if repository.is_remote_mode() {
+            repository.workspace_name.unwrap()
+        } else { 
+            UserConfig::identifier()?
+        };
         api::client::workspaces::data_frames::restore(
             &remote_repo,
-            &workspace_id,
+            &workspace_identifier,
             opts.path.to_owned(),
         )
         .await?;

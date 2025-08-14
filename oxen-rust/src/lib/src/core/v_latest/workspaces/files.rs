@@ -23,6 +23,10 @@ use crate::core::{self, db};
 use crate::error::OxenError;
 use crate::model::workspace::Workspace;
 use crate::model::LocalRepository;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::node::DirNode;
 use crate::model::{Commit, StagedEntryStatus};
 use crate::repositories;
 use crate::util;
@@ -48,15 +52,13 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
     Ok(relative_path)
 }
 
-// TODO: Support for removing dirs
-// p_rm_file cannot remove dirs
 pub async fn rm(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    p_rm_file(base_repo, workspace_repo, filepath).await?;
+    p_rm(base_repo, workspace_repo, filepath).await?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -114,7 +116,11 @@ pub fn add_version_files(
                 staged_db_manager,
                 &seen_dirs,
             ) {
-                Ok(_) => (),
+                Ok(_) => {
+                    // Add parents to staged db
+                    // let parent_dirs = item.parents;
+
+                },
                 Err(e) => {
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
@@ -560,28 +566,41 @@ async fn p_add_file(
     )
 }
 
-// TODO: Make separate method for removing dirs
-async fn p_rm_file(
+async fn p_rm(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
     path: &Path,
 ) -> Result<(), OxenError> {
+
     let head_commit = repositories::commits::head_commit(base_repo)?;
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+
     let parent_path = path.parent().unwrap_or(Path::new(""));
     let maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, &head_commit, parent_path)?;
 
-    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let file_name = util::fs::path_relative_to_dir(path, &parent_path)?;
+    if let Some(file_node) = get_file_node(&maybe_dir_node, &file_name)? {
 
-    // Get file node to remove
-    let file_node = get_file_node(&maybe_dir_node, path)?;
-    let Some(file_node) = file_node else {
-        return Err(OxenError::basic_str(format!(
-            "Error: Cannot remove file `{path:?}` because it is not committed"
-        )));
-    };
+        core::v_latest::rm::remove_file(workspace_repo, &relative_path, &file_node)?;
 
-    core::v_latest::rm::remove_file(workspace_repo, &relative_path, &file_node)?;
+    } else if has_dir_node(&maybe_dir_node, file_name)? {
 
+        match CommitMerkleTree::dir_with_children_recursive(base_repo, &head_commit, &relative_path)? {
+            Some(dir_node) => {    
+                core::v_latest::rm::remove_dir_node(workspace_repo, &dir_node, path)?;
+
+            }
+            None => {
+            }
+        };
+    } 
+
+    // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
+    // TODO: Handle these gracefully
+
+    /*Err(OxenError::basic_str(format!(
+        "Error: Cannot remove file `{path:?}` because it is not committed"
+    )))*/
     Ok(())
 }
 
@@ -611,3 +630,24 @@ fn p_modify_file(
         Err(OxenError::basic_str("file not found in head commit"))
     }
 }
+
+
+fn has_dir_node(
+    dir_node: &Option<MerkleTreeNode>,
+    path: impl AsRef<Path>,
+) -> Result<bool, OxenError> {
+    if let Some(node) = dir_node {
+        if let Some(node) = node.get_by_path(path)? {
+            if let EMerkleTreeNode::Directory(dir_node) = &node.node {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
+    } else {
+        Ok(false)
+    }
+}
+

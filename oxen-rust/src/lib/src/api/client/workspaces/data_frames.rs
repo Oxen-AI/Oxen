@@ -195,6 +195,23 @@ pub async fn restore(
     Ok(())
 }
 
+pub async fn restore_files(
+    remote_repo: &RemoteRepository,
+    workspace_id: &str,
+    path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let file_name = path.as_ref().to_string_lossy();
+    let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    log::debug!("workspaces::data_frames::restore {}", url);
+    let client = client::new_for_url(&url)?;
+    let res = client.delete(&url).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    log::debug!("workspaces::data_frames::restore got body: {}", body);
+    Ok(())
+}
+
+
 pub async fn diff(
     remote_repo: &RemoteRepository,
     workspace_id: &str,

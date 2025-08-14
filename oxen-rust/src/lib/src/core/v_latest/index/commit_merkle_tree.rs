@@ -402,6 +402,7 @@ impl CommitMerkleTree {
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let node_path = path.as_ref();
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        log::debug!("dir_hashes: {dir_hashes:?}");
         let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
         if let Some(node_hash) = node_hash {
             // We are reading a node with children
@@ -422,6 +423,7 @@ impl CommitMerkleTree {
         let node_path = path.as_ref();
         log::debug!("Read path {:?} in commit {:?}", node_path, commit);
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+
         let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
         if let Some(node_hash) = node_hash {
             // We are reading a node with children
@@ -599,7 +601,6 @@ impl CommitMerkleTree {
         commit: &Commit,
     ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
         let node_db_dir = CommitMerkleTree::dir_hash_db_path(repo, commit);
-        log::debug!("loading dir_hashes from: {:?}", node_db_dir);
         let opts = db::key_val::opts::default();
         let node_db: DBWithThreadMode<MultiThreaded> =
             DBWithThreadMode::open_for_read_only(&opts, node_db_dir, false)?;

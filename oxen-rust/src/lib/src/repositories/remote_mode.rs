@@ -11,6 +11,9 @@ pub use checkout::create_checkout_branch;
 pub mod commit;
 pub use commit::commit;
 
+pub mod restore;
+pub use restore::restore;
+
 pub mod status;
 pub use status::status;
 
@@ -89,7 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_list_tabular_files() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -117,7 +120,7 @@ mod tests {
 
                 // Add and commit all
                 let files_to_add = vec![cats_tsv, dogs_csv, readme_md];
-                api::client::workspaces::files::add(&remote_repo, &workspace_identifier, &directory, files_to_add).await?;
+                api::client::workspaces::files::add(&remote_mode_repo, &remote_repo, &workspace_identifier, &directory, files_to_add).await?;
 
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Adding tabular data");
                 repositories::remote_mode::commit(&remote_mode_repo, &commit_body).await?;
@@ -125,14 +128,14 @@ mod tests {
                 // List files and verify the count
                 let new_head = repositories::commits::head_commit(&remote_mode_repo)?;
                 let new_files = repositories::tree::list_tabular_files_in_repo(&remote_mode_repo, &new_head)?;
-                assert_eq!(new_files.len(), 2);
+                assert_eq!(new_files.len(), 3);
 
                 // Pull with the original repo and verify the count is the same
                 repositories::pull(&local_repo).await?;
                 let local_repo_head = repositories::commits::head_commit(&local_repo)?;
                 let files = repositories::tree::list_tabular_files_in_repo(&local_repo, &local_repo_head)?;
                 
-                assert_eq!(files.len(), 2);
+                assert_eq!(files.len(), 3);
                 assert_eq!(local_repo_head.id, new_head.id);
 
                 Ok(())
@@ -144,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_merkle_two_files_same_hash() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -166,7 +169,7 @@ mod tests {
                 test::write_txt_file_to_path(&full_path_2, common_contents)?;
 
                 // Add both files
-                api::client::workspaces::files::add(&remote_repo, &workspace_identifier, &directory, vec![p1.clone(), p2.clone()]).await?;
+                api::client::workspaces::files::add(&remote_mode_repo, &remote_repo, &workspace_identifier, &directory, vec![p1.clone(), p2.clone()]).await?;
 
                 // Check status to verify both are staged
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[p1.clone(), p2.clone()]);

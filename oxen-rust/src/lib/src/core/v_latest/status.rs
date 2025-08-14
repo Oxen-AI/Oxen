@@ -131,7 +131,7 @@ pub fn status_from_opts_and_staged_data(
     let mut total_entries = 0;
 
     let mut untracked = UntrackedData::new();
-    let mut untracked = UnsyncedData::new();
+    let mut unsynced = UnsyncedData::new();
     let mut modified = HashSet::new();
     let mut removed = HashSet::new();
 
@@ -657,7 +657,7 @@ fn find_local_changes(
 
     if let Some(ignore) = &opts.ignore {
         if ignore.contains(search_node_path) || ignore.contains(&full_path) {
-            return Ok((UntrackedData::new(), HashSet::new(), HashSet::new()));
+            return Ok((UntrackedData::new(), UnsyncedData::new(), HashSet::new(), HashSet::new()));
         }
     }
 
@@ -749,12 +749,7 @@ fn find_local_changes(
                     found_file = true;
                     if util::fs::is_modified_from_node(&path, file_node)? {
                         modified.insert(relative_path.clone());
-                    } else {
-                        // If the file is found but not modified, and doesn't exist locally, it is unsynced
-                        if !path.exists() {
-                            unsynced.add_file(relative_path.clone());
-                        }
-                    }
+                    } 
                 }
             }
             log::debug!("find_changes found_file {:?} {:?}", found_file, path);
@@ -785,7 +780,7 @@ fn find_local_changes(
         // if we have subtree paths, don't check for removed files that are outside of the subtree
         if let Some(subtree_paths) = repo.subtree_paths() {
             if !subtree_paths.contains(&search_node_path.to_path_buf()) {
-                return Ok((untracked, modified, removed));
+                return Ok((untracked, unsynced, modified, removed));
             }
 
             if subtree_paths.len() == 1 && subtree_paths[0] == PathBuf::from("") {
@@ -795,13 +790,13 @@ fn find_local_changes(
                     for child in CommitMerkleTree::node_files_and_folders(&node)? {
                         if let EMerkleTreeNode::File(file_node) = &child.node {
                             let file_path = full_path.join(file_node.name());
-                            if !file_path.exists() && !unsynced.contains(file_path) {
+                            if !file_path.exists() && !unsynced.files.contains(&file_path) {
                                 removed.insert(search_node_path.join(file_node.name()));
                             }
                         }
                     }
                 }
-                return Ok((untracked, modified, removed));
+                return Ok((untracked, unsynced, modified, removed));
             }
         }
 
@@ -811,7 +806,7 @@ fn find_local_changes(
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let file_path = full_path.join(file_node.name());
                     if !file_path.exists() {
-                        removed.insert(search_node_path.join(file_node.name()));
+                        unsynced.add_file(search_node_path.join(file_node.name()));
                     }
                 } else if let EMerkleTreeNode::Directory(dir) = &child.node {
                     let dir_path = full_path.join(dir.name());
@@ -1000,7 +995,6 @@ impl UnsyncedData {
         Self {
             dirs: HashMap::new(),
             files: Vec::new(),
-            all_untracked: true,
         }
     }
 
@@ -1027,7 +1021,7 @@ impl UnsyncedData {
         self.files.push(file_path);
     }
 
-    fn merge(&mut self, other: UntrackedData) {
+    fn merge(&mut self, other: UnsyncedData) {
         // Since we process child directories first, we can just extend
         self.dirs.extend(other.dirs);
         self.files.extend(other.files);
