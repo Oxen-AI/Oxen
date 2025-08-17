@@ -368,11 +368,11 @@ impl CommitMerkleTree {
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let node_path = path.as_ref();
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        log::debug!("dir_hashes: {dir_hashes:?}");
+        println!("dir_hashes: {dir_hashes:?}");
         let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
         if let Some(node_hash) = node_hash {
             // We are reading a node with children
-            log::debug!("Look up dir {:?}", node_path);
+            println!("Look up dir {:?}", node_path);
             // Read the node at depth 1 to get VNodes and Sub-Files/Dirs
             // We don't count VNodes in the depth
             CommitMerkleTree::read_depth(repo, &node_hash, 1)

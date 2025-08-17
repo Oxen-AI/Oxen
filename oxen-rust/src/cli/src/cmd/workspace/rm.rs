@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use clap::{Arg, ArgGroup, ArgMatches, Command};
 
-use liboxen::{api, util, core::oxenignore, error::OxenError, model::LocalRepository};
+use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
 
 use crate::cmd::{rm::rm_args, RunCmd};
 pub const NAME: &str = "rm";

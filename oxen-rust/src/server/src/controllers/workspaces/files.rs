@@ -27,20 +27,28 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
 ) -> Result<NamedFile, OxenHttpError> {
+
+    println!("S");
     let app_data = app_data(&req)?;
+    println!("sdf");
     let namespace = path_param(&req, "namespace")?;
+    println!("ddddd");
     let repo_name = path_param(&req, "repo_name")?;
+    println!("asdf");
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    println!("oiuy");
     let workspace_id = path_param(&req, "workspace_id")?;
+    println!("JEJ");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
+    println!("iii");
     let path = path_param(&req, "path")?;
 
     // The path in a workspace context is just the working path of the workspace repo
     let path = workspace.workspace_repo.path.join(path);
 
-    log::debug!("got workspace file path {:?}", path);
+    println!("got workspace file path {:?}", path);
 
     // TODO: This probably isn't the best place for the resize logic
     let img_resize = query.into_inner();

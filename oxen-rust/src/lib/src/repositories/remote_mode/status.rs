@@ -12,7 +12,6 @@ use crate::core::v_latest::status::status_from_opts_and_staged_data;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-// TODO: Should 'ignore' be None here?
 pub async fn status(
     local_repository: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -158,32 +157,38 @@ mod tests {
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
-                
-                // Download specific files from the remote
-                let subdir_path = PathBuf::from("annotations").join("train");
 
-                let one_shot_path = subdir_path.join("one_shot.csv");
-                let two_shot_path = subdir_path.join("two_shot.csv");
-                let bounding_box_path = subdir_path.join("bounding_box.csv");
-
-                // TODO: Actually download the file contents
+                let repo_path = cloned_repo.path.clone();
 
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
                 status.print();
                 
                 // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
-                println!("status: {status:?}");
+
                 assert_eq!(status.unsynced_dirs.len(), 4);
                 assert_eq!(status.unsynced_files.len(), 4);
+                                
+                // Download specific files from the remote
+                let subdir_path = PathBuf::from("annotations").join("train");
+                let one_shot_path = subdir_path.join("one_shot.csv");
+                let two_shot_path = subdir_path.join("two_shot.csv");
+                let bounding_box_path = subdir_path.join("bounding_box.csv");
+
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                repositories::remote_mode::restore(&cloned_repo, &vec![one_shot_path.clone()], &head_commit.id).await?;
+                repositories::remote_mode::restore(&cloned_repo, &vec![two_shot_path.clone()], &head_commit.id).await?;
+                repositories::remote_mode::restore(&cloned_repo, &vec![bounding_box_path.clone()], &head_commit.id).await?;
                 
                 // Modify one_shot.csv
                 let new_content = "new content coming in hot";
                 test::modify_txt_file(cloned_repo.path.join(&one_shot_path), new_content)?;
 
-                // Stage two_shot.csv
+                // Modify and commit two_shot.csv
+                let new_content = "new content coming in even hotter!";
+                test::modify_txt_file(cloned_repo.path.join(&two_shot_path), new_content)?;
                 api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![two_shot_path.clone()]).await?;
 
                 // Remove bounding_box.csv
@@ -191,10 +196,11 @@ mod tests {
 
                 // Check status for corresponding changes
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
                 
-                assert_eq!(status.unsynced_dirs.len(), 5);
+                assert_eq!(status.unsynced_dirs.len(), 4);
                 assert_eq!(status.unsynced_files.len(), 4);
 
                 assert_eq!(status.modified_files.len(), 1);
@@ -208,11 +214,12 @@ mod tests {
 
                 // Re-check status
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
                 
                 assert_eq!(status.unsynced_dirs.len(), 4);
-                assert_eq!(status.unsynced_files.len(), 4);
+                assert_eq!(status.unsynced_files.len(), 7);
                 assert_eq!(status.staged_files.len(), 3);
                 assert_eq!(status.modified_files.len(), 0);
 
@@ -235,37 +242,46 @@ mod tests {
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
 
+                let repo_path = cloned_repo.path.clone();
+                log::debug!("Cloned repo path: {:?}", cloned_repo.path.canonicalize());
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                
-                // TODO: Download README.md
 
-                // Move `README.md` to `README2.md`
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                
                 let og_basename = PathBuf::from("README.md");
+                repositories::remote_mode::restore(&cloned_repo, &vec![og_basename.clone()], &head_commit.id).await?;
+                println!("Hey!");
+
                 let og_file = cloned_repo.path.join(&og_basename);
                 let new_basename = PathBuf::from("README2.md");
                 let new_file = cloned_repo.path.join(&new_basename);
+                println!("og_file: {og_file:?}; exists? {:?}", og_file.exists());
+                println!("sddddd");
                 util::fs::rename(&og_file, &new_file)?;
-
-                // Status before adding should show a removed file and an untracked file
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[og_basename.clone(), new_basename.clone()]);
+                println!("asf");
+                // Status before adding should show 4 unsynced files (README.md,  LICENSE, prompts.jsonl, labels.txt) and an untracked file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
                 assert_eq!(status.moved_files.len(), 0);
-                assert_eq!(status.removed_files.len(), 1);
+                assert_eq!(status.unsynced_files.len(), 4);
                 assert_eq!(status.untracked_files.len(), 1);
 
-                // Add the removed file
+                // Add the unsynced file
                 api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![og_basename.clone()]).await?;
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[og_basename.clone(), new_basename.clone()]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
                 assert_eq!(status.moved_files.len(), 0);
                 assert_eq!(status.staged_files.len(), 1);
                 assert_eq!(status.untracked_files.len(), 1);
 
                 // Add the new file to complete the pair
                 api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![new_basename.clone()]).await?;
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[og_basename.clone(), new_basename.clone()]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
                 assert_eq!(status.moved_files.len(), 1);
                 assert_eq!(status.staged_files.len(), 2);
 

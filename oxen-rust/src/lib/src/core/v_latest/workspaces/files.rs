@@ -25,8 +25,6 @@ use crate::model::workspace::Workspace;
 use crate::model::LocalRepository;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
-use crate::model::merkle_tree::node::FileNode;
-use crate::model::merkle_tree::node::DirNode;
 use crate::model::{Commit, StagedEntryStatus};
 use crate::repositories;
 use crate::util;
@@ -638,7 +636,7 @@ fn has_dir_node(
 ) -> Result<bool, OxenError> {
     if let Some(node) = dir_node {
         if let Some(node) = node.get_by_path(path)? {
-            if let EMerkleTreeNode::Directory(dir_node) = &node.node {
+            if let EMerkleTreeNode::Directory(_dir_node) = &node.node {
                 Ok(true)
             } else {
                 Ok(false)
