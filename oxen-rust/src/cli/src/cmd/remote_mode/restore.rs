@@ -24,6 +24,7 @@ impl RunCmd for RemoteModeRestoreCmd {
         restore_args()
     }
 
+    // TODO: Support multiple paths
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
 
         let path = args.get_one::<String>("PATH").expect("required");
@@ -36,7 +37,8 @@ impl RunCmd for RemoteModeRestoreCmd {
             head_commit.id
         };
 
-        repositories::remote_mode::restore(&repo, &PathBuf::from(path), &revision).await?;
+        let paths = vec![PathBuf::from(path)];
+        repositories::remote_mode::restore(&repo, &paths, &revision).await?;
 
         Ok(())
     }

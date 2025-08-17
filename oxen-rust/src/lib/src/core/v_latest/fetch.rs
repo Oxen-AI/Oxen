@@ -575,14 +575,14 @@ pub async fn pull_entries(
     to_working_dir: bool,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
-    log::debug!("entries.len() {}", entries.len());
+    println!("entries.len() {}", entries.len());
 
     if entries.is_empty() {
         return Ok(());
     }
 
     let missing_entries = get_missing_entries(entries, dst);
-    log::debug!("Pulling {} missing entries", missing_entries.len());
+    println!("Pulling {} missing entries", missing_entries.len());
 
     if missing_entries.is_empty() {
         return Ok(());

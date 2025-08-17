@@ -179,13 +179,14 @@ mod tests {
                 assert!(status.staged_files.contains_key(&p2));
 
                 // Commit the files
-                let current_branch = repositories::branches::current_branch(&remote_mode_repo)?.unwrap();
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Add two files with same content");
-                let commit = api::client::workspaces::commit(&remote_repo, &current_branch.name, &workspace_identifier, &commit_body).await?;
-
+                
+                let commit = repositories::remote_mode::commit(&remote_mode_repo, &commit_body).await?;
+                let head_commit = repositories::commits::head_commit(&remote_mode_repo)?;
+                
                 // Verify the new commit contains both paths
                 assert!(repositories::tree::has_path(&remote_mode_repo, &commit, p1.clone())?);
-                assert!(repositories::tree::has_path(&remote_mode_repo, &commit, p2.clone())?);
+                assert!(repositories::tree::has_path(&remote_mode_repo, &head_commit, p2.clone())?);
 
                 // Pull with the original repo and verify it also contains both paths
                 repositories::pull(&local_repo).await?;

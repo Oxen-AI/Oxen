@@ -4,7 +4,7 @@ use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
-use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
+use crate::{api, view::workspaces::ValidateUploadFeasibilityRequest};
 use crate::core::oxenignore;
 
 use bytesize::ByteSize;
@@ -223,8 +223,8 @@ async fn upload_multiple_files(
    // println!("Upload feasibility validated. Begin uploading large files...");
 
     // Process large files individually with parallel upload
-    for (path, size) in large_files {
-        // println!("Uploading large file: {:?} ({} bytes)", path, size);
+    for (path, _size) in large_files {
+        // println!("Uploading large file: {:?} ({} bytes)", path, _size);
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,

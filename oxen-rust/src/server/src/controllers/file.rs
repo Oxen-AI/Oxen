@@ -31,7 +31,7 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    log::debug!("get file path {:?}", req.path());
+    println!("get file path {:?}", req.path());
 
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -47,7 +47,7 @@ pub async fn get(
         &repo
     };
 
-    log::debug!(
+    println!(
         "{} resource {namespace}/{repo_name}/{resource}",
         liboxen::current_function!()
     );
