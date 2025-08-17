@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remote_mode_add_and_commit_downloaded_file() -> Result<(), OxenError> {
+    async fn test_remote_mode_add_and_commit_downloaded_dir() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
@@ -184,14 +184,16 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 // Download file from remote: 
-                // TODO: Download file
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                let annotations_dir = PathBuf::from("annotations");
+                repositories::remote_mode::restore(&cloned_repo, &vec![annotations_dir.clone()], &head_commit.id).await?;
 
                 // Verify bounding_box.csv and its parent dirs are no longer unsynced
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
-
+                status.print();
                 assert_eq!(status.untracked_files.len(), 0);
                 assert_eq!(status.untracked_dirs.len(), 0);
                 assert_eq!(status.unsynced_files.len(), 0);

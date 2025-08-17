@@ -26,7 +26,7 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    log::debug!("get file path {:?}", req.path());
+    println!("get file path {:?}", req.path());
 
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -40,7 +40,7 @@ pub async fn get(
         resource.clone().commit.unwrap()
     };
 
-    log::debug!(
+    println!(
         "{} resource {namespace}/{repo_name}/{resource}",
         liboxen::current_function!()
     );
@@ -77,7 +77,7 @@ pub async fn get(
             log::debug!("did not hit the resize cache");
         }
 
-        log::debug!(
+        println!(
             "get_file_for_commit_id looking for {:?} -> {:?}",
             path,
             version_path
@@ -103,6 +103,8 @@ pub async fn get(
             header::CONTENT_LENGTH,
             header::HeaderValue::from_str(&content_length).unwrap(),
         );
+
+                println!("response: {response:?}");
 
         response
     };

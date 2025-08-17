@@ -2,7 +2,7 @@ use crate::api::client;
 use crate::config::UserConfig;
 use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
 use crate::error::OxenError;
-use crate::model::{EntryDataType, MetadataEntry, NewCommitBody, RemoteRepository};
+use crate::model::{EntryDataType, MetadataEntry, NewCommitBody, RemoteRepository, LocalRepository};
 use crate::opts::UploadOpts;
 use crate::repositories;
 use crate::view::entries::{EMetadataEntry, PaginatedMetadataEntriesResponse};
@@ -177,6 +177,58 @@ pub async fn download_entry(
     }
 }
 
+
+/// Get entry status in batch and download them to a specific local repo
+pub async fn download_entries_to_repo(
+    local_repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    paths_to_download: &Vec<(PathBuf, PathBuf)>,
+    revision: impl AsRef<str>,
+) -> Result<(), OxenError> {
+    let revision = revision.as_ref();
+    for (local_path, remote_path) in paths_to_download.iter() {
+
+        // TODO: Refactor to get the entries for all paths in one API call
+        let entry = get_entry(remote_repo, remote_path, &revision).await?;
+
+        let entry = match entry {
+            Some(EMetadataEntry::MetadataEntry(entry)) => entry,
+            Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
+                return Err(OxenError::basic_str(
+                    "Workspace entries are not supported for download",
+                ))
+            }
+            None => {
+                return Err(OxenError::path_does_not_exist(&remote_path));
+            }
+        };
+
+        // * if the dst parent is a file, we error because cannot copy to a file subdirectory
+        println!("eeeee");
+        if let Some(parent) = local_path.parent() {
+            if parent.is_file() {
+                return Err(OxenError::basic_str(format!(
+                    "{:?} is not a directory",
+                    parent
+                )));
+            }
+
+            if !parent.exists() && parent != Path::new("") {
+                util::fs::create_dir_all(&parent)?;
+            }
+        }
+        println!("a");
+
+        if entry.is_dir {
+            repositories::download::download_dir_to_repo(local_repo, remote_repo, &entry, &remote_path, &local_path).await?
+        } else {
+            download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn download_file(
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
@@ -204,11 +256,15 @@ pub async fn download_small_entry(
     dest: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    let r = remote_path.as_ref();
+    let d = dest.as_ref();
+   println!("remote path: {r:?}");
+    println!("Dest: {d:?}");
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/file/{}/{}", revision, path);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
+   // println!("url: {url:?}");
     let client = client::new_for_url(&url)?;
     let response = client
         .get(&url)
@@ -217,19 +273,25 @@ pub async fn download_small_entry(
         .map_err(|_| OxenError::resource_not_found(&url))?;
 
     let status = response.status();
+    println!("response: {response:?}");
     match status {
         reqwest::StatusCode::OK => {
             // Copy to file
             let dest = dest.as_ref();
+            println!("asdf");
             // Create parent directories if they don't exist
             if let Some(parent) = dest.parent() {
                 util::fs::create_dir_all(parent)?;
             }
-
+            println!("asdfsafasd");
+           println!("Hi");
             let mut dest_file = { util::fs::file_create(dest)? };
+           println!("dest_file: {dest_file:?}");
+            println!("Canon dest file: {:?}", dest.canonicalize());
             let mut content = Cursor::new(response.bytes().await?);
-
+            println!("content: {content:?}");
             std::io::copy(&mut content, &mut dest_file)?;
+            println!("asdf");
             Ok(())
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),

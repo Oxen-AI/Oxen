@@ -218,6 +218,44 @@ impl MerkleTreeNode {
         )))
     }
 
+    
+    /// List all paths in the tree
+    pub fn list_paths(&self) -> Result<Vec<PathBuf>, OxenError> {
+        let mut paths = Vec::new();
+        let current_path = Path::new("");
+        self.list_paths_helper(current_path, &mut paths)?;
+        Ok(paths)
+    }
+
+    fn list_paths_helper(
+        &self,
+        current_path: &Path,
+        paths: &mut Vec<PathBuf>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(file_node) = &self.node {
+            paths.push(
+                current_path.join(file_node.name()).to_path_buf()
+            );
+        }
+
+        if let EMerkleTreeNode::Directory(dir_node) = &self.node {
+            paths.push(
+                current_path.join(dir_node.name()).to_path_buf()
+            );
+        }
+
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                child.list_paths_helper(&new_path, paths)?;
+            } else {
+                child.list_paths_helper(current_path, paths)?;
+            }
+        }
+        Ok(())
+    }
+
+
     /// List all the directories in the tree
     pub fn list_dir_paths(&self) -> Result<Vec<PathBuf>, OxenError> {
         let mut dirs = Vec::new();
