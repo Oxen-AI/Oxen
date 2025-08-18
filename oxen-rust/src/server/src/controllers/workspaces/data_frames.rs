@@ -7,7 +7,7 @@ use crate::params::{app_data, df_opts_query, path_param, DFOptsQuery, PageNumQue
 use actix_web::{web, HttpRequest, HttpResponse};
 
 use liboxen::constants::{self, TABLE_NAME};
-use liboxen::core::db::data_frames::df_db;
+use liboxen::core::db::data_frames::df_db::with_df_db_manager;
 use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use liboxen::error::OxenError;
 use liboxen::model::Schema;
@@ -205,8 +205,9 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &file_path);
 
-    let conn = df_db::get_connection(db_path)?;
-    let schema = schema_without_oxen_cols(&conn, TABLE_NAME)?;
+    let schema = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| schema_without_oxen_cols(conn, TABLE_NAME))
+    })?;
 
     Ok(HttpResponse::Ok().json(schema))
 }

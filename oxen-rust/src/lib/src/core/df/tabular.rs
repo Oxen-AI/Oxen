@@ -1758,7 +1758,7 @@ mod tests {
         let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
             tabular::read_df_jsonl("data/test/text/test.jsonl")?
                 .collect()
-                .map_err(|e| OxenError::from(e))
+                .map_err(OxenError::from)
         })
         .await?
         {
@@ -1818,7 +1818,7 @@ mod tests {
         let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
             tabular::transform_slice_lazy(df.lazy(), &opts)?
                 .collect()
-                .map_err(|e| OxenError::from(e))
+                .map_err(OxenError::from)
         })
         .await?
         {

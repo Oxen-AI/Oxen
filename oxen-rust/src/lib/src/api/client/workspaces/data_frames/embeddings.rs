@@ -376,6 +376,7 @@ mod tests {
                 .join("train")
                 .join("embeddings.jsonl");
             api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+
             let column = "embedding";
             let use_background_thread = true;
             api::client::workspaces::data_frames::embeddings::index(
@@ -396,7 +397,6 @@ mod tests {
                     &path,
                 )
                 .await;
-
                 assert!(result.is_ok());
                 let response = result.unwrap();
                 indexing_status = response.columns[0].status.clone();
@@ -425,7 +425,6 @@ mod tests {
                     &opts,
                 )
                 .await?;
-
                 assert!(output_path.exists());
 
                 // There should be 10000 rows by 4 columns
@@ -433,7 +432,6 @@ mod tests {
                 println!("{df}");
                 assert_eq!(df.width(), 4);
                 assert_eq!(df.height(), 10000);
-
                 Ok(())
             })
             .await?;
