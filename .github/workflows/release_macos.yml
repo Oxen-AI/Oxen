@@ -22,8 +22,9 @@ jobs:
       - name: Create release directory
         run: mkdir ${{ github.workspace }}/release
 
-      - name: Install latest rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
