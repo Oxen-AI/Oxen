@@ -504,23 +504,6 @@ pub fn commit_dir_entries(
         }
     }
 
-    // if let Some(commit) = &maybe_head_commit {
-    //     parent_id = Some(commit.hash()?);
-    //     let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-    //     log::debug!(
-    //         "Copy over {} dir hashes from previous commit {}",
-    //         dir_hashes.len(),
-    //         commit
-    //     );
-    //     for (path, hash) in dir_hashes {
-    //         if let Some(path_str) = path.to_str() {
-    //             str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-    //         } else {
-    //             log::error!("Failed to convert path to string: {:?}", path);
-    //         }
-    //     }
-    // }
-
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
     write_commit_entries(
         repo,
