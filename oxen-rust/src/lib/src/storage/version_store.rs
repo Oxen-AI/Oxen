@@ -175,6 +175,7 @@ pub fn create_version_store(
         // If not in tokio runtime, use futures' block_on
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
+            .thread_stack_size(128 * 1024)
             .build()
             .unwrap()
             .block_on(create_version_store_async(path, storage_config))
