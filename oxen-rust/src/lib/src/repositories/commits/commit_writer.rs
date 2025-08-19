@@ -273,9 +273,12 @@ pub fn commit_dir_entries_with_parents(
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    let dir_hashes = match &maybe_head_commit {
-        Some(commit) => CommitMerkleTree::dir_hashes(repo, commit)?,
-        None => HashMap::new(),
+    let (dir_hashes, parent_id) = match &maybe_head_commit {
+        Some(commit) => (
+            CommitMerkleTree::dir_hashes(repo, commit)?,
+            Some(commit.hash()?),
+        ),
+        None => (HashMap::new(), None),
     };
 
     for (path, hash) in &dir_hashes {
@@ -286,7 +289,7 @@ pub fn commit_dir_entries_with_parents(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -371,10 +374,12 @@ pub fn commit_dir_entries_new(
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    let parent_id: Option<MerkleHash> = None;
-    let dir_hashes = match &maybe_head_commit {
-        Some(commit) => CommitMerkleTree::dir_hashes(repo, commit)?,
-        None => HashMap::new(),
+    let (dir_hashes, parent_id) = match &maybe_head_commit {
+        Some(commit) => (
+            CommitMerkleTree::dir_hashes(repo, commit)?,
+            Some(commit.hash()?),
+        ),
+        None => (HashMap::new(), None),
     };
 
     for (path, hash) in &dir_hashes {
