@@ -53,6 +53,10 @@ fn base_lazy_csv_reader(
         .with_encoding(CsvEncoding::LossyUtf8)
 }
 
+pub fn new_df() -> DataFrame {
+    DataFrame::empty()
+}
+
 fn read_df_csv(
     path: impl AsRef<Path>,
     delimiter: u8,
@@ -1007,6 +1011,7 @@ fn sniff_db_csv_delimiter(path: impl AsRef<Path>, opts: &DFOpts) -> Result<u8, O
 }
 
 pub async fn read_df(path: impl AsRef<Path>, opts: DFOpts) -> Result<DataFrame, OxenError> {
+    log::debug!("Reading df with path: {:?}", path.as_ref());
     let path = path.as_ref();
     if !path.exists() {
         return Err(OxenError::path_does_not_exist(path));
@@ -1753,7 +1758,7 @@ mod tests {
         let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
             tabular::read_df_jsonl("data/test/text/test.jsonl")?
                 .collect()
-                .map_err(|e| OxenError::from(e))
+                .map_err(OxenError::from)
         })
         .await?
         {
@@ -1813,7 +1818,7 @@ mod tests {
         let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
             tabular::transform_slice_lazy(df.lazy(), &opts)?
                 .collect()
-                .map_err(|e| OxenError::from(e))
+                .map_err(OxenError::from)
         })
         .await?
         {

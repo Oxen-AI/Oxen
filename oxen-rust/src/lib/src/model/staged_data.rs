@@ -225,7 +225,7 @@ impl StagedData {
 
     pub fn unstaged_files(&self) -> Vec<PathBuf> {
         let mut files: Vec<PathBuf> = Vec::new();
-
+        // files.extend(self.untracked_files.clone());
         files.extend(self.modified_files.clone());
         files.extend(
             self.moved_files

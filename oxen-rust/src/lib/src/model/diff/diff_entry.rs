@@ -14,7 +14,6 @@ use super::dir_diff_summary::DirDiffSummary;
 use super::generic_diff::GenericDiff;
 use super::generic_diff_summary::GenericDiffSummary;
 use super::tabular_diff_summary::TabularDiffWrapper;
-use super::DiffResult;
 
 #[derive(Default, Deserialize, Serialize, Debug, Clone)]
 pub struct DiffEntry {
@@ -236,18 +235,15 @@ impl DiffEntry {
         }
 
         // TODO: handle all diff types more generically
-        let diff = if should_do_full_diff && data_type == EntryDataType::Text {
-            if base_entry.is_some() && head_entry.is_some() {
-                match repositories::diffs::diff_text_file_nodes(
-                    repo,
-                    &base_entry.clone().unwrap(),
-                    &head_entry.clone().unwrap(),
-                )? {
-                    DiffResult::Text(diff) => Some(GenericDiff::TextDiff(diff)),
-                    _ => None,
-                }
-            } else {
-                None
+        let diff: Option<GenericDiff> = if should_do_full_diff && data_type == EntryDataType::Text {
+            // Use the Option-aware API to also support add/remove scenarios
+            match repositories::diffs::diff_text_file_nodes(
+                repo,
+                base_entry.as_ref(),
+                head_entry.as_ref(),
+            ) {
+                Ok(text_diff) => Some(GenericDiff::TextDiff(text_diff)),
+                Err(_) => None,
             }
         } else {
             None

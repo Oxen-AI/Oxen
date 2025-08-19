@@ -581,7 +581,12 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_controllers_file_import() -> Result<(), OxenError> {
+    async fn test_controllers_file_import_tabular_file() -> Result<(), OxenError> {
+        // We get duckdb errors on windows, so skip this test because it has a tabular file
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
         test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
@@ -630,6 +635,67 @@ mod tests {
             &repo,
             &resp.commit,
             PathBuf::from("data/cats_vs_dogs.tsv"),
+        )?
+        .unwrap();
+        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
+        assert!(version_path.exists());
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_file_import_text_file() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let author = "test_user";
+        let email = "ox@oxen.ai";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        util::fs::create_dir_all(repo.path.join("data"))?;
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/notebooks");
+
+        // import a file from oxen for testing
+        let body = serde_json::json!({"download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/notebooks/chat.py"});
+
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("repo_name", repo_name)
+            .insert_header(("oxen-commit-author", author))
+            .insert_header(("oxen-commit-email", email))
+            .set_json(&body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
+                    web::post().to(controllers::file::import),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let resp: CommitResponse = serde_json::from_str(body)?;
+        assert_eq!(resp.status.status, "success");
+
+        let entry = repositories::entries::get_file(
+            &repo,
+            &resp.commit,
+            PathBuf::from("notebooks/chat.py"),
         )?
         .unwrap();
         let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());

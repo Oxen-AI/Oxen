@@ -4,7 +4,7 @@ use rocksdb::DB;
 use crate::constants::TABLE_NAME;
 use crate::core::db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{column_changes_db, columns, df_db};
+use crate::core::db::data_frames::{column_changes_db, columns, df_db::with_df_db_manager};
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
@@ -34,8 +34,9 @@ pub fn add(
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     log::debug!("add_column() got db_path: {:?}", db_path);
-    let conn = df_db::get_connection(&db_path)?;
-    let result = columns::add_column(&conn, new_column)?;
+    let result = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| columns::add_column(conn, new_column))
+    })?;
 
     let column_after = ColumnChange {
         column_name: new_column.name.clone(),
@@ -64,17 +65,20 @@ pub fn delete(
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     log::debug!("delete_column() got db_path: {:?}", db_path);
-    let conn = df_db::get_connection(&db_path)?;
+    let (result, column_data_type) = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
+            let column_data_type =
+                table_schema
+                    .get_field(&column_to_delete.name)
+                    .ok_or(OxenError::Basic(
+                        "A column with the given name does not exist".into(),
+                    ))?;
 
-    let table_schema = schema_without_oxen_cols(&conn, TABLE_NAME)?;
-    let column_data_type =
-        table_schema
-            .get_field(&column_to_delete.name)
-            .ok_or(OxenError::Basic(
-                "A column with the given name does not exist".into(),
-            ))?;
-
-    let result = columns::delete_column(&conn, column_to_delete)?;
+            let result = columns::delete_column(conn, column_to_delete)?;
+            Ok((result, column_data_type.to_owned()))
+        })
+    })?;
 
     let column_before = ColumnChange {
         column_name: column_to_delete.name.clone(),
@@ -103,13 +107,14 @@ pub async fn update(
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     log::debug!("update_column() got db_path: {:?}", db_path);
-    let conn = df_db::get_connection(&db_path)?;
-
-    let table_schema = schema_without_oxen_cols(&conn, TABLE_NAME)?;
-
-    let result = columns::update_column(&conn, column_to_update, &table_schema)?;
-
-    let column_data_type = table_schema.get_field(&column_to_update.name).unwrap();
+    let (result, column_data_type) = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
+            let result = columns::update_column(conn, column_to_update, &table_schema)?;
+            let column_data_type = table_schema.get_field(&column_to_update.name).unwrap();
+            Ok((result, column_data_type.clone()))
+        })
+    })?;
 
     let column_after_name = column_to_update
         .new_name
@@ -171,7 +176,6 @@ pub async fn restore(
     let db = DB::open(&opts, dunce::simplified(&column_changes_path))?;
 
     log::debug!("restore_column() got db_path: {:?}", db_path);
-    let conn = df_db::get_connection(&db_path)?;
 
     let og_schema = repositories::data_frames::schemas::get_by_path(
         &workspace.base_repo,
@@ -195,7 +199,9 @@ pub async fn restore(
                         .column_name
                         .clone(),
                 };
-                let result = columns::delete_column(&conn, &column_to_delete)?;
+                let result = with_df_db_manager(&db_path, |manager| {
+                    manager.with_conn(|conn| columns::delete_column(conn, &column_to_delete))
+                })?;
                 columns::revert_column_changes(
                     &db,
                     &change
@@ -231,7 +237,9 @@ pub async fn restore(
                             "Column data type is required but was None".into(),
                         ))?,
                 };
-                let result = columns::add_column(&conn, &new_column)?;
+                let result = with_df_db_manager(&db_path, |manager| {
+                    manager.with_conn(|conn| columns::add_column(conn, &new_column))
+                })?;
                 columns::revert_column_changes(
                     &db,
                     &change
@@ -278,8 +286,12 @@ pub async fn restore(
                     ),
                 };
 
-                let table_schema = schema_without_oxen_cols(&conn, TABLE_NAME)?;
-                let result = columns::update_column(&conn, &column_to_update, &table_schema)?;
+                let result = with_df_db_manager(&db_path, |manager| {
+                    manager.with_conn(|conn| {
+                        let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
+                        columns::update_column(conn, &column_to_update, &table_schema)
+                    })
+                })?;
                 columns::revert_column_changes(
                     &db,
                     &change

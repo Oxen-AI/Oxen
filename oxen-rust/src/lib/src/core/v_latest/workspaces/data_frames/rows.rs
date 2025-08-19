@@ -12,7 +12,8 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::opts::DFOpts;
 
-use crate::core::db::data_frames::{df_db, rows};
+use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::workspaces;
@@ -43,12 +44,13 @@ pub fn add(
         row_changes_path,
         db_path
     );
-    let conn = df_db::get_connection(db_path)?;
 
     let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {:?}", df);
 
-    let mut result = rows::append_row(&conn, &df)?;
+    let mut result = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::append_row(conn, &df))
+    })?;
 
     let oxen_id_col = result
         .column("_oxen_id")
@@ -114,10 +116,9 @@ pub fn delete(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut deleted_row = {
-        let conn = df_db::get_connection(db_path)?;
-        rows::delete_row(&conn, row_id)?
-    };
+    let mut deleted_row = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::delete_row(conn, row_id))
+    })?;
     log::debug!("delete() deleted_row: {:?}", deleted_row);
 
     let row = JsonDataFrameView::json_from_df(&mut deleted_row);
@@ -164,14 +165,15 @@ pub fn update(
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
     let mut df = tabular::parse_json_to_df(data)?;
 
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
 
-    let mut result = rows::modify_row(&conn, &mut df, row_id)?;
+    let mut result = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
+    })?;
 
     let row_before = JsonDataFrameView::json_from_df(&mut row);
 
@@ -212,7 +214,6 @@ pub fn batch_update(
     let path = path.as_ref();
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
 
     let Some(array) = data.as_array() else {
         return Err(OxenError::basic_str("Data is not an array"));
@@ -239,7 +240,9 @@ pub fn batch_update(
         })
         .collect::<Result<_, OxenError>>()?;
 
-    rows::modify_rows(&conn, row_map)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::modify_rows(conn, row_map))
+    })?;
 
     let results: Vec<UpdateResult> = keys
         .iter()
@@ -308,7 +311,6 @@ pub async fn restore_row_in_db(
 ) -> Result<DataFrame, OxenError> {
     let row_id = row_id.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path.as_ref());
-    let conn = df_db::get_connection(db_path)?;
     let opts = db::key_val::opts::default();
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, path.as_ref());
@@ -329,7 +331,9 @@ pub async fn restore_row_in_db(
             // Row is added, just delete it
             log::debug!("restore_row() row is added, deleting");
             rows::revert_row_changes(&db, row_id.to_owned())?;
-            rows::delete_row(&conn, row_id)?
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| rows::delete_row(conn, row_id))
+            })?
         }
         StagedRowStatus::Modified | StagedRowStatus::Removed => {
             // Row is modified, just delete it
@@ -344,7 +348,9 @@ pub async fn restore_row_in_db(
             log::debug!("restore_row() insert_row: {:?}", insert_row);
             rows::revert_row_changes(&db, row_id.to_owned())?;
             log::debug!("restore_row() after revert");
-            rows::modify_row(&conn, &mut insert_row, row_id)?
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| rows::modify_row(conn, &mut insert_row, row_id))
+            })?
         }
         StagedRowStatus::Unchanged => {
             // Row is unchanged, just return it

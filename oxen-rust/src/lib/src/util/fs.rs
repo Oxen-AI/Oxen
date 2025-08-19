@@ -340,6 +340,13 @@ pub fn read_bytes_from_path(path: impl AsRef<Path>) -> Result<Vec<u8>, OxenError
     Ok(std::fs::read(path)?)
 }
 
+pub fn read_file(path: Option<impl AsRef<Path>>) -> Result<String, OxenError> {
+    match path {
+        Some(path) => read_from_path(path),
+        None => Ok(String::new()),
+    }
+}
+
 pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
     let path = path.as_ref();
     match std::fs::read_to_string(path) {

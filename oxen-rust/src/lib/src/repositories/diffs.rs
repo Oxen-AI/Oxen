@@ -41,8 +41,8 @@ use std::str::FromStr;
 
 use crate::model::diff::diff_entries_counts::DiffEntriesCounts;
 use crate::model::diff::schema_diff::SchemaDiff;
-use crate::model::diff::AddRemoveModifyCounts;
 use crate::model::diff::DiffResult;
+use crate::model::diff::{AddRemoveModifyCounts, TextDiff};
 
 use crate::opts::{DFOpts, DiffOpts};
 
@@ -67,6 +67,8 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
         opts.targets
     );
 
+    log::debug!("opts: {:?}", opts);
+
     let repo = match &opts.repo_dir {
         Some(dir) => {
             log::debug!("dir: {:?}", dir);
@@ -78,18 +80,21 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
         }
     };
 
-    if repo.is_err() {
-        let result = diff_files(
-            opts.path_1,
-            opts.path_2.unwrap(),
-            opts.keys.clone(),
-            opts.targets.clone(),
-            vec![],
-        )
-        .await?;
-        return Ok(vec![result]);
-    }
-    let repo = repo.unwrap();
+    let repo = match repo {
+        Err(e) => {
+            log::error!("Failed to get repo: {}", e);
+            let result = diff_files(
+                opts.path_1,
+                opts.path_2.unwrap(),
+                opts.keys.clone(),
+                opts.targets.clone(),
+                vec![],
+            )
+            .await?;
+            return Ok(vec![result]);
+        }
+        Ok(repo) => repo,
+    };
 
     log::debug!(
         "Processing paths and revisions - path_2: {:?}, revision_1: {:?}, revision_2: {:?}, path_1: {:?}",
@@ -158,19 +163,29 @@ pub async fn diff_uncommitted(
     let status_opts = StagedDataOpts::from_paths(&[path_1.to_path_buf()]);
     let status = repositories::status::status_from_opts(repo, &status_opts)?;
     let unstaged_files = status.unstaged_files();
+    log::debug!("unstaged_files: {:?}", unstaged_files);
     let commit_1 = repositories::revisions::get(repo, rev_1)?
         .ok_or_else(|| OxenError::revision_not_found(rev_1.to_string().into()))?;
+    log::debug!("commit_1: {:?}", commit_1);
     let mut diff_result = Vec::new();
+    log::debug!("diff_result: {:?}", diff_result);
 
     for file in unstaged_files {
-        let node_1 =
-            repositories::entries::get_file(repo, &commit_1, file.as_path())?.ok_or_else(|| {
-                OxenError::ResourceNotFound(format!("{}@{}", file.display(), commit_1.id).into())
-            })?;
+        log::debug!("file: {:?}", file);
+
+        let node_1 = match repositories::entries::get_file(repo, &commit_1, file.as_path()) {
+            Ok(node) => node,
+            Err(err) => {
+                log::error!("Failed to get file {:?}: {}", file, err);
+                None
+            }
+        };
+
+        log::debug!("node_1: {:?}", node_1);
         diff_result.push(
             diff_file_and_node(
                 repo,
-                &node_1,
+                node_1,
                 file.as_path(),
                 opts.keys.clone(),
                 opts.targets.clone(),
@@ -178,6 +193,7 @@ pub async fn diff_uncommitted(
             )
             .await?,
         );
+        log::debug!("diff_result: {:?}", diff_result);
     }
 
     Ok(diff_result)
@@ -212,39 +228,106 @@ pub async fn diff_revs(
     let mut content_diffs = vec![];
 
     for entry in dir_diff.entries {
-        if let (Some(head_res), Some(base_res)) = (entry.head_resource, entry.base_resource) {
-            log::debug!("Computing content diff for file: {:?}", head_res.path);
-            let cpath_1 = CommitPath {
-                commit: Some(commit_1.clone()),
-                path: head_res.path.clone(),
-            };
-            let cpath_2 = CommitPath {
-                commit: Some(commit_2.clone()),
-                path: base_res.path,
-            };
+        log::debug!("entry: {:#?}", entry);
 
-            match diff_commits(
-                repo,
-                cpath_1,
-                cpath_2,
-                opts.keys.clone(),
-                opts.targets.clone(),
-                vec![],
-            )
-            .await
-            {
-                Ok(result) => {
-                    log::debug!("Content diff successful for file: {:?}", head_res.path);
-                    content_diffs.push(result);
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to compute diff for file {:?}: {}",
-                        head_res.path,
-                        err
-                    );
+        match (entry.head_resource, entry.base_resource) {
+            (Some(head_res), Some(base_res)) => {
+                log::debug!("Computing content diff for file: {:?}", head_res.path);
+                let cpath_1 = CommitPath {
+                    commit: Some(commit_1.clone()),
+                    path: head_res.path.clone(),
+                };
+                let cpath_2 = CommitPath {
+                    commit: Some(commit_2.clone()),
+                    path: base_res.path,
+                };
+
+                match diff_commits(
+                    repo,
+                    cpath_1,
+                    cpath_2,
+                    opts.keys.clone(),
+                    opts.targets.clone(),
+                    vec![],
+                )
+                .await
+                {
+                    Ok(result) => {
+                        log::debug!("Content diff successful for file: {:?}", head_res.path);
+                        content_diffs.push(result);
+                    }
+                    Err(err) => {
+                        log::debug!(
+                            "Failed to compute diff for file {:?}: {}",
+                            head_res.path,
+                            err
+                        );
+                    }
                 }
             }
+            (None, Some(base_res)) => {
+                log::debug!("Computing content diff for file: {:?}", base_res.path);
+                let cpath_1 = CommitPath {
+                    commit: Some(commit_1.clone()),
+                    path: base_res.path.clone(),
+                };
+                let cpath_2 = CommitPath {
+                    commit: Some(commit_2.clone()),
+                    path: base_res.path,
+                };
+
+                match diff_commits(
+                    repo,
+                    cpath_1,
+                    cpath_2,
+                    opts.keys.clone(),
+                    opts.targets.clone(),
+                    vec![],
+                )
+                .await
+                {
+                    Ok(result) => {
+                        // log::debug!("Content diff successful for file: {:?}", base_res.path);
+                        content_diffs.push(result);
+                    }
+                    Err(err) => {
+                        log::debug!("Failed to compute diff for file {}", err);
+                    }
+                }
+            }
+
+            (Some(head_res), None) => {
+                log::debug!("Computing content diff for file: {:?}", head_res.path);
+                let cpath_1 = CommitPath {
+                    commit: Some(commit_1.clone()),
+                    path: head_res.path.clone(),
+                };
+                let cpath_2 = CommitPath {
+                    commit: Some(commit_2.clone()),
+                    path: head_res.path,
+                };
+
+                match diff_commits(
+                    repo,
+                    cpath_1,
+                    cpath_2,
+                    opts.keys.clone(),
+                    opts.targets.clone(),
+                    vec![],
+                )
+                .await
+                {
+                    Ok(result) => {
+                        // log::debug!("Content diff successful for file: {:?}", head_res.path);
+                        content_diffs.push(result);
+                    }
+                    Err(err) => {
+                        log::debug!("Failed to compute diff for file {}", err);
+                    }
+                }
+            }
+
+            _ => {}
         }
     }
     log::debug!(
@@ -270,65 +353,45 @@ pub async fn diff_commits(
 
     let (node_1, node_2) = match (cpath_1.commit, cpath_2.commit) {
         (Some(commit_1), Some(commit_2)) => {
-            let node_1 = Some(
-                repositories::entries::get_file(repo, &commit_1, &cpath_1.path)?.ok_or_else(
-                    || {
-                        OxenError::ResourceNotFound(
-                            format!("{}@{}", cpath_1.path.display(), commit_1.id).into(),
-                        )
-                    },
-                )?,
-            );
+            log::debug!("Diffing commits: {:?} and {:?}", commit_1, commit_2);
+            let node_1 = repositories::entries::get_file(repo, &commit_1, &cpath_1.path)?;
 
+            // log::debug!("Diffing nodes: {:?} and {:?}", node_1, node_2);
+            log::debug!("Diffing commits: {:?} and {:?}", commit_1, commit_2);
             let merger = EntryMergeConflictReader::new(repo)?;
+            log::debug!("Diffing merger:",);
 
             let node_2 = match merger.has_conflicts()? {
                 true => {
                     let merger = EntryMergeConflictReader::new(repo)?;
-                    Some(
-                        repositories::entries::get_file(
-                            repo,
-                            &merger.get_conflict_commit()?.unwrap(),
-                            &cpath_2.path,
-                        )?
-                        .ok_or_else(|| {
-                            OxenError::ResourceNotFound(
-                                format!("{}@{}", cpath_2.path.display(), commit_2.id).into(),
-                            )
-                        })?,
-                    )
+                    log::debug!("Diffing merger: ");
+
+                    repositories::entries::get_file(
+                        repo,
+                        &merger.get_conflict_commit()?.unwrap(),
+                        &cpath_2.path,
+                    )?
                 }
-                false => Some(
-                    repositories::entries::get_file(repo, &commit_2, &cpath_2.path)?.ok_or_else(
-                        || {
-                            OxenError::ResourceNotFound(
-                                format!("{}@{}", cpath_2.path.display(), commit_2.id).into(),
-                            )
-                        },
-                    )?,
-                ),
+                false => repositories::entries::get_file(repo, &commit_2, &cpath_2.path)?,
             };
 
             (node_1, node_2)
         }
-        _ => (None, None),
+        (Some(commit_1), None) => {
+            let node_1 = repositories::entries::get_file(repo, &commit_1, &cpath_1.path)?;
+
+            (node_1, None)
+        }
+        (None, Some(commit_2)) => {
+            let node_2 = repositories::entries::get_file(repo, &commit_2, &cpath_2.path)?;
+            (None, node_2)
+        }
+        (None, None) => (None, None),
     };
 
-    match (node_1, node_2) {
-        (Some(node_1), Some(node_2)) => {
-            let compare_result = repositories::diffs::diff_file_nodes(
-                repo, &node_1, &node_2, keys, targets, display,
-            )
-            .await?;
-
-            log::debug!("compare result: {:?}", compare_result);
-
-            Ok(compare_result)
-        }
-        _ => Err(OxenError::basic_str(
-            "Could not find one or both of the files to compare",
-        )),
-    }
+    let compare_result =
+        repositories::diffs::diff_file_nodes(repo, node_1, node_2, keys, targets, display).await?;
+    Ok(compare_result)
 }
 
 /// Diffs a directory between two commits, returning a summary of changes.
@@ -405,7 +468,10 @@ pub async fn diff_files(
         let result = tabular(path_1, path_2, keys, targets, display).await?;
         Ok(DiffResult::Tabular(result))
     } else if is_files_utf8(&path_1, &path_2) {
-        let result = utf8_diff::diff(path_1, path_2)?;
+        let result = utf8_diff::diff(
+            Some(path_1.as_ref().to_path_buf()),
+            Some(path_2.as_ref().to_path_buf()),
+        )?;
         Ok(DiffResult::Text(result))
     } else {
         Err(OxenError::invalid_file_type(format!(
@@ -419,81 +485,189 @@ pub async fn diff_files(
 // TODO: merge this and diff_file_and_node
 pub async fn diff_file_and_node(
     repo: &LocalRepository,
-    file_node: &FileNode,
+    file_node: Option<FileNode>,
     file_path: impl AsRef<Path>,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
-    match file_node.data_type() {
-        EntryDataType::Tabular => {
-            let result =
-                diff_tabular_file_and_file_node(repo, file_node, file_path, keys, targets, display)
+    match file_node {
+        Some(file_node) => match file_node.data_type() {
+            EntryDataType::Tabular => {
+                let result = diff_tabular_file_and_file_node(
+                    repo,
+                    Some(&file_node),
+                    file_path,
+                    keys,
+                    targets,
+                    display,
+                )
+                .await?;
+                Ok(DiffResult::Tabular(result))
+            }
+            EntryDataType::Text => {
+                log::debug!(
+                    "diff_file_and_node: diffing text files {:?} and {:?}",
+                    file_path.as_ref(),
+                    file_node.hash().to_string()
+                );
+                let result = diff_text_file_and_node(repo, Some(&file_node), file_path)?;
+                log::debug!(
+                    "diff_file_and_node: diffing text files {:?} and {:?}",
+                    file_node.hash().to_string(),
+                    result
+                );
+                Ok(result)
+            }
+            _ => Err(OxenError::invalid_file_type(format!(
+                "Compare not supported for files, found {:?} and {:?}",
+                file_path.as_ref(),
+                file_node.hash().to_string()
+            ))),
+        },
+        None => {
+            //we didn't get the file node, so we are comparing to a new file
+
+            let file_type = util::fs::file_data_type(file_path.as_ref());
+            match file_type {
+                EntryDataType::Tabular => {
+                    let result = diff_tabular_file_and_file_node(
+                        repo, None, file_path, keys, targets, display,
+                    )
                     .await?;
-            Ok(DiffResult::Tabular(result))
+
+                    Ok(DiffResult::Tabular(result))
+                }
+                EntryDataType::Text => {
+                    log::debug!(
+                        "diff_file_and_node: diffing text files {:?}",
+                        file_path.as_ref()
+                    );
+                    let result = diff_text_file_and_node(repo, None, file_path)?;
+                    log::debug!("diff_file_and_node: diffing text files {:?}", result);
+                    Ok(result)
+                }
+                _ => Err(OxenError::invalid_file_type(format!(
+                    "Compare not supported for files, found {:?}",
+                    file_path.as_ref(),
+                ))),
+            }
         }
-        EntryDataType::Text => {
-            let result = diff_text_file_and_node(repo, file_node, file_path)?;
-            Ok(result)
-        }
-        _ => Err(OxenError::invalid_file_type(format!(
-            "Compare not supported for files, found {:?} and {:?}",
-            file_path.as_ref(),
-            file_node.hash().to_string()
-        ))),
     }
 }
 
 pub async fn diff_file_nodes(
     repo: &LocalRepository,
-    file_1: &FileNode,
-    file_2: &FileNode,
+    file_1: Option<FileNode>,
+    file_2: Option<FileNode>,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
-    let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
-    let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+    match (file_1, file_2) {
+        (Some(file_1), Some(file_2)) => {
+            log::debug!(
+                " version_path_1: {:?}",
+                *file_1.data_type() == EntryDataType::Tabular
+                    && *file_2.data_type() == EntryDataType::Tabular
+            );
 
-    log::debug!(
-        " version_path_1: {:?}",
-        *file_1.data_type() == EntryDataType::Tabular
-            && *file_2.data_type() == EntryDataType::Tabular
-    );
-
-    if *file_1.data_type() == EntryDataType::Tabular
-        && *file_2.data_type() == EntryDataType::Tabular
-    {
-        let mut result =
-            diff_tabular_file_nodes(repo, file_1, file_2, keys, targets, display).await?;
-        result.filename1 = Some(file_1.name().to_string());
-        result.filename2 = Some(file_2.name().to_string());
-        Ok(DiffResult::Tabular(result))
-    } else if is_files_utf8(&version_path_1, &version_path_2) {
-        let mut result = utf8_diff::diff(version_path_1, version_path_2)?;
-        result.filename1 = Some(file_1.name().to_string());
-        result.filename2 = Some(file_2.name().to_string());
-        Ok(DiffResult::Text(result))
-    } else {
-        Err(OxenError::invalid_file_type(format!(
-            "Compare not supported for files, found {:?} and {:?}",
-            version_path_1, version_path_2
-        )))
+            match (file_1.data_type(), file_2.data_type()) {
+                // is there no better way to do this?
+                (EntryDataType::Tabular, EntryDataType::Tabular) => {
+                    let mut result = diff_tabular_file_nodes(
+                        repo,
+                        Some(&file_1),
+                        Some(&file_2),
+                        keys,
+                        targets,
+                        display,
+                    )
+                    .await?;
+                    result.filename1 = Some(file_1.name().to_string());
+                    result.filename2 = Some(file_2.name().to_string());
+                    Ok(DiffResult::Tabular(result))
+                }
+                (EntryDataType::Text, EntryDataType::Text) => {
+                    let mut result = diff_text_file_nodes(repo, Some(&file_1), Some(&file_2))?;
+                    result.filename1 = Some(file_1.name().to_string());
+                    result.filename2 = Some(file_2.name().to_string());
+                    Ok(DiffResult::Text(result))
+                }
+                _ => Err(OxenError::invalid_file_type(format!(
+                    "Compare not supported for files, found {:?} and {:?}",
+                    file_1.data_type(),
+                    file_2.data_type()
+                ))),
+            }
+        }
+        (Some(file_1), None) => match file_1.data_type() {
+            EntryDataType::Tabular => {
+                let mut result =
+                    diff_tabular_file_nodes(repo, Some(&file_1), None, keys, targets, display)
+                        .await?;
+                result.filename1 = Some(file_1.name().to_string());
+                Ok(DiffResult::Tabular(result))
+            }
+            EntryDataType::Text => {
+                let mut result = diff_text_file_nodes(repo, Some(&file_1), None)?;
+                result.filename1 = Some(file_1.name().to_string());
+                Ok(DiffResult::Text(result))
+            }
+            _ => Err(OxenError::invalid_file_type(format!(
+                "Compare not supported for files, found {:?}",
+                file_1.data_type()
+            ))),
+        },
+        (None, Some(file_2)) => match file_2.data_type() {
+            EntryDataType::Tabular => {
+                let result =
+                    diff_tabular_file_nodes(repo, None, Some(&file_2), keys, targets, display)
+                        .await?;
+                Ok(DiffResult::Tabular(result))
+            }
+            EntryDataType::Text => {
+                let result = diff_text_file_nodes(repo, None, Some(&file_2))?;
+                Ok(DiffResult::Text(result))
+            }
+            _ => Err(OxenError::invalid_file_type(format!(
+                "Compare not supported for files, found {:?}",
+                file_2.data_type()
+            ))),
+        },
+        (None, None) => Err(OxenError::basic_str(
+            "Could not find one or both of the files to compare",
+        )),
     }
 }
 
 pub async fn diff_tabular_file_and_file_node(
     repo: &LocalRepository,
-    file_node: &FileNode,
+    file_node: Option<&FileNode>,
     file_1_path: impl AsRef<Path>,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<TabularDiff, OxenError> {
-    let file_node_path = util::fs::version_path_from_hash(repo, file_node.hash().to_string());
-
-    let df_1 = tabular::read_df(file_node_path, DFOpts::empty()).await?;
-    let df_2 = tabular::read_df(file_1_path, DFOpts::empty()).await?;
+    let (df_1, df_2) = match file_node {
+        Some(file_node) => {
+            let file_node_path =
+                util::fs::version_path_from_hash(repo, file_node.hash().to_string());
+            let df_1 = tabular::read_df_with_extension(
+                file_node_path,
+                file_node.extension(),
+                &DFOpts::empty(),
+            )
+            .await?;
+            let df_2 = tabular::read_df(file_1_path, DFOpts::empty()).await?;
+            (df_1, df_2)
+        }
+        None => {
+            let df_1 = tabular::new_df(); //TODO: should we create a new df with the schema of the file?
+            let df_2 = tabular::read_df(file_1_path, DFOpts::empty()).await?;
+            (df_1, df_2)
+        }
+    };
 
     let schema_1 = Schema::from_polars(df_1.schema());
     let schema_2 = Schema::from_polars(df_2.schema());
@@ -505,49 +679,100 @@ pub async fn diff_tabular_file_and_file_node(
 
 pub async fn diff_tabular_file_nodes(
     repo: &LocalRepository,
-    file_1: &FileNode,
-    file_2: &FileNode,
+    file_1: Option<&FileNode>,
+    file_2: Option<&FileNode>,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<TabularDiff, OxenError> {
-    let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
-    let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
-    let df_1 =
-        tabular::read_df_with_extension(version_path_1, file_1.extension(), &DFOpts::empty())
+    match (file_1, file_2) {
+        (Some(file_1), Some(file_2)) => {
+            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
+            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+            let df_1 = tabular::read_df_with_extension(
+                version_path_1,
+                file_1.extension(),
+                &DFOpts::empty(),
+            )
             .await?;
-    let df_2 =
-        tabular::read_df_with_extension(version_path_2, file_2.extension(), &DFOpts::empty())
+            let df_2 = tabular::read_df_with_extension(
+                version_path_2,
+                file_2.extension(),
+                &DFOpts::empty(),
+            )
             .await?;
+            let schema_1 = Schema::from_polars(df_1.schema());
+            let schema_2 = Schema::from_polars(df_2.schema());
+            validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
+            diff_dfs(&df_1, &df_2, keys, targets, display)
+        }
+        (Some(file_1), None) => {
+            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
+            let df_1 = tabular::read_df_with_extension(
+                version_path_1,
+                file_1.extension(),
+                &DFOpts::empty(),
+            )
+            .await?;
+            let schema_1 = Schema::from_polars(df_1.schema());
+            let df_2 = tabular::new_df();
 
-    let schema_1 = Schema::from_polars(df_1.schema());
-    let schema_2 = Schema::from_polars(df_2.schema());
-
-    validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
-
-    diff_dfs(&df_1, &df_2, keys, targets, display)
+            validate_required_fields(schema_1.clone(), schema_1, keys.clone(), targets.clone())?;
+            diff_dfs(&df_1, &df_2, keys, targets, display)
+        }
+        (None, Some(file_2)) => {
+            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+            let df_1 = tabular::new_df();
+            let df_2 = tabular::read_df_with_extension(
+                version_path_2,
+                file_2.extension(),
+                &DFOpts::empty(),
+            )
+            .await?;
+            let schema_2 = Schema::from_polars(df_2.schema());
+            validate_required_fields(schema_2.clone(), schema_2, keys.clone(), targets.clone())?;
+            diff_dfs(&df_1, &df_2, keys, targets, display)
+        }
+        _ => Err(OxenError::basic_str(
+            "Could not find one or both of the files to compare",
+        )),
+    }
 }
 
 pub fn diff_text_file_and_node(
     repo: &LocalRepository,
-    file_node: &FileNode,
+    file_node: Option<&FileNode>,
     file_path: impl AsRef<Path>,
 ) -> Result<DiffResult, OxenError> {
-    let version_path = util::fs::version_path_from_hash(repo, file_node.hash().to_string());
-    let result = utf8_diff::diff(&version_path, file_path)?;
+    let version_path = file_node
+        .map(|file_node| util::fs::version_path_from_hash(repo, file_node.hash().to_string()));
+    let result = utf8_diff::diff(version_path, Some(file_path.as_ref().to_path_buf()))?;
     Ok(DiffResult::Text(result))
 }
 
 pub fn diff_text_file_nodes(
     repo: &LocalRepository,
-    file_1: &FileNode,
-    file_2: &FileNode,
-) -> Result<DiffResult, OxenError> {
-    let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
-    let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
-
-    let result = utf8_diff::diff(&version_path_1, &version_path_2)?;
-    Ok(DiffResult::Text(result))
+    file_1: Option<&FileNode>,
+    file_2: Option<&FileNode>,
+) -> Result<TextDiff, OxenError> {
+    match (file_1, file_2) {
+        (Some(file_1), Some(file_2)) => {
+            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
+            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+            utf8_diff::diff(Some(version_path_1), Some(version_path_2))
+        }
+        (Some(file_1), None) => {
+            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
+            utf8_diff::diff(Some(version_path_1), None)
+        }
+        (None, Some(file_2)) => {
+            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+            utf8_diff::diff(None, Some(version_path_2))
+        }
+        (None, None) => Err(OxenError::basic_str(
+            "Could not find one or both of the files to compare",
+        )),
+    }
 }
 
 pub async fn tabular(

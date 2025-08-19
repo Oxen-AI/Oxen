@@ -17,24 +17,155 @@ use crate::opts::DFOpts;
 use crate::{model, util};
 use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::{params, ToSql};
+use lru::LruCache;
+use parking_lot::{Mutex, RwLock};
 use polars::prelude::*;
 use sqlparser::ast::{self, Expr as SqlExpr, SelectItem, Statement, Value as SqlValue};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::Path;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
 
 use sql_query_builder as sql;
+
+const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+
+// Static cache of DuckDB instances with LRU eviction
+static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<Mutex<duckdb::Connection>>>>> =
+    LazyLock::new(|| RwLock::new(LruCache::new(DF_DB_CACHE_SIZE)));
+
+/// Removes a database instance from the cache.
+pub fn remove_df_db_from_cache(db_path: impl AsRef<Path>) -> Result<(), OxenError> {
+    let db_path = db_path.as_ref().to_path_buf();
+    let mut instances = DF_DB_INSTANCES.write();
+    let _ = instances.pop(&db_path); // drop immediately
+    Ok(())
+}
+
+/// Removes a database instance and all its subdirectories from the cache.
+/// This is mostly useful in test cleanup to ensure all DB instances are removed.
+pub fn remove_df_db_from_cache_with_children(
+    db_path_prefix: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let db_path_prefix = db_path_prefix.as_ref();
+
+    let mut dbs_to_remove: Vec<PathBuf> = vec![];
+    let mut instances = DF_DB_INSTANCES.write();
+    for (key, _) in instances.iter() {
+        if key.starts_with(db_path_prefix) {
+            dbs_to_remove.push(key.clone());
+        }
+    }
+
+    for db in dbs_to_remove {
+        let _ = instances.pop(&db); // drop immediately
+    }
+
+    Ok(())
+}
+
+#[derive(Clone)]
+pub struct DfDBManager {
+    df_db: Arc<Mutex<duckdb::Connection>>,
+}
+
+pub fn with_df_db_manager<F, T>(db_path: impl AsRef<Path>, operation: F) -> Result<T, OxenError>
+where
+    F: FnOnce(&DfDBManager) -> Result<T, OxenError>,
+{
+    let db_path = db_path.as_ref().to_path_buf();
+
+    let df_db = {
+        // 1. If df db exists in cache, return the existing connection
+        // Fast path: try to get a cloned handle under a short-lived read lock.
+        if let Some(db_lock) = {
+            let cache_r = DF_DB_INSTANCES.read();
+            cache_r.peek(&db_path).cloned()
+        } {
+            // Read lock has been dropped before executing user code.
+            return operation(&DfDBManager { df_db: db_lock });
+        }
+
+        // 2. If not exists, create the directory and open the db
+        let mut cache_w = DF_DB_INSTANCES.write();
+        if let Some(db_lock) = cache_w.get(&db_path) {
+            db_lock.clone()
+        } else {
+            // Cache miss: create directory and open DB
+            if let Some(parent) = db_path.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        log::error!("Failed to create df db directory: {}", e);
+                        OxenError::basic_str(format!("Failed to create df db directory: {}", e))
+                    })?;
+                }
+            }
+
+            let conn = get_connection(&db_path).map_err(|e| {
+                log::error!("Failed to open df db: {}", e);
+                OxenError::basic_str(format!("Failed to open df db: {}", e))
+            })?;
+
+            // Wrap the Connection in a Mutex and store it in the cache
+            let db_lock = Arc::new(Mutex::new(conn));
+            cache_w.put(db_path.clone(), db_lock.clone());
+            db_lock
+        }
+    };
+
+    let manager = DfDBManager { df_db };
+
+    // Execute the operation with our DfDBManager instance
+    operation(&manager)
+}
+
+impl DfDBManager {
+    /// Execute an operation with the database connection
+    pub fn with_conn<F, T>(&self, operation: F) -> Result<T, OxenError>
+    where
+        F: FnOnce(&duckdb::Connection) -> Result<T, OxenError>,
+    {
+        let conn = self.df_db.lock();
+
+        operation(&conn)
+    }
+
+    /// Execute an operation with the database connection (mutable access)
+    /// Note: This provides mutable access to the connection for functions that require it
+    pub fn with_conn_mut<F, T>(&self, operation: F) -> Result<T, OxenError>
+    where
+        F: FnOnce(&mut duckdb::Connection) -> Result<T, OxenError>,
+    {
+        let mut conn = self.df_db.lock();
+
+        operation(&mut conn)
+    }
+}
 
 /// Get a connection to a duckdb database.
 pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, OxenError> {
     let path = path.as_ref();
+    log::debug!(
+        "get_connection: Opening new DuckDB connection for path: {:?}",
+        path
+    );
+
     if let Some(parent) = path.parent() {
+        log::debug!(
+            "get_connection: Ensuring parent directory exists: {:?}",
+            parent
+        );
         util::fs::create_dir_all(parent)?;
     }
 
     let conn = duckdb::Connection::open(path)?;
+    log::info!(
+        "get_connection: Successfully created new DuckDB connection for path: {:?}",
+        path
+    );
     Ok(conn)
 }
 
@@ -217,7 +348,7 @@ pub fn export(
         ));
     }
     let export_sql = wrap_sql_for_export(sql, tmp_path);
-    // log::debug!("export_sql: {}", export_sql);
+    log::debug!("export_sql: {}", export_sql);
     conn.execute(&export_sql, [])?;
     Ok(())
 }
@@ -640,53 +771,8 @@ pub fn record_batches_to_polars_df(records: Vec<RecordBatch>) -> Result<DataFram
 #[cfg(test)]
 mod tests {
     use crate::test;
-    // use sql_query_builder as sql;
 
     use super::*;
-
-    /*
-    #[test]
-    fn test_df_db_count() -> Result<(), OxenError> {
-        // TODO: Create this db file in a temp dir
-        let db_file = Path::new("data")
-            .join("test")
-            .join("db")
-            .join("metadata.db");
-        let conn = get_connection(db_file)?;
-
-        let count = count(&conn, "metadata")?;
-
-        assert_eq!(count, 16);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_df_db_select() -> Result<(), OxenError> {
-        let db_file = Path::new("data")
-            .join("test")
-            .join("db")
-            .join("metadata.db");
-        let conn = get_connection(db_file)?;
-
-        let offset = 0;
-        let limit = 7;
-        let fields = ["filename", "data_type"];
-
-        let stmt = sql::Select::new()
-            .select(&fields.join(", "))
-            .offset(&offset.to_string())
-            .limit(&limit.to_string())
-            .from("metadata");
-
-        let df = select(&conn, &stmt)?;
-
-        assert!(df.width() == fields.len());
-        assert!(df.height() == limit);
-
-        Ok(())
-    }
-     */
 
     #[test]
     fn test_df_db_create() -> Result<(), OxenError> {

@@ -2,6 +2,7 @@ use duckdb::Connection;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
 use crate::core::db::data_frames::df_db;
+use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::staged::with_staged_db_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
@@ -144,10 +145,6 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     };
     util::fs::create_dir_all(parent)?;
 
-    let conn = df_db::get_connection(db_path)?;
-    if df_db::table_exists(&conn, TABLE_NAME)? {
-        df_db::drop_table(&conn, TABLE_NAME)?;
-    }
     let version_path = util::fs::version_path_from_node(repo, file_hash.to_string(), path);
 
     log::debug!(
@@ -163,13 +160,22 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
         }
     };
 
-    df_db::index_file_with_id(&version_path, &conn, extension)?;
-    log::debug!(
-        "core::v_latest::index::workspaces::data_frames::index({:?}) finished!",
-        path
-    );
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            if df_db::table_exists(conn, TABLE_NAME)? {
+                df_db::drop_table(conn, TABLE_NAME)?;
+            }
 
-    add_row_status_cols(&conn)?;
+            df_db::index_file_with_id(&version_path, conn, extension)?;
+            log::debug!(
+                "core::v_latest::index::workspaces::data_frames::index({:?}) finished!",
+                path
+            );
+
+            add_row_status_cols(conn)?;
+            Ok(())
+        })
+    })?;
 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =
@@ -329,7 +335,7 @@ pub fn extract_file_node_to_working_dir(
     let working_path = workspace_repo.path.join(&path);
     log::debug!("extracting file node to working dir: {:?}", working_path);
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
-    let conn = df_db::get_connection(db_path)?;
+
     // Match on the extension
     if !working_path.exists() {
         util::fs::create_dir_all(
@@ -339,19 +345,24 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
-    let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
-        "\"{}\" = '{}'",
-        DIFF_STATUS_COL,
-        StagedRowStatus::Removed
-    ));
-    let res = conn.execute(&delete.to_string(), [])?;
-    log::debug!("delete query result is: {:?}", res);
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
+                "\"{}\" = '{}'",
+                DIFF_STATUS_COL,
+                StagedRowStatus::Removed
+            ));
+            let res = conn.execute(&delete.to_string(), [])?;
+            log::debug!("delete query result is: {:?}", res);
 
-    let excluded_cols = get_existing_excluded_columns(&conn, TABLE_NAME)?;
-    let sql = format!("SELECT * EXCLUDE ({}) FROM '{}'", excluded_cols, TABLE_NAME);
-    let query = wrap_sql_for_export(&sql, &working_path);
-    log::debug!("extracting file node to working dir query: {:?}", query);
-    conn.execute(&query, [])?;
+            let excluded_cols = get_existing_excluded_columns(conn, TABLE_NAME)?;
+            let sql = format!("SELECT * EXCLUDE ({}) FROM '{}'", excluded_cols, TABLE_NAME);
+            let query = wrap_sql_for_export(&sql, &working_path);
+            log::debug!("extracting file node to working dir query: {:?}", query);
+            conn.execute(&query, [])?;
+            Ok(())
+        })
+    })?;
 
     Ok(working_path)
 }

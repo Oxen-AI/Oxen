@@ -225,8 +225,8 @@ impl DiffCmd {
                         &mut p,
                         &format!(
                             "--- from file: {}\n+++ to file: {}\n",
-                            diff.filename1.as_ref().unwrap(),
-                            diff.filename2.as_ref().unwrap()
+                            diff.filename1.as_ref().unwrap_or(&"".to_string()),
+                            diff.filename2.as_ref().unwrap_or(&"".to_string())
                         ),
                     )?;
                     DiffCmd::print_column_changes(&mut p, &diff.summary.modifications)?;
@@ -304,12 +304,16 @@ impl DiffCmd {
     }
 
     fn print_text_diff(p: &mut Pager, diff: &TextDiff) -> Result<(), OxenError> {
+        let filename1 = diff.filename1.clone();
+        let filename2 = diff.filename2.clone();
+
+        //  TODO: Filename handle
         write_to_pager(
             p,
             &format!(
                 "--- from file: {}\n+++ to file: {}\n",
-                diff.filename1.as_ref().unwrap_or(&"<no file1>".to_string()),
-                diff.filename2.as_ref().unwrap_or(&"<no file1>".to_string())
+                filename1.unwrap_or(String::from("")),
+                filename2.unwrap_or(String::from("")),
             ),
         )?;
 

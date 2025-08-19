@@ -344,14 +344,10 @@ pub async fn create_df_diff(
     let keys: Vec<String> = keys.iter().map(|k| k.left.clone()).collect();
     let targets = get_targets_from_req(targets);
 
-    let repo = repository.clone();
-    let node_1_copy = node_1.clone();
-    let node_2_copy = node_2.clone();
-
     let diff_result = repositories::diffs::diff_tabular_file_nodes(
-        &repo,
-        &node_1_copy,
-        &node_2_copy,
+        &repository,
+        Some(&node_1),
+        Some(&node_2),
         keys,
         targets,
         display_by_column, // TODONOW: add display handling here
@@ -440,8 +436,8 @@ pub async fn update_df_diff(
 
     let diff_result = repositories::diffs::diff_tabular_file_nodes(
         &repository,
-        &node_1,
-        &node_2,
+        Some(&node_1),
+        Some(&node_2),
         keys,
         targets,
         display_by_column, // TODONOW: add display handling here

@@ -1091,7 +1091,7 @@ mod tests {
 
             // Should have staged the test files for removal but not .oxen
             assert!(
-                status.staged_files.len() > 0,
+                !status.staged_files.is_empty(),
                 "Some files should be staged for removal"
             );
 
