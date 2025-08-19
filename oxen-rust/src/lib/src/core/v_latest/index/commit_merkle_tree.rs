@@ -272,6 +272,40 @@ impl CommitMerkleTree {
         Ok(Some(root))
     }
 
+    pub fn node_from_path_maybe(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        load_recursive: bool,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        log::debug!("Read path {:?} in commit {:?}", node_path, commit);
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
+
+        if let Some(node_hash) = node_hash {
+            // We are reading a node with children
+            log::debug!("Look up dir 🗂️ {:?}", node_path);
+            match CommitMerkleTree::read_node(repo, &node_hash, load_recursive) {
+                Ok(node) => Ok(node),
+                Err(e) => {
+                    log::debug!("Failed to read node {:?}: {}", node_path, e);
+                    Ok(None)
+                }
+            }
+        } else {
+            // We are skipping to a file in the tree using the dir_hashes db
+            log::debug!("Look up file 📄 {:?}", node_path);
+            match CommitMerkleTree::read_file(repo, &dir_hashes, node_path) {
+                Ok(node) => Ok(node),
+                Err(e) => {
+                    log::debug!("Failed to read file {:?}: {}", node_path, e);
+                    Ok(None)
+                }
+            }
+        }
+    }
+
     pub fn from_path(
         repo: &LocalRepository,
         commit: &Commit,

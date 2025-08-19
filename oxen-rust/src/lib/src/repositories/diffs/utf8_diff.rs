@@ -5,7 +5,7 @@ use crate::model::diff::text_diff::TextDiff;
 use crate::util;
 
 use difference::{Changeset, Difference};
-use std::path::Path;
+use std::path::PathBuf;
 
 /// Adds a slice of lines from a text block to the result vector with a given modification type.
 fn add_lines_to_diff(
@@ -34,25 +34,22 @@ fn add_lines_to_diff(
 }
 
 pub fn diff(
-    version_file_1: impl AsRef<Path>,
-    version_file_2: impl AsRef<Path>,
+    version_file_1: Option<PathBuf>,
+    version_file_2: Option<PathBuf>,
 ) -> Result<TextDiff, OxenError> {
-    log::debug!(
-        "diffing text files {:?} and {:?}",
-        version_file_1.as_ref(),
-        version_file_2.as_ref()
-    );
-
-    let original_data = util::fs::read_from_path(version_file_1.as_ref())?;
-    let compare_data = util::fs::read_from_path(version_file_2.as_ref())?;
-    let Changeset { diffs, .. } = Changeset::new(&original_data, &compare_data, "\n");
-    log::debug!("Changeset created with {} diffs", diffs.len());
-
     let mut result = TextDiff {
-        filename1: Some(version_file_1.as_ref().to_string_lossy().to_string()), //TODO: why is this so ugly? change result.filename1 to have Path,
-        filename2: Some(version_file_2.as_ref().to_string_lossy().to_string()),
+        filename1: version_file_1
+            .clone()
+            .map(|p| p.to_string_lossy().to_string()),
+        filename2: version_file_2
+            .clone()
+            .map(|p| p.to_string_lossy().to_string()),
         ..Default::default()
     };
+    let original_data = util::fs::read_file(version_file_1)?;
+    let compare_data = util::fs::read_file(version_file_2)?;
+    let Changeset { diffs, .. } = Changeset::new(&original_data, &compare_data, "\n");
+    log::debug!("Changeset created with {} diffs", diffs.len());
 
     // Find the indices of all Add or Rem changes
     let change_indices: Vec<usize> = diffs

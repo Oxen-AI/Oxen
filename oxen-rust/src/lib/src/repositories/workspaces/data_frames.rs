@@ -5,6 +5,7 @@ use sql_query_builder::Select;
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
+use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
 use crate::core::db::data_frames::{df_db, workspace_df_db};
 use crate::core::df::sql;
@@ -38,11 +39,14 @@ pub fn is_indexed(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool,
     log::debug!("checking dataset is indexed for {:?}", path);
     let db_path = duckdb_path(workspace, path);
     log::debug!("getting conn at path {:?}", db_path);
-    let conn = df_db::get_connection(db_path)?;
 
-    let table_exists = df_db::table_exists(&conn, TABLE_NAME)?;
-    log::debug!("dataset_is_indexed() got table_exists: {:?}", table_exists);
-    Ok(table_exists)
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let table_exists = df_db::table_exists(conn, TABLE_NAME)?;
+            log::debug!("dataset_is_indexed() got table_exists: {:?}", table_exists);
+            Ok(table_exists)
+        })
+    })
 }
 
 pub fn is_queryable_data_frame_indexed(
@@ -100,10 +104,13 @@ pub async fn rename(
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
-    df_db::drop_table(&conn, TABLE_NAME)?;
 
-    Ok(())
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            df_db::drop_table(conn, TABLE_NAME)?;
+            Ok(())
+        })
+    })
 }
 
 pub fn restore(
@@ -122,10 +129,13 @@ pub fn restore(
 
 pub fn count(workspace: &Workspace, path: impl AsRef<Path>) -> Result<usize, OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
 
-    let count = df_db::count(&conn, TABLE_NAME)?;
-    Ok(count)
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let count = df_db::count(conn, TABLE_NAME)?;
+            Ok(count)
+        })
+    })
 }
 
 pub fn query(
@@ -138,25 +148,33 @@ pub fn query(
     log::debug!("query_staged_df() got db_path: {:?}", db_path);
     log::debug!("query() opts: {:?}", opts);
 
-    let mut conn = df_db::get_connection(db_path)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn_mut(|conn| {
+            // Get the schema of this commit entry
+            let schema = df_db::get_schema(conn, TABLE_NAME)?;
 
-    // Get the schema of this commit entry
-    let schema = df_db::get_schema(&conn, TABLE_NAME)?;
+            let col_names = select_cols_from_schema(&schema)?;
 
-    let col_names = select_cols_from_schema(&schema)?;
+            // Right now embeddings and sql are mutually exclusive
+            let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+                log::debug!("querying embeddings: {:?}", embedding_opts);
+                repositories::workspaces::data_frames::embeddings::query_with_conn(
+                    conn,
+                    workspace,
+                    &embedding_opts,
+                )?
+            } else if let Some(sql) = &opts.sql {
+                log::debug!("querying sql: {:?}", sql);
+                return sql::query_df(conn, sql.clone(), None);
+            } else {
+                log::debug!("querying select cols: {:?}", col_names);
+                let select = Select::new().select(&col_names).from(TABLE_NAME);
+                df_db::select(conn, &select, Some(opts))?
+            };
 
-    // Right now embeddings and sql are mutually exclusive
-    let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-        log::debug!("querying embeddings: {:?}", embedding_opts);
-        repositories::workspaces::data_frames::embeddings::query(workspace, &embedding_opts)?
-    } else if let Some(sql) = &opts.sql {
-        sql::query_df(&mut conn, sql.clone(), None)?
-    } else {
-        let select = Select::new().select(&col_names).from(TABLE_NAME);
-        df_db::select(&conn, &select, Some(opts))?
-    };
-
-    Ok(df)
+            Ok(df)
+        })
+    })
 }
 
 pub fn export(
@@ -169,35 +187,42 @@ pub fn export(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("export() got db_path: {:?}", db_path);
 
-    let conn = df_db::get_connection(db_path)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+                let exclude_cols = true;
+                repositories::workspaces::data_frames::embeddings::similarity_query_with_conn(
+                    conn,
+                    workspace,
+                    &embedding_opts,
+                    exclude_cols,
+                )?
+            } else if let Some(sql) = opts.sql.clone() {
+                add_exclude_to_sql(&sql)?
+            } else {
+                let sql = format!("SELECT * FROM {}", TABLE_NAME);
+                add_exclude_to_sql(&sql)?
+            };
 
-    let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-        let exclude_cols = true;
-        repositories::workspaces::data_frames::embeddings::similarity_query(
-            workspace,
-            &embedding_opts,
-            exclude_cols,
-        )?
-    } else if let Some(sql) = opts.sql.clone() {
-        add_exclude_to_sql(&sql)?
-    } else {
-        let sql = format!("SELECT * FROM {}", TABLE_NAME);
-        add_exclude_to_sql(&sql)?
-    };
+            log::debug!("exporting data frame with sql: {:?}", sql);
 
-    // log::debug!("exporting data frame with sql: {:?}", sql);
+            sql::export_df(conn, sql, Some(opts), temp_file)?;
 
-    sql::export_df(&conn, sql, Some(opts), temp_file)?;
-
-    Ok(())
+            Ok(())
+        })
+    })
 }
 
 pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DataFrame, OxenError> {
     let file_path = path.as_ref();
     let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-    let conn = df_db::get_connection(staged_db_path)?;
-    let diff_df = workspace_df_db::df_diff(&conn)?;
-    Ok(diff_df)
+
+    with_df_db_manager(staged_db_path, |manager| {
+        manager.with_conn(|conn| {
+            let diff_df = workspace_df_db::df_diff(conn)?;
+            Ok(diff_df)
+        })
+    })
 }
 
 pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult, OxenError> {
@@ -215,43 +240,45 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let conn = df_db::get_connection(db_path)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let diff_df = workspace_df_db::df_diff(conn)?;
+            log::debug!("full_diff() diff_df: {:?}", diff_df);
 
-    let diff_df = workspace_df_db::df_diff(&conn)?;
-    log::debug!("full_diff() diff_df: {:?}", diff_df);
+            if diff_df.is_empty() {
+                return Ok(DiffResult::Tabular(TabularDiff::empty()));
+            }
 
-    if diff_df.is_empty() {
-        return Ok(DiffResult::Tabular(TabularDiff::empty()));
-    }
+            let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
 
-    let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
+            let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
 
-    let schema = workspace_df_db::schema_without_oxen_cols(&conn, TABLE_NAME)?;
+            let schemas = TabularDiffSchemas {
+                left: schema.clone(),
+                right: schema.clone(),
+                diff: schema.clone(),
+            };
 
-    let schemas = TabularDiffSchemas {
-        left: schema.clone(),
-        right: schema.clone(),
-        diff: schema.clone(),
-    };
+            let diff_summary = TabularDiffSummary {
+                modifications: TabularDiffMods {
+                    row_counts: row_mods,
+                    col_changes: TabularSchemaDiff::empty(),
+                },
+                schemas,
+                dupes: TabularDiffDupes::empty(),
+            };
 
-    let diff_summary = TabularDiffSummary {
-        modifications: TabularDiffMods {
-            row_counts: row_mods,
-            col_changes: TabularSchemaDiff::empty(),
-        },
-        schemas,
-        dupes: TabularDiffDupes::empty(),
-    };
+            let diff_result = TabularDiff {
+                contents: diff_df,
+                parameters: TabularDiffParameters::empty(),
+                summary: diff_summary,
+                filename1: None,
+                filename2: None,
+            };
 
-    let diff_result = TabularDiff {
-        contents: diff_df,
-        parameters: TabularDiffParameters::empty(),
-        summary: diff_summary,
-        filename1: None,
-        filename2: None,
-    };
-
-    Ok(DiffResult::Tabular(diff_result))
+            Ok(DiffResult::Tabular(diff_result))
+        })
+    })
 }
 
 pub fn duckdb_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {

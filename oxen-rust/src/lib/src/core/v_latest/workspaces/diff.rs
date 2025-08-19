@@ -1,5 +1,8 @@
 use crate::constants::TABLE_NAME;
-use crate::core::db::data_frames::{df_db, workspace_df_db};
+use crate::core::db::data_frames::{
+    df_db::{self, with_df_db_manager},
+    workspace_df_db,
+};
 use crate::error::OxenError;
 use crate::model::diff::tabular_diff::{
     TabularDiffDupes, TabularDiffMods, TabularDiffParameters, TabularDiffSchemas,
@@ -32,17 +35,19 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let conn = df_db::get_connection(db_path)?;
-
-    let diff_df = workspace_df_db::df_diff(&conn)?;
+    let (diff_df, schema) = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let diff_df = workspace_df_db::df_diff(conn)?;
+            let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
+            Ok((diff_df, schema))
+        })
+    })?;
 
     if diff_df.is_empty() {
         return Ok(DiffResult::Tabular(TabularDiff::empty()));
     }
 
     let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
-
-    let schema = workspace_df_db::schema_without_oxen_cols(&conn, TABLE_NAME)?;
 
     let schemas = TabularDiffSchemas {
         left: schema.clone(),
@@ -74,9 +79,9 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, OxenError>
     log::debug!("checking dataset is indexed for {:?}", path);
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("getting conn at path {:?}", db_path);
-    let conn = df_db::get_connection(db_path)?;
-
-    let table_exists = df_db::table_exists(&conn, TABLE_NAME)?;
+    let table_exists = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| df_db::table_exists(conn, TABLE_NAME))
+    })?;
     log::debug!("dataset_is_indexed() got table_exists: {:?}", table_exists);
     Ok(table_exists)
 }

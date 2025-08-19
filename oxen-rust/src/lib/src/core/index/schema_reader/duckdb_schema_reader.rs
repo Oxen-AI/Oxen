@@ -1,5 +1,5 @@
 use crate::constants::TABLE_NAME;
-use crate::core::db::data_frames::df_db;
+use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::core::index::workspaces::data_frames::duckdb_path;
 use crate::core::index::CommitReader;
 use crate::error::OxenError;
@@ -36,9 +36,11 @@ impl DuckDBSchemaReader {
         path: P,
     ) -> Result<Option<Schema>, OxenError> {
         let staged_db_path = duckdb_path(&self.workspace, &path);
-        let conn = df_db::get_connection(staged_db_path)?;
-
-        let df_schema = df_db::get_schema(&conn, TABLE_NAME)?;
+        let df_schema = with_df_db_manager(staged_db_path, |manager| {
+            manager.with_conn(|conn| {
+                df_db::get_schema(conn, TABLE_NAME)
+            })
+        })?;
 
         Ok(Some(df_schema))
     }
