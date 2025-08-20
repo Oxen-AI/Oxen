@@ -50,7 +50,6 @@ pub async fn download_dir(
     Ok(())
 }
 
-
 pub async fn download_dir_to_repo(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -61,14 +60,19 @@ pub async fn download_dir_to_repo(
     match remote_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
-            core::v_latest::download::download_dir_entries(local_repo, remote_repo, entry, remote_path, local_path)
-                .await?;
+            core::v_latest::download::download_dir_entries(
+                local_repo,
+                remote_repo,
+                entry,
+                remote_path,
+                local_path,
+            )
+            .await?;
         }
     }
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

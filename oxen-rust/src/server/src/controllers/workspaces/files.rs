@@ -32,9 +32,7 @@ pub async fn get(
     query: web::Query<ImgResize>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    println!("sdf");
     let namespace = path_param(&req, "namespace")?;
-    println!("ddddd");
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let version_store = repo.version_store()?;
@@ -155,7 +153,11 @@ pub async fn add_version_files(
     };
 
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-    println!("Calling add version files from the core workspace logic with {} files:\n {:?}", files_with_hash.len(), files_with_hash);
+    println!(
+        "Calling add version files from the core workspace logic with {} files:\n {:?}",
+        files_with_hash.len(),
+        files_with_hash
+    );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,

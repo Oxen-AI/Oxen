@@ -1,12 +1,12 @@
 // TODO: Split into separate files?
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use liboxen::api;
+use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
-use liboxen::util;
-use liboxen::api;
-use liboxen::command;
 use liboxen::test::create_remote_repo;
+use liboxen::util;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
@@ -153,7 +153,6 @@ async fn setup_repo_for_push_benchmark(
     // Set remote
     command::config::set_remote(
         &mut repo,
-        
         format!("repo_{}", num_files_to_push_in_benchmark).as_ref(),
         &remote_repo.remote.url,
     )?;
@@ -210,16 +209,12 @@ async fn setup_repo_for_push_benchmark(
     repositories::commit(&repo, "Init")?;
     repositories::push(&repo).await?;
 
-
     for i in repo_size..(repo_size + num_files_to_push_in_benchmark) {
         let dir_idx = rng.gen_range(0..dirs.len());
         let dir = &dirs[dir_idx];
         util::fs::create_dir_all(dir)?;
         let file_path = dir.join(format!("file_{}.txt", i));
-        write_file_for_push_benchmark(
-            &file_path,
-            large_file_percentage,
-        )?;
+        write_file_for_push_benchmark(&file_path, large_file_percentage)?;
     }
 
     repositories::add(&repo, black_box(&files_dir)).await?;
@@ -227,7 +222,6 @@ async fn setup_repo_for_push_benchmark(
 
     Ok((repo, remote_repo))
 }
-
 
 fn add_benchmark(c: &mut Criterion) {
     let base_dir = PathBuf::from("data/test/benches/add");
@@ -321,12 +315,12 @@ fn push_benchmark(c: &mut Criterion) {
                 // Run in async executor
                 b.to_async(&rt).iter(|| async {
                     // TODO: Black box?
-                    repositories::push(&repo)
-                        .await
-                        .unwrap();
+                    repositories::push(&repo).await.unwrap();
 
                     // Cleanup remote repo
-                    let _ = api::client::repositories::delete(&remote_repo).await.unwrap();
+                    let _ = api::client::repositories::delete(&remote_repo)
+                        .await
+                        .unwrap();
                 })
             },
         );

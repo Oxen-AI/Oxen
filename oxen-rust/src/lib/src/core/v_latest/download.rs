@@ -1,4 +1,3 @@
-use crate::{api, repositories};
 use crate::core::progress::pull_progress::PullProgress;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
@@ -8,6 +7,7 @@ use crate::model::CommitEntry;
 use crate::model::LocalRepository;
 use crate::model::MetadataEntry;
 use crate::model::RemoteRepository;
+use crate::{api, repositories};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -66,7 +66,9 @@ pub async fn download_dir_entries(
 
     // Get tree from local repos
     let commit = &entry.latest_commit.as_ref().unwrap();
-    let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(&local_repo, &commit, remote_path)? else {
+    let Some(dir_node) =
+        repositories::tree::get_dir_with_children_recursive(local_repo, commit, remote_path)?
+    else {
         println!("Dir node not found for path {local_path:?}");
         return Ok(());
     };

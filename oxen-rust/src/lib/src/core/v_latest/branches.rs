@@ -466,15 +466,13 @@ fn r_remove_if_not_in_target(
             // Only consider files not seen while traversing the target tree
             // println!("Node: {file_node:?}");
             if !hashes.seen_hashes.contains(&from_node.hash) {
-           
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);
                 //log::debug!("file_path: {file_path:?}");
 
                 // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
-                    if util::fs::is_modified_from_node(&full_path, file_node)? 
-                    {
+                    if util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
                         // If in remote mode, save file to version store before removing
@@ -484,7 +482,7 @@ fn r_remove_if_not_in_target(
 
                         paths_to_remove.push(full_path.clone());
                     }
-                // If in remote-mode, save original file contents to version_store 
+                // If in remote-mode, save original file contents to version_store
                 } else if full_path.exists() && repo.is_remote_mode() {
                     files_to_store.push((from_node.hash, full_path.clone()))
                 }
@@ -593,7 +591,7 @@ fn r_restore_missing_or_modified_files(
                 // First check last modified times
                 let meta = util::fs::metadata(&full_path)?;
                 let last_modified = Some(FileTime::from_last_modification_time(&meta));
-            
+
                 // If last_modified matches the target, do nothing
                 let target_last_modified = util::fs::last_modified_time(
                     file_node.last_modified_seconds(),
@@ -602,7 +600,7 @@ fn r_restore_missing_or_modified_files(
                 if last_modified == Some(target_last_modified) {
                     return Ok(());
                 }
-                
+
                 // If last_modified matches a corresponding from_node, stage it to be restored
                 let (from_node, from_last_modified) =
                     if let Some(from_node) = partial_nodes.get(&file_path) {

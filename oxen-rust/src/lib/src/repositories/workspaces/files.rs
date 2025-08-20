@@ -20,7 +20,10 @@ pub async fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBu
     }
 }
 
-pub async fn rm(workspace: &Workspace, path: impl AsRef<Path>) -> Result<Vec<ErrorFileInfo>, OxenError> {
+pub async fn rm(
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::rm(workspace, path).await,

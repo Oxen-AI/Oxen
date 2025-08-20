@@ -1,11 +1,11 @@
 use crate::api::client;
 use crate::constants::AVG_CHUNK_SIZE;
+use crate::core::oxenignore;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
-use crate::core::oxenignore;
 
 use bytesize::ByteSize;
 use futures_util::StreamExt;
@@ -19,6 +19,13 @@ use tokio::time::{sleep, Duration};
 use walkdir::WalkDir;
 use glob::glob;
 use glob_match::glob_match;
+use pluralizer::pluralize;
+use rand::{thread_rng, Rng};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+use walkdir::WalkDir;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
@@ -29,7 +36,7 @@ pub struct UploadResult {
     pub err_files: Vec<ErrorFileInfo>,
 }
 
-// TODO: Test adding removed files 
+// TODO: Test adding removed files
 pub async fn add(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -50,10 +57,9 @@ pub async fn add(
     let gitignore = oxenignore::create(local_repo);
 
     // Parse glob paths
-    let mut expanded_paths: HashSet<PathBuf> = HashSet::new(); 
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
-    for path in paths.clone()  {
-
+    for path in paths.clone() {
         let path_str = &path
             .to_str()
             .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
@@ -68,7 +74,7 @@ pub async fn add(
                 .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
 
             // println!("glov path str: {glob_path_str:?}");
-            for entry in glob(&glob_path_str)? {
+            for entry in glob(glob_path_str)? {
                 let entry_path = entry?;
                 // println!("entry path: {entry_path:?}");
                 let relative_path = util::fs::path_relative_to_dir(&entry_path, &repo_path)?;
@@ -96,7 +102,7 @@ pub async fn add(
         } else {
             let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
             let full_path = repo_path.join(&relative_path);
-           // println!("path: {path:?}\nfull: {full_path:?}\n rel: {relative_path:?}\n");
+            // println!("path: {path:?}\nfull: {full_path:?}\n rel: {relative_path:?}\n");
             if full_path.is_dir() {
                 for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
                     let entry_path = entry.path().to_path_buf();
@@ -122,8 +128,16 @@ pub async fn add(
 
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
-    match upload_multiple_files(local_repo, remote_repo, workspace_id, directory, expanded_paths.clone()).await {
-        Ok(()) => {    
+    match upload_multiple_files(
+        local_repo,
+        remote_repo,
+        workspace_id,
+        directory,
+        expanded_paths.clone(),
+    )
+    .await
+    {
+        Ok(()) => {
             println!(
                 "🐂 oxen added {} entries to workspace {}",
                 expanded_paths.len(),
@@ -134,7 +148,6 @@ pub async fn add(
             return Err(e);
         }
     }
-
 
     Ok(())
 }
@@ -191,8 +204,7 @@ async fn upload_multiple_files(
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
 
-
-     println!("Iterating through paths in upload_multiple_files");
+    println!("Iterating through paths in upload_multiple_files");
 
     // Group files by size
     // TODO: NEED NEED NEED full paths to be fed in this far;
@@ -221,7 +233,7 @@ async fn upload_multiple_files(
         }
     }
 
-   // println!("Finished sorting paths into large and small files");
+    // println!("Finished sorting paths into large and small files");
     //println!("Large files: {large_files:?}");
     // println!("Small files: {small_files:?}");
 
@@ -230,7 +242,7 @@ async fn upload_multiple_files(
 
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
-   // println!("Upload feasibility validated. Begin uploading large files...");
+    // println!("Upload feasibility validated. Begin uploading large files...");
 
     // Process large files individually with parallel upload
     for (path, _size) in large_files {
@@ -263,7 +275,7 @@ async fn upload_multiple_files(
 }
 
 async fn parallel_batched_small_file_upload(
-    local_repo: &LocalRepository,   
+    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
@@ -585,31 +597,38 @@ pub async fn rm_files(
 
     // Parse glob paths
     let repo_path = local_repo.path.clone();
-    let mut expanded_paths: HashSet<PathBuf> = HashSet::new(); 
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
-    for path in paths.clone()  {
-        
+    for path in paths.clone() {
         let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
         let full_path = repo_path.join(&relative_path);
         if util::fs::is_glob_path(&full_path) {
-            let Some(ref head_commit) = repositories::commits::head_commit_maybe(&local_repo)? else {
+            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
+            else {
                 // TODO: Better error message?
-                return Err(OxenError::basic_str("Error: Cannot rm with glob paths in remote-mode repo without HEAD commit"));
+                return Err(OxenError::basic_str(
+                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
+                ));
             };
-            let glob_pattern = relative_path.file_name().unwrap().to_string_lossy().to_string();
+            let glob_pattern = relative_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             let root_path = PathBuf::from("");
             let parent_path = relative_path.parent().unwrap_or(&root_path);
-            
+
             // If dir not found in tree, skip glob path
-            let Some(dir_node) = repositories::tree::get_dir_with_children(&local_repo, &head_commit, &parent_path)? else {
+            let Some(dir_node) =
+                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
+            else {
                 continue;
             };
-        
+
             let dir_children = dir_node.list_paths()?;
             for child_path in dir_children {
                 let child_str = child_path.to_string_lossy().to_string();
                 if glob_match(&glob_pattern, &child_str) {
-                    
                     expanded_paths.insert(parent_path.join(child_path.clone()));
                 }
             }
@@ -619,7 +638,6 @@ pub async fn rm_files(
     }
 
     println!("expanded paths: {expanded_paths:?}");
-
 
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
 
@@ -642,9 +660,11 @@ pub async fn rm_files(
 
         // Remove files locally
         for path in expanded_paths {
-
             let full_path = local_repo.path.join(&path);
-            println!("full path: {full_path:?}; exists? : {:?}", full_path.exists());
+            println!(
+                "full path: {full_path:?}; exists? : {:?}",
+                full_path.exists()
+            );
             if full_path.is_dir() {
                 util::fs::remove_dir_all(&full_path)?;
             }
@@ -654,16 +674,15 @@ pub async fn rm_files(
                 util::fs::remove_file(&full_path)?;
             }
         }
-
     } else {
         println!("Request failed with status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
 
-        return Err(OxenError::basic_str(format!("Error: Could not remove paths {:?}", body)))
-
+        return Err(OxenError::basic_str(format!(
+            "Error: Could not remove paths {:?}",
+            body
+        )));
     }
-
-
 
     Ok(())
 }
@@ -678,31 +697,38 @@ pub async fn rm_files_from_staged(
 
     // Parse glob paths
     let repo_path = local_repo.path.clone();
-    let mut expanded_paths: HashSet<PathBuf> = HashSet::new(); 
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
-    for path in paths.clone()  {
-        
+    for path in paths.clone() {
         let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
         let full_path = repo_path.join(&relative_path);
         if util::fs::is_glob_path(&full_path) {
-            let Some(ref head_commit) = repositories::commits::head_commit_maybe(&local_repo)? else {
+            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
+            else {
                 // TODO: Better error message?
-                return Err(OxenError::basic_str("Error: Cannot rm with glob paths in remote-mode repo without HEAD commit"));
+                return Err(OxenError::basic_str(
+                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
+                ));
             };
-            let glob_pattern = relative_path.file_name().unwrap().to_string_lossy().to_string();
+            let glob_pattern = relative_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             let root_path = PathBuf::from("");
             let parent_path = relative_path.parent().unwrap_or(&root_path);
-            
+
             // If dir not found in tree, skip glob path
-            let Some(dir_node) = repositories::tree::get_dir_with_children(&local_repo, &head_commit, &parent_path)? else {
+            let Some(dir_node) =
+                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
+            else {
                 continue;
             };
-        
+
             let dir_children = dir_node.list_paths()?;
             for child_path in dir_children {
                 let child_str = child_path.to_string_lossy().to_string();
                 if glob_match(&glob_pattern, &child_str) {
-                    
                     expanded_paths.insert(parent_path.join(child_path.clone()));
                 }
             }
@@ -712,7 +738,6 @@ pub async fn rm_files_from_staged(
     }
 
     log::debug!("expanded paths: {expanded_paths:?}");
-
 
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
 
@@ -786,7 +811,6 @@ fn jitter() -> usize {
     thread_rng().gen_range(0..=500)
 }
 
-
 #[cfg(test)]
 mod tests {
 
@@ -823,7 +847,7 @@ mod tests {
             let path = test::test_img_file();
             println!("test: {path:?}");
             let result = api::client::workspaces::files::add(
-                &local_repo, 
+                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory_name,
@@ -877,7 +901,7 @@ mod tests {
 
             let path = test::test_30k_parquet();
             let result = api::client::workspaces::files::add(
-                &local_repo, 
+                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory_name,
@@ -1530,9 +1554,14 @@ mod tests {
             let directory = "test_data";
 
             // Call the add function with multiple files
-            let result =
-                api::client::workspaces::files::add(&local_repo, &remote_repo, &workspace_id, directory, paths)
-                    .await;
+            let result = api::client::workspaces::files::add(
+                &local_repo,
+                &remote_repo,
+                &workspace_id,
+                directory,
+                paths,
+            )
+            .await;
             assert!(result.is_ok());
 
             // Verify that both files were added
@@ -1576,7 +1605,7 @@ mod tests {
             // Get the absolute path to the file
             let path = test::test_img_file().canonicalize()?;
             let result = api::client::workspaces::files::add(
-                &local_repo, 
+                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory_name,

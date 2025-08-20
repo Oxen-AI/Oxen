@@ -1,11 +1,11 @@
 use crate::api;
-use crate::repositories::LocalRepository;
+use crate::model::staged_data::StagedDataOpts;
 use crate::model::RemoteRepository;
-use crate::repositories::OxenError;
 use crate::model::StagedData;
 use crate::model::StagedEntry;
 use crate::model::StagedEntryStatus;
-use crate::model::staged_data::StagedDataOpts;
+use crate::repositories::LocalRepository;
+use crate::repositories::OxenError;
 
 use crate::core::v_latest::status::status_from_opts_and_staged_data;
 
@@ -81,19 +81,18 @@ pub async fn status(
 #[cfg(test)]
 mod tests {
 
-
     use std::path::PathBuf;
 
     use crate::error::OxenError;
-    use crate::opts::clone_opts::CloneOpts;
     use crate::model::staged_data::StagedDataOpts;
+    use crate::opts::clone_opts::CloneOpts;
 
     use crate::{api, repositories, test};
 
     // For reference, the fully synced repo structure is as follows:
     // nlp/
     //   classification/
-    //     annotations/ 
+    //     annotations/
     //       train.tsv
     //       test.tsv
     //
@@ -103,17 +102,17 @@ mod tests {
     //   dog_3.jpg
     //   cat_1.jpg
     //   cat_2.jpg
-    // test/ 
+    // test/
     //   1.jpg
     //   2.jpg
-    // annotations/ 
+    // annotations/
     //   README.md
-    //   train/ 
+    //   train/
     //     bounding_box.csv
     //     one_shot.csv
     //     two_shot.csv
     //     annotations.txt
-    //   test/ 
+    //   test/
     //     annotations.csv
     // prompts.jsonl
     // labels.txt
@@ -121,10 +120,11 @@ mod tests {
     // README.md
 
     #[tokio::test]
-    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone() -> Result<(), OxenError> {
+    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone(
+    ) -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
-            
+
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -132,8 +132,16 @@ mod tests {
 
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
                 status.print();
                 // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
                 assert_eq!(status.unsynced_dirs.len(), 4);
@@ -143,10 +151,12 @@ mod tests {
                 assert!(status.is_clean());
 
                 Ok(())
-            }).await?;
+            })
+            .await?;
 
             Ok(remote_repo_copy)
-        }).await
+        })
+        .await
     }
 
     #[tokio::test]
@@ -165,13 +175,20 @@ mod tests {
                 let directory = ".".to_string();
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
                 status.print();
-                
+
                 // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
                 assert_eq!(status.unsynced_dirs.len(), 4);
                 assert_eq!(status.unsynced_files.len(), 4);
-                                
+
                 // Download specific files from the remote
                 let subdir_path = PathBuf::from("annotations").join("train");
                 let one_shot_path = subdir_path.join("one_shot.csv");
@@ -179,10 +196,25 @@ mod tests {
                 let bounding_box_path = subdir_path.join("bounding_box.csv");
 
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                repositories::remote_mode::restore(&cloned_repo, &vec![one_shot_path.clone()], &head_commit.id).await?;
-                repositories::remote_mode::restore(&cloned_repo, &vec![two_shot_path.clone()], &head_commit.id).await?;
-                repositories::remote_mode::restore(&cloned_repo, &vec![bounding_box_path.clone()], &head_commit.id).await?;
-                
+                repositories::remote_mode::restore(
+                    &cloned_repo,
+                    &[one_shot_path.clone()],
+                    &head_commit.id,
+                )
+                .await?;
+                repositories::remote_mode::restore(
+                    &cloned_repo,
+                    &[two_shot_path.clone()],
+                    &head_commit.id,
+                )
+                .await?;
+                repositories::remote_mode::restore(
+                    &cloned_repo,
+                    &[bounding_box_path.clone()],
+                    &head_commit.id,
+                )
+                .await?;
+
                 // Modify one_shot.csv
                 let new_content = "new content coming in hot";
                 test::modify_txt_file(cloned_repo.path.join(&one_shot_path), new_content)?;
@@ -190,17 +222,37 @@ mod tests {
                 // Modify and add two_shot.csv
                 let new_content = "new content coming in even hotter!";
                 test::modify_txt_file(cloned_repo.path.join(&two_shot_path), new_content)?;
-                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![two_shot_path.clone()]).await?;
-                               
+                api::client::workspaces::files::add(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    vec![two_shot_path.clone()],
+                )
+                .await?;
+
                 // Remove bounding_box.csv
-                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![bounding_box_path.clone()]).await?;
+                api::client::workspaces::files::rm_files(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    vec![bounding_box_path.clone()],
+                )
+                .await?;
 
                 // Check status for corresponding changes
                 let directory = ".".to_string();
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
                 status.print();
-                
+
                 // 6 unsynced files, as creating the parent dirs for the restored files causes more subfiles to be registed as unsynced
                 assert_eq!(status.unsynced_dirs.len(), 4);
                 assert_eq!(status.unsynced_files.len(), 6);
@@ -211,26 +263,42 @@ mod tests {
                 assert_eq!(status.staged_files.len(), 2);
                 assert!(status.staged_files.contains_key(&two_shot_path));
                 assert!(status.staged_files.contains_key(&bounding_box_path));
-                
+
                 // Stage the subdirectory itself
-                api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![subdir_path.clone()]).await?;
+                api::client::workspaces::files::add(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    vec![subdir_path.clone()],
+                )
+                .await?;
 
                 // Re-check status
                 let directory = ".".to_string();
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
                 status.print();
-                
+
                 assert_eq!(status.unsynced_dirs.len(), 4);
                 assert_eq!(status.unsynced_files.len(), 6);
                 assert_eq!(status.staged_files.len(), 3);
                 assert_eq!(status.modified_files.len(), 0);
 
                 Ok(())
-            }).await?;
+            })
+            .await?;
 
             Ok(remote_repo_copy)
-        }).await
+        })
+        .await
     }
 
     // NOTE: With the current workspace::changes::status command used in remote_mode::status,
@@ -256,7 +324,7 @@ mod tests {
                 let directory = ".".to_string();
 
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                
+
                 let og_basename = PathBuf::from("README.md");
                 repositories::remote_mode::restore(&cloned_repo, &vec![og_basename.clone()], &head_commit.id).await?;
 
@@ -265,7 +333,7 @@ mod tests {
                 let new_file = cloned_repo.path.join(&new_basename);
 
                 util::fs::rename(&og_file, &new_file)?;
-    
+
                 // Status before adding should show 4 unsynced files (README.md,  LICENSE, prompts.jsonl, labels.txt) and an untracked file
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
@@ -293,10 +361,9 @@ mod tests {
 
                 Ok(())
             }).await?;
-            
+
             Ok(remote_repo_copy)
         }).await
     }
     */
 }
-
