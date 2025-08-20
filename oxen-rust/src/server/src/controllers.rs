@@ -19,4 +19,5 @@ pub mod revisions;
 pub mod schemas;
 pub mod tree;
 pub mod versions;
+pub mod webhooks;
 pub mod workspaces;

@@ -54,7 +54,7 @@ pub use add::add;
 pub use checkout::checkout;
 pub use clone::{clone, clone_url, deep_clone_url};
 pub use commits::commit;
-pub use download::download;
+pub use download::{download, download_with_bearer_token};
 pub use fetch::{fetch_all, fetch_branch};
 pub use init::init;
 pub use load::load;

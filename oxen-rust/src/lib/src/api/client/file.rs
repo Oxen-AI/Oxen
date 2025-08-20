@@ -10,22 +10,15 @@ use std::path::Path;
 
 use bytes::Bytes;
 
-pub async fn put_file(
-    remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    directory: impl AsRef<str>,
+/// Helper function that contains the common logic for putting a file
+async fn put_file_impl(
+    client: reqwest::Client,
+    url: String,
     file_path: impl AsRef<Path>,
     file_name: Option<impl AsRef<str>>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
-    let branch = branch.as_ref();
-    let directory = directory.as_ref();
     let file_path = file_path.as_ref();
-    let uri = format!("/file/{branch}/{directory}");
-    log::debug!("put_file {uri:?}, file_path {file_path:?}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
     let file_part = Part::file(file_path).await?;
     let file_part = if let Some(file_name) = file_name {
         file_part.file_name(file_name.as_ref().to_string())
@@ -46,6 +39,45 @@ pub async fn put_file(
     let body = client::parse_json_body(&url, res).await?;
     let response: CommitResponse = serde_json::from_str(&body)?;
     Ok(response)
+}
+
+pub async fn put_file(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let directory = directory.as_ref();
+    let file_path = file_path.as_ref();
+    let uri = format!("/file/{branch}/{directory}");
+    log::debug!("put_file {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    put_file_impl(client, url, file_path, file_name, commit_body).await
+}
+
+pub async fn put_file_with_bearer_token(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+    bearer_token: &str,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let directory = directory.as_ref();
+    let file_path = file_path.as_ref();
+    let uri = format!("/file/{branch}/{directory}");
+    log::debug!("put_file_with_bearer_token {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url_with_bearer_token(&url, bearer_token)?;
+    put_file_impl(client, url, file_path, file_name, commit_body).await
 }
 
 pub async fn get_file(
@@ -71,81 +103,8 @@ mod tests {
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::model::NewCommitBody;
-    use crate::{api, repositories, test, util};
+    use crate::{api, test, util};
 
-    #[tokio::test]
-    async fn test_update_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let branch_name = "main";
-            let directory_name = "test_data";
-            let file_path = test::test_img_file();
-            let commit_body = NewCommitBody {
-                author: "Test Author".to_string(),
-                email: "test@example.com".to_string(),
-                message: "Update file test".to_string(),
-            };
-
-            let response = api::client::file::put_file(
-                &remote_repo,
-                branch_name,
-                directory_name,
-                &file_path,
-                Some("test.jpeg"),
-                Some(commit_body),
-            )
-            .await?;
-
-            assert_eq!(response.status.status_message, "resource_created");
-
-            // Pull changes from remote to local repo
-            repositories::pull(&local_repo).await?;
-
-            // Check that the file exists in the local repo after pulling
-            let file_path_in_repo = local_repo.path.join(directory_name).join("test.jpeg");
-            assert!(file_path_in_repo.exists());
-
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_update_file_on_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_configured_remote_repo_test(|local_repo, remote_repo| async move {
-            let branch_name = "main";
-            let directory_name = "test_data";
-            let file_path = test::test_img_file();
-            let commit_body = NewCommitBody {
-                author: "Test Author".to_string(),
-                email: "test@example.com".to_string(),
-                message: "Update file test".to_string(),
-            };
-
-            let response = api::client::file::put_file(
-                &remote_repo,
-                branch_name,
-                directory_name,
-                &file_path,
-                Some("test.jpeg"),
-                Some(commit_body),
-            )
-            .await?;
-            assert_eq!(response.status.status_message, "resource_created");
-
-            // Pull changes from remote to local repo
-            repositories::pull(&local_repo).await?;
-            repositories::checkout(&local_repo, branch_name).await?;
-
-            // // Check that the file exists in the local repo after pulling
-            let file_path_in_repo = local_repo.path.join(directory_name).join("test.jpeg");
-            println!("file_path_in_repo: {:?}", file_path_in_repo);
-            assert!(file_path_in_repo.exists());
-
-            Ok(remote_repo)
-        })
-        .await
-    }
 
     #[tokio::test]
     async fn test_get_file() -> Result<(), OxenError> {

@@ -516,6 +516,7 @@ pub async fn post_push_complete(
     let uri = format!("/commits/{}/complete", commit_id);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("post_push_complete: {}", url);
+    println!("🔄 Client calling push complete endpoint: {}", url);
     let body = serde_json::to_string(&json!({
         "branch": {
             "name": branch.name,

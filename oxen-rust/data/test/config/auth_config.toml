@@ -4,3 +4,7 @@ default_host = "hub.oxen.ai"
 host = "localhost:3001"
 auth_token = "sample-token"
 
+[[host_configs]]
+host = "localhost:3000"
+auth_token = "sample-token"
+

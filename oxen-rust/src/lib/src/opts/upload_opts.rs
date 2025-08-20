@@ -9,4 +9,5 @@ pub struct UploadOpts {
     pub host: String,
     pub scheme: String,
     pub remote: String,
+    pub bearer_token: Option<String>,
 }

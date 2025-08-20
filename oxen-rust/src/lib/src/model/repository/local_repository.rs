@@ -67,6 +67,30 @@ impl LocalRepository {
         Ok(repo)
     }
 
+    /// Create a LocalRepository with a pre-configured version store (composition)
+    pub fn with_version_store(
+        path: impl AsRef<Path>,
+        version_store: Arc<dyn VersionStore>,
+    ) -> Result<Self, OxenError> {
+        let path = path.as_ref().to_path_buf();
+        let config_path = util::fs::config_filepath(&path);
+        let config = RepositoryConfig::from_file(&config_path).unwrap_or_default();
+
+        Ok(LocalRepository {
+            path,
+            remote_name: config.remote_name,
+            min_version: config.min_version,
+            remotes: config.remotes,
+            vnode_size: config.vnode_size,
+            subtree_paths: config.subtree_paths,
+            depth: config.depth,
+            version_store: Some(version_store),
+            remote_mode: config.remote_mode,
+            workspace_name: config.workspace_name,
+            workspaces: config.workspaces,
+        })
+    }
+
     /// Get a reference to the version store
     pub fn version_store(&self) -> Result<Arc<dyn VersionStore>, OxenError> {
         match &self.version_store {
@@ -95,6 +119,7 @@ impl LocalRepository {
         self.version_store = Some(store);
         Ok(())
     }
+
 
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory

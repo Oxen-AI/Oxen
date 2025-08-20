@@ -514,8 +514,16 @@ impl error::ResponseError for OxenHttpError {
                     }
                     err => {
                         log::error!("Internal server error: {:?}", err);
-                        HttpResponse::InternalServerError()
-                            .json(StatusMessage::internal_server_error())
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_INTERNAL_SERVER_ERROR,
+                                "title": "Internal server error",
+                                "detail": format!("{}", err),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_INTERNAL_SERVER_ERROR,
+                        });
+                        HttpResponse::InternalServerError().json(error_json)
                     }
                 }
             }

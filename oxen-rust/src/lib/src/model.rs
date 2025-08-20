@@ -24,6 +24,7 @@ pub mod staged_dir_stats;
 pub mod staged_row_status;
 pub mod summarized_staged_dir_stats;
 pub mod user;
+pub mod webhook;
 pub mod workspace;
 
 // Namespace
@@ -61,6 +62,9 @@ pub use crate::model::merge_conflict::NodeMergeConflict;
 pub use crate::model::data_frame::data_frame_size::DataFrameSize;
 
 pub use crate::model::user::User;
+
+// Webhook
+pub use crate::model::webhook::{Webhook, WebhookAddRequest, WebhookNotification};
 
 pub use crate::model::object_id::ObjectID;
 pub use crate::model::parsed_resource::ParsedResource;

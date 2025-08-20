@@ -1,5 +1,6 @@
 use liboxen::{
     core::v0_10_0::cache::commit_cacher,
+    core::webhook_dispatcher::WebhookDispatcher,
     model::{Commit, LocalRepository},
 };
 use serde::{Deserialize, Serialize};
@@ -19,8 +20,6 @@ impl Runnable for PostPushComplete {
             self.commit.id,
             &self.repo.path
         );
-        // sleep to debug
-        println!("Here is the commit id: {}", self.commit.id);
         let force = false;
         match commit_cacher::run_all(&self.repo, &self.commit, force) {
             Ok(_) => {
@@ -37,6 +36,34 @@ impl Runnable for PostPushComplete {
                     &self.repo.path
                 );
                 log::error!("Error: {:?}", e);
+            }
+        }
+        
+        // Trigger webhook notifications for the push
+        match WebhookDispatcher::from_repo(&self.repo) {
+            Ok(dispatcher) => {
+                log::debug!("Triggering webhook notifications for push complete");
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        log::error!("Failed to create async runtime for webhook dispatch: {}", e);
+                        return;
+                    }
+                };
+                
+                rt.block_on(async {
+                    match dispatcher.dispatch_webhook_event(&self.repo, &self.commit).await {
+                        Ok(_) => {
+                            log::debug!("Webhook notifications dispatched successfully for push complete");
+                        }
+                        Err(e) => {
+                            log::error!("Failed to dispatch webhook notifications for push complete: {}", e);
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                log::error!("Failed to create webhook dispatcher for push complete: {}", e);
             }
         }
     }

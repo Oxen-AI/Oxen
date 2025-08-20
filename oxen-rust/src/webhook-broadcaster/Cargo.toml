@@ -1,0 +1,16 @@
+[package]
+name = "oxen-webhook-broadcaster"
+version = "0.36.3"
+edition = "2021"
+license-file = "LICENSE"
+description = "Webhook broadcasting service for Oxen VCS"
+
+[dependencies]
+liboxen = { path = "../lib" }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+reqwest = { version = "0.12", features = ["json"] }

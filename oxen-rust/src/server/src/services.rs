@@ -18,6 +18,7 @@ pub mod tabular;
 pub mod transfer;
 pub mod tree;
 pub mod versions;
+pub mod webhooks;
 pub mod workspaces;
 
 pub use action::action;
@@ -40,4 +41,5 @@ pub use tabular::tabular;
 pub use transfer::transfer;
 pub use tree::tree;
 pub use versions::versions;
+pub use webhooks::webhooks;
 pub use workspaces::workspace;

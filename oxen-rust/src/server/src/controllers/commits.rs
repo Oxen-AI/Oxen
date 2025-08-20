@@ -6,6 +6,7 @@ use liboxen::constants::HISTORY_DIR;
 use liboxen::constants::VERSION_FILE_NAME;
 
 use liboxen::core::commit_sync_status;
+use liboxen::core::webhook_dispatcher::WebhookDispatcher;
 use liboxen::error::OxenError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
@@ -827,11 +828,33 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     let namespace: &str = req.match_info().get("namespace").unwrap();
     let repo_name: &str = req.match_info().get("repo_name").unwrap();
     let commit_id: &str = req.match_info().get("commit_id").unwrap();
+    
 
     match repositories::get_by_namespace_and_name(&app_data.path, namespace, repo_name) {
         Ok(Some(repo)) => {
             match repositories::commits::get_by_id(&repo, commit_id) {
                 Ok(Some(commit)) => {
+                    // Trigger webhook notifications for the completed push
+                    match WebhookDispatcher::from_repo(&repo) {
+                        Ok(dispatcher) => {
+                            let repo_clone = repo.clone();
+                            let commit_clone = commit.clone();
+                            tokio::spawn(async move {
+                                match dispatcher.dispatch_webhook_event(&repo_clone, &commit_clone).await {
+                                    Ok(_) => {
+                                        log::debug!("Webhook notifications dispatched successfully for push complete");
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to dispatch webhook notifications for push complete: {}", e);
+                                    }
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create webhook dispatcher for push complete: {}", e);
+                        }
+                    }
+                    
                     let response = CommitResponse {
                         status: StatusMessage::resource_created(),
                         commit: commit.clone(),

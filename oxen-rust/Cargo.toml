@@ -15,6 +15,7 @@ categories = [
     "database",
     "computer-vision",
 ]
+autotests = false
 
 [features]
 default = ["duckdb/bundled"]
@@ -144,6 +145,7 @@ xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = "2.4.1"
 pathdiff = "0.2.3"
 async-recursion = "1.1.1"
+hmac = "0.12.1"
 
 
 [workspace]
@@ -192,3 +194,12 @@ harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["astral-tokio-tar", "libduckdb-sys"]
+
+[[test]]
+name = "unit_tests"
+path = "tests/test.rs"
+
+[[test]]
+name = "integration_tests"
+path = "itests/http_tests.rs"
+
