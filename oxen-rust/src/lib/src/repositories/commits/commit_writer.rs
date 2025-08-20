@@ -206,6 +206,7 @@ pub fn commit_dir_entries_with_parents(
 ) -> Result<Commit, OxenError> {
     let message = &new_commit.message;
     let target_branch = target_branch.as_ref();
+
     // if the HEAD file exists, we have parents
     // otherwise this is the first commit
     let head_path = util::fs::oxen_hidden_dir(&repo.path).join(HEAD_FILE);
@@ -272,27 +273,29 @@ pub fn commit_dir_entries_with_parents(
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    // Copy over the dir hashes from the previous commit
-    let mut parent_id: Option<MerkleHash> = None;
-    if let Some(commit) = &maybe_head_commit {
-        parent_id = Some(commit.hash()?);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        for (path, hash) in dir_hashes {
-            if let Some(path_str) = path.to_str() {
-                str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-            } else {
-                log::error!("Failed to convert path to string: {:?}", path);
-            }
+    let (dir_hashes, parent_id) = match &maybe_head_commit {
+        Some(commit) => (
+            CommitMerkleTree::dir_hashes(repo, commit)?,
+            Some(commit.hash()?),
+        ),
+        None => (HashMap::new(), None),
+    };
+
+    for (path, hash) in &dir_hashes {
+        if let Some(path_str) = path.to_str() {
+            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
+        } else {
+            log::error!("Failed to convert path to string: {:?}", path);
         }
     }
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
     write_commit_entries(
         repo,
-        &maybe_head_commit,
         commit_id,
         &mut commit_db,
         &dir_hash_db,
+        &dir_hashes,
         &vnode_entries,
     )?;
     commit_progress_bar.finish_and_clear();
@@ -371,17 +374,19 @@ pub fn commit_dir_entries_new(
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    // Copy over the dir hashes from the previous commit
-    let mut parent_id: Option<MerkleHash> = None;
-    if let Some(commit) = &maybe_head_commit {
-        parent_id = Some(commit.hash()?);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        for (path, hash) in dir_hashes {
-            if let Some(path_str) = path.to_str() {
-                str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-            } else {
-                log::error!("Failed to convert path to string: {:?}", path);
-            }
+    let (dir_hashes, parent_id) = match &maybe_head_commit {
+        Some(commit) => (
+            CommitMerkleTree::dir_hashes(repo, commit)?,
+            Some(commit.hash()?),
+        ),
+        None => (HashMap::new(), None),
+    };
+
+    for (path, hash) in &dir_hashes {
+        if let Some(path_str) = path.to_str() {
+            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
+        } else {
+            log::error!("Failed to convert path to string: {:?}", path);
         }
     }
 
@@ -389,10 +394,10 @@ pub fn commit_dir_entries_new(
 
     write_commit_entries(
         repo,
-        &maybe_head_commit,
         commit_id,
         &mut commit_db,
         &dir_hash_db,
+        &dir_hashes,
         &vnode_entries,
     )?;
 
@@ -491,32 +496,26 @@ pub fn commit_dir_entries(
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    // Copy over the dir hashes from the previous commit
-    let mut parent_id: Option<MerkleHash> = None;
-    if let Some(commit) = &maybe_head_commit {
-        parent_id = Some(commit.hash()?);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        log::debug!(
-            "Copy over {} dir hashes from previous commit {}",
-            dir_hashes.len(),
-            commit
-        );
-        for (path, hash) in dir_hashes {
-            if let Some(path_str) = path.to_str() {
-                str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-            } else {
-                log::error!("Failed to convert path to string: {:?}", path);
-            }
+    let dir_hashes = match &maybe_head_commit {
+        Some(commit) => CommitMerkleTree::dir_hashes(repo, commit)?,
+        None => HashMap::new(),
+    };
+
+    for (path, hash) in &dir_hashes {
+        if let Some(path_str) = path.to_str() {
+            str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
+        } else {
+            log::error!("Failed to convert path to string: {:?}", path);
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
     write_commit_entries(
         repo,
-        &maybe_head_commit,
         commit_id,
         &mut commit_db,
         &dir_hash_db,
+        &dir_hashes,
         &vnode_entries,
     )?;
     commit_progress_bar.finish_and_clear();
@@ -792,16 +791,16 @@ fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError> {
 
 fn write_commit_entries(
     repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
     commit_id: MerkleHash,
     commit_db: &mut MerkleNodeDB,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, Vec<EntryVNode>>,
 ) -> Result<(), OxenError> {
     // Write the root dir, then recurse into the vnodes and subdirectories
     let mut total_written = 0;
     let root_path = PathBuf::from("");
-    let dir_node = compute_dir_node(repo, maybe_head_commit, commit_id, entries, &root_path)?;
+    let dir_node = compute_dir_node(repo, commit_id, entries, dir_hashes, &root_path)?;
     commit_db.add_child(&dir_node)?;
     total_written += 1;
 
@@ -813,10 +812,10 @@ fn write_commit_entries(
     let dir_db = MerkleNodeDB::open_read_write(repo, &dir_node, Some(commit_id))?;
     r_create_dir_node(
         repo,
-        maybe_head_commit,
         commit_id,
         &mut Some(dir_db),
         dir_hash_db,
+        dir_hashes,
         entries,
         root_path,
         &mut total_written,
@@ -828,10 +827,10 @@ fn write_commit_entries(
 #[allow(clippy::too_many_arguments)]
 fn r_create_dir_node(
     repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
     commit_id: MerkleHash,
     maybe_dir_db: &mut Option<MerkleNodeDB>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, Vec<EntryVNode>>,
     path: impl AsRef<Path>,
     total_written: &mut u64,
@@ -887,13 +886,8 @@ fn r_create_dir_node(
                     let dir_path = entry.node.maybe_path().unwrap();
                     // log::debug!("Processing dir node {:?}", dir_path);
                     let dir_node = if entries.contains_key(&dir_path) {
-                        let dir_node = compute_dir_node(
-                            repo,
-                            maybe_head_commit,
-                            commit_id,
-                            entries,
-                            &dir_path,
-                        )?;
+                        let dir_node =
+                            compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
 
                         // if let Some(vnode_db) = &mut maybe_vnode_db {
                         vnode_db.add_child(&dir_node)?;
@@ -918,10 +912,10 @@ fn r_create_dir_node(
 
                         r_create_dir_node(
                             repo,
-                            maybe_head_commit,
                             commit_id,
                             &mut child_db,
                             dir_hash_db,
+                            dir_hashes,
                             entries,
                             &dir_path,
                             total_written,
@@ -1035,9 +1029,9 @@ fn get_children(
 
 fn compute_dir_node(
     repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
     commit_id: MerkleHash,
     entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
     path: impl AsRef<Path>,
 ) -> Result<DirNode, OxenError> {
     let path = path.as_ref().to_path_buf();
@@ -1050,18 +1044,16 @@ fn compute_dir_node(
     let mut data_type_counts: HashMap<String, u64> = HashMap::new();
     let mut data_type_sizes: HashMap<String, u64> = HashMap::new();
 
+    if let Ok(Some(old_dir_node)) =
+        CommitMerkleTree::dir_without_children_with_dirhash(repo, &path, dir_hashes)
+    {
+        let old_dir_node = old_dir_node.dir().unwrap();
+        num_entries = old_dir_node.num_entries();
+        num_bytes = old_dir_node.num_bytes();
+        data_type_counts = old_dir_node.data_type_counts().clone();
+        data_type_sizes = old_dir_node.data_type_sizes().clone();
+    };
     // Collect the previous commit counts
-    if let Some(head_commit) = maybe_head_commit {
-        if let Ok(Some(old_dir_node)) =
-            CommitMerkleTree::dir_without_children(repo, head_commit, &path)
-        {
-            let old_dir_node = old_dir_node.dir().unwrap();
-            num_entries = old_dir_node.num_entries();
-            num_bytes = old_dir_node.num_bytes();
-            data_type_counts = old_dir_node.data_type_counts().clone();
-            data_type_sizes = old_dir_node.data_type_sizes().clone();
-        };
-    }
 
     let children = get_children(entries, &path)?;
     log::debug!(
