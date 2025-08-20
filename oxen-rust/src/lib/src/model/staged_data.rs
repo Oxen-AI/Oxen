@@ -289,23 +289,28 @@ impl StagedData {
     }
 
     fn staged_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
-        log::debug!("staged_dirs: {:?}", self.staged_dirs);
+        println!("\nstaged_dirs: {:?}", self.staged_dirs);
         let mut dirs: Vec<Vec<ColoredString>> = vec![];
         for (path, staged_dirs) in self.staged_dirs.paths.iter() {
+            println!("Path: {path:?}; \n staged dir: {staged_dirs:?}");
             let mut dir_row: Vec<ColoredString> = vec![];
             for staged_dir in staged_dirs.iter() {
+                println!("staged dir in the path {path:?}: {staged_dir:?}");
                 if *path == PathBuf::from("") {
                     continue;
                 }
 
                 match staged_dir.status {
                     StagedEntryStatus::Added => {
+                        println!("Push call: 1");
                         dir_row.push("  added: ".green());
                     }
                     StagedEntryStatus::Modified => {
+                               println!("Push call: 2");
                         dir_row.push("  modified: ".green());
                     }
                     StagedEntryStatus::Removed => {
+                               println!("Push call: 3");
                         dir_row.push("  removed: ".green());
                     }
                     StagedEntryStatus::Unmodified => {
@@ -325,12 +330,15 @@ impl StagedData {
                     _ => Some(format!(" with {} files\n", staged_dir.num_files_staged).normal()),
                 };
                 if let Some(num_files_str) = num_files_str {
+                    println!("Push call: 4: {num_files_str:?}");
                     dir_row.push(num_files_str);
                 } else {
+                           println!("Push call: 5");
                     dir_row.push("\n".normal());
                 }
 
                 if !dir_row.is_empty() {
+                           println!("ctual push dirs");
                     dirs.push(dir_row.clone());
                 }
             }
@@ -340,7 +348,7 @@ impl StagedData {
             return;
         }
 
-        log::debug!("num dirs staged: {}", dirs.len());
+        println!("num dirs staged: {}", dirs.len());
         outputs.push("Directories to be committed\n".normal());
         self.__collapse_outputs(&dirs, |dir| dir.to_vec(), outputs, opts);
         outputs.push("\n".normal());

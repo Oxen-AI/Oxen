@@ -110,7 +110,7 @@ async fn main() -> ExitCode {
                             return ExitCode::SUCCESS;
                         }
                         // Remote-mode specific commands
-                        "commit" | "checkout" | "restore" | "status" => {
+                        "commit" | "checkout" | "pull" | "restore" | "status" => {
                             match RemoteModeCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
@@ -121,7 +121,7 @@ async fn main() -> ExitCode {
                             return ExitCode::SUCCESS;
                         }
                         // Disallowed commands
-                        "embeddings" | "merge" | "push" | "pull" | "schemas" | "workspace" => {
+                        "embeddings" | "merge" | "push" | "workspace" => {
                             eprintln!("Command `oxen {command}` not implemented for remote-mode repositories");
                             return ExitCode::FAILURE;
                         }

@@ -50,17 +50,16 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
     Ok(relative_path)
 }
 
-pub async fn rm(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub async fn rm(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    p_rm(base_repo, workspace_repo, filepath).await?;
+    let err_files = p_rm(base_repo, workspace_repo, filepath).await?;
 
-    // Return the relative path of the file in the workspace
-    let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
-    Ok(relative_path)
+    // Return the Err files
+    Ok(err_files)
 }
 
 pub fn add_version_file(
@@ -568,7 +567,7 @@ async fn p_rm(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
     path: &Path,
-) -> Result<(), OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
 
     let head_commit = repositories::commits::head_commit(base_repo)?;
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
@@ -577,29 +576,34 @@ async fn p_rm(
     let maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, &head_commit, parent_path)?;
 
     let file_name = util::fs::path_relative_to_dir(path, &parent_path)?;
-    if let Some(file_node) = get_file_node(&maybe_dir_node, &file_name)? {
-
-        core::v_latest::rm::remove_file(workspace_repo, &relative_path, &file_node)?;
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    println!("file name: {file_name:?}");
+    if let Some(mut file_node) = get_file_node(&maybe_dir_node, &file_name)? {
+        file_node.set_name(&path.to_string_lossy()); 
+        println!("file node: {file_node:?}");
+        err_files.extend(core::v_latest::rm::remove_file_with_db_manager(workspace_repo, &relative_path, &file_node, &seen_dirs)?);
 
     } else if has_dir_node(&maybe_dir_node, file_name)? {
 
         match CommitMerkleTree::dir_with_children_recursive(base_repo, &head_commit, &relative_path)? {
             Some(dir_node) => {    
-                core::v_latest::rm::remove_dir_node(workspace_repo, &dir_node, path)?;
-
-            }
-            None => {
-            }
+                core::v_latest::rm::remove_dir_with_db_manager(workspace_repo, &dir_node, &relative_path, &seen_dirs)?;
+            },
+            None => {},
         };
-    } 
 
-    // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
-    // TODO: Handle these gracefully
+    } else {
+        // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
+        // Return as err_file
+        err_files.push(ErrorFileInfo {
+            hash: "".to_string(),
+            path: Some(path.to_path_buf()),
+            error: format!("Cannot call `oxen rm` on uncommitted files"),
+        });
+    }
 
-    /*Err(OxenError::basic_str(format!(
-        "Error: Cannot remove file `{path:?}` because it is not committed"
-    )))*/
-    Ok(())
+    Ok(err_files)
 }
 
 fn p_modify_file(

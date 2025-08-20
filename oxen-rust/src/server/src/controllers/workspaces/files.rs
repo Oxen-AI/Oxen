@@ -12,7 +12,7 @@ use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::{
-    ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
@@ -28,27 +28,18 @@ pub async fn get(
     query: web::Query<ImgResize>,
 ) -> Result<NamedFile, OxenHttpError> {
 
-    println!("S");
     let app_data = app_data(&req)?;
-    println!("sdf");
     let namespace = path_param(&req, "namespace")?;
-    println!("ddddd");
     let repo_name = path_param(&req, "repo_name")?;
-    println!("asdf");
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    println!("oiuy");
     let workspace_id = path_param(&req, "workspace_id")?;
-    println!("JEJ");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
-    println!("iii");
     let path = path_param(&req, "path")?;
 
     // The path in a workspace context is just the working path of the workspace repo
     let path = workspace.workspace_repo.path.join(path);
-
-    println!("got workspace file path {:?}", path);
 
     // TODO: This probably isn't the best place for the resize logic
     let img_resize = query.into_inner();
@@ -165,19 +156,33 @@ pub async fn rm_files(
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
 
-    let mut ret_files = vec![];
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
 
-    for path in paths_to_remove {
+    for path in &paths_to_remove {
         println!("rm_files path {:?}", path);
-        let path = repositories::workspaces::files::rm(&workspace, &path).await?;
+        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
         println!("rm ✅ success! staged file {:?} as removed", path);
-        ret_files.push(path);
     }
 
-    Ok(HttpResponse::Ok().json(FilePathsResponse {
-        status: StatusMessage::resource_deleted(),
-        paths: ret_files,
-    }))
+    println!("err_files: {err_files:?}");
+
+    if err_files.is_empty() {
+        Ok(HttpResponse::Ok().json(FilePathsResponse {
+            status: StatusMessage::resource_deleted(),
+            paths: paths_to_remove,
+        }))
+    } else {
+        let error_paths: Vec<PathBuf> = err_files
+            .into_iter()
+            .filter_map(|err_info| err_info.path)
+            .collect();
+
+        // Return a partial content response with all the paths
+        Ok(HttpResponse::PartialContent().json(FilePathsResponse {
+            status: StatusMessage::resource_not_found(),
+            paths: error_paths,
+        }))
+    }
 }
 
 // Remove files from staging

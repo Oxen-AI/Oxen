@@ -3,11 +3,10 @@ use crate::{api, repositories, util};
 use std::path::PathBuf;
 use crate::repositories::LocalRepository;
 use crate::repositories::OxenError;
+use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 
 use glob_match::glob_match;
 
-// TODO: Skip download on up to date files using metadata from tree
-// This is particularly necessary for the glob paths -- should get the file nodes themselves, and check metadata
 pub async fn restore(repo: &LocalRepository, paths: &Vec<PathBuf>, revision: &String) -> Result<(), OxenError> {
    // println!("path: {path:?}");
     let mut paths_to_download: Vec<(PathBuf, PathBuf)> = vec![];
@@ -19,44 +18,47 @@ pub async fn restore(repo: &LocalRepository, paths: &Vec<PathBuf>, revision: &St
     for path in paths.iter() {
 
         let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
-        println!("rel path: {relative_path:?}");
         let full_path = repo_path.join(&relative_path);
-        println!("full path: {full_path:?}");
 
         // If glob path, check for paths against the tree
         if util::fs::is_glob_path(&relative_path) {
-            println!("s");
             let Some(ref head_commit) = head_commit else {
                 // TODO: Better error message?
                 return Err(OxenError::basic_str("Error: Cannot restore with glob paths in remote-mode repo without HEAD commit"));
             };
 
             let glob_pattern = full_path.file_name().unwrap().to_string_lossy().to_string();
-            println!("glob_pattern: {glob_pattern:?}");
             let parent_path = relative_path.parent().unwrap_or(&root_path);
-            println!("parent_path: {parent_path:?}");
             
             // If dir not found in tree, skip glob path
-            println!("asdf");
             let Some(dir_node) = repositories::tree::get_dir_with_children(&repo, &head_commit, &parent_path)? else {
                 continue;
             };
         
-            let dir_paths = dir_node.list_paths()?;
-            println!("paths: {dir_paths:?}");
-            println!("dir_paths: {dir_paths:?}");
-            for child_path in dir_paths {
-                if child_path == parent_path {
-                    continue;
-                }
-                let child_str = child_path.to_string_lossy().to_string();
-                println!("child: {child_str:?}");
+            let dir_children = dir_node.get_all_children()?;
+            for child in dir_children {
 
+                if let EMerkleTreeNode::File(file_node) = &child.node {
+                    let child_str = file_node.name();
+                    let child_path = parent_path.join(child_str);
+                    if glob_match(&glob_pattern, &child_str) {
+                        // Skip files that aren't modified
+                        if !util::fs::is_modified_from_node(&child_path, &file_node)? {
+                            continue;
+                        }
 
-                if glob_match(&glob_pattern, &child_str) {
-                    let full_dir_path = repo_path.join(parent_path).join(&child_path);
-                    println!("full dir path: {full_dir_path:?}");
-                    paths_to_download.push((full_dir_path, parent_path.join(&child_path)));
+                        let full_dir_path = repo_path.join(&child_path);
+                        paths_to_download.push((full_dir_path, child_path));
+                    }
+                } else if let EMerkleTreeNode::Directory(dir_node) = &child.node {
+                    let child_str = dir_node.name();
+                    let child_path = parent_path.join(child_str);
+                    if glob_match(&glob_pattern, &child_str) {
+
+                        // TODO: Method to detect if dirs are modified from the tree
+                        let full_dir_path = repo_path.join(&child_path);
+                        paths_to_download.push((full_dir_path, child_path));
+                    }
                 }
             } 
 
@@ -110,19 +112,11 @@ mod tests {
                 let full_path = cloned_repo.path.join(&readme_path);
                 assert!(full_path.exists());
 
-                /*let contents = std::fs::read_to_string(&full_path)?;
+                let contents = std::fs::read_to_string(&full_path)?;
                 assert_eq!(
                     contents,
-                    "
-                    # Welcome to the party
-
-                    If you are seeing this, you are deep in the test framework, love to see it, keep testing.
-
-                    Yes I am biased, dog is label 0, cat is label 1, not alphabetical. Interpret that as you will.
-
-                    🐂 💨
-                    "
-                );*/
+                    "Hello World"
+                );
 
                 Ok(())
             }).await?;
@@ -154,19 +148,11 @@ mod tests {
 
                 assert!(readme_path.exists());
 
-                /*let contents = std::fs::read_to_string(&full_path)?;
+                let contents = std::fs::read_to_string(&full_path)?;
                 assert_eq!(
                     contents,
-                    "
-                    # Welcome to the party
-
-                    If you are seeing this, you are deep in the test framework, love to see it, keep testing.
-
-                    Yes I am biased, dog is label 0, cat is label 1, not alphabetical. Interpret that as you will.
-
-                    🐂 💨
-                    "
-                );*/
+                    "Hello World"
+                );
 
                 Ok(())
             }).await?;
@@ -190,7 +176,6 @@ mod tests {
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
                 status.print();
-                
 
                 let file_path = PathBuf::from("annotations").join("train").join("bounding_box.csv");
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
