@@ -12,7 +12,8 @@ use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::{
-    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
+    StatusMessageDescription,
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
@@ -27,7 +28,6 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
 ) -> Result<NamedFile, OxenHttpError> {
-
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -107,7 +107,11 @@ pub async fn add_version_files(
     };
 
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-    println!("Calling add version files from the core workspace logic with {} files:\n {:?}", files_with_hash.len(), files_with_hash);
+    println!(
+        "Calling add version files from the core workspace logic with {} files:\n {:?}",
+        files_with_hash.len(),
+        files_with_hash
+    );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,

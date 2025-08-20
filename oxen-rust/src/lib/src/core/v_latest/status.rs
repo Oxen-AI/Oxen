@@ -647,7 +647,15 @@ fn find_local_changes(
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     progress: &ProgressBar,
     total_entries: &mut usize,
-) -> Result<(UntrackedData, UnsyncedData, HashSet<PathBuf>, HashSet<PathBuf>), OxenError> {
+) -> Result<
+    (
+        UntrackedData,
+        UnsyncedData,
+        HashSet<PathBuf>,
+        HashSet<PathBuf>,
+    ),
+    OxenError,
+> {
     let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
 
@@ -659,7 +667,12 @@ fn find_local_changes(
 
     if let Some(ignore) = &opts.ignore {
         if ignore.contains(search_node_path) || ignore.contains(&full_path) {
-            return Ok((UntrackedData::new(), UnsyncedData::new(), HashSet::new(), HashSet::new()));
+            return Ok((
+                UntrackedData::new(),
+                UnsyncedData::new(),
+                HashSet::new(),
+                HashSet::new(),
+            ));
         }
     }
 
@@ -723,7 +736,6 @@ fn find_local_changes(
             unsynced.merge(sub_unsynced);
             modified.extend(sub_modified);
             removed.extend(sub_removed);
-
         } else if in_staged_data(&relative_path, staged_data)? {
             log::debug!("find_changes entry is staged {:?}", path);
             // check this after handling directories, because we still need to recurse into staged directories
@@ -751,7 +763,7 @@ fn find_local_changes(
                     found_file = true;
                     if util::fs::is_modified_from_node(&path, file_node)? {
                         modified.insert(relative_path.clone());
-                    } 
+                    }
                 }
             }
             log::debug!("find_changes found_file {:?} {:?}", found_file, path);
@@ -808,14 +820,22 @@ fn find_local_changes(
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let file_path = full_path.join(file_node.name());
 
-                    if !file_path.exists() && !staged_data.staged_files.contains_key(&search_node_path.join(file_node.name())) {
+                    if !file_path.exists()
+                        && !staged_data
+                            .staged_files
+                            .contains_key(&search_node_path.join(file_node.name()))
+                    {
                         unsynced.add_file(search_node_path.join(file_node.name()));
                     }
-
                 } else if let EMerkleTreeNode::Directory(dir) = &child.node {
                     let dir_path = full_path.join(dir.name());
                     let relative_dir_path = search_node_path.join(dir.name());
-                    if !dir_path.exists() && !staged_data.staged_dirs.paths.contains_key(&relative_dir_path){
+                    if !dir_path.exists()
+                        && !staged_data
+                            .staged_dirs
+                            .paths
+                            .contains_key(&relative_dir_path)
+                    {
                         // Only call this for non-existant dirs, because existant dirs already trigger a find_changes call
                         let mut count: usize = 0;
                         count_removed_entries(
@@ -987,7 +1007,7 @@ impl UntrackedData {
     }
 }
 
-// 
+//
 #[derive(Debug)]
 struct UnsyncedData {
     dirs: HashMap<PathBuf, usize>,

@@ -109,9 +109,13 @@ impl RunCmd for WorkspaceRmCmd {
             )
             .await?;
         } else {
-            api::client::workspaces::files::rm_files(&repository, &remote_repo, workspace_identifier, paths)
-                .await?;
-            
+            api::client::workspaces::files::rm_files(
+                &repository,
+                &remote_repo,
+                workspace_identifier,
+                paths,
+            )
+            .await?;
         }
 
         Ok(())

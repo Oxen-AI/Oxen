@@ -2,13 +2,15 @@ use crate::api::client;
 use crate::config::UserConfig;
 use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
 use crate::error::OxenError;
-use crate::model::{EntryDataType, MetadataEntry, NewCommitBody, RemoteRepository, LocalRepository};
+use crate::model::{
+    EntryDataType, LocalRepository, MetadataEntry, NewCommitBody, RemoteRepository,
+};
 use crate::opts::UploadOpts;
 use crate::repositories;
+use crate::util::hasher;
 use crate::view::entries::{EMetadataEntry, PaginatedMetadataEntriesResponse};
 use crate::{api, constants};
 use crate::{current_function, util};
-use crate::util::hasher;
 
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -178,17 +180,15 @@ pub async fn download_entry(
     }
 }
 
-
 /// Get entry status in batch and download them to a specific local repo
 pub async fn download_entries_to_repo(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    paths_to_download: &Vec<(PathBuf, PathBuf)>,
+    paths_to_download: &[(PathBuf, PathBuf)],
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let revision = revision.as_ref();
     for (local_path, remote_path) in paths_to_download.iter() {
-
         // TODO: Refactor to get the entries for all paths in one API call
         let entry = get_entry(remote_repo, remote_path, &revision).await?;
 
@@ -200,7 +200,7 @@ pub async fn download_entries_to_repo(
                 ))
             }
             None => {
-                return Err(OxenError::path_does_not_exist(&remote_path));
+                return Err(OxenError::path_does_not_exist(remote_path));
             }
         };
 
@@ -214,22 +214,32 @@ pub async fn download_entries_to_repo(
             }
 
             if !parent.exists() && parent != Path::new("") {
-                util::fs::create_dir_all(&parent)?;
+                util::fs::create_dir_all(parent)?;
             }
         }
 
         if entry.is_dir {
-            repositories::download::download_dir_to_repo(local_repo, remote_repo, &entry, &remote_path, &local_path).await?
+            repositories::download::download_dir_to_repo(
+                local_repo,
+                remote_repo,
+                &entry,
+                &remote_path,
+                &local_path,
+            )
+            .await?
         } else {
             // Download file contents to working directory
             download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?;
 
             // Save contents to version store
             let version_store = local_repo.version_store()?;
-            let file = std::fs::read(&local_path)
-                .map_err(|e| OxenError::basic_str(format!("Failed to read file '{:?}': {e}", remote_path)))?;
+            let file = std::fs::read(local_path).map_err(|e| {
+                OxenError::basic_str(format!("Failed to read file '{:?}': {e}", remote_path))
+            })?;
             let hash = hasher::hash_buffer(&file);
-            version_store.store_version_from_path(&hash, &local_path).await?;
+            version_store
+                .store_version_from_path(&hash, local_path)
+                .await?;
         }
     }
 
@@ -263,7 +273,6 @@ pub async fn download_small_entry(
     dest: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
-
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/file/{}/{}", revision, path);

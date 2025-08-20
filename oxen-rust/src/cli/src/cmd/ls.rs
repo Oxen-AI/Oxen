@@ -1,22 +1,21 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, StagedData, StagedEntry, StagedEntryStatus};
-use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use liboxen::{repositories, api};
+use liboxen::model::staged_data::StagedDataOpts;
+use liboxen::model::{LocalRepository, StagedData, StagedEntry, StagedEntryStatus};
+use liboxen::{api, repositories};
 
-use std::path::PathBuf;
-use std::collections::HashMap;
 use chrono::{Local, TimeZone};
 use colored::{ColoredString, Colorize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "ls";
 pub struct LsCmd;
 
-
-// TODO: Support options besides the base 'ls' functionality -- file stats, etc; 
+// TODO: Support options besides the base 'ls' functionality -- file stats, etc;
 #[async_trait]
 impl RunCmd for LsCmd {
     fn name(&self) -> &str {
@@ -45,9 +44,8 @@ impl RunCmd for LsCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
-        
         let repo = LocalRepository::from_current_dir()?;
-        
+
         // Early exit for non-remote-mode repositories
         let Some(ref workspace_identifier) = repo.workspace_name else {
             return Ok(());
@@ -58,9 +56,7 @@ impl RunCmd for LsCmd {
             .expect("Must supply commit");
 
         let root_dir = "".to_string();
-        let directory = args
-            .get_one::<String>("directory")
-            .unwrap_or(&root_dir);
+        let directory = args.get_one::<String>("directory").unwrap_or(&root_dir);
 
         let commit = if commit_id == "HEAD" {
             repositories::commits::head_commit(&repo)?
@@ -86,7 +82,8 @@ impl RunCmd for LsCmd {
             directory.clone(),
             page_num,
             page_size,
-        ).await?;
+        )
+        .await?;
 
         let mut status = StagedData::empty();
         status.staged_dirs = remote_status.added_dirs;
@@ -117,18 +114,21 @@ impl RunCmd for LsCmd {
             .chain(staged_removals)
             .collect();
 
-        
         // Get directory children from latest commit
-        let Some(dir_node) = repositories::tree::get_dir_with_children(&repo, &commit, &directory)? else {
-            return Ok(())
+        let Some(dir_node) = repositories::tree::get_dir_with_children(&repo, &commit, &directory)?
+        else {
+            return Ok(());
         };
         log::debug!("dir node: {dir_node:?}");
         let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
-        
+
         // Print data
         let remote_mode_message = "\nRemote-Mode Repository".green().bold();
-        let remote_mode_sub_message = "This is a remote-mode repository. File contents may not be present for all files\n".to_string().normal();
-        
+        let remote_mode_sub_message =
+            "This is a remote-mode repository. File contents may not be present for all files\n"
+                .to_string()
+                .normal();
+
         println!("{}", remote_mode_message);
         println!("{}", remote_mode_sub_message);
 
@@ -139,9 +139,7 @@ impl RunCmd for LsCmd {
     }
 }
 
-
 impl LsCmd {
-   
     // Helper function to format a single line of output
     fn format_line(
         node_type: ColoredString,
@@ -176,8 +174,12 @@ impl LsCmd {
         )
     }
 
-    fn ls_files_and_folders(_directory: &PathBuf, status: StagedData, files_and_folders: &Vec<MerkleTreeNode>, opts: &StagedDataOpts) {
-
+    fn ls_files_and_folders(
+        _directory: &Path,
+        status: StagedData,
+        files_and_folders: &Vec<MerkleTreeNode>,
+        opts: &StagedDataOpts,
+    ) {
         let mut files: Vec<(String, StagedEntryStatus)> = vec![];
         let mut dirs: Vec<(String, StagedEntryStatus)> = vec![];
 
@@ -185,10 +187,16 @@ impl LsCmd {
         for node in files_and_folders {
             if let EMerkleTreeNode::Directory(dir_node) = &node.node {
                 let dir_name = dir_node.name();
-                let datetime = Local.timestamp_opt(dir_node.last_modified_seconds(), dir_node.last_modified_nanoseconds()).unwrap();
+                let datetime = Local
+                    .timestamp_opt(
+                        dir_node.last_modified_seconds(),
+                        dir_node.last_modified_nanoseconds(),
+                    )
+                    .unwrap();
                 let formatted_date = datetime.format(" %m/%d/%Y %I:%M %p").to_string();
-                
-                let dir_name_with_count = format!(" {} ({} items)", dir_name, dir_node.num_entries());
+
+                let dir_name_with_count =
+                    format!(" {} ({} items)", dir_name, dir_node.num_entries());
                 let dir_info = Self::format_line(
                     " [Dir] ".to_string().white().bold(),
                     dir_name_with_count.to_string().white().bold(),
@@ -197,16 +205,25 @@ impl LsCmd {
                 );
 
                 if status.staged_dirs.contains_key(&PathBuf::from(dir_name)) {
-                    let staged_dirs = status.staged_dirs.paths.get(&PathBuf::from(dir_name)).unwrap();
+                    let staged_dirs = status
+                        .staged_dirs
+                        .paths
+                        .get(&PathBuf::from(dir_name))
+                        .unwrap();
                     if let Some(staged_dir) = staged_dirs.iter().next() {
-                         dirs.push((dir_info, staged_dir.status.clone()));
+                        dirs.push((dir_info, staged_dir.status.clone()));
                     }
                 } else {
                     dirs.push((dir_info, StagedEntryStatus::Unmodified));
                 }
             } else if let EMerkleTreeNode::File(file_node) = &node.node {
                 let file_name = file_node.name();
-                let datetime = Local.timestamp_opt(file_node.last_modified_seconds(), file_node.last_modified_nanoseconds()).unwrap();
+                let datetime = Local
+                    .timestamp_opt(
+                        file_node.last_modified_seconds(),
+                        file_node.last_modified_nanoseconds(),
+                    )
+                    .unwrap();
                 let formatted_date = datetime.format("%m/%d/%Y %I:%M %p").to_string();
                 let size_bytes = file_node.num_bytes();
 
@@ -250,28 +267,16 @@ impl LsCmd {
             &dirs,
             |(entry, status)| match status {
                 StagedEntryStatus::Removed => {
-                    vec![
-                        "  -  ".red(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["  -  ".red(), format!("{}\n", entry).into()]
                 }
                 StagedEntryStatus::Modified => {
-                    vec![
-                        "  Δ   ".yellow(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["  Δ   ".yellow(), format!("{}\n", entry).into()]
                 }
                 StagedEntryStatus::Added => {
-                    vec![
-                        "  +  ".green(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["  +  ".green(), format!("{}\n", entry).into()]
                 }
                 StagedEntryStatus::Unmodified => {
-                    vec![
-                        "     ".into(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["     ".into(), format!("{}\n", entry).into()]
                 }
             },
             &mut outputs,
@@ -282,41 +287,28 @@ impl LsCmd {
             &files,
             |(entry, status)| match status {
                 StagedEntryStatus::Removed => {
-                    vec![
-                        "  -  ".red(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["  -  ".red(), format!("{}\n", entry).into()]
                 }
                 StagedEntryStatus::Modified => {
-                    vec![
-                        "  Δ   ".yellow(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["  Δ   ".yellow(), format!("{}\n", entry).into()]
                 }
                 StagedEntryStatus::Added => {
-                    vec![
-                        "  +   ".green(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["  +   ".green(), format!("{}\n", entry).into()]
                 }
                 StagedEntryStatus::Unmodified => {
-                    vec![
-                        "      ".into(),
-                        format!("{}\n", entry).into()
-                    ]
+                    vec!["      ".into(), format!("{}\n", entry).into()]
                 }
             },
             &mut outputs,
             opts,
         );
-        
+
         for output in outputs {
             print!("{output}");
         }
 
         println!("\n");
     }
-    
 
     fn collapse_outputs<T, F>(
         inputs: &[T],
@@ -353,8 +345,6 @@ impl LsCmd {
         }
     }
 }
-
-
 
 /*
 

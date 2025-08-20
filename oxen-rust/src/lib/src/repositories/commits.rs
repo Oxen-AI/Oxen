@@ -172,7 +172,6 @@ pub fn list_unsynced_from(
         MinOxenVersion::V0_10_0 => panic!("list_unsynced_from not supported in v0.10.0"),
         _ => core::v_latest::commits::list_unsynced_from(repo, revision),
     }
-
 }
 // Source
 pub fn get_commit_or_head<S: AsRef<str> + Clone>(

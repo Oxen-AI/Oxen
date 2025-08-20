@@ -79,8 +79,7 @@ pub async fn get(
 
         println!(
             "get_file_for_commit_id looking for {:?} -> {:?}",
-            path,
-            version_path
+            path, version_path
         );
 
         let file = NamedFile::open(version_path)?;
@@ -104,7 +103,7 @@ pub async fn get(
             header::HeaderValue::from_str(&content_length).unwrap(),
         );
 
-                println!("response: {response:?}");
+        println!("response: {response:?}");
 
         response
     };

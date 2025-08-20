@@ -175,12 +175,13 @@ pub async fn create_with_new_branch(
         }
     };
 
-    // If the branch doesn't exist, create it 
-    let branch = if let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? {
-        branch
-    } else {
-        repositories::branches::create_from_head(&repo, &data.branch_name)?
-    };
+    // If the branch doesn't exist, create it
+    let branch =
+        if let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? {
+            branch
+        } else {
+            repositories::branches::create_from_head(&repo, &data.branch_name)?
+        };
 
     let workspace_id = &data.workspace_id;
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();

@@ -218,7 +218,7 @@ impl StagedDBManager {
             status: StagedEntryStatus::Added,
             node: MerkleTreeNode::default_dir_from_path(directory_path),
         };
-   
+
         let mut buf = Vec::new();
         dir_entry
             .serialize(&mut Serializer::new(&mut buf))
@@ -231,7 +231,7 @@ impl StagedDBManager {
         println!("Add directory staged: \n{dir_entry:?}");
         Ok(())
     }
-  
+
     /// Read a file node from the staged db
     pub fn read_from_staged_db(
         &self,

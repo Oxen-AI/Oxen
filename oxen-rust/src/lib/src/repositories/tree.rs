@@ -1447,7 +1447,6 @@ pub fn print_tree_path(
     Ok(())
 }
 
-
 pub fn print_tree_depth(
     repo: &LocalRepository,
     commit: &Commit,

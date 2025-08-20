@@ -30,8 +30,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
-use crate::util;
 use crate::repositories;
+use crate::util;
 
 // Multipart upload strategy, based off of AWS S3 Multipart Upload and huggingface hf_transfer
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
@@ -500,16 +500,17 @@ pub async fn workspace_multipart_batch_upload_versions(
         .map(|f| (f.path.clone(), f.hash.clone()))
         .collect();
 
-    let head_commit_maybe = repositories::commits::head_commit_maybe(&local_repo)?;
+    let head_commit_maybe = repositories::commits::head_commit_maybe(local_repo)?;
     let repo_path = &local_repo.path;
     let mut form = reqwest::multipart::Form::new();
 
     for path in paths {
-
-        let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        let relative_path = util::fs::path_relative_to_dir(&path, repo_path)?;
         // Skip adding files already present in tree
         if let Some(ref head_commit) = head_commit_maybe {
-            if let Some(file_node) = repositories::tree::get_file_by_path(&local_repo, head_commit, &relative_path)? {
+            if let Some(file_node) =
+                repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
+            {
                 if !util::fs::is_modified_from_node(&path, &file_node)? {
                     continue;
                 }
@@ -539,11 +540,20 @@ pub async fn workspace_multipart_batch_upload_versions(
             .map_err(|e| OxenError::basic_str(format!("Failed to read file '{:?}': {e}", path)))?;
 
         let hash = hasher::hash_buffer(&file);
+        let file_name = PathBuf::from(path.file_name().unwrap());
 
-        files_to_add.push(FileWithHash {
-            hash: hash.clone(),
-            path: relative_path,
-        });
+        // Workspaces expect just the file name, while remote-mode repos expect the relative path
+        if local_repo.is_remote_mode() {
+            files_to_add.push(FileWithHash {
+                hash: hash.clone(),
+                path: relative_path,
+            });
+        } else {
+            files_to_add.push(FileWithHash {
+                hash: hash.clone(),
+                path: file_name,
+            });
+        }
 
         // gzip the file
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -569,7 +579,7 @@ pub async fn workspace_multipart_batch_upload_versions(
         form = form.part("file[]", file_part);
     }
 
-   // println!("files_to_add: {files_to_add:?}");
+    // println!("files_to_add: {files_to_add:?}");
 
     let uri = ("/versions").to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -589,14 +599,15 @@ pub async fn workspace_multipart_batch_upload_versions(
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
-    log::debug!("Exponential backoff got called with base_wait_time {base_wait_time}. n {n}, and max {max}");
+    log::debug!(
+        "Exponential backoff got called with base_wait_time {base_wait_time}. n {n}, and max {max}"
+    );
     (base_wait_time + n.pow(2) + jitter()).min(max)
 }
 
 fn jitter() -> usize {
     thread_rng().gen_range(0..=500)
 }
-
 
 #[cfg(test)]
 mod tests {
