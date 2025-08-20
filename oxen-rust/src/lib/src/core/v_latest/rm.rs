@@ -14,9 +14,9 @@ use indicatif::ProgressStyle;
 use rocksdb::IteratorMode;
 use tokio::time::Duration;
 
-use crate::core::v_latest::add::CumulativeStats;
-use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::core::staged::with_staged_db_manager;
+use crate::core::v_latest::add::add_file_node_and_parent_dir;
+use crate::core::v_latest::add::CumulativeStats;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
@@ -25,9 +25,9 @@ use crate::constants::STAGED_DIR;
 use crate::model::Commit;
 use crate::model::StagedEntryStatus;
 
+use parking_lot::Mutex;
 use rmp_serde::Serializer;
 use serde::Serialize;
-use parking_lot::Mutex;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -295,22 +295,15 @@ pub fn remove_file_with_db_manager(
     file_node: &FileNode,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
- 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
     let _ = with_staged_db_manager(repo, |staged_db_manager| {
-        let status = StagedEntryStatus::Removed; 
-        match add_file_node_and_parent_dir(
-            file_node,
-            status,
-            &path,
-            staged_db_manager,
-            &seen_dirs,
-        ) {
+        let status = StagedEntryStatus::Removed;
+        match add_file_node_and_parent_dir(file_node, status, path, staged_db_manager, seen_dirs) {
             Ok(_) => {
                 println!("Success!");
                 Ok(())
-            },
+            }
             Err(e) => {
                 println!("Fail");
                 err_files.push(ErrorFileInfo {
@@ -323,7 +316,6 @@ pub fn remove_file_with_db_manager(
         }
     });
 
-
     Ok(err_files)
 }
 
@@ -331,20 +323,17 @@ pub fn remove_file_with_db_manager(
 pub fn remove_dir_with_db_manager(
     repo: &LocalRepository,
     root_dir: &MerkleTreeNode,
-    root_path: &PathBuf,
+    root_path: &Path,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-
     let empty_path = PathBuf::new();
     let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
     // let err_files: Vec<ErrorFileInfo> = vec![];
 
     let result = with_staged_db_manager(repo, |staged_db_manager| {
-
         // Walk the tree, collecting every node under the dir
         let nodes = root_dir.list_files_and_dirs()?;
         let parent_path = root_path.parent().unwrap_or(&empty_path);
-        //println!("nodes: {nodes:?}");
 
         for (path, node) in nodes {
             let path = parent_path.join(path);
@@ -353,20 +342,20 @@ pub fn remove_dir_with_db_manager(
                     let mut file_node = file_node.clone();
                     file_node.set_name(&path.to_string_lossy());
                     MerkleTreeNode {
-                        hash: node.hash.clone(),
+                        hash: node.hash,
                         node: EMerkleTreeNode::File(file_node.clone()),
-                        parent_id: node.parent_id.clone(),
+                        parent_id: node.parent_id,
                         children: node.children.clone(),
                     }
                 }
-   
+
                 EMerkleTreeNode::Directory(ref dir_node) => {
                     let mut dir_node = dir_node.clone();
-                    dir_node.set_name(&path.to_string_lossy());
+                    dir_node.set_name(path.to_string_lossy());
                     MerkleTreeNode {
-                        hash: node.hash.clone(),
+                        hash: node.hash,
                         node: EMerkleTreeNode::Directory(dir_node.clone()),
-                        parent_id: node.parent_id.clone(),
+                        parent_id: node.parent_id,
                         children: node.children.clone(),
                     }
                 }
@@ -377,7 +366,7 @@ pub fn remove_dir_with_db_manager(
 
             let staged_node = StagedMerkleTreeNode {
                 status: StagedEntryStatus::Removed,
-                node: corrected_node, 
+                node: corrected_node,
             };
 
             staged_nodes.insert(path, staged_node);
@@ -385,14 +374,13 @@ pub fn remove_dir_with_db_manager(
 
         log::debug!("staged_nodes: {}", staged_nodes.len());
 
-
-        // Stage the root dir's parents 
+        // Stage the root dir's parents
         let mut parent_path = root_path.to_path_buf();
         while let Some(parent) = parent_path.parent() {
             parent_path = parent.to_path_buf();
 
-            match staged_db_manager.add_directory(&parent_path, &seen_dirs) {
-                Ok(_) => {},
+            match staged_db_manager.add_directory(&parent_path, seen_dirs) {
+                Ok(_) => {}
                 Err(e) => {
                     println!("Error adding parent dirs: {:?}", e);
                     return Err(e);
@@ -415,7 +403,6 @@ pub fn remove_dir_with_db_manager(
                 Err(e)
             }
         }
-                
     });
 
     result
@@ -428,7 +415,6 @@ fn process_remove_file_and_parents(
     staged_db: &DBWithThreadMode<MultiThreaded>,
     file_node: &FileNode,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-
     let repo_path = repo.path.clone();
     let mut update_node = file_node.clone();
     update_node.set_name(path.to_string_lossy().to_string().as_str());

@@ -6,8 +6,8 @@ use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, NewCommitBody};
 use liboxen::repositories;
 
-use crate::helpers::check_repo_migration_needed;
 use crate::cmd::RunCmd;
+use crate::helpers::check_repo_migration_needed;
 
 pub const NAME: &str = "commit";
 pub struct RemoteModeCommitCmd;

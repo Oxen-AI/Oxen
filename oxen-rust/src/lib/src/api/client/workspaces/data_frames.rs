@@ -211,7 +211,6 @@ pub async fn restore_files(
     Ok(())
 }
 
-
 pub async fn diff(
     remote_repo: &RemoteRepository,
     workspace_id: &str,

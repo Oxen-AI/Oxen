@@ -21,10 +21,10 @@ use crate::core::v_latest::add::{
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
 use crate::error::OxenError;
-use crate::model::workspace::Workspace;
-use crate::model::LocalRepository;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::workspace::Workspace;
+use crate::model::LocalRepository;
 use crate::model::{Commit, StagedEntryStatus};
 use crate::repositories;
 use crate::util;
@@ -50,7 +50,10 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
     Ok(relative_path)
 }
 
-pub async fn rm(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Vec<ErrorFileInfo>, OxenError> {
+pub async fn rm(
+    workspace: &Workspace,
+    filepath: impl AsRef<Path>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
@@ -105,7 +108,6 @@ pub fn add_version_files(
             let version_path = version_store.get_version_path(&item.hash)?;
             let target_path = PathBuf::from(directory).join(&item.path);
 
-            
             match get_status_and_add_file(
                 workspace_repo,
                 &version_path,
@@ -116,8 +118,7 @@ pub fn add_version_files(
                 Ok(_) => {
                     // Add parents to staged db
                     // let parent_dirs = item.parents;
-
-                },
+                }
                 Err(e) => {
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
@@ -568,38 +569,43 @@ async fn p_rm(
     workspace_repo: &LocalRepository,
     path: &Path,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-
     let head_commit = repositories::commits::head_commit(base_repo)?;
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
 
     let parent_path = path.parent().unwrap_or(Path::new(""));
     let maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, &head_commit, parent_path)?;
 
-    let file_name = util::fs::path_relative_to_dir(path, &parent_path)?;
+    let file_name = util::fs::path_relative_to_dir(path, parent_path)?;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     println!("file name: {file_name:?}");
     if let Some(mut file_node) = get_file_node(&maybe_dir_node, &file_name)? {
-        file_node.set_name(&path.to_string_lossy()); 
+        file_node.set_name(&path.to_string_lossy());
         println!("file node: {file_node:?}");
-        err_files.extend(core::v_latest::rm::remove_file_with_db_manager(workspace_repo, &relative_path, &file_node, &seen_dirs)?);
-
+        err_files.extend(core::v_latest::rm::remove_file_with_db_manager(
+            workspace_repo,
+            &relative_path,
+            &file_node,
+            &seen_dirs,
+        )?);
     } else if has_dir_node(&maybe_dir_node, file_name)? {
-
-        match CommitMerkleTree::dir_with_children_recursive(base_repo, &head_commit, &relative_path)? {
-            Some(dir_node) => {    
-                core::v_latest::rm::remove_dir_with_db_manager(workspace_repo, &dir_node, &relative_path, &seen_dirs)?;
-            },
-            None => {},
+        if let Some(dir_node) =
+            CommitMerkleTree::dir_with_children_recursive(base_repo, &head_commit, &relative_path)?
+        {
+            core::v_latest::rm::remove_dir_with_db_manager(
+                workspace_repo,
+                &dir_node,
+                &relative_path,
+                &seen_dirs,
+            )?;
         };
-
     } else {
         // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
         // Return as err_file
         err_files.push(ErrorFileInfo {
             hash: "".to_string(),
             path: Some(path.to_path_buf()),
-            error: format!("Cannot call `oxen rm` on uncommitted files"),
+            error: "Cannot call `oxen rm` on uncommitted files".to_string(),
         });
     }
 
@@ -633,7 +639,6 @@ fn p_modify_file(
     }
 }
 
-
 fn has_dir_node(
     dir_node: &Option<MerkleTreeNode>,
     path: impl AsRef<Path>,
@@ -652,4 +657,3 @@ fn has_dir_node(
         Ok(false)
     }
 }
-

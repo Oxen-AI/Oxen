@@ -3,9 +3,9 @@ use async_trait::async_trait;
 use clap::arg;
 use clap::{Arg, Command};
 
+use liboxen::api;
 use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_HOST, DEFAULT_SCHEME};
 use liboxen::error::OxenError;
-use liboxen::api;
 use std::path::PathBuf;
 
 use liboxen::repositories;

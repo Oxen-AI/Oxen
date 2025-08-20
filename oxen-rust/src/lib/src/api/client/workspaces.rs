@@ -145,7 +145,7 @@ pub async fn create_with_path(
     }
 }
 
-// Creates a new branch on the remote and instantiates a workspace 
+// Creates a new branch on the remote and instantiates a workspace
 pub async fn create_with_new_branch(
     remote_repo: &RemoteRepository,
     branch_name: impl AsRef<str>,

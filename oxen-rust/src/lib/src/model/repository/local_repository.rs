@@ -10,9 +10,9 @@ use crate::util;
 use crate::view::RepositoryView;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
-use std::collections::HashSet;
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -421,7 +421,7 @@ impl LocalRepository {
 
     pub fn num_workspaces(&self) -> usize {
         if let Some(workspaces) = &self.workspaces {
-           workspaces.len() 
+            workspaces.len()
         } else {
             0
         }

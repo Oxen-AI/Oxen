@@ -481,12 +481,7 @@ impl CommitMerkleTree {
 
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
         let start_path = PathBuf::new();
-        CommitMerkleTree::load_present_children(
-            repo,
-            &mut node,
-            &start_path,
-            paths,
-        )?;
+        CommitMerkleTree::load_present_children(repo, &mut node, &start_path, paths)?;
         Ok(Some(node))
     }
 
@@ -1224,7 +1219,6 @@ impl CommitMerkleTree {
         Ok(())
     }
 
-    
     fn load_present_children(
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
@@ -1239,8 +1233,8 @@ impl CommitMerkleTree {
         {
             return Ok(());
         }
-        
-        let full_path = repo.path.join(&current_path);
+
+        let full_path = repo.path.join(current_path);
         if !full_path.exists() {
             return Ok(());
         }
@@ -1265,12 +1259,7 @@ impl CommitMerkleTree {
                     };
 
                     // log::debug!("load_unique_children  opened node_db: {:?}", child.hash);
-                    CommitMerkleTree::load_present_children(
-                        repo,
-                        &mut child,
-                        new_path,
-                        paths,
-                    )?;
+                    CommitMerkleTree::load_present_children(repo, &mut child, new_path, paths)?;
                     node.children.push(child);
                 }
                 // FileChunks and Files are leaf nodes

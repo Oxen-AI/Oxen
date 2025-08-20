@@ -170,15 +170,15 @@ impl StagedData {
     ///
     fn __collect_outputs(&self, opts: &StagedDataOpts) -> Vec<ColoredString> {
         let mut outputs: Vec<ColoredString> = vec![];
-        
+
         if self.is_clean() {
             // If in remote-mode repo, check for unsynced files
-            if let Ok(repo) = LocalRepository::from_current_dir() {      
+            if let Ok(repo) = LocalRepository::from_current_dir() {
                 if repo.is_remote_mode() {
                     self.__collect_unsynced_dirs(&mut outputs, opts);
                     self.__collect_unsynced_files(&mut outputs, opts);
-                }      
-            } 
+                }
+            }
             outputs.push(MSG_CLEAN_REPO.to_string().normal());
             return outputs;
         }
@@ -306,11 +306,11 @@ impl StagedData {
                         dir_row.push("  added: ".green());
                     }
                     StagedEntryStatus::Modified => {
-                               println!("Push call: 2");
+                        println!("Push call: 2");
                         dir_row.push("  modified: ".green());
                     }
                     StagedEntryStatus::Removed => {
-                               println!("Push call: 3");
+                        println!("Push call: 3");
                         dir_row.push("  removed: ".green());
                     }
                     StagedEntryStatus::Unmodified => {
@@ -333,12 +333,12 @@ impl StagedData {
                     println!("Push call: 4: {num_files_str:?}");
                     dir_row.push(num_files_str);
                 } else {
-                           println!("Push call: 5");
+                    println!("Push call: 5");
                     dir_row.push("\n".normal());
                 }
 
                 if !dir_row.is_empty() {
-                           println!("ctual push dirs");
+                    println!("ctual push dirs");
                     dirs.push(dir_row.clone());
                 }
             }
@@ -543,7 +543,7 @@ impl StagedData {
         outputs.push("\n".normal());
     }
 
-        fn __collect_unsynced_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
+    fn __collect_unsynced_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
         // List untracked files
         if !self.unsynced_dirs.is_empty() {
             outputs.push("Unsynced Directories\n".normal());
@@ -595,7 +595,6 @@ impl StagedData {
             outputs.push("\n".normal());
         }
     }
-
 
     fn __collect_untracked_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
         // List untracked files

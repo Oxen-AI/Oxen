@@ -25,16 +25,16 @@ mod tests {
 
     use std::path::PathBuf;
 
+    use crate::api;
+    use crate::config::UserConfig;
+    use crate::constants;
     use crate::error::OxenError;
-    use crate::opts::clone_opts::CloneOpts;
     use crate::model::staged_data::StagedDataOpts;
+    use crate::model::NewCommitBody;
+    use crate::opts::clone_opts::CloneOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
-    use crate::api;
-    use crate::constants;
-    use crate::config::UserConfig;
-    use crate::model::NewCommitBody;
 
     #[tokio::test]
     async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
@@ -55,8 +55,10 @@ mod tests {
 
                 // Merkle tree matches original local repo
                 let cloned_head_commit = repositories::commits::head_commit(&remote_mode_repo)?;
-                let cloned_root =
-                    repositories::tree::get_root_with_children(&remote_mode_repo, &cloned_head_commit)?;
+                let cloned_root = repositories::tree::get_root_with_children(
+                    &remote_mode_repo,
+                    &cloned_head_commit,
+                )?;
                 assert_eq!(local_root, cloned_root);
 
                 // Versions dir is empty
@@ -105,7 +107,12 @@ mod tests {
                 let directory = ".".to_string();
 
                 // Create a deeply nested directory
-                let dir_path = remote_mode_repo.path.join("data").join("train").join("images").join("cats");
+                let dir_path = remote_mode_repo
+                    .path
+                    .join("data")
+                    .join("train")
+                    .join("images")
+                    .join("cats");
                 util::fs::create_dir_all(&dir_path)?;
 
                 // Add two tabular files
@@ -120,29 +127,41 @@ mod tests {
 
                 // Add and commit all
                 let files_to_add = vec![cats_tsv, dogs_csv, readme_md];
-                api::client::workspaces::files::add(&remote_mode_repo, &remote_repo, &workspace_identifier, &directory, files_to_add).await?;
+                api::client::workspaces::files::add(
+                    &remote_mode_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    files_to_add,
+                )
+                .await?;
 
-                let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Adding tabular data");
+                let commit_body =
+                    NewCommitBody::from_config(&UserConfig::get()?, "Adding tabular data");
                 repositories::remote_mode::commit(&remote_mode_repo, &commit_body).await?;
 
                 // List files and verify the count
                 let new_head = repositories::commits::head_commit(&remote_mode_repo)?;
-                let new_files = repositories::tree::list_tabular_files_in_repo(&remote_mode_repo, &new_head)?;
+                let new_files =
+                    repositories::tree::list_tabular_files_in_repo(&remote_mode_repo, &new_head)?;
                 assert_eq!(new_files.len(), 3);
 
                 // Pull with the original repo and verify the count is the same
                 repositories::pull(&local_repo).await?;
                 let local_repo_head = repositories::commits::head_commit(&local_repo)?;
-                let files = repositories::tree::list_tabular_files_in_repo(&local_repo, &local_repo_head)?;
-                
+                let files =
+                    repositories::tree::list_tabular_files_in_repo(&local_repo, &local_repo_head)?;
+
                 assert_eq!(files.len(), 3);
                 assert_eq!(local_repo_head.id, new_head.id);
 
                 Ok(())
-            }).await?;
+            })
+            .await?;
 
             Ok(remote_repo_copy)
-        }).await
+        })
+        .await
     }
 
     #[tokio::test]
@@ -158,7 +177,7 @@ mod tests {
 
                 let workspace_identifier = remote_mode_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                
+
                 let p1 = PathBuf::from("hi.txt");
                 let p2 = PathBuf::from("bye.txt");
                 let full_path_1 = remote_mode_repo.path.join(&p1);
@@ -169,36 +188,72 @@ mod tests {
                 test::write_txt_file_to_path(&full_path_2, common_contents)?;
 
                 // Add both files
-                api::client::workspaces::files::add(&remote_mode_repo, &remote_repo, &workspace_identifier, &directory, vec![p1.clone(), p2.clone()]).await?;
+                api::client::workspaces::files::add(
+                    &remote_mode_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    vec![p1.clone(), p2.clone()],
+                )
+                .await?;
 
                 // Check status to verify both are staged
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[p1.clone(), p2.clone()]);
-                let status = repositories::remote_mode::status(&remote_mode_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status = repositories::remote_mode::status(
+                    &remote_mode_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
                 assert_eq!(status.staged_files.len(), 2);
                 assert!(status.staged_files.contains_key(&p1));
                 assert!(status.staged_files.contains_key(&p2));
 
                 // Commit the files
-                let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Add two files with same content");
-                
-                let commit = repositories::remote_mode::commit(&remote_mode_repo, &commit_body).await?;
+                let commit_body = NewCommitBody::from_config(
+                    &UserConfig::get()?,
+                    "Add two files with same content",
+                );
+
+                let commit =
+                    repositories::remote_mode::commit(&remote_mode_repo, &commit_body).await?;
                 let head_commit = repositories::commits::head_commit(&remote_mode_repo)?;
-                
+
                 // Verify the new commit contains both paths
-                assert!(repositories::tree::has_path(&remote_mode_repo, &commit, p1.clone())?);
-                assert!(repositories::tree::has_path(&remote_mode_repo, &head_commit, p2.clone())?);
+                assert!(repositories::tree::has_path(
+                    &remote_mode_repo,
+                    &commit,
+                    p1.clone()
+                )?);
+                assert!(repositories::tree::has_path(
+                    &remote_mode_repo,
+                    &head_commit,
+                    p2.clone()
+                )?);
 
                 // Pull with the original repo and verify it also contains both paths
                 repositories::pull(&local_repo).await?;
-                
+
                 let local_repo_head = repositories::commits::head_commit(&local_repo)?;
-                assert!(repositories::tree::has_path(&local_repo, &local_repo_head, p1.clone())?);
-                assert!(repositories::tree::has_path(&local_repo, &local_repo_head, p2.clone())?);
+                assert!(repositories::tree::has_path(
+                    &local_repo,
+                    &local_repo_head,
+                    p1.clone()
+                )?);
+                assert!(repositories::tree::has_path(
+                    &local_repo,
+                    &local_repo_head,
+                    p2.clone()
+                )?);
 
                 Ok(())
-            }).await?;
+            })
+            .await?;
 
             Ok(remote_repo_copy)
-        }).await
+        })
+        .await
     }
 }

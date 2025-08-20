@@ -26,7 +26,6 @@ impl RunCmd for RemoteModeRestoreCmd {
 
     // TODO: Support multiple paths
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
-
         let path = args.get_one::<String>("PATH").expect("required");
         let repo = LocalRepository::from_current_dir()?;
 

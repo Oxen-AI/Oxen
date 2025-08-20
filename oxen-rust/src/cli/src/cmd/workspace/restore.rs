@@ -52,7 +52,7 @@ impl RunCmd for WorkspaceRestoreCmd {
         let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
         let workspace_identifier = if repository.is_remote_mode() {
             repository.workspace_name.unwrap()
-        } else { 
+        } else {
             UserConfig::identifier()?
         };
         api::client::workspaces::data_frames::restore(
