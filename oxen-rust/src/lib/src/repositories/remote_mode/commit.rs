@@ -370,7 +370,9 @@ mod tests {
                 
                 // Add the deletion to stage the removal
                 api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_id, vec![dir_to_remove.clone()]).await?;
-
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
+                status.print();
                 // Commit the deletion
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Removing train directory");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
@@ -378,6 +380,7 @@ mod tests {
                 // Verify no entries remain in the head commit except the original bounding box
                 let head = repositories::commits::head_commit(&cloned_repo)?;
                 let commit_list = repositories::entries::list_for_commit(&cloned_repo, &head)?;
+                println!("Commit list: {commit_list:?}");
                 assert_eq!(commit_list.len(), 1);
 
                 Ok(())

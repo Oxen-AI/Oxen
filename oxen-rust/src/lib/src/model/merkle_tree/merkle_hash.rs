@@ -24,6 +24,11 @@ impl MerkleHash {
         self.0
     }
 
+    fn to_string(&self) -> String {
+        let str = format!("{}", self);
+        str
+    }
+
     // only print the first N characters of the hash
     pub fn to_short_str(&self) -> String {
         const SHORT_STR_LEN: usize = 10;

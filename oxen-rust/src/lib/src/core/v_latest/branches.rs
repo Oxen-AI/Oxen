@@ -256,7 +256,8 @@ pub async fn checkout_subtrees(
 
         if repo.is_remote_mode() {
             for file_to_restore in results.files_to_restore {
-                //let file_hash = format!("{}", &file_to_restore.file_node.hash());
+                log::debug!("file_to_restore: {:?}", file_to_restore.file_node);
+                // let file_hash = format!("{}", &file_to_restore.file_node.hash());
                 // In remote-mode repos, only restore files that are present in version store
                 if version_store.version_exists(&file_to_restore.file_node.hash().to_string())? {
                     // println!("Version exists for file_node: {:?}", file_to_restore.file_node);
@@ -428,6 +429,7 @@ async fn cleanup_removed_files(
     if repo.is_remote_mode() {
         let version_store = repo.version_store()?;
         for (hash, full_path) in files_to_store {
+            log::debug!("Storing hash {hash:?} and path {full_path:?}");
             version_store
                 .store_version_from_path(&hash.to_string(), &full_path)
                 .await?;
@@ -467,12 +469,12 @@ fn r_remove_if_not_in_target(
            
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);
+                //log::debug!("file_path: {file_path:?}");
+
                 // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
-                // println!("file_path: {file_path:?}");
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
                     if util::fs::is_modified_from_node(&full_path, file_node)? 
                     {
-                  
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
                         // If in remote mode, save file to version store before removing
@@ -482,6 +484,9 @@ fn r_remove_if_not_in_target(
 
                         paths_to_remove.push(full_path.clone());
                     }
+                // If in remote-mode, save original file contents to version_store 
+                } else if full_path.exists() && repo.is_remote_mode() {
+                    files_to_store.push((from_node.hash, full_path.clone()))
                 }
             }
         }
@@ -570,7 +575,6 @@ fn r_restore_missing_or_modified_files(
         EMerkleTreeNode::File(file_node) => {
             let file_path = path.join(file_node.name());
             let full_path = repo.path.join(&file_path);
-            // println!("File path: {file_path:?}");
 
             // Collect hash and path for matching in r_remove_if_not_in_target
             hashes.seen_hashes.insert(target_node.hash);

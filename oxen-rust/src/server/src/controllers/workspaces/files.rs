@@ -30,31 +30,19 @@ use tokio_util::io::ReaderStream;
 pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
-<<<<<<< HEAD
 ) -> Result<HttpResponse, OxenHttpError> {
-=======
-) -> Result<NamedFile, OxenHttpError> {
-
-    println!("S");
->>>>>>> 7d109ae8 (Implement remote-mode rm and restore)
     let app_data = app_data(&req)?;
     println!("sdf");
     let namespace = path_param(&req, "namespace")?;
     println!("ddddd");
     let repo_name = path_param(&req, "repo_name")?;
-    println!("asdf");
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-<<<<<<< HEAD
     let version_store = repo.version_store()?;
-=======
-    println!("oiuy");
->>>>>>> 7d109ae8 (Implement remote-mode rm and restore)
     let workspace_id = path_param(&req, "workspace_id")?;
-    println!("JEJ");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
-    println!("iii");
+
     let path = path_param(&req, "path")?;
     log::debug!("got workspace file path {:?}", &path);
 
@@ -64,7 +52,6 @@ pub async fn get(
             .read_from_staged_db(&path)?
             .ok_or_else(|| OxenError::basic_str("File not found in staged DB"))?;
 
-<<<<<<< HEAD
         let file_node = match staged_node.node.node {
             EMerkleTreeNode::File(f) => Ok(f),
             _ => Err(OxenError::basic_str(
@@ -80,9 +67,6 @@ pub async fn get(
     let last_commit_id = file_node.last_commit_id().to_string();
     let version_path = version_store.get_version_path(&hash_str)?;
     log::debug!("got workspace file version path {:?}", &version_path);
-=======
-    println!("got workspace file path {:?}", path);
->>>>>>> 7d109ae8 (Implement remote-mode rm and restore)
 
     // TODO: This probably isn't the best place for the resize logic
     let img_resize = query.into_inner();

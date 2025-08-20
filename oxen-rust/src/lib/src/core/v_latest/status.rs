@@ -187,7 +187,7 @@ pub fn status_from_dir_entries(
         paths: HashMap::new(),
     };
 
-    //log::debug!("dir_entries.len(): {:?}", dir_entries.len());
+    // log::debug!("dir_entries.len(): {:?}", dir_entries.len());
 
     for (dir, entries) in dir_entries {
         log::debug!(
@@ -288,6 +288,7 @@ pub fn status_from_dir_entries(
 }
 
 fn find_moved_files(staged_data: &mut StagedData) -> Result<(), OxenError> {
+    staged_data.print();
     let files = staged_data.staged_files.clone();
     let files_vec: Vec<(&PathBuf, &StagedEntry)> = files.iter().collect();
 
@@ -312,6 +313,7 @@ fn find_moved_files(staged_data: &mut StagedData) -> Result<(), OxenError> {
     }
 
     for (hash, added_paths) in added_map.iter_mut() {
+        println!("Hash: {hash:?}; added_paths: {added_paths:?}");
         if let Some(removed_paths) = removed_map.get_mut(hash) {
             while !added_paths.is_empty() && !removed_paths.is_empty() {
                 if let (Some(added_path), Some(removed_path)) =
@@ -774,7 +776,7 @@ fn find_local_changes(
         untracked.files.clear();
     }
 
-    // Check for removed files
+    // Check for unsynced files
     // TODO: Distinguish 'removed files' from unsynced
     if let Some(dir_hash) = dir_hashes.get(search_node_path) {
         // if we have subtree paths, don't check for removed files that are outside of the subtree
@@ -805,13 +807,15 @@ fn find_local_changes(
             for child in CommitMerkleTree::node_files_and_folders(&node)? {
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let file_path = full_path.join(file_node.name());
-                    if !file_path.exists() {
+
+                    if !file_path.exists() && !staged_data.staged_files.contains_key(&search_node_path.join(file_node.name())) {
                         unsynced.add_file(search_node_path.join(file_node.name()));
                     }
+
                 } else if let EMerkleTreeNode::Directory(dir) = &child.node {
                     let dir_path = full_path.join(dir.name());
                     let relative_dir_path = search_node_path.join(dir.name());
-                    if !dir_path.exists() {
+                    if !dir_path.exists() && !staged_data.staged_dirs.paths.contains_key(&relative_dir_path){
                         // Only call this for non-existant dirs, because existant dirs already trigger a find_changes call
                         let mut count: usize = 0;
                         count_removed_entries(

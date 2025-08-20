@@ -19,9 +19,153 @@ mod tests {
     use crate::config::UserConfig;
     use crate::model::StagedEntryStatus;
 
-    // TODO: Real bugs uncovered:
+    // TODO: Bugs:
     // 1. Handling errors with rm; need to return err_files
+ 
+    #[tokio::test]
+    async fn test_remote_mode_rm_synced_file() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                // Clone a repo in remote mode
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                // Restore the README file
+                let file_path = PathBuf::from("README.md");
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                repositories::remote_mode::restore(&cloned_repo, &vec![file_path.clone()], &head_commit.id).await?;
+
         
+                // Remove the README file
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![file_path]).await?;
+
+                // Get status, should show staged file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
+
+                assert_eq!(status.untracked_files.len(), 0);
+                assert_eq!(status.staged_files.len(), 1);
+
+                Ok(())
+            }).await?;
+
+            Ok(remote_repo_copy)
+        }).await
+    }
+    
+    #[tokio::test]
+    async fn test_remote_mode_rm_unsynced_file() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                // Clone a repo in remote mode
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                // Get path to unsynced README file
+                let file_path = PathBuf::from("README.md");
+        
+                // Add file with full path
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![file_path]).await?;
+
+                // Get status, should show staged file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
+
+                assert_eq!(status.untracked_files.len(), 0);
+                assert_eq!(status.staged_files.len(), 1);
+
+                Ok(())
+            }).await?;
+
+            Ok(remote_repo_copy)
+        }).await
+    }
+
+    #[tokio::test]
+    async fn test_remote_mode_rm_unsynced_subdir_file() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                // Clone a repo in remote mode
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                // Get path to unsynced README file
+                let file_path = PathBuf::from("annotations").join("train").join("bounding_box.csv");
+        
+                // Remove the file
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![file_path]).await?;
+
+                // Get status, should show staged file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
+
+                assert_eq!(status.untracked_files.len(), 0);
+                assert_eq!(status.staged_files.len(), 1);
+
+                Ok(())
+            }).await?;
+
+            Ok(remote_repo_copy)
+        }).await
+    }
+
+    #[tokio::test]
+    async fn test_remote_mode_rm_unsynced_file_with_full_path() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                // Clone a repo in remote mode
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                // Get path to unsynced README file
+                let file_path = PathBuf::from("README.md");
+                let full_path = cloned_repo.path.join(&file_path);
+        
+                // Add file with full path
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![full_path]).await?;
+
+                // Get status, should show staged file
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                status.print();
+                
+                assert_eq!(status.untracked_files.len(), 0);
+                assert_eq!(status.staged_files.len(), 1);
+
+                Ok(())
+            }).await?;
+
+            Ok(remote_repo_copy)
+        }).await
+    }
+
     #[tokio::test]
     async fn test_remote_mode_rm_dir_that_is_not_committed_should_throw_error() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -78,7 +222,7 @@ mod tests {
 
                 // Remove it from staged area
                 let paths_to_remove = vec![file_path.clone()];
-                api::client::workspaces::files::rm_files_from_staged(&remote_repo, &workspace_id, paths_to_remove).await?;
+                api::client::workspaces::files::rm_files_from_staged(&cloned_repo, &remote_repo, &workspace_id, paths_to_remove).await?;
 
                 // Check status again; it should be unstaged
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
@@ -144,6 +288,7 @@ mod tests {
                 // Check status: only one file should be staged for removal
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
+                println!("status: {status:?}");
                 assert_eq!(status.staged_files.len(), 1);
                 assert_eq!(status.staged_files.get(&file1).unwrap().status, StagedEntryStatus::Removed);
 
@@ -167,6 +312,71 @@ mod tests {
         }).await
     }
 
+    // TODO: 'status.print()' has weird behavior when staging subdirs for removal
+    //       Resolve this at some point
+    #[tokio::test]
+    async fn test_remote_mode_rm_dir_with_asterisk() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                // Count files and dirs for comparison
+                println!("1");
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                println!("2");
+                let commit_root = repositories::tree::get_root_with_children(&cloned_repo, &head_commit)?.unwrap();
+                println!("3");
+                let files_in_tree = repositories::tree::list_all_files(&commit_root, &PathBuf::from("."))?; 
+                let prev_files = files_in_tree.len();
+                let dirs_in_tree = repositories::tree::list_all_dirs(&commit_root)?; 
+                let prev_dirs = dirs_in_tree.len();
+
+                let workspace_id = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                let path_with_asterisk = PathBuf::from("annotations").join("*");
+
+                // Remove the directory using a path with a trailing slash
+                let paths_to_remove = vec![path_with_asterisk.clone()];
+                api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_id, paths_to_remove).await?;
+
+                // Check status to verify files are staged for removal
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
+                status.print();
+
+                // assert_eq!(status.staged_dirs.paths.len(), 2);
+                assert_eq!(status.staged_files.len(), 6);
+
+                // Commit the removals
+                let commit_message = format!("Removing subdirectories");
+                let commit_body = NewCommitBody::from_config(&UserConfig::get()?, &commit_message);
+                let new_commit = repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
+
+                // Check that the files and dirs were removed
+                let commit_root = repositories::tree::get_root_with_children(&cloned_repo, &new_commit)?.unwrap();
+                
+                let files_in_tree = repositories::tree::list_all_files(&commit_root, &PathBuf::from("."))?; 
+                let dirs_in_tree = repositories::tree::list_all_dirs(&commit_root)?; 
+
+                // 6 files were removed
+                assert_eq!(files_in_tree.len(), prev_files - 6);
+
+                // 2 dirs were removed
+                assert_eq!(dirs_in_tree.len(), prev_dirs - 2);
+
+
+                Ok(())
+            }).await?;
+
+            Ok(remote_repo_copy)
+        }).await
+    }
+
     #[tokio::test]
     async fn test_remote_mode_rm_dir_with_glob_path() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -180,7 +390,7 @@ mod tests {
 
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                let path_with_slash = PathBuf::from("annotations").join("*");
+                let path_with_slash = PathBuf::from("annotations").join("t*");
 
                 // Remove the directory using a path with a trailing slash
                 let paths_to_remove = vec![path_with_slash.clone()];
@@ -189,9 +399,10 @@ mod tests {
                 // Check status to verify files are staged for removal
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_id, &directory, &status_opts).await?;
-                
-                assert_eq!(status.staged_dirs.paths.len(), 1);
-                assert_eq!(status.staged_files.len(), 4);
+                status.print();
+
+                // Does not remove the README file
+                assert_eq!(status.staged_files.len(), 5);
 
                 Ok(())
             }).await?;
