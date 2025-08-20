@@ -206,7 +206,7 @@ pub fn lowest_common_ancestor_from_commits(
 #[cfg(test)]
 mod tests {
 
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use crate::core::df::tabular;
     use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
@@ -1085,6 +1085,95 @@ mod tests {
 
             // 5. There should be no commit
             assert!(commit.is_none());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_commit_rejection_during_merge_conflict() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+            let labels_path = repo.path.join("labels.txt");
+            repositories::add(&repo, &labels_path).await?;
+            repositories::commit(&repo, "adding initial labels file")?;
+
+            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create a branch and modify the same file
+            let branch_name = "feature-branch";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Modify labels.txt on feature branch
+            test::modify_txt_file(&labels_path, "cat\ndog\nfeature_label")?;
+            repositories::add(&repo, &labels_path).await?;
+            repositories::commit(&repo, "adding feature label")?;
+
+            // Switch back to main and modify the same file differently
+            repositories::checkout(&repo, og_branch.name).await?;
+            test::modify_txt_file(&labels_path, "cat\ndog\nmain_label")?;
+            repositories::add(&repo, &labels_path).await?;
+            repositories::commit(&repo, "adding main label")?;
+
+            // Try to merge - this should create a conflict
+            let merge_result = repositories::merge::merge(&repo, branch_name).await;
+            let merge_commit = merge_result.unwrap();
+            assert!(merge_commit.is_none());
+
+            // Verify we have merge conflicts
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.merge_conflicts.len(), 1, "Should have exactly one merge conflict");
+            
+            let conflict_path = &status.merge_conflicts[0].base_entry.path;
+            assert_eq!(conflict_path, &PathBuf::from("labels.txt"), "Conflict should be on labels.txt");
+
+            // Create a new file that's not in conflict
+            let new_file_path = repo.path.join("new_file.txt");
+            util::fs::write_to_path(&new_file_path, "This is a new file")?;
+            repositories::add(&repo, &new_file_path).await?;
+
+            // Try to commit while there are unresolved merge conflicts
+            // This should be rejected
+            let commit_result = repositories::commit(&repo, "attempt commit during conflict");
+            assert!(commit_result.is_err(), "Commit should be rejected when merge conflicts exist");
+            
+            // Verify the error message indicates merge conflict
+            let error_msg = commit_result.unwrap_err().to_string();
+            assert!(error_msg.contains("merge") || error_msg.contains("conflict"), 
+                    "Error should mention merge conflict: {}", error_msg);
+
+            // Verify that the new file was NOT committed
+            let head_commit = repositories::commits::head_commit(&repo)?;
+            let tree = repositories::tree::get_root_with_children(&repo, &head_commit)?.unwrap();
+            let new_file_node = tree.get_by_path(PathBuf::from("new_file.txt"))?;
+            assert!(new_file_node.is_none(), "New file should not be committed during merge conflict");
+
+            // Now resolve the conflict by manually editing the file
+            test::modify_txt_file(&labels_path, "cat\ndog\nfeature_label\nmain_label")?;
+            repositories::add(&repo, &labels_path).await?;
+            
+            // Mark the conflict as resolved
+            repositories::merge::mark_conflict_as_resolved(&repo, &labels_path)?;
+
+            // Now commit should succeed (this will be the merge commit)
+            let merge_commit = repositories::commit(&repo, "resolve merge conflict")?;
+            assert_eq!(merge_commit.parent_ids.len(), 2, "Merge commit should have two parents");
+
+            // Verify the new file is still staged and can be committed separately
+            let final_commit = repositories::commit(&repo, "add new file after merge")?;
+            
+            // Verify the new file is now in the repository
+            let final_tree = repositories::tree::get_root_with_children(&repo, &final_commit)?.unwrap();
+            let new_file_node = final_tree.get_by_path(PathBuf::from("new_file.txt"))?;
+            assert!(new_file_node.is_some(), "New file should be committed after conflict resolution");
+
+            // Verify we have the expected commit history
+            let history = repositories::commits::list(&repo)?;
+            assert_eq!(history.len(), 5, "Should have 5 commits: initial, feature, main, merge, new file");
+
+            // Verify no more conflicts exist
+            let final_status = repositories::status(&repo)?;
+            assert_eq!(final_status.merge_conflicts.len(), 0, "Should have no remaining conflicts");
 
             Ok(())
         })
