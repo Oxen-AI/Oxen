@@ -238,15 +238,10 @@ impl MerkleTreeNode {
             );
         }
 
-        if let EMerkleTreeNode::Directory(dir_node) = &self.node {
-            paths.push(
-                current_path.join(dir_node.name()).to_path_buf()
-            );
-        }
-
         for child in &self.children {
             if let EMerkleTreeNode::Directory(dir) = &child.node {
                 let new_path = current_path.join(dir.name());
+                paths.push(new_path.clone());
                 child.list_paths_helper(&new_path, paths)?;
             } else {
                 child.list_paths_helper(current_path, paths)?;
@@ -363,6 +358,49 @@ impl MerkleTreeNode {
                 child.list_files_helper(&new_path, files)?;
             } else {
                 child.list_files_helper(current_path, files)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all file and dir nodes in the tree 
+    pub fn list_files_and_dirs(&self) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
+        let mut nodes = HashMap::new();
+        let mut current_path = PathBuf::new();
+        if let EMerkleTreeNode::Directory(dir) = &self.node {
+            current_path = current_path.join(dir.name());
+            nodes.insert(
+                current_path.clone(),
+                self.clone(),
+            );
+        }
+
+        self.list_files_and_dirs_helper(&current_path, &mut nodes)?;
+        Ok(nodes)
+    }
+
+    fn list_files_and_dirs_helper(
+        &self,
+        current_path: &Path,
+        nodes: &mut HashMap<PathBuf, MerkleTreeNode>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(file_node) = &self.node {
+            nodes.insert(
+                current_path.join(file_node.name()).to_path_buf(),
+                self.clone()
+            );
+        }
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                nodes.insert(
+                    new_path.clone(),
+                    self.clone(),
+                );
+
+                child.list_files_and_dirs_helper(&new_path, nodes)?;
+            } else {
+                child.list_files_and_dirs_helper(current_path, nodes)?;
             }
         }
         Ok(())
@@ -728,6 +766,7 @@ impl MerkleTreeNode {
             }
         }
     }
+
 
     pub fn walk_tree_mut(&mut self, mut f: impl FnMut(&mut MerkleTreeNode)) {
         let mut stack = vec![self];

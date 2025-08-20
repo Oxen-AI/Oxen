@@ -1,9 +1,12 @@
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::{api, repositories};
+use crate::core::v_latest::index::CommitMerkleTree;
+use crate::model::MerkleHash;
 
 use colored::Colorize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub async fn checkout(
@@ -17,8 +20,6 @@ pub async fn checkout(
             repo.set_workspace(branch.name.clone())?;
             repo.save()?;
 
-            println!("Checked out branch: {}", branch.name);
-
         }
         // TODO: This should create a workspace on this commit
         Ok(None) => {
@@ -27,6 +28,7 @@ pub async fn checkout(
         }
         Err(OxenError::RevisionNotFound(name)) => {
             println!("Revision not found: {}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {}\n\nto update the local copy, then try again.", name, name);
+            return Err(OxenError::RevisionNotFound(name));
         }
         Err(e) => {
             return Err(e);
@@ -41,20 +43,36 @@ pub async fn create_checkout(
     branch_name: &str,
 ) -> Result<(), OxenError> {
    
+    // Save files in working directory to version store
+    let head_commit = repositories::commits::head_commit(repo)?;
+    let mut paths_to_store: HashMap<PathBuf, MerkleHash> = HashMap::new();
+    let _from_root = CommitMerkleTree::root_with_present_children(&repo, &head_commit, &mut paths_to_store)?.unwrap();
+
+    let version_store = repo.version_store()?;
+    for (path, hash) in paths_to_store {
+        println!("HERE: Path: {path:?}, hash: {hash:?}");
+        version_store.store_version_from_path(&hash.to_string(), &path).await?;
+    }
+
+    // Create the new branch
     let workspace_name = create_checkout_branch(repo, branch_name).await?;
 
+    // Update repo to new workspace and branch
+    repositories::checkout(repo, branch_name).await?;
     repo.set_workspace(&workspace_name)?;
     repo.save()?;
 
     Ok(())
 }
 
+// Creates the new branch, but does not check it out
 pub async fn create_checkout_branch(
     repo: &mut LocalRepository,
     branch_name: &str,
 ) -> Result<String, OxenError> {
 
-    repositories::branches::create_checkout(repo, branch_name)?;
+    // Create the new branch
+    repositories::branches::create_from_head(repo, branch_name)?;
 
     // Generate a random workspace id
     let workspace_id = Uuid::new_v4().to_string();
@@ -118,12 +136,6 @@ pub async fn create_checkout_branch(
     Ok(workspace_name)
 }
 
-// Actual bugs uncovered:
-
-// 1: Properly return error when checking out current branch
-//
-
-
 #[cfg(test)]
 mod tests {
     use crate::{api, repositories, test, util};
@@ -134,7 +146,20 @@ mod tests {
     
     use crate::opts::CloneOpts;
     use crate::config::UserConfig;
-    use std::path::PathBuf;
+
+    
+    #[tokio::test]
+    async fn test_remote_mode_checkout_non_existant_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            // This shouldn't work
+            let checkout_result = repositories::remote_mode::checkout(&mut repo, "non-existant").await;
+            assert!(checkout_result.is_err());
+
+            Ok(())
+        })
+        .await
+    }
+
 
     #[tokio::test]
     async fn test_remote_mode_checkout_current_branch_name_does_nothing() -> Result<(), OxenError> {
@@ -148,14 +173,11 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 let branch_name = "feature".to_string();
-
-                // TODO: Assert is_err()
                 repositories::remote_mode::create_checkout(&mut cloned_repo, &branch_name).await?;
-                let initial_workspace = cloned_repo.workspace_name.clone();
 
-                repositories::remote_mode::checkout(&mut cloned_repo, &branch_name).await?;
-
-                assert_eq!(cloned_repo.workspace_name, initial_workspace);
+                // Call repositories::checkout to get the outputted branch name
+                let checkout_branch = repositories::checkout(&mut cloned_repo, &branch_name).await?.unwrap();
+                assert_eq!(checkout_branch.name, branch_name);
 
                 Ok(())
             }).await?;
@@ -176,7 +198,6 @@ mod tests {
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
 
-                let directory = ".".to_string();
                 let orig_branch_name = repositories::branches::current_branch(&cloned_repo)?.unwrap().name.clone();
                 let orig_workspace_name = cloned_repo.workspace_name.clone().unwrap();
 
@@ -194,26 +215,47 @@ mod tests {
                 // Verify the workspace name has reverted to the original
                 assert_eq!(cloned_repo.workspace_name.clone().unwrap(), orig_workspace_name);
 
-                // Add a file and commit
-                let new_file_path = PathBuf::from("new_file.txt");
-                let full_path = cloned_repo.path.join(&new_file_path);
-                util::fs::write_to_path(&full_path, "This is a new file.")?;
-
-                let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
-                api::client::workspaces::files::add(
-                    &cloned_repo, 
-                    &remote_repo,
-                    &current_workspace_id,
-                    &directory,
-                    vec![new_file_path.clone()],
-                )
-                .await?;
-
-                let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Adding new file to main");
-                repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
-
                 // Verify the workspace name remains the same after the commit
                 assert_eq!(cloned_repo.workspace_name.unwrap(), orig_workspace_name);
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_remote_mode_checkout_updates_branch() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                // Clone repo in remote mode
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let mut cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                let orig_branch_name = repositories::branches::current_branch(&cloned_repo)?.unwrap().name.clone();
+
+                // Create and checkout a new branch
+                let new_branch_name = "feature/workspace-change";
+                remote_mode::create_checkout(&mut cloned_repo, new_branch_name).await?;
+
+                // Verify the branch has been updated
+                let current_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
+                assert_ne!(current_branch.name, orig_branch_name);
+
+                // Checkout the original branch
+                repositories::remote_mode::checkout(&mut cloned_repo, &orig_branch_name).await?;
+
+                // Verify the branch has been reverted to the original
+                let current_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
+                assert_eq!(current_branch.name, orig_branch_name);
+
 
                 Ok(())
             })

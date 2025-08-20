@@ -8,6 +8,7 @@ use crate::repositories;
 use crate::view::entries::{EMetadataEntry, PaginatedMetadataEntriesResponse};
 use crate::{api, constants};
 use crate::{current_function, util};
+use crate::util::hasher;
 
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -204,7 +205,6 @@ pub async fn download_entries_to_repo(
         };
 
         // * if the dst parent is a file, we error because cannot copy to a file subdirectory
-        println!("eeeee");
         if let Some(parent) = local_path.parent() {
             if parent.is_file() {
                 return Err(OxenError::basic_str(format!(
@@ -217,12 +217,19 @@ pub async fn download_entries_to_repo(
                 util::fs::create_dir_all(&parent)?;
             }
         }
-        println!("a");
 
         if entry.is_dir {
             repositories::download::download_dir_to_repo(local_repo, remote_repo, &entry, &remote_path, &local_path).await?
         } else {
-            download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?
+            // Download file contents to working directory
+            download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?;
+
+            // Save contents to version store
+            let version_store = local_repo.version_store()?;
+            let file = std::fs::read(&local_path)
+                .map_err(|e| OxenError::basic_str(format!("Failed to read file '{:?}': {e}", remote_path)))?;
+            let hash = hasher::hash_buffer(&file);
+            version_store.store_version_from_path(&hash, &local_path).await?;
         }
     }
 
@@ -256,15 +263,12 @@ pub async fn download_small_entry(
     dest: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
-    let r = remote_path.as_ref();
-    let d = dest.as_ref();
-   println!("remote path: {r:?}");
-    println!("Dest: {d:?}");
+
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/file/{}/{}", revision, path);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-   // println!("url: {url:?}");
+    // log::debug!("url: {url:?}");
     let client = client::new_for_url(&url)?;
     let response = client
         .get(&url)
@@ -273,25 +277,19 @@ pub async fn download_small_entry(
         .map_err(|_| OxenError::resource_not_found(&url))?;
 
     let status = response.status();
-    println!("response: {response:?}");
     match status {
         reqwest::StatusCode::OK => {
             // Copy to file
             let dest = dest.as_ref();
-            println!("asdf");
             // Create parent directories if they don't exist
             if let Some(parent) = dest.parent() {
                 util::fs::create_dir_all(parent)?;
             }
-            println!("asdfsafasd");
-           println!("Hi");
             let mut dest_file = { util::fs::file_create(dest)? };
-           println!("dest_file: {dest_file:?}");
-            println!("Canon dest file: {:?}", dest.canonicalize());
+            // log::debug!("Dest file: {dest_file:?}");
             let mut content = Cursor::new(response.bytes().await?);
-            println!("content: {content:?}");
             std::io::copy(&mut content, &mut dest_file)?;
-            println!("asdf");
+
             Ok(())
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
