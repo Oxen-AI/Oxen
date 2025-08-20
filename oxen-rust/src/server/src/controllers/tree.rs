@@ -1,6 +1,7 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use bytesize::ByteSize;
 use futures_util::stream::StreamExt as _;
+use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
@@ -166,6 +167,36 @@ pub async fn list_missing_file_hashes(
         hash,
         hashes.len()
     );
+    Ok(HttpResponse::Ok().json(MerkleHashesResponse {
+        status: StatusMessage::resource_found(),
+        hashes,
+    }))
+}
+
+pub async fn mark_nodes_as_synced(
+    req: HttpRequest,
+    mut body: web::Payload,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("START");
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = body.next().await {
+        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+    }
+
+    let request: MerkleHashes = serde_json::from_slice(&bytes)?;
+    let hashes = request.hashes;
+    log::debug!("mark_nodes_as_synced marking {} node hashes", &hashes.len());
+
+    for hash in &hashes {
+        node_sync_status::mark_node_as_synced(&repository, hash)?;
+    }
+
+    log::debug!("successfully marked {} commit hashes", &hashes.len());
     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
         status: StatusMessage::resource_found(),
         hashes,

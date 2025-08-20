@@ -19,7 +19,7 @@ use http::header::CONTENT_LENGTH;
 use rand::{thread_rng, Rng};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -333,6 +333,7 @@ pub async fn multipart_batch_upload_with_retry(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
+    synced_nodes: &HashSet<MerkleHash>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
@@ -342,8 +343,15 @@ pub async fn multipart_batch_upload_with_retry(
         first_try = false;
         retry_count += 1;
 
-        files_to_retry =
-            multipart_batch_upload(local_repo, remote_repo, chunk, client, files_to_retry).await?;
+        files_to_retry = multipart_batch_upload(
+            local_repo,
+            remote_repo,
+            chunk,
+            client,
+            files_to_retry,
+            synced_nodes,
+        )
+        .await?;
 
         if !files_to_retry.is_empty() {
             let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
@@ -359,6 +367,7 @@ pub async fn multipart_batch_upload(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
+    synced_nodes: &HashSet<MerkleHash>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = local_repo.version_store()?;
     let mut form = reqwest::multipart::Form::new();
@@ -370,6 +379,18 @@ pub async fn multipart_batch_upload(
     } else {
         files_to_retry.iter().map(|f| f.hash.clone()).collect()
     };
+
+    // If there are nodes to mark as synced, add them to the form first
+    if !synced_nodes.is_empty() {
+        let synced_nodes: Vec<MerkleHash> = synced_nodes.iter().cloned().collect();
+        let json_string = serde_json::to_string(&synced_nodes)?;
+
+        let node_sync_multipart = reqwest::multipart::Part::text(json_string)
+            .file_name("synced_nodes.json")
+            .mime_str("application/json")?;
+
+        form = form.part("synced_nodes", node_sync_multipart);
+    }
 
     for entry in chunk {
         let file_hash = entry.hash();
@@ -400,8 +421,13 @@ pub async fn multipart_batch_upload(
             .mime_str("application/gzip")?;
         form = form.part("file[]", file_part);
     }
+
+    // If there are nodes to mark as synced, re-route API call
     let uri = ("/versions").to_string();
+
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    // Post the node hashes to sync on the first chunk upload
 
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;

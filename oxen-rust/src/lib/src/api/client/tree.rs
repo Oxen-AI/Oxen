@@ -495,6 +495,30 @@ pub async fn list_missing_file_hashes_from_nodes(
     }
 }
 
+pub async fn mark_nodes_as_synced(
+    remote_repo: &RemoteRepository,
+    commit_hashes: HashSet<MerkleHash>,
+) -> Result<(), OxenError> {
+    let uri = "/tree/nodes/mark_nodes_as_synced".to_string();
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let client = client::new_for_url(&url)?;
+    let res = client
+        .post(&url)
+        .json(&MerkleHashes {
+            hashes: commit_hashes,
+        })
+        .send()
+        .await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(_response) => Ok(()),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::api;

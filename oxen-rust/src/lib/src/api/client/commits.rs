@@ -1227,7 +1227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_missing_commit_hashes() -> Result<(), OxenError> {
+    async fn test_list_unsynced_commit_hashes() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let commit_hash = MerkleHash::from_str(&commit.id)?;
