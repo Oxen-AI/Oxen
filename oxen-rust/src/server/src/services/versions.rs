@@ -25,12 +25,15 @@ pub fn versions() -> Scope {
             web::post().to(controllers::versions::chunks::complete),
         )
         .route(
-            "/chunks/{resource:.*}/download",
-            web::get().to(controllers::versions::chunks::download),
-        )
-        .route(
+            // TODO: change the endpoint to /{version_id} for consistency and a more efficient download when client has the file hash
+            // For this change, a easy mapping from file_hash to file_node is needed.
             "/{resource:.*}",
             web::get().to(controllers::versions::download),
+        )
+        .route(
+            //TODO: The versions chunk download endpoint is not functional now. Needs the same changes mentioned above.
+            "/{version_id}/chunks/download",
+            web::get().to(controllers::versions::chunks::download),
         )
         .route(
             "/{version_id}/create",

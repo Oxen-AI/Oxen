@@ -61,6 +61,7 @@ pub async fn get_file(
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
 
+    let res = res.error_for_status()?;
     let mut stream = res.bytes_stream();
     let mut buffer = BytesMut::new();
     while let Some(chunk_result) = stream.next().await {

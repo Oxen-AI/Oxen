@@ -59,19 +59,22 @@ pub async fn get(
     })?;
 
     let file_hash = file_node.hash();
+    let hash_str = file_hash.to_string();
     let mime_type = file_node.mime_type();
     let last_commit_id = file_node.last_commit_id().to_string();
-    let version_path = version_store.get_version_path(&file_hash.to_string())?;
+    let version_path = version_store.get_version_path(&hash_str)?;
     log::debug!("got workspace file version path {:?}", &version_path);
 
     // TODO: This probably isn't the best place for the resize logic
     let img_resize = query.into_inner();
-    if img_resize.width.is_some() || img_resize.height.is_some() {
+    if (img_resize.width.is_some() || img_resize.height.is_some())
+        && mime_type.starts_with("image/")
+    {
         log::debug!("img_resize {:?}", img_resize);
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
-            file_hash.to_string(),
+            hash_str,
             &PathBuf::from(path),
             &version_path,
             img_resize,
@@ -92,9 +95,7 @@ pub async fn get(
     }
 
     // Stream the file
-    let stream = version_store
-        .get_version_stream(&file_hash.to_string())
-        .await?;
+    let stream = version_store.get_version_stream(&hash_str).await?;
 
     Ok(HttpResponse::Ok()
         .content_type(mime_type)

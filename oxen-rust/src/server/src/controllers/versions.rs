@@ -68,19 +68,22 @@ pub async fn download(
     let entry = repositories::entries::get_file(&repo, &commit, &path)?
         .ok_or(OxenError::path_does_not_exist(path.clone()))?;
     let file_hash = entry.hash();
+    let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();
     let last_commit_id = entry.last_commit_id().to_string();
-    let version_path = version_store.get_version_path(&file_hash.to_string())?;
+    let version_path = version_store.get_version_path(&hash_str)?;
 
     // TODO: refactor out of here and check for type,
     // but seeing if it works to resize the image and cache it to disk if we have a resize query
     let img_resize = query.into_inner();
-    if img_resize.width.is_some() || img_resize.height.is_some() {
+    if (img_resize.width.is_some() || img_resize.height.is_some())
+        && mime_type.starts_with("image/")
+    {
         log::debug!("img_resize {:?}", img_resize);
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
-            file_hash.to_string(),
+            hash_str,
             &path,
             &version_path,
             img_resize,
@@ -99,9 +102,7 @@ pub async fn download(
         log::debug!("did not hit the resize cache");
     }
 
-    let stream = version_store
-        .get_version_stream(&file_hash.to_string())
-        .await?;
+    let stream = version_store.get_version_stream(&hash_str).await?;
     Ok(HttpResponse::Ok()
         .content_type(mime_type)
         .insert_header(("oxen-revision-id", last_commit_id.as_str()))
