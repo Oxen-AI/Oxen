@@ -15,11 +15,12 @@ mod event_processor_test;
 /// Processes filesystem events and updates the cache
 pub struct EventProcessor {
     cache: Arc<StatusCache>,
+    repo_path: PathBuf,
 }
 
 impl EventProcessor {
-    pub fn new(cache: Arc<StatusCache>) -> Self {
-        Self { cache }
+    pub fn new(cache: Arc<StatusCache>, repo_path: PathBuf) -> Self {
+        Self { cache, repo_path }
     }
     
     /// Run the event processing loop
@@ -127,8 +128,17 @@ impl EventProcessor {
                 continue;
             };
             
+            // Convert absolute path to relative path
+            let relative_path = match path.strip_prefix(&self.repo_path) {
+                Ok(rel) => rel.to_path_buf(),
+                Err(_) => {
+                    // Path is not within repo, skip it
+                    continue;
+                }
+            };
+            
             updates.push(FileStatus {
-                path: path.clone(),
+                path: relative_path,
                 mtime,
                 size,
                 hash: None, // Will be computed later if needed
