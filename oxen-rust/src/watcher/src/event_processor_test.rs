@@ -22,7 +22,7 @@ mod tests {
         let cache = Arc::new(StatusCache::new(repo_path).unwrap());
         let (event_tx, event_rx) = mpsc::channel::<Event>(100);
 
-        let processor = EventProcessor::new(cache.clone());
+        let processor = EventProcessor::new(cache.clone(), repo_path.to_path_buf());
 
         // Start processor in background
         tokio::spawn(async move {
