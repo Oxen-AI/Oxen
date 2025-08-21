@@ -51,11 +51,11 @@ mod tests {
 
                 // Add file
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![file_path],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -104,11 +104,11 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![relative_path],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -158,11 +158,11 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![canon_path],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -236,11 +236,11 @@ mod tests {
 
                 // Add the new file
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![full_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -270,11 +270,11 @@ mod tests {
 
                 // Add the modified file
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![full_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -303,11 +303,11 @@ mod tests {
 
                 // Add the modified file
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![full_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -381,11 +381,11 @@ mod tests {
 
                 // Add all three files
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![sub_file_1, sub_file_2, sub_file_3],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -444,11 +444,11 @@ mod tests {
                 // Add all files with glob path
                 let glob_path = PathBuf::from("*");
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![glob_path],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -495,11 +495,11 @@ mod tests {
                 // Adding `n*` should add both the new file and new dir
                 let glob_path2 = PathBuf::from("n*");
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![glob_path2],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -563,11 +563,11 @@ mod tests {
                 // Add the top-level directory
                 // TODO: Check how many files were added
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![new_dir.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -616,11 +616,11 @@ mod tests {
                 let hello_file_path = test::add_txt_file_to_dir(&dir_path, "hello.txt")?;
 
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![hello_file_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
                 let cfg = UserConfig::get()?;
@@ -633,11 +633,11 @@ mod tests {
 
                 // Add again without modification
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![hello_file_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 

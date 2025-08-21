@@ -128,11 +128,11 @@ mod tests {
                 // Add and commit all
                 let files_to_add = vec![cats_tsv, dogs_csv, readme_md];
                 api::client::workspaces::files::add(
-                    &remote_mode_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     files_to_add,
+                    &Some(remote_mode_repo.clone()),
                 )
                 .await?;
 
@@ -189,11 +189,11 @@ mod tests {
 
                 // Add both files
                 api::client::workspaces::files::add(
-                    &remote_mode_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![p1.clone(), p2.clone()],
+                    &Some(remote_mode_repo.clone()),
                 )
                 .await?;
 

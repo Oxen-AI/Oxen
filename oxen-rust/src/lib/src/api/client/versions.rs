@@ -440,8 +440,8 @@ pub async fn multipart_batch_upload(
 }
 
 pub async fn workspace_multipart_batch_upload_versions_with_retry(
-    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
+    local_repo: &Option<LocalRepository>,
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
 ) -> Result<UploadResult, OxenError> {
@@ -457,8 +457,8 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
         retry_count += 1;
 
         result = workspace_multipart_batch_upload_versions(
-            local_repo,
             remote_repo,
+            local_repo,
             client.clone(),
             paths.clone(),
             result,
@@ -474,8 +474,8 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
 }
 
 pub async fn workspace_multipart_batch_upload_versions(
-    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
+    local_repo: &Option<LocalRepository>,
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
     result: UploadResult,
@@ -499,17 +499,30 @@ pub async fn workspace_multipart_batch_upload_versions(
         .map(|f| (f.path.clone(), f.hash.clone()))
         .collect();
 
-    let head_commit_maybe = repositories::commits::head_commit_maybe(local_repo)?;
-    let repo_path = &local_repo.path;
+    let head_commit_maybe = if let Some(local_repo) = local_repo {
+        repositories::commits::head_commit_maybe(local_repo)?
+    } else {
+        None
+    };
+
+    // Get repo path if provided
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
     let mut form = reqwest::multipart::Form::new();
 
     for path in paths {
-        let relative_path = util::fs::path_relative_to_dir(&path, repo_path)?;
+        let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
         // Skip adding files already present in tree
         if let Some(ref head_commit) = head_commit_maybe {
-            if let Some(file_node) =
-                repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
-            {
+            if let Some(file_node) = repositories::tree::get_file_by_path(
+                &local_repo.clone().unwrap(),
+                head_commit,
+                &relative_path,
+            )? {
                 if !util::fs::is_modified_from_node(&path, &file_node)? {
                     continue;
                 }
@@ -541,7 +554,9 @@ pub async fn workspace_multipart_batch_upload_versions(
         let file_name = PathBuf::from(path.file_name().unwrap());
 
         // Workspaces expect just the file name, while remote-mode repos expect the relative path
-        if local_repo.is_remote_mode() {
+        // TODO: Refactor this into separate modules later, but for now, remote-mode repos will always have
+        //       a local_repo, whereas workspaces will have local_repo be None
+        if local_repo.is_some() {
             files_to_add.push(FileWithHash {
                 hash: hash.clone(),
                 path: relative_path,
@@ -576,7 +591,6 @@ pub async fn workspace_multipart_batch_upload_versions(
 
         form = form.part("file[]", file_part);
     }
-
 
     let uri = ("/versions").to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

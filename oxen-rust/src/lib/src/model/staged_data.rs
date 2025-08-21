@@ -338,7 +338,7 @@ impl StagedData {
         if dirs.is_empty() {
             return;
         }
-        
+
         outputs.push("Directories to be committed\n".normal());
         self.__collapse_outputs(&dirs, |dir| dir.to_vec(), outputs, opts);
         outputs.push("\n".normal());

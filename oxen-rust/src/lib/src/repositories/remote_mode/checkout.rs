@@ -298,11 +298,11 @@ mod tests {
                 let directory = ".".to_string();
 
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![hello_file.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -322,11 +322,11 @@ mod tests {
                 util::fs::write_to_path(&world_file, "World")?;
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &current_workspace_id,
                     &directory,
                     vec![world_file.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
                 let commit_body =
@@ -379,11 +379,11 @@ mod tests {
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![hello_file.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -406,11 +406,11 @@ mod tests {
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
 
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &current_workspace_id,
                     &directory,
                     vec![world_file.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
                 let commit_body =
@@ -464,11 +464,11 @@ mod tests {
                 let directory = ".".to_string();
 
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![hello_file.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -488,11 +488,11 @@ mod tests {
 
                 let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &current_workspace_id,
                     &directory,
                     vec![hello_file.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 

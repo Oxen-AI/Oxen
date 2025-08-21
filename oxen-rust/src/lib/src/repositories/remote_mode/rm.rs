@@ -289,11 +289,11 @@ mod tests {
                 // Create and stage a file
                 test::write_txt_file_to_path(&full_path, "Test content")?;
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![file_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -377,11 +377,11 @@ mod tests {
                 let files_to_add = vec![file1.clone(), file2.clone(), file3.clone()];
 
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     files_to_add,
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
                 let commit_body = NewCommitBody::from_config(&UserConfig::get()?, "Adding images");

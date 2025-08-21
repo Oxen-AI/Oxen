@@ -300,9 +300,7 @@ pub fn remove_file_with_db_manager(
     let _ = with_staged_db_manager(repo, |staged_db_manager| {
         let status = StagedEntryStatus::Removed;
         match add_file_node_and_parent_dir(file_node, status, path, staged_db_manager, seen_dirs) {
-            Ok(_) => {
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(e) => {
                 err_files.push(ErrorFileInfo {
                     hash: file_node.hash().to_string(),
