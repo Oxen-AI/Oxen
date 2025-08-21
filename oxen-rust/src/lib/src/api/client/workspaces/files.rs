@@ -42,9 +42,8 @@ pub async fn add(
     if paths.is_empty() {
         return Ok(());
     }
-    println!("{paths:?}");
     let repo_path = local_repo.path.clone();
-    println!("Repo path: {repo_path:?}");
+    log::debug!("Repo path: {repo_path:?}");
     let gitignore = oxenignore::create(local_repo);
 
     // Parse glob paths
@@ -56,7 +55,6 @@ pub async fn add(
             .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
 
         if util::fs::is_glob_path(path_str) {
-            // println!("glob path: {:?}", path_str);
             // Match against any untracked entries in the current dir
             let relative_glob_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
             let glob_path = repo_path.join(relative_glob_path);
@@ -64,10 +62,8 @@ pub async fn add(
                 .to_str()
                 .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
 
-            // println!("glov path str: {glob_path_str:?}");
             for entry in glob(glob_path_str)? {
                 let entry_path = entry?;
-                // println!("entry path: {entry_path:?}");
                 let relative_path = util::fs::path_relative_to_dir(&entry_path, &repo_path)?;
                 if oxenignore::is_ignored(&relative_path, &gitignore, relative_path.is_dir()) {
                     continue;
@@ -93,7 +89,6 @@ pub async fn add(
         } else {
             let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
             let full_path = repo_path.join(&relative_path);
-            // println!("path: {path:?}\nfull: {full_path:?}\n rel: {relative_path:?}\n");
             if full_path.is_dir() {
                 for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
                     let entry_path = entry.path().to_path_buf();
@@ -114,8 +109,7 @@ pub async fn add(
     }
 
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
-
-    println!("expanded paths: {expanded_paths:?}");
+    log::debug!("expanded paths: {expanded_paths:?}");
 
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
@@ -195,13 +189,11 @@ async fn upload_multiple_files(
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
 
-    println!("Iterating through paths in upload_multiple_files");
-
     // Group files by size
     // TODO: NEED NEED NEED full paths to be fed in this far;
     for path in paths {
         if !path.exists() {
-            println!("File does not exist: {:?}", path);
+            log::warn!("File does not exist: {:?}", path);
             continue;
         }
 
@@ -224,20 +216,13 @@ async fn upload_multiple_files(
         }
     }
 
-    // println!("Finished sorting paths into large and small files");
-    //println!("Large files: {large_files:?}");
-    // println!("Small files: {small_files:?}");
-
     let large_files_size = large_files.iter().map(|(_, size)| size).sum::<u64>();
     let total_size = large_files_size + small_files_size;
 
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
-    // println!("Upload feasibility validated. Begin uploading large files...");
-
     // Process large files individually with parallel upload
     for (path, _size) in large_files {
-        // println!("Uploading large file: {:?} ({} bytes)", path, _size);
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
@@ -274,7 +259,6 @@ async fn parallel_batched_small_file_upload(
     small_files_size: u64,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
-        //println!("Small files was empty");
         return Ok(());
     }
 
@@ -353,7 +337,6 @@ async fn parallel_batched_small_file_upload(
                 .await
                 {
                     Ok(result) => {
-                        //println!("Successfully uploaded batch of files");
                         // second, stage the files to workspace
                         match add_version_files_to_workspace_with_retry(
                             &remote_repo,
@@ -408,7 +391,6 @@ pub async fn add_version_files_to_workspace_with_retry(
         first_try = false;
         retry_count += 1;
 
-        //println!("Add_version_files_to_workspace called for {} files. This is try number {retry_count}", files_to_add.len());
         err_files = add_version_files_to_workspace(
             remote_repo,
             client.clone(),
@@ -437,7 +419,6 @@ pub async fn add_version_files_to_workspace(
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory_str = directory_str.as_ref();
-    // println!("files: {files_to_add:?}");
     let uri = format!("/workspaces/{}/versions/{directory_str}", workspace_id);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -452,7 +433,6 @@ pub async fn add_version_files_to_workspace(
     } else {
         files_to_add.to_vec()
     };
-    // println!("uri: {uri:?}");
     let response = client.post(&url).json(&files_to_send).send().await?;
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
@@ -628,9 +608,8 @@ pub async fn rm_files(
         }
     }
 
-    println!("expanded paths: {expanded_paths:?}");
-
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+    log::debug!("expanded paths: {expanded_paths:?}");
 
     let uri = format!("/workspaces/{workspace_id}/versions");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -638,35 +617,30 @@ pub async fn rm_files(
     let client = client::new_for_url(&url)?;
     let response = client.delete(&url).json(&expanded_paths).send().await?;
     // TODO: Same issue as with add, will display same message even if rm doesn't stage the files
-    println!("response: ");
+
     if response.status().is_success() {
-        log::debug!("Request successful, status: {}", response.status());
+        log::debug!("rm_files successful, status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
         log::debug!("rm_files got body: {}", body);
 
         println!(
-            "🐂 oxen  staged paths {paths:?} as removed for workspace {}",
+            "🐂 oxen staged paths {paths:?} as removed for workspace {}",
             workspace_id
         );
 
         // Remove files locally
         for path in expanded_paths {
             let full_path = local_repo.path.join(&path);
-            println!(
-                "full path: {full_path:?}; exists? : {:?}",
-                full_path.exists()
-            );
             if full_path.is_dir() {
                 util::fs::remove_dir_all(&full_path)?;
             }
 
             if full_path.is_file() {
-                println!("Removing: {full_path:?}");
                 util::fs::remove_file(&full_path)?;
             }
         }
     } else {
-        println!("Request failed with status: {}", response.status());
+        log::debug!("rm_files failed with status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
 
         return Err(OxenError::basic_str(format!(
@@ -829,7 +803,6 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             let path = test::test_img_file();
-            println!("test: {path:?}");
             let result = api::client::workspaces::files::add(
                 &local_repo,
                 &remote_repo,

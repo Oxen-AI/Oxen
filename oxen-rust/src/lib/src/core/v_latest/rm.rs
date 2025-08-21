@@ -302,11 +302,9 @@ pub fn remove_file_with_db_manager(
         let status = StagedEntryStatus::Removed;
         match add_file_node_and_parent_dir(file_node, status, path, staged_db_manager, seen_dirs) {
             Ok(_) => {
-                println!("Success!");
                 Ok(())
             }
             Err(e) => {
-                println!("Fail");
                 err_files.push(ErrorFileInfo {
                     hash: file_node.hash().to_string(),
                     path: Some(path.to_path_buf()),
@@ -383,7 +381,7 @@ pub fn remove_dir_with_db_manager(
             match staged_db_manager.add_directory(&parent_path, seen_dirs) {
                 Ok(_) => {}
                 Err(e) => {
-                    println!("Error adding parent dirs: {:?}", e);
+                    log::debug!("Error adding parent dirs: {:?}", e);
                     return Err(e);
                 }
             }
