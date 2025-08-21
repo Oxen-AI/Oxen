@@ -3,6 +3,8 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::process::Command;
 use tokio::time;
+use oxen_watcher::ipc::send_request;
+use oxen_watcher::protocol::{WatcherRequest, WatcherResponse};
 
 /// Helper to get the watcher binary path
 fn get_watcher_path() -> PathBuf {
@@ -197,4 +199,68 @@ async fn test_multiple_watcher_prevention() {
 
     // Clean up
     let _ = first_watcher.kill().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_watcher_reports_relative_paths() {
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Initialize an oxen repository
+    liboxen::repositories::init::init(repo_path).unwrap();
+
+    let watcher_path = get_watcher_path();
+
+    // Start the watcher
+    let mut watcher_process = Command::new(&watcher_path)
+        .arg("start")
+        .arg("--repo")
+        .arg(repo_path)
+        .spawn()
+        .expect("Failed to start watcher");
+
+    // Give it time to start and do initial scan
+    time::sleep(Duration::from_secs(3)).await;
+
+    // Create test files in different directories
+    std::fs::write(repo_path.join("root_file.txt"), "root content").unwrap();
+    std::fs::create_dir_all(repo_path.join("subdir")).unwrap();
+    std::fs::write(repo_path.join("subdir/nested_file.txt"), "nested content").unwrap();
+
+    // Give watcher time to detect the changes
+    time::sleep(Duration::from_millis(500)).await;
+
+    // Query the watcher via IPC
+    let socket_path = repo_path.join(".oxen/watcher.sock");
+    let request = WatcherRequest::GetStatus { paths: None };
+    let response = send_request(&socket_path, request).await.expect("Failed to send request");
+
+    // Verify the response contains relative paths
+    if let WatcherResponse::Status(status) = response {
+        // Check that all paths are relative
+        for path in &status.untracked {
+            assert!(!path.is_absolute(), "Path should be relative, got: {:?}", path);
+            assert!(!path.starts_with("/"), "Path should not start with /, got: {:?}", path);
+        }
+        
+        // Verify specific files are present with correct relative paths
+        let paths: Vec<_> = status.untracked.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        assert!(paths.contains(&"root_file.txt".to_string()), "Should contain root_file.txt");
+        assert!(paths.contains(&"subdir/nested_file.txt".to_string()), "Should contain subdir/nested_file.txt");
+    } else {
+        panic!("Expected Status response, got: {:?}", response);
+    }
+
+    // Stop the watcher
+    Command::new(&watcher_path)
+        .arg("stop")
+        .arg("--repo")
+        .arg(repo_path)
+        .output()
+        .await
+        .expect("Failed to stop watcher");
+
+    // Clean up
+    let _ = watcher_process.kill().await;
 }

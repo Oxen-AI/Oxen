@@ -63,7 +63,7 @@ impl FileSystemWatcher {
         info!("Watching directory: {}", self.repo_path.display());
 
         // Start the event processor
-        let processor = EventProcessor::new(self.cache.clone());
+        let processor = EventProcessor::new(self.cache.clone(), self.repo_path.clone());
         let processor_handle = tokio::spawn(async move { processor.run(event_rx).await });
 
         // Start the IPC server
