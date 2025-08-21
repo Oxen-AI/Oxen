@@ -1027,6 +1027,8 @@ pub fn add_file_node_and_parent_dir(
     while let Some(parent) = parent_path.parent() {
         parent_path = parent.to_path_buf();
 
+        println!("parent_path: {parent_path:?}");
+
         staged_db_manager.add_directory(&parent_path, seen_dirs)?;
         if parent_path == Path::new("") {
             break;

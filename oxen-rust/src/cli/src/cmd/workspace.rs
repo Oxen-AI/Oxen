@@ -97,6 +97,7 @@ impl WorkspaceCmd {
             Box::new(WorkspaceDeleteCmd),
             Box::new(WorkspaceListCmd),
             Box::new(WorkspaceRmCmd),
+            Box::new(WorkspaceRestoreCmd),
             Box::new(WorkspaceStatusCmd),
             Box::new(WorkspaceDownloadCmd),
         ];

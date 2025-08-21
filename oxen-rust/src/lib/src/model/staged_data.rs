@@ -8,13 +8,21 @@ use crate::model::{
     SummarizedStagedDirStats,
 };
 
+use crate::model::LocalRepository;
+
+// TODO: Display if in Remote mode repo;
+
 pub const MSG_CLEAN_REPO: &str = "nothing to commit, working tree clean\n";
 pub const MSG_OXEN_ADD_FILE_EXAMPLE: &str =
     "  (use \"oxen add <file>...\" to update what will be committed)\n";
+pub const MSG_OXEN_UNSYNCED_FILE_EXAMPLE: &str =
+    "  (use \"oxen restore <file>...\" to download file contents)\n";
 pub const MSG_OXEN_RM_FILE_EXAMPLE: &str =
     "  (use \"oxen add/rm <file>...\" to update what will be committed)\n";
 pub const MSG_OXEN_ADD_DIR_EXAMPLE: &str =
     "  (use \"oxen add <dir>...\" to update what will be committed)\n";
+pub const MSG_OXEN_UNSYNCED_DIR_EXAMPLE: &str =
+    "  (use \"oxen restore <dir>...\" to download directories)\n";
 pub const MSG_OXEN_RM_DIR_EXAMPLE: &str =
     "  (use \"oxen add/rm <dir>...\" to update what will be committed)\n";
 pub const MSG_OXEN_ADD_FILE_RESOLVE_CONFLICT: &str =
@@ -40,6 +48,14 @@ impl StagedDataOpts {
     pub fn from_paths(paths: &[PathBuf]) -> StagedDataOpts {
         StagedDataOpts {
             paths: paths.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    pub fn from_paths_remote_mode(paths: &[PathBuf]) -> StagedDataOpts {
+        StagedDataOpts {
+            paths: paths.to_owned(),
+            is_remote: true,
             ..Default::default()
         }
     }
@@ -78,6 +94,8 @@ pub struct StagedData {
     pub staged_schemas: HashMap<PathBuf, StagedSchema>, // All the staged entrisumes will be in here
     pub untracked_dirs: Vec<(PathBuf, usize)>,
     pub untracked_files: Vec<PathBuf>,
+    pub unsynced_dirs: Vec<(PathBuf, usize)>,
+    pub unsynced_files: Vec<PathBuf>,
     pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
     pub removed_files: HashSet<PathBuf>,
@@ -92,6 +110,8 @@ impl StagedData {
             staged_schemas: HashMap::new(),
             untracked_dirs: vec![],
             untracked_files: vec![],
+            unsynced_dirs: vec![],
+            unsynced_files: vec![],
             modified_files: HashSet::new(),
             removed_files: HashSet::new(),
             moved_files: vec![],
@@ -99,6 +119,7 @@ impl StagedData {
         }
     }
 
+    // Unsynced dirs and files not included
     pub fn is_clean(&self) -> bool {
         self.staged_files.is_empty()
             && self.staged_dirs.is_empty()
@@ -113,6 +134,10 @@ impl StagedData {
 
     pub fn has_added_entries(&self) -> bool {
         !self.staged_dirs.is_empty() || !self.staged_files.is_empty()
+    }
+
+    pub fn has_unsynced_entries(&self) -> bool {
+        !self.unsynced_dirs.is_empty() || !self.unsynced_files.is_empty()
     }
 
     pub fn has_modified_entries(&self) -> bool {
@@ -147,6 +172,13 @@ impl StagedData {
         let mut outputs: Vec<ColoredString> = vec![];
 
         if self.is_clean() {
+            // If in remote-mode repo, check for unsynced files
+            if let Ok(repo) = LocalRepository::from_current_dir() {
+                if repo.is_remote_mode() {
+                    self.__collect_unsynced_dirs(&mut outputs, opts);
+                    self.__collect_unsynced_files(&mut outputs, opts);
+                }
+            }
             outputs.push(MSG_CLEAN_REPO.to_string().normal());
             return outputs;
         }
@@ -156,6 +188,8 @@ impl StagedData {
         self.staged_schemas(&mut outputs, opts);
         self.__collect_modified_files(&mut outputs, opts);
         self.__collect_merge_conflicts(&mut outputs, opts);
+        self.__collect_unsynced_dirs(&mut outputs, opts);
+        self.__collect_unsynced_files(&mut outputs, opts);
         self.__collect_untracked_dirs(&mut outputs, opts);
         self.__collect_untracked_files(&mut outputs, opts);
         self.__collect_removed_files(&mut outputs, opts);
@@ -175,7 +209,7 @@ impl StagedData {
     pub fn print_with_params(&self, opts: &StagedDataOpts) {
         let outputs = self.__collect_outputs(opts);
         for output in outputs {
-            print!("{output}")
+            print!("{output}");
         }
     }
 
@@ -255,7 +289,6 @@ impl StagedData {
     }
 
     fn staged_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
-        log::debug!("staged_dirs: {:?}", self.staged_dirs);
         let mut dirs: Vec<Vec<ColoredString>> = vec![];
         for (path, staged_dirs) in self.staged_dirs.paths.iter() {
             let mut dir_row: Vec<ColoredString> = vec![];
@@ -306,7 +339,6 @@ impl StagedData {
             return;
         }
 
-        log::debug!("num dirs staged: {}", dirs.len());
         outputs.push("Directories to be committed\n".normal());
         self.__collapse_outputs(&dirs, |dir| dir.to_vec(), outputs, opts);
         outputs.push("\n".normal());
@@ -499,6 +531,59 @@ impl StagedData {
             opts,
         );
         outputs.push("\n".normal());
+    }
+
+    fn __collect_unsynced_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
+        // List untracked files
+        if !self.unsynced_dirs.is_empty() {
+            outputs.push("Unsynced Directories\n".normal());
+            outputs.push(MSG_OXEN_UNSYNCED_DIR_EXAMPLE.normal());
+
+            let mut dirs = self.unsynced_dirs.clone();
+            dirs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap());
+
+            let max_dir_len = dirs
+                .iter()
+                .map(|(path, _size)| path.to_str().unwrap().len())
+                .max()
+                .unwrap();
+
+            self.__collapse_outputs(
+                &dirs,
+                |(path, size)| {
+                    let path_str = path.to_str().unwrap();
+                    let num_spaces = max_dir_len - path_str.len();
+                    vec![
+                        format!("  {} {}", path_str, StagedData::spaces(num_spaces))
+                            .white()
+                            .bold(),
+                        format!("({} {})\n", size, StagedData::item_str_plural(*size)).normal(),
+                    ]
+                },
+                outputs,
+                opts,
+            );
+            outputs.push("\n".normal());
+        }
+    }
+
+    fn __collect_unsynced_files(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
+        // List untracked files
+        if !self.unsynced_files.is_empty() {
+            outputs.push("Unsynced Files\n".normal());
+            outputs.push(MSG_OXEN_UNSYNCED_FILE_EXAMPLE.normal());
+
+            let mut files = self.unsynced_files.clone();
+            files.sort();
+
+            self.__collapse_outputs(
+                &files,
+                |f| vec![format!("  {}\n", f.to_str().unwrap()).white().bold()],
+                outputs,
+                opts,
+            );
+            outputs.push("\n".normal());
+        }
     }
 
     fn __collect_untracked_dirs(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {

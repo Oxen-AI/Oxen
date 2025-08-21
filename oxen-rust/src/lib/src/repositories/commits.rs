@@ -231,7 +231,7 @@ pub fn list_between(
     }
 }
 
-/// Get a list commits by the commit message
+/// Get a list of commits by the commit message
 pub fn get_by_message(
     repo: &LocalRepository,
     msg: impl AsRef<str>,

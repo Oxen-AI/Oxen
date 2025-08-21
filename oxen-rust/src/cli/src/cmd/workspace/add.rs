@@ -99,8 +99,14 @@ impl RunCmd for WorkspaceAddCmd {
             ));
         }
 
-        api::client::workspaces::files::add(&remote_repo, workspace_identifier, directory, paths)
-            .await?;
+        api::client::workspaces::files::add(
+            &remote_repo,
+            workspace_identifier,
+            directory,
+            paths,
+            &None,
+        )
+        .await?;
 
         Ok(())
     }

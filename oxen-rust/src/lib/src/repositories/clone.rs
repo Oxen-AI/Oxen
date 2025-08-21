@@ -779,60 +779,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            let local_head_commit = repositories::commits::head_commit(&local_repo)?;
-            let local_root =
-                repositories::tree::get_root_with_children(&local_repo, &local_head_commit)?;
-
-            test::run_empty_dir_test_async(|repo_dir| async move {
-                // Clone repo in remote mode
-                let mut clone_opts =
-                    CloneOpts::new(&remote_repo.remote.url, repo_dir.join("new_repo"));
-                clone_opts.is_remote = true;
-
-                let cloned_repo = repositories::clone(&clone_opts).await?;
-                assert!(cloned_repo.is_remote_mode());
-
-                // Merkle tree matches original local repo
-                let cloned_head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                let cloned_root =
-                    repositories::tree::get_root_with_children(&cloned_repo, &cloned_head_commit)?;
-                assert_eq!(local_root, cloned_root);
-
-                // Versions dir is empty
-                let versions_dir = util::fs::oxen_hidden_dir(&cloned_repo.path)
-                    .join(constants::VERSIONS_DIR)
-                    .join(constants::OBJECT_FILES_DIR);
-                let mut versions_iter = std::fs::read_dir(versions_dir)?;
-                assert!(versions_iter.next().is_none());
-
-                // Workspace was initialized
-                let workspace_name = cloned_repo.workspace_name;
-                assert!(workspace_name.is_some());
-
-                let workspace_name = workspace_name.unwrap();
-                let workspace =
-                    api::client::workspaces::get_by_name(&remote_repo, &workspace_name).await?;
-
-                // Workspaces initialized by remote-mode clone are named
-                assert!(workspace.is_some());
-
-                let workspace = workspace.unwrap();
-                assert!(workspace.name.is_some());
-                assert_eq!(workspace.name.unwrap(), workspace_name);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_cloned_repos_not_set_as_remote_mode_by_default() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();

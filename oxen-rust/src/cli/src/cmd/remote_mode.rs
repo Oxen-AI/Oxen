@@ -1,11 +1,17 @@
-pub mod status;
-pub use status::RemoteModeStatusCmd;
-
 pub mod checkout;
 pub use checkout::RemoteModeCheckoutCmd;
 
 pub mod commit;
 pub use commit::RemoteModeCommitCmd;
+
+// pub mod pull;
+// pub use pull::RemoteModePullCmd;
+
+pub mod restore;
+pub use restore::RemoteModeRestoreCmd;
+
+pub mod status;
+pub use status::RemoteModeStatusCmd;
 
 use async_trait::async_trait;
 use clap::Command;
@@ -63,7 +69,8 @@ impl RemoteModeCmd {
         let commands: Vec<Box<dyn RunCmd>> = vec![
             Box::new(RemoteModeCheckoutCmd),
             Box::new(RemoteModeCommitCmd),
-            // Box::new(RemoteModeListCmd),
+            // Box::new(RemoteModePullCmd),
+            Box::new(RemoteModeRestoreCmd),
             Box::new(RemoteModeStatusCmd),
         ];
         let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();

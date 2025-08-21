@@ -57,6 +57,9 @@ pub use load::LoadCmd;
 pub mod log;
 pub use log::LogCmd;
 
+pub mod ls;
+pub use ls::LsCmd;
+
 pub mod migrate;
 pub use migrate::MigrateCmd;
 

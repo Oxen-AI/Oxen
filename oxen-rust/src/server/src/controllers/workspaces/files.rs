@@ -12,7 +12,8 @@ use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::{
-    ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
+    StatusMessageDescription,
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
@@ -40,8 +41,6 @@ pub async fn get(
     // The path in a workspace context is just the working path of the workspace repo
     let path = workspace.workspace_repo.path.join(path);
 
-    log::debug!("got workspace file path {:?}", path);
-
     // TODO: This probably isn't the best place for the resize logic
     let img_resize = query.into_inner();
     if img_resize.width.is_some() || img_resize.height.is_some() {
@@ -55,6 +54,7 @@ pub async fn get(
         util::fs::resize_cache_image(&path, &resized_path, img_resize)?;
         return Ok(NamedFile::open(resized_path)?);
     }
+
     Ok(NamedFile::open(path)?)
 }
 
@@ -71,13 +71,10 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    log::debug!("add_file directory {:?}", directory);
-
     let files = save_parts(&workspace, &directory, payload).await?;
     let mut ret_files = vec![];
 
     for file in files.iter() {
-        log::debug!("add_file file {:?}", file);
         let path = repositories::workspaces::files::add(&workspace, file).await?;
         log::debug!("add_file ✅ success! staged file {:?}", path);
         ret_files.push(path);
@@ -107,7 +104,11 @@ pub async fn add_version_files(
     };
 
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-
+    log::debug!(
+        "Calling add version files from the core workspace logic with {} files:\n {:?}",
+        files_with_hash.len(),
+        files_with_hash
+    );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,
@@ -156,19 +157,32 @@ pub async fn rm_files(
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
 
-    let mut ret_files = vec![];
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
 
-    for path in paths_to_remove {
-        log::debug!("rm_files path {:?}", path);
-        let path = repositories::workspaces::files::rm(&workspace, &path).await?;
-        log::debug!("rm ✅ success! staged file {:?} as removed", path);
-        ret_files.push(path);
+    for path in &paths_to_remove {
+        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
+        println!("rm ✅ success! staged file {:?} as removed", path);
     }
 
-    Ok(HttpResponse::Ok().json(FilePathsResponse {
-        status: StatusMessage::resource_deleted(),
-        paths: ret_files,
-    }))
+    log::debug!("err_files: {err_files:?}");
+
+    if err_files.is_empty() {
+        Ok(HttpResponse::Ok().json(FilePathsResponse {
+            status: StatusMessage::resource_deleted(),
+            paths: paths_to_remove,
+        }))
+    } else {
+        let error_paths: Vec<PathBuf> = err_files
+            .into_iter()
+            .filter_map(|err_info| err_info.path)
+            .collect();
+
+        // Return a partial content response with all the paths
+        Ok(HttpResponse::PartialContent().json(FilePathsResponse {
+            status: StatusMessage::resource_not_found(),
+            paths: error_paths,
+        }))
+    }
 }
 
 // Remove files from staging

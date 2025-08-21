@@ -225,7 +225,6 @@ pub async fn checkout_subtrees(
         };
 
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
-
         let mut results = CheckoutResult::new();
         let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
         let version_store = repo.version_store()?;
@@ -257,8 +256,8 @@ pub async fn checkout_subtrees(
 
         if repo.is_remote_mode() {
             for file_to_restore in results.files_to_restore {
-                //let file_hash = format!("{}", &file_to_restore.file_node.hash());
-
+                log::debug!("file_to_restore: {:?}", file_to_restore.file_node);
+                // let file_hash = format!("{}", &file_to_restore.file_node.hash());
                 // In remote-mode repos, only restore files that are present in version store
                 if version_store.version_exists(&file_to_restore.file_node.hash().to_string())? {
                     restore::restore_file(
@@ -429,6 +428,7 @@ async fn cleanup_removed_files(
     if repo.is_remote_mode() {
         let version_store = repo.version_store()?;
         for (hash, full_path) in files_to_store {
+            log::debug!("Storing hash {hash:?} and path {full_path:?}");
             version_store
                 .store_version_from_path(&hash.to_string(), &full_path)
                 .await?;
@@ -450,8 +450,6 @@ async fn cleanup_removed_files(
     Ok(())
 }
 
-// Note: If we're willing to duplicate the recursive logic, we could make synchronous version for regular repos
-// And have the async only for remote-mode repos
 fn r_remove_if_not_in_target(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
@@ -468,8 +466,9 @@ fn r_remove_if_not_in_target(
             if !hashes.seen_hashes.contains(&from_node.hash) {
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);
-                // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
+                //log::debug!("file_path: {file_path:?}");
 
+                // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
                     if util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
@@ -481,6 +480,9 @@ fn r_remove_if_not_in_target(
 
                         paths_to_remove.push(full_path.clone());
                     }
+                // If in remote-mode, save original file contents to version_store
+                } else if full_path.exists() && repo.is_remote_mode() {
+                    files_to_store.push((from_node.hash, full_path.clone()))
                 }
             }
         }
@@ -606,7 +608,6 @@ fn r_restore_missing_or_modified_files(
                     };
 
                 if last_modified == from_last_modified {
-                    log::debug!("Updating modified file: {:?}", file_path);
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),
@@ -628,8 +629,6 @@ fn r_restore_missing_or_modified_files(
                 //log::debug!("from hash: {from_hash:?}");
 
                 if working_hash == from_hash {
-                    log::debug!("Updating modified file: {:?}", file_path);
-
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),

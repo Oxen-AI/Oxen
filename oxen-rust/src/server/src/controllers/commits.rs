@@ -166,7 +166,7 @@ pub async fn list_missing(
         merkle_hashes.hashes.len()
     );
     let missing_commits =
-        repositories::tree::list_missing_commit_hashes(&repo, &merkle_hashes.hashes)?;
+        repositories::tree::list_unsynced_commit_hashes(&repo, &merkle_hashes.hashes)?;
     log::debug!(
         "list_missing found {} missing commits",
         missing_commits.len()
