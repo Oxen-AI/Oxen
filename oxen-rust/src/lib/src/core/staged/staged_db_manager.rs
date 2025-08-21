@@ -132,7 +132,6 @@ impl StagedDBManager {
         // Get a write lock on the db
         let db_w = self.staged_db.write();
         self.upsert_staged_node(relative_path, &staged_file_node, Some(&db_w))?;
-        println!("Add file staged: \n{file_node:?}");
 
         Ok(Some(staged_file_node))
     }
@@ -170,7 +169,6 @@ impl StagedDBManager {
         let db_w = self.staged_db.write();
         for (key, staged_node) in staged_nodes.iter() {
             self.upsert_staged_node(key, staged_node, Some(&db_w))?;
-            println!("Upsert staged nodes upserted: \n{staged_node:?}\n");
         }
         Ok(())
     }
@@ -228,7 +226,6 @@ impl StagedDBManager {
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
 
-        println!("Add directory staged: \n{dir_entry:?}");
         Ok(())
     }
 

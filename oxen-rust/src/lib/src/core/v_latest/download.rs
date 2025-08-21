@@ -62,14 +62,14 @@ pub async fn download_dir_entries(
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
     let local_path = local_path.as_ref();
-    println!("downloading dir {:?}", remote_path);
+    log::debug!("downloading dir {:?}", remote_path);
 
     // Get tree from local repos
     let commit = &entry.latest_commit.as_ref().unwrap();
     let Some(dir_node) =
         repositories::tree::get_dir_with_children_recursive(local_repo, commit, remote_path)?
     else {
-        println!("Dir node not found for path {local_path:?}");
+        log::warn!("Dir node not found for path {local_path:?}");
         return Ok(());
     };
 
@@ -94,9 +94,7 @@ async fn r_download_entries(
     directory: &Path,
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
-    println!("r_download_entries downloading entries for {:?}", directory);
     for child in &node.children {
-        println!("r_download_entries downloading entry {:?}", child);
 
         let mut new_directory = directory.to_path_buf();
         if let EMerkleTreeNode::Directory(dir_node) = &child.node {
@@ -104,7 +102,6 @@ async fn r_download_entries(
         }
 
         let has_children = child.has_children();
-        println!("r_download_entries has children: {:?}", has_children);
         if has_children {
             Box::pin(r_download_entries(
                 remote_repo,
@@ -133,7 +130,7 @@ async fn r_download_entries(
             }
         }
 
-        println!(
+        log::debug!(
             "r_download_entries downloading {} entries to working dir",
             entries.len()
         );

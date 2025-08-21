@@ -71,13 +71,10 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    println!("add_file directory {:?}", directory);
-
     let files = save_parts(&workspace, &directory, payload).await?;
     let mut ret_files = vec![];
 
     for file in files.iter() {
-        println!("add_file file {:?}", file);
         let path = repositories::workspaces::files::add(&workspace, file).await?;
         log::debug!("add_file ✅ success! staged file {:?}", path);
         ret_files.push(path);
@@ -107,7 +104,7 @@ pub async fn add_version_files(
     };
 
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-    println!(
+    log::debug!(
         "Calling add version files from the core workspace logic with {} files:\n {:?}",
         files_with_hash.len(),
         files_with_hash
@@ -163,12 +160,11 @@ pub async fn rm_files(
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
     for path in &paths_to_remove {
-        println!("rm_files path {:?}", path);
         err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
         println!("rm ✅ success! staged file {:?} as removed", path);
     }
 
-    println!("err_files: {err_files:?}");
+    log::debug!("err_files: {err_files:?}");
 
     if err_files.is_empty() {
         Ok(HttpResponse::Ok().json(FilePathsResponse {

@@ -126,7 +126,6 @@ fn collect_missing_files(
         node.children.len()
     );
     for child in &node.children {
-        // println!("Child: {child:?}");
         if let EMerkleTreeNode::File(file_node) = &child.node {
             if !hashes.contains(&child.hash) {
                 continue;

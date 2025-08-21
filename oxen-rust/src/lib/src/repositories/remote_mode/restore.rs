@@ -12,7 +12,6 @@ pub async fn restore(
     paths: &[PathBuf],
     revision: &String,
 ) -> Result<(), OxenError> {
-    // println!("path: {path:?}");
     let mut paths_to_download: Vec<(PathBuf, PathBuf)> = vec![];
     let remote_repo = api::client::repositories::get_default_remote(repo).await?;
     let head_commit = repositories::commits::head_commit_maybe(repo)?;

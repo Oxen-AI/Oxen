@@ -71,7 +71,7 @@ pub async fn batch_upload(
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
 
-    println!("batch upload file for repo: {:?}", repo.path);
+    log::debug!("batch upload file for repo: {:?}", repo.path);
     let files = save_multiparts(payload, &repo).await?;
 
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {

@@ -453,7 +453,6 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
     let mut retry_count: usize = 0;
 
     while (first_try || !result.err_files.is_empty()) && retry_count < MAX_RETRIES {
-        // println!("Uploading versions. Retry count is {retry_count}");
         first_try = false;
         retry_count += 1;
 
@@ -517,7 +516,6 @@ pub async fn workspace_multipart_batch_upload_versions(
             }
         }
 
-        // println!("{path:?}");
         // if it's not the first try
         if !result.err_files.is_empty() {
             // if the file doesn't have a hash it failed, so we need to retry it
@@ -579,7 +577,6 @@ pub async fn workspace_multipart_batch_upload_versions(
         form = form.part("file[]", file_part);
     }
 
-    // println!("files_to_add: {files_to_add:?}");
 
     let uri = ("/versions").to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -588,7 +585,7 @@ pub async fn workspace_multipart_batch_upload_versions(
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
 
-    // println!("resonse: {response:?}");
+    log::debug!("workspace_multipart_batch_upload got response: {response:?}");
 
     err_files.extend(response.err_files);
     let result = UploadResult {

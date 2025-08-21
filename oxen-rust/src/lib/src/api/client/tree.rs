@@ -650,7 +650,7 @@ mod tests {
                 })
                 .count();
 
-            println!("dir_count: {}", dir_count);
+            log::debug!("dir_count: {}", dir_count);
             assert!(dir_count > 33);
 
             let download_repo_path_2 = local_repo.path.join("download_repo_test_2");
