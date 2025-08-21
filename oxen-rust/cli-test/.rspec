@@ -1,2 +1,3 @@
+--pattern spec/test_cases/**/tests.rb
 --format documentation
 --color
