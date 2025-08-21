@@ -95,7 +95,6 @@ async fn r_download_entries(
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     for child in &node.children {
-
         let mut new_directory = directory.to_path_buf();
         if let EMerkleTreeNode::Directory(dir_node) = &child.node {
             new_directory.push(dir_node.name());

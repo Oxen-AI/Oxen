@@ -76,11 +76,11 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![file_path],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -155,11 +155,11 @@ mod tests {
 
                     test::write_txt_file_to_path(&full_path, &file_content)?;
                     api::client::workspaces::files::add(
-                        &cloned_repo,
                         &remote_repo,
                         &workspace_id,
                         &directory,
                         vec![file_path.clone()],
+                        &Some(cloned_repo.clone()),
                     )
                     .await?;
 
@@ -274,11 +274,11 @@ mod tests {
 
                 // Add and commit modified file
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
                     &directory,
                     vec![full_path],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
                 let cfg = UserConfig::get()?;
@@ -382,11 +382,11 @@ mod tests {
 
                 // Add the file, which uploads its content to the remote workspace
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![hello_file_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -453,11 +453,11 @@ mod tests {
 
                 // Add the directory, which stages its contents remotely
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![dir_to_remove.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
@@ -534,11 +534,11 @@ mod tests {
 
                 let file_path = PathBuf::from("invalid.parquet");
                 api::client::workspaces::files::add(
-                    &cloned_repo,
                     &remote_repo,
                     &workspace_id,
                     &directory,
                     vec![file_path.clone()],
+                    &Some(cloned_repo.clone()),
                 )
                 .await?;
 
