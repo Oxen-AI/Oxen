@@ -38,11 +38,11 @@ pub struct UploadResult {
 
 // TODO: Test adding removed files
 pub async fn add(
-    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
@@ -51,22 +51,36 @@ pub async fn add(
     if paths.is_empty() {
         return Ok(());
     }
-    let repo_path = local_repo.path.clone();
-    log::debug!("Repo path: {repo_path:?}");
-    let gitignore = oxenignore::create(local_repo);
+
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
+    let gitignore = local_repo.as_ref().map(oxenignore::create);
 
     // Parse glob paths
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths.clone() {
+        // Get repo path if provided
         let path_str = &path
             .to_str()
             .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
+        println!("path_str: {path_str:?}");
 
         if util::fs::is_glob_path(path_str) {
             // Match against any untracked entries in the current dir
-            let relative_glob_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-            let glob_path = repo_path.join(relative_glob_path);
+            //println!("relative: {relative_glob_path:?}");
+            let glob_path = if local_repo.is_some() {
+                let relative_glob_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+                repo_path.join(relative_glob_path)
+            } else {
+                path.clone()
+            };
+
+            log::debug!("glob path: {glob_path:?}");
             let glob_path_str = &glob_path
                 .to_str()
                 .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
@@ -74,9 +88,17 @@ pub async fn add(
             for entry in glob(glob_path_str)? {
                 let entry_path = entry?;
                 let relative_path = util::fs::path_relative_to_dir(&entry_path, &repo_path)?;
-                if oxenignore::is_ignored(&relative_path, &gitignore, relative_path.is_dir()) {
+
+                if gitignore.is_some()
+                    && oxenignore::is_ignored(
+                        &relative_path,
+                        &gitignore.clone().unwrap(),
+                        relative_path.is_dir(),
+                    )
+                {
                     continue;
                 }
+
                 let full_path = repo_path.join(relative_path);
                 if full_path.is_dir() {
                     for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
@@ -123,11 +145,11 @@ pub async fn add(
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
     match upload_multiple_files(
-        local_repo,
         remote_repo,
         workspace_id,
         directory,
         expanded_paths.clone(),
+        local_repo,
     )
     .await
     {
@@ -180,11 +202,11 @@ pub async fn upload_single_file(
 }
 
 async fn upload_multiple_files(
-    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -247,12 +269,12 @@ async fn upload_multiple_files(
 
     // Upload small files in batches
     parallel_batched_small_file_upload(
-        local_repo,
         remote_repo,
         workspace_id,
         directory,
         small_files,
         small_files_size,
+        local_repo,
     )
     .await?;
 
@@ -260,12 +282,12 @@ async fn upload_multiple_files(
 }
 
 async fn parallel_batched_small_file_upload(
-    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
@@ -338,8 +360,8 @@ async fn parallel_batched_small_file_upload(
 
                 // first, upload the files to the version store
                 match api::client::versions::workspace_multipart_batch_upload_versions_with_retry(
-                    &local_repo,
                     &remote_repo,
+                    &local_repo,
                     client.clone(),
                     batch,
                 )
@@ -802,7 +824,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_single_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -820,11 +842,11 @@ mod tests {
 
             let path = test::test_img_file();
             let result = api::client::workspaces::files::add(
-                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -856,7 +878,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_large_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-large-file";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -874,11 +896,11 @@ mod tests {
 
             let path = test::test_30k_parquet();
             let result = api::client::workspaces::files::add(
-                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -1504,7 +1526,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_multiple_files() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-multiple-files";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1528,11 +1550,11 @@ mod tests {
 
             // Call the add function with multiple files
             let result = api::client::workspaces::files::add(
-                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory,
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -1559,7 +1581,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_file_with_absolute_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images-with-absolute-path";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1578,11 +1600,11 @@ mod tests {
             // Get the absolute path to the file
             let path = test::test_img_file().canonicalize()?;
             let result = api::client::workspaces::files::add(
-                &local_repo,
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
