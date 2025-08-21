@@ -260,7 +260,6 @@ pub async fn checkout_subtrees(
                 // let file_hash = format!("{}", &file_to_restore.file_node.hash());
                 // In remote-mode repos, only restore files that are present in version store
                 if version_store.version_exists(&file_to_restore.file_node.hash().to_string())? {
-                    // println!("Version exists for file_node: {:?}", file_to_restore.file_node);
                     restore::restore_file(
                         repo,
                         &file_to_restore.file_node,
@@ -464,7 +463,6 @@ fn r_remove_if_not_in_target(
     match &from_node.node {
         EMerkleTreeNode::File(file_node) => {
             // Only consider files not seen while traversing the target tree
-            // println!("Node: {file_node:?}");
             if !hashes.seen_hashes.contains(&from_node.hash) {
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);

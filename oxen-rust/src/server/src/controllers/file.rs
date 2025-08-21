@@ -31,7 +31,6 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    println!("get file path {:?}", req.path());
 
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
