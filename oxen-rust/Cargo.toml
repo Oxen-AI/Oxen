@@ -147,7 +147,7 @@ async-recursion = "1.1.1"
 
 
 [workspace]
-members = ["src/cli", "src/lib", "src/server"]
+members = ["src/cli", "src/lib", "src/server", "src/watcher"]
 
 [profile.release]
 codegen-units = 1
@@ -172,6 +172,11 @@ bench = false
 name = "oxen-server"
 path = "src/server/src/main.rs"
 bench = false
+
+# [[bin]]
+# name = "oxen-watcher"
+# path = "src/watcher/src/main.rs"
+# bench = false
 
 [package.metadata.docs.rs]
 default-target = "x86_64-unknown-linux-gnu"
