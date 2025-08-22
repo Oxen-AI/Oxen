@@ -101,6 +101,7 @@ async fn handle_client(
     let response = match request {
         WatcherRequest::GetStatus { paths } => {
             let status = cache.get_status(paths).await;
+            debug!("Status response:\n{}", status);
             WatcherResponse::Status(status)
         }
 
