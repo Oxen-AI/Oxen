@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Display};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -16,9 +17,7 @@ pub enum WatcherRequest {
     /// Get a summary of changes (just counts)
     GetSummary,
     /// Force a refresh/rescan of specific paths
-    Refresh {
-        paths: Vec<PathBuf>,
-    },
+    Refresh { paths: Vec<PathBuf> },
     /// Shutdown the watcher daemon
     Shutdown,
     /// Health check ping
@@ -55,14 +54,61 @@ pub struct StatusResult {
     pub scan_complete: bool,
 }
 
+impl Display for StatusResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.modified.iter().for_each(|status| {
+            writeln!(f, "{}", status).unwrap();
+        });
+        self.removed.iter().for_each(|path| {
+            writeln!(f, "[Removed]\t{:?}", path).unwrap();
+        });
+        self.untracked.iter().for_each(|path| {
+            writeln!(f, "[Untracked]\t{:?}", path).unwrap();
+        });
+        Ok(())
+    }
+}
+
 /// Status of a single file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FileStatus {
     pub path: PathBuf,
     pub mtime: SystemTime,
     pub size: u64,
     pub hash: Option<String>,
     pub status: FileStatusType,
+}
+
+impl Debug for FileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileStatus")
+            .field("path", &self.path)
+            .field(
+                "mtime",
+                &self
+                    .mtime
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+            )
+            .field("status", &self.status)
+            .finish()
+    }
+}
+
+impl Display for FileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{:?}] {}  {}",
+            self.status,
+            self.mtime
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            self.path.display(),
+        )
+    }
 }
 
 /// Type of file status
@@ -79,7 +125,7 @@ impl WatcherRequest {
     pub fn to_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec(self)
     }
-    
+
     /// Deserialize request from MessagePack bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(bytes)
@@ -91,7 +137,7 @@ impl WatcherResponse {
     pub fn to_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec(self)
     }
-    
+
     /// Deserialize response from MessagePack bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(bytes)
