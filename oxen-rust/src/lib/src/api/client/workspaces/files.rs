@@ -68,11 +68,9 @@ pub async fn add(
         let path_str = &path
             .to_str()
             .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
-        println!("path_str: {path_str:?}");
 
         if util::fs::is_glob_path(path_str) {
             // Match against any untracked entries in the current dir
-            //println!("relative: {relative_glob_path:?}");
             let glob_path = if local_repo.is_some() {
                 let relative_glob_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
                 repo_path.join(relative_glob_path)
