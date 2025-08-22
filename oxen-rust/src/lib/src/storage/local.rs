@@ -7,8 +7,12 @@ use crate::error::OxenError;
 use crate::storage::version_store::{ReadSeek, VersionStore};
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
+use tokio_stream::Stream;
+use tokio_util::io::ReaderStream;
 
 /// Local filesystem implementation of version storage
 #[derive(Debug)]
@@ -124,6 +128,19 @@ impl VersionStore for LocalVersionStore {
         Ok(data)
     }
 
+    async fn get_version_stream(
+        &self,
+        hash: &str,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
+    {
+        let path = self.version_path(hash);
+        let file = File::open(&path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        Ok(Box::new(stream))
+    }
+
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
         Ok(self.version_path(hash))
     }
@@ -227,6 +244,42 @@ impl VersionStore for LocalVersionStore {
         file.read_exact(&mut buffer).await?;
 
         Ok(buffer)
+    }
+
+    async fn get_version_chunk_stream(
+        &self,
+        hash: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
+    {
+        let version_file_path = self.version_path(hash);
+
+        let mut file = File::open(&version_file_path).await?;
+        let metadata = file.metadata().await?;
+        let file_len = metadata.len();
+
+        if offset >= file_len || offset + size > file_len {
+            return Err(OxenError::IO(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "beyond end of file",
+            )));
+        }
+
+        let read_len = std::cmp::min(size, file_len - offset);
+        if read_len > usize::MAX as u64 {
+            return Err(OxenError::basic_str("requested chunk too large"));
+        }
+
+        use tokio::io::{AsyncSeekExt, SeekFrom};
+        file.seek(SeekFrom::Start(offset)).await?;
+
+        // Create a limited reader that only reads the specified range
+        let limited_reader = file.take(read_len);
+        let reader = BufReader::new(limited_reader);
+        let stream = ReaderStream::new(reader);
+
+        Ok(Box::new(stream))
     }
 
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u32>, OxenError> {

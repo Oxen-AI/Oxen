@@ -4469,6 +4469,8 @@ dependencies = [
  "serde_json",
  "tar",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "url",
  "uuid",
 ]

@@ -5,10 +5,10 @@ use crate::model::commit::NewCommitBody;
 use crate::model::RemoteRepository;
 use crate::view::CommitResponse;
 
+use bytes::{Bytes, BytesMut};
+use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use std::path::Path;
-
-use bytes::Bytes;
 
 pub async fn put_file(
     remote_repo: &RemoteRepository,
@@ -60,8 +60,17 @@ pub async fn get_file(
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
-    let body = res.bytes().await?;
-    Ok(body)
+
+    let res = res.error_for_status()?;
+    let mut stream = res.bytes_stream();
+    let mut buffer = BytesMut::new();
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result
+            .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {}", e)))?;
+        buffer.extend_from_slice(&chunk);
+    }
+
+    Ok(buffer.freeze())
 }
 
 #[cfg(test)]
@@ -180,7 +189,7 @@ mod tests {
 
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
-                &workspace_id,
+                &workspace.id,
                 directory_name,
                 &full_path,
             )

@@ -130,6 +130,8 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 
+// TODO: Add content-type and oxen-revision-id in the response header
+// Currently, this endpoint is not used anywhere.
 pub async fn download(
     req: HttpRequest,
     query: web::Query<ChunkQuery>,
@@ -153,7 +155,6 @@ pub async fn download(
 
     let version_store = repo.version_store()?;
 
-    // TODO: Stream the chunk data
     let chunk_data = version_store
         .get_version_chunk(&version_id, offset, size)
         .await?;

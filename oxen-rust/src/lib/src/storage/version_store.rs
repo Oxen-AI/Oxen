@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncSeek};
+use tokio_stream::Stream;
 
 use crate::constants;
 use crate::error::OxenError;
@@ -93,6 +95,19 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         size: u64,
     ) -> Result<Vec<u8>, OxenError>;
 
+    /// Get a chunk of a version file as a stream of bytes
+    ///    
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    /// * `offset` - The starting byte position of the chunk
+    /// * `size` - The chunk size
+    async fn get_version_chunk_stream(
+        &self,
+        hash: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+
     /// List all chunks for a version file
     ///
     /// # Arguments
@@ -119,6 +134,15 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
+
+    /// Get a version file as a stream of bytes
+    ///    
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    async fn get_version_stream(
+        &self,
+        hash: &str,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
 
     /// Get the path to a version file (sync operation)
     ///

@@ -2,22 +2,27 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param};
 
+use liboxen::core::staged::staged_db_manager::with_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew};
+use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::{Commit, User};
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::view::{CommitResponse, StatusMessage};
 
-use actix_files::NamedFile;
 use actix_multipart::Multipart;
-use actix_web::{http::header, web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::TryStreamExt as _;
 use liboxen::repositories::commits;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::BufReader;
+use tokio_util::io::ReaderStream;
 
 const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen.ai"];
 
@@ -32,12 +37,14 @@ pub async fn get(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let version_store = repo.version_store()?;
     let resource = parse_resource(&req, &repo)?;
     let workspace_ref = resource.workspace.as_ref();
-    let commit = if let Some(workspace) = workspace_ref {
-        workspace.commit.clone()
+
+    let repo = if let Some(workspace) = workspace_ref {
+        &workspace.workspace_repo
     } else {
-        resource.clone().commit.unwrap()
+        &repo
     };
 
     log::debug!(
@@ -46,68 +53,73 @@ pub async fn get(
     );
     let path = resource.path.clone();
 
-    // If the resource is a workspace, return the file from the workspace
-    let response = if let Some(workspace) = workspace_ref {
-        let file_path = workspace.workspace_repo.path.join(path.clone());
-        let file = NamedFile::open(file_path)?;
-        file.into_response(&req)
-    } else {
-        let entry = repositories::entries::get_file(&repo, &commit, &path)?;
-        let entry = entry.ok_or(OxenError::path_does_not_exist(path.clone()))?;
+    // if resource is workspace, get file node from the staged db
+    let entry = match workspace_ref {
+        Some(_workspace_ref) => with_staged_db_manager(repo, |staged_db_manager| {
+            let staged_node = staged_db_manager
+                .read_from_staged_db(&path)?
+                .ok_or_else(|| OxenError::basic_str("File not found in staged DB"))?;
 
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
-
-        // TODO: refactor out of here and check for type,
-        // but seeing if it works to resize the image and cache it to disk if we have a resize query
-        let img_resize = query.into_inner();
-        if img_resize.width.is_some() || img_resize.height.is_some() {
-            log::debug!("img_resize {:?}", img_resize);
-
-            let resized_path = util::fs::resized_path_for_file_node(
-                &repo,
-                &entry,
-                img_resize.width,
-                img_resize.height,
-            )?;
-            util::fs::resize_cache_image(&version_path, &resized_path, img_resize)?;
-
-            log::debug!("In the resize cache! {:?}", resized_path);
-            return Ok(NamedFile::open(resized_path)?.into_response(&req));
-        } else {
-            log::debug!("did not hit the resize cache");
+            let file_node = match staged_node.node.node {
+                EMerkleTreeNode::File(f) => Ok(f),
+                _ => Err(OxenError::basic_str(
+                    "Only single file download is supported",
+                )),
+            }?;
+            Ok(file_node)
+        }),
+        None => {
+            // Otherwise get file node from commit tree
+            let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+            let file_node = repositories::tree::get_file_by_path(repo, &commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+            Ok(file_node)
         }
+    }?;
 
-        log::debug!(
-            "get_file_for_commit_id looking for {:?} -> {:?}",
-            path,
-            version_path
-        );
+    let file_hash = entry.hash();
+    let hash_str = file_hash.to_string();
+    let mime_type = entry.mime_type();
+    let last_commit_id = entry.last_commit_id().to_string();
+    let version_path = version_store.get_version_path(&hash_str)?;
 
-        let file = NamedFile::open(version_path)?;
-        let mut response = file.into_response(&req);
+    // TODO: refactor out of here and check for type,
+    // but seeing if it works to resize the image and cache it to disk if we have a resize query
+    let img_resize = query.into_inner();
+    if (img_resize.width.is_some() || img_resize.height.is_some())
+        && mime_type.starts_with("image/")
+    {
+        log::debug!("img_resize {:?}", img_resize);
 
-        let last_commit_id = entry.last_commit_id().to_string();
-        let meta_entry = repositories::entries::get_meta_entry(&repo, &commit, &path)?;
-        let content_length = meta_entry.size.to_string();
-        response.headers_mut().insert(
-            header::HeaderName::from_static("oxen-revision-id"),
-            header::HeaderValue::from_str(&last_commit_id).unwrap(),
-        );
+        let resized_path = util::fs::handle_image_resize(
+            Arc::clone(&version_store),
+            hash_str,
+            &path,
+            &version_path,
+            img_resize,
+        )?;
+        log::debug!("In the resize cache! {:?}", resized_path);
 
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_str(&meta_entry.mime_type).unwrap(),
-        );
+        // Generate stream for the resized image
+        let file = File::open(&resized_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
 
-        response.headers_mut().insert(
-            header::CONTENT_LENGTH,
-            header::HeaderValue::from_str(&content_length).unwrap(),
-        );
+        return Ok(HttpResponse::Ok()
+            .content_type(mime_type)
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(stream));
+    } else {
+        log::debug!("did not hit the resize cache");
+    }
 
-        response
-    };
+    // Stream the file
+    let stream = version_store.get_version_stream(&hash_str).await?;
 
-    Ok(response)
+    Ok(HttpResponse::Ok()
+        .content_type(mime_type)
+        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+        .streaming(stream))
 }
 
 /// Update file content in place (add to temp workspace and commit)

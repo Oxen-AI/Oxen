@@ -7,10 +7,12 @@ use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWith
 use crate::{api, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
+use futures_util::StreamExt;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::time::{sleep, Duration};
 use walkdir::WalkDir;
 
@@ -541,10 +543,17 @@ pub async fn download(
     log::debug!("Downloading file from {url}");
     let client = client::new_for_url(&url)?;
     let response = client.get(&url).send().await?;
-    // Save the raw file contents from the response
-    let file_contents = response.bytes().await?;
+
+    // Save the raw file contents from the response stream
     let output_path = output_path.unwrap_or_else(|| Path::new(path));
-    util::fs::write(output_path, file_contents)?;
+    let mut file = tokio::fs::File::create(&output_path).await?;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
 
     Ok(())
 }

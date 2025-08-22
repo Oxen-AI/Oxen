@@ -2,10 +2,10 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
-use actix_files::NamedFile;
-
 use liboxen::core;
 use liboxen::core::staged::with_staged_db_manager;
+use liboxen::error::OxenError;
+use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
 use liboxen::model::Workspace;
@@ -22,40 +22,85 @@ use actix_web::Error;
 use futures_util::TryStreamExt as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::BufReader;
+use tokio_util::io::ReaderStream;
 
 pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
-) -> Result<NamedFile, OxenHttpError> {
+) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let version_store = repo.version_store()?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
     let path = path_param(&req, "path")?;
+    log::debug!("got workspace file path {:?}", &path);
 
-    // The path in a workspace context is just the working path of the workspace repo
-    let path = workspace.workspace_repo.path.join(path);
+    // Get the file from the version store
+    let file_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+        let staged_node = staged_db_manager
+            .read_from_staged_db(&path)?
+            .ok_or_else(|| OxenError::basic_str("File not found in staged DB"))?;
 
-    log::debug!("got workspace file path {:?}", path);
+        let file_node = match staged_node.node.node {
+            EMerkleTreeNode::File(f) => Ok(f),
+            _ => Err(OxenError::basic_str(
+                "Only single file download is supported",
+            )),
+        }?;
+        Ok(file_node)
+    })?;
+
+    let file_hash = file_node.hash();
+    let hash_str = file_hash.to_string();
+    let mime_type = file_node.mime_type();
+    let last_commit_id = file_node.last_commit_id().to_string();
+    let version_path = version_store.get_version_path(&hash_str)?;
+    log::debug!("got workspace file version path {:?}", &version_path);
 
     // TODO: This probably isn't the best place for the resize logic
     let img_resize = query.into_inner();
-    if img_resize.width.is_some() || img_resize.height.is_some() {
-        let resized_path = util::fs::resized_path_for_staged_entry(
-            repo,
-            &path,
-            img_resize.width,
-            img_resize.height,
-        )?;
+    if (img_resize.width.is_some() || img_resize.height.is_some())
+        && mime_type.starts_with("image/")
+    {
+        log::debug!("img_resize {:?}", img_resize);
 
-        util::fs::resize_cache_image(&path, &resized_path, img_resize)?;
-        return Ok(NamedFile::open(resized_path)?);
+        let resized_path = util::fs::handle_image_resize(
+            Arc::clone(&version_store),
+            hash_str,
+            &PathBuf::from(path),
+            &version_path,
+            img_resize,
+        )?;
+        log::debug!("In the resize cache! {:?}", resized_path);
+
+        // Generate stream for the resized image
+        let file = File::open(&resized_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        return Ok(HttpResponse::Ok()
+            .content_type(mime_type)
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(stream));
+    } else {
+        log::debug!("did not hit the resize cache");
     }
-    Ok(NamedFile::open(path)?)
+
+    // Stream the file
+    let stream = version_store.get_version_stream(&hash_str).await?;
+
+    Ok(HttpResponse::Ok()
+        .content_type(mime_type)
+        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+        .streaming(stream))
 }
 
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {

@@ -15,6 +15,8 @@ use std::io::BufReader;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::io::SeekFrom;
 
 use crate::constants;
 use crate::constants::CACHE_DIR;
@@ -34,9 +36,10 @@ use crate::model::Commit;
 use crate::model::Schema;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
+use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use filetime::FileTime;
-use image::ImageFormat;
+use image::{ImageFormat, ImageReader};
 
 use crate::repositories;
 use crate::util;
@@ -108,34 +111,44 @@ pub fn version_path_for_commit_id(
     }
 }
 
-pub fn resized_path_for_file_node(
-    repo: &LocalRepository,
-    file_node: &FileNode,
-    width: Option<u32>,
-    height: Option<u32>,
+pub fn handle_image_resize(
+    version_store: Arc<dyn VersionStore>,
+    file_hash: String,
+    file_path: &Path,
+    version_path: &Path,
+    img_resize: ImgResize,
 ) -> Result<PathBuf, OxenError> {
-    let path = version_path_from_hash(repo, file_node.hash().to_string());
-    let extension = file_node.extension().to_string();
-    let width = width.map(|w| w.to_string());
-    let height = height.map(|w| w.to_string());
-    let resized_path = path.parent().unwrap().join(format!(
-        "{}x{}.{}",
-        width.unwrap_or("".to_string()),
-        height.unwrap_or("".to_string()),
-        extension
-    ));
+    log::debug!("img_resize {:?}", img_resize);
+    let resized_path = resized_path_for_version_store_file(
+        Arc::clone(&version_store),
+        &file_hash,
+        file_path,
+        img_resize.width,
+        img_resize.height,
+    )?;
+
+    resize_cache_image_version_store(
+        version_store,
+        &file_hash,
+        version_path,
+        &resized_path,
+        img_resize,
+    )?;
+
+    log::debug!("In the resize cache! {:?}", resized_path);
     Ok(resized_path)
 }
 
-pub fn resized_path_for_staged_entry(
-    branch_repo: LocalRepository,
+// TODO: Change the resized path from version store to a server location
+pub fn resized_path_for_version_store_file(
+    version_store: Arc<dyn VersionStore>,
+    img_hash: &str,
     img_path: &Path,
     width: Option<u32>,
     height: Option<u32>,
 ) -> Result<PathBuf, OxenError> {
-    let img_hash = util::hasher::hash_file_contents(img_path)?;
-    let img_version_path = version_path_from_hash_and_file(branch_repo.path, img_hash, img_path);
-    let extension = img_version_path.extension().unwrap().to_str().unwrap();
+    let img_version_path = version_store.get_version_path(img_hash)?;
+    let extension = img_path.extension().unwrap().to_str().unwrap();
     let width = width.map(|w| w.to_string());
     let height = height.map(|w| w.to_string());
     let resized_path = img_version_path.parent().unwrap().join(format!(
@@ -1651,22 +1664,32 @@ pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
     }
 }
 
-fn detect_image_format(path: &Path) -> Result<ImageFormat, OxenError> {
-    let mut file = File::open(path)?;
-    let mut buffer = [0; 10];
-    file.read_exact(&mut buffer)?;
+fn detect_image_format_from_version(
+    versioned_store: Arc<dyn VersionStore>,
+    hash: &str,
+) -> Result<ImageFormat, OxenError> {
+    let mut file = versioned_store.open_version(hash)?;
 
-    match image::guess_format(&buffer) {
-        Ok(format) => Ok(format),
-        Err(_) => Err(OxenError::basic_str(format!(
-            "Unknown image format for file: {:?}",
-            path
-        ))),
-    }
+    let mut header = [0u8; 10];
+    let n = file.read(&mut header).map_err(|e| {
+        OxenError::basic_str(format!("Failed to read version file {}: {}", hash, e))
+    })?;
+    // Set the pointer back to the front
+    file.seek(SeekFrom::Start(0)).map_err(|e| {
+        OxenError::basic_str(format!("Failed to seek version file {}: {}", hash, e))
+    })?;
+
+    // detect format
+    let format = image::guess_format(&header[..n])
+        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {}", hash)))?;
+
+    Ok(format)
 }
 
 // Caller must provide out path because it differs between remote staged vs. committed files
-pub fn resize_cache_image(
+pub fn resize_cache_image_version_store(
+    version_store: Arc<dyn VersionStore>,
+    img_hash: &str,
     image_path: &Path,
     resize_path: &Path,
     resize: ImgResize,
@@ -1676,12 +1699,19 @@ pub fn resize_cache_image(
         return Ok(());
     }
 
-    let image_format = detect_image_format(image_path);
+    let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash);
     let img = match image_format {
-        Ok(format) => image::load(BufReader::new(File::open(image_path)?), format)?,
+        Ok(format) => {
+            let reader = version_store.open_version(img_hash)?;
+            image::load(BufReader::new(reader), format)?
+        }
         Err(_) => {
             log::debug!("Could not detect image format, opening file without format");
-            image::open(image_path)?
+            let reader = version_store.open_version(img_hash)?;
+
+            ImageReader::new(BufReader::new(reader))
+                .with_guessed_format()?
+                .decode()?
         }
     };
 
@@ -1710,7 +1740,7 @@ pub fn resize_cache_image(
 
     let resize_parent = resize_path.parent().unwrap_or(Path::new(""));
     if !resize_parent.exists() {
-        util::fs::create_dir_all(resize_parent).unwrap();
+        util::fs::create_dir_all(resize_parent)?;
     }
 
     resized_img.save(resize_path).unwrap();
