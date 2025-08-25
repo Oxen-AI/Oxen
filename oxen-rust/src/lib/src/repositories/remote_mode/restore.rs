@@ -41,14 +41,16 @@ pub async fn restore(
                 continue;
             };
 
-            let dir_children = dir_node.get_all_children()?;
+            let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
             for child in dir_children {
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let child_str = file_node.name();
                     let child_path = parent_path.join(child_str);
                     if glob_match(&glob_pattern, child_str) {
                         // Skip files that aren't modified
-                        if !util::fs::is_modified_from_node(&child_path, file_node)? {
+                        if child_path.exists()
+                            && !util::fs::is_modified_from_node(&child_path, file_node)?
+                        {
                             continue;
                         }
 

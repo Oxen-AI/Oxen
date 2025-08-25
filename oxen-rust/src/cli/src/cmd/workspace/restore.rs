@@ -26,23 +26,14 @@ impl RunCmd for WorkspaceRestoreCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
-        let path = args.get_one::<String>("PATH").expect("required");
-
-        let opts = if let Some(source) = args.get_one::<String>("source") {
-            RestoreOpts {
-                path: PathBuf::from(path),
-                staged: args.get_flag("staged"),
-                is_remote: true,
-                source_ref: Some(String::from(source)),
-            }
-        } else {
-            RestoreOpts {
-                path: PathBuf::from(path),
-                staged: args.get_flag("staged"),
-                is_remote: true,
-                source_ref: None,
-            }
-        };
+        let paths: Vec<PathBuf> = args
+            .get_many::<String>("paths")
+            .expect("Must supply paths")
+            .map(|p| -> Result<PathBuf, OxenError> {
+                let path = PathBuf::from(p);
+                Ok(path)
+            })
+            .collect::<Result<Vec<PathBuf>, OxenError>>()?;
 
         let repo_dir = env::current_dir().unwrap();
         let repository = LocalRepository::from_dir(&repo_dir)?;
@@ -55,12 +46,32 @@ impl RunCmd for WorkspaceRestoreCmd {
         } else {
             UserConfig::identifier()?
         };
-        api::client::workspaces::data_frames::restore(
-            &remote_repo,
-            &workspace_identifier,
-            opts.path.to_owned(),
-        )
-        .await?;
+
+        // TODO: Refactor to do the restore for all pathsin 1 API call
+        for path in paths {
+            let opts = if let Some(source) = args.get_one::<String>("source") {
+                RestoreOpts {
+                    path,
+                    staged: args.get_flag("staged"),
+                    is_remote: true,
+                    source_ref: Some(String::from(source)),
+                }
+            } else {
+                RestoreOpts {
+                    path,
+                    staged: args.get_flag("staged"),
+                    is_remote: true,
+                    source_ref: None,
+                }
+            };
+
+            api::client::workspaces::data_frames::restore(
+                &remote_repo,
+                &workspace_identifier,
+                opts.path.to_owned(),
+            )
+            .await?;
+        }
 
         Ok(())
     }
