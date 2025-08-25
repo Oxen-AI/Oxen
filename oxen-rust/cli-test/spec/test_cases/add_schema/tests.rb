@@ -72,7 +72,7 @@ RSpec.describe 'schemas add - test relative paths', type: :aruba do
     status_output = Open3.capture2('oxen status')
     puts status_output
     output_lines = status_output[0].split("\n")
-    schema_line = output_lines[8]
+    schema_line = output_lines[10]
 
     expect(schema_line).to eq("Schemas to be committed") 
 
