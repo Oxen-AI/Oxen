@@ -503,7 +503,6 @@ mod tests {
         .await
     }
 
-    // FAILS BECAUSE OF search entries in commit
     #[tokio::test]
     async fn test_wildcard_restore_deleted_and_present() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|repo| async move {
@@ -567,7 +566,7 @@ mod tests {
                 source_ref: None,
                 is_remote: false,
             };
-
+            println!("\n\n\n");
             repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;
@@ -581,7 +580,6 @@ mod tests {
         .await
     }
 
-    // FAILS BECAUSE OF STATUS IT SEEMS LIKE
     #[tokio::test]
     async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
@@ -623,7 +621,7 @@ mod tests {
 
             // Restore *.csv
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("*.csv"),
+                path: PathBuf::from("new_annotations").join(PathBuf::from("*.csv")),
                 staged: true,
                 source_ref: None,
                 is_remote: false,

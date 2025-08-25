@@ -288,7 +288,6 @@ pub fn status_from_dir_entries(
 }
 
 fn find_moved_files(staged_data: &mut StagedData) -> Result<(), OxenError> {
-    staged_data.print();
     let files = staged_data.staged_files.clone();
     let files_vec: Vec<(&PathBuf, &StagedEntry)> = files.iter().collect();
 
@@ -313,7 +312,6 @@ fn find_moved_files(staged_data: &mut StagedData) -> Result<(), OxenError> {
     }
 
     for (hash, added_paths) in added_map.iter_mut() {
-        println!("Hash: {hash:?}; added_paths: {added_paths:?}");
         if let Some(removed_paths) = removed_map.get_mut(hash) {
             while !added_paths.is_empty() && !removed_paths.is_empty() {
                 if let (Some(added_path), Some(removed_path)) =
