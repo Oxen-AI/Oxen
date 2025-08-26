@@ -1,0 +1,28 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = ["-v", "-s", "--tb=short", "--strict-markers", "--timeout=120"]
+markers = [
+    "performance: marks tests as performance tests",
+    "integration: marks tests as integration tests",
+]
+timeout = 120
+timeout_method = "thread"
+
+[project]
+name = "oxen-cli-tests"
+version = "0.1.0"
+requires-python = ">=3.8"
+dependencies = [
+    "pytest>=7.0.0",
+    "pytest-timeout>=2.1.0",
+    "python-dotenv>=0.19.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
