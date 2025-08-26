@@ -67,6 +67,7 @@ dependencies = [
  "minus",
  "mockito",
  "mp4",
+ "notify",
  "num_cpus",
  "os_path",
  "par-stream",
@@ -98,6 +99,7 @@ dependencies = [
  "sysinfo",
  "tar",
  "tempfile",
+ "thiserror 2.0.12",
  "time",
  "tokio",
  "tokio-console",
@@ -2772,6 +2774,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fsevent-sys"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3537,6 +3548,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inotify"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f37dccff2791ab604f9babef0ba14fbe0be30bd368dc541e2b08d07c8aa908f3"
+dependencies = [
+ "bitflags 2.9.1",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e05c02b5e89bff3b946cedeca278abc628fe811e604f027c45a8aa3cf793d0eb"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3726,6 +3757,26 @@ checksum = "2735847566356cd2179a2a38264839308f7079fa96e6bd5a42d740460e003c56"
 dependencies = [
  "crossbeam",
  "rayon",
+]
+
+[[package]]
+name = "kqueue"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eac30106d7dce88daf4a3fcb4879ea939476d5074a9b7ddd0fb97fa4bed5596a"
+dependencies = [
+ "kqueue-sys",
+ "libc",
+]
+
+[[package]]
+name = "kqueue-sys"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed9625ffda8729b85e45cf04090035ac368927b8cebc34898e7c120f52e4838b"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
 ]
 
 [[package]]
@@ -4375,6 +4426,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
+name = "notify"
+version = "8.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
+dependencies = [
+ "bitflags 2.9.1",
+ "fsevent-sys",
+ "inotify",
+ "kqueue",
+ "libc",
+ "log",
+ "mio 1.0.4",
+ "notify-types",
+ "walkdir",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "notify-types"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
+
+[[package]]
 name = "now"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4708,6 +4783,25 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "oxen-watcher"
+version = "0.36.3"
+dependencies = [
+ "chrono",
+ "clap",
+ "env_logger",
+ "liboxen",
+ "log",
+ "notify",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-test",
 ]
 
 [[package]]
@@ -7326,6 +7420,19 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2468baabc3311435b55dd935f702f42cd1b8abb7e754fb7dfb16bd36aa88f9f7"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "futures-core",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
