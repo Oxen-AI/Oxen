@@ -156,7 +156,8 @@ pub async fn create_with_new_branch(
     let branch_name = branch_name.as_ref();
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
-    let url = api::endpoint::url_from_repo(remote_repo, "/workspaces/{workspace_id}/new")?;
+    let url =
+        api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{}/new", workspace_id))?;
     log::debug!("create workspace {} with new branch {}\n", url, branch_name);
 
     let body = NewWorkspace {

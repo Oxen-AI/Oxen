@@ -32,7 +32,6 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     let path = opts.path;
     let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
-    println!("restore::restore: got path {:?}", path);
 
     let dir = CommitMerkleTree::dir_with_children_recursive(repo, &commit, &path)?;
 

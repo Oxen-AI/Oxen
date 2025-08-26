@@ -578,10 +578,8 @@ async fn p_rm(
     let file_name = util::fs::path_relative_to_dir(path, parent_path)?;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let mut err_files: Vec<ErrorFileInfo> = vec![];
-    println!("file name: {file_name:?}");
     if let Some(mut file_node) = get_file_node(&maybe_dir_node, &file_name)? {
         file_node.set_name(&path.to_string_lossy());
-        println!("file node: {file_node:?}");
         err_files.extend(core::v_latest::rm::remove_file_with_db_manager(
             workspace_repo,
             &relative_path,

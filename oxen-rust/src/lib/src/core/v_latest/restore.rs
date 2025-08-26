@@ -51,7 +51,6 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
                 repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
             {
                 let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
-                println!("dir_node: {dir_node:?}");
                 for child in dir_children {
                     if let EMerkleTreeNode::File(file_node) = &child.node {
                         let child_str = file_node.name();
@@ -73,8 +72,6 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     } else {
         paths.insert(relative_path);
     }
-
-    println!("paths: {paths:?}");
 
     for path in paths {
         let mut opts = opts.clone();

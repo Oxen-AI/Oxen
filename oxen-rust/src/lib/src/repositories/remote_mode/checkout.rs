@@ -45,7 +45,6 @@ pub async fn create_checkout(
 
     let version_store = repo.version_store()?;
     for (path, hash) in paths_to_store {
-        println!("HERE: Path: {path:?}, hash: {hash:?}");
         version_store
             .store_version_from_path(&hash.to_string(), &path)
             .await?;

@@ -254,7 +254,7 @@ async fn upload_multiple_files(
         .await
         {
             Ok(_) => log::debug!("Successfully uploaded large file: {:?}", path),
-            Err(err) => log::debug!("Failed to upload large file {:?}: {}", path, err),
+            Err(err) => log::error!("Failed to upload large file {:?}: {}", path, err),
         }
     }
 

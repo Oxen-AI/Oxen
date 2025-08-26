@@ -575,8 +575,6 @@ pub async fn pull_entries(
     to_working_dir: bool,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
-    println!("entries.len() {}", entries.len());
-
     if entries.is_empty() {
         return Ok(());
     }

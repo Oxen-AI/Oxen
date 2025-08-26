@@ -459,13 +459,10 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 // Count files and dirs for comparison
-                println!("1");
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                println!("2");
                 let commit_root =
                     repositories::tree::get_root_with_children(&cloned_repo, &head_commit)?
                         .unwrap();
-                println!("3");
                 let files_in_tree =
                     repositories::tree::list_all_files(&commit_root, &PathBuf::from("."))?;
                 let prev_files = files_in_tree.len();

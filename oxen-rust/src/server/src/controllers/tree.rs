@@ -177,7 +177,6 @@ pub async fn mark_nodes_as_synced(
     req: HttpRequest,
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    log::debug!("START");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

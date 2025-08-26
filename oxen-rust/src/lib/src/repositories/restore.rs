@@ -566,7 +566,6 @@ mod tests {
                 source_ref: None,
                 is_remote: false,
             };
-            println!("\n\n\n");
             repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;

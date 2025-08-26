@@ -97,33 +97,6 @@ impl RunCmd for DownloadCmd {
 
         check_remote_version_blocking(scheme.clone(), host.clone()).await?;
 
-        // If remote flag is set and there's a remote-mode repository in scope, run workspace download
-        /*if let Ok(repo) = LocalRepository::from_current_dir() {
-            if args.get_flag("remote") && repo.is_remote_mode() {
-                let remote_repo = api::client::repositories::get_default_remote(&repo).await?;
-                let cwd = std::env::current_dir()?;
-                for path in paths {
-                    api::client::workspaces::files::download(
-                        &remote_repo,
-                        &repo.workspace_name.clone().unwrap(),
-                        path.to_str().unwrap(),
-                        Some(&dst),
-                    )
-                    .await?;
-                }
-
-                return Ok(());
-            }
-
-            // Error if remote flag set in regular repo
-            if args.get_flag("remote") && !repo.is_remote_mode() {
-                // TODO: Better error message
-                return Err(OxenError::basic_str(
-                    "Error: 'remote' flag can only be used in remote-mode repositories",
-                ));
-            }
-        }*/
-
         // Check if the first path is a valid remote repo
         if let Some(remote_repo) =
             api::client::repositories::get_by_name_host_and_scheme(id, &host, &scheme).await?
