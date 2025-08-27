@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 
-def run_command(cmd: str, cwd: Optional[str] = None, check: bool = True) -> subprocess.CompletedProcess:
+def run_command(cmd: str, cwd: Optional[str] = None, check: bool = True, timeout: Optional[int] = 120) -> subprocess.CompletedProcess:
     """Run a shell command and return the result."""
     print(f"Running: {cmd}")
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=cwd)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=cwd, timeout=timeout)
     if check and result.returncode != 0:
         raise RuntimeError(f"Command failed: {cmd}\nError: {result.stderr}")
     return result
