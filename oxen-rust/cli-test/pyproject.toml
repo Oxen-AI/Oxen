@@ -12,7 +12,7 @@ timeout_method = "thread"
 [project]
 name = "oxen-cli-tests"
 version = "0.1.0"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "pytest>=7.0.0",
     "pytest-timeout>=2.1.0",
