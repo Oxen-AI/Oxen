@@ -16,8 +16,10 @@ pub fn restore_args() -> Command {
     // Setups the CLI args for the restore command
     Command::new(NAME)
         .about("Restore specified paths in the working tree with some contents from a restore source.")
-        .arg(Arg::new("PATH")
-            .help("The files or directory to restore")
+        .arg(
+            Arg::new("paths")
+                .required(true)
+                .action(clap::ArgAction::Append),
         )
         .arg_required_else_help(true)
         .arg(
@@ -25,14 +27,14 @@ pub fn restore_args() -> Command {
                 .long("source")
                 .help("Restores a specific revision of the file. Can supply commit id or branch name")
                 .action(clap::ArgAction::Set)
-                .requires("PATH"),
+                .requires("paths"),
         )
         .arg(
             Arg::new("staged")
                 .long("staged")
                 .help("Restore content in staging area. By default, if --staged is given, the contents are restored from HEAD. Use --source to restore from a different commit.")
                 .action(clap::ArgAction::SetTrue)
-                .requires("PATH"),
+                .requires("paths"),
         )
 }
 
@@ -47,35 +49,36 @@ impl RunCmd for RestoreCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
-        let path = args.get_one::<String>("PATH").expect("required");
-
-        let opts = if let Some(source) = args.get_one::<String>("source") {
-            RestoreOpts {
-                path: PathBuf::from(path),
-                staged: args.get_flag("staged"),
-                is_remote: false,
-                source_ref: Some(String::from(source)),
-            }
-        } else {
-            RestoreOpts {
-                path: PathBuf::from(path),
-                staged: args.get_flag("staged"),
-                is_remote: false,
-                source_ref: None,
-            }
-        };
-
         let repository = LocalRepository::from_current_dir()?;
-
-        // Don't allow in remote mode
-        if repository.is_remote_mode() {
-            return Err(OxenError::basic_str(
-                "Error: Command 'oxen restore' not implemented for remote mode repositories",
-            ));
-        }
-
         check_repo_migration_needed(&repository)?;
-        repositories::restore::restore(&repository, opts).await?;
+        let paths: Vec<PathBuf> = args
+            .get_many::<String>("paths")
+            .expect("Must supply paths")
+            .map(|p| -> Result<PathBuf, OxenError> {
+                let path = PathBuf::from(p);
+                Ok(path)
+            })
+            .collect::<Result<Vec<PathBuf>, OxenError>>()?;
+
+        for path in paths {
+            let opts = if let Some(source) = args.get_one::<String>("source") {
+                RestoreOpts {
+                    path,
+                    staged: args.get_flag("staged"),
+                    is_remote: false,
+                    source_ref: Some(String::from(source)),
+                }
+            } else {
+                RestoreOpts {
+                    path,
+                    staged: args.get_flag("staged"),
+                    is_remote: false,
+                    source_ref: None,
+                }
+            };
+
+            repositories::restore::restore(&repository, opts).await?;
+        }
 
         Ok(())
     }

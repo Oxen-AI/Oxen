@@ -1669,8 +1669,6 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 annotations_entry.unwrap().status,
                 DiffEntryStatus::Modified.to_string()
             );
-            println!("CHECK HERE");
-            println!("entries: {entries:?}");
 
             // Ensure the filename is correct across operating systems
             let annotations_path = Path::new("annotations").join(Path::new("train"));
@@ -1687,9 +1685,6 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             );
 
             // Check that "annotations/train/bounding_box.csv" is removed
-            println!("ROUNT #");
-            println!("entries: {entries:?}");
-
             let bounding_box_path = Path::new("annotations")
                 .join(Path::new("train"))
                 .join(Path::new("bounding_box.csv"));

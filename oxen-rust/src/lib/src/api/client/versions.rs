@@ -19,7 +19,7 @@ use http::header::CONTENT_LENGTH;
 use rand::{thread_rng, Rng};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -30,6 +30,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
+use crate::repositories;
 use crate::util;
 
 // Multipart upload strategy, based off of AWS S3 Multipart Upload and huggingface hf_transfer
@@ -333,6 +334,7 @@ pub async fn multipart_batch_upload_with_retry(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
+    synced_nodes: &HashSet<MerkleHash>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
@@ -342,8 +344,15 @@ pub async fn multipart_batch_upload_with_retry(
         first_try = false;
         retry_count += 1;
 
-        files_to_retry =
-            multipart_batch_upload(local_repo, remote_repo, chunk, client, files_to_retry).await?;
+        files_to_retry = multipart_batch_upload(
+            local_repo,
+            remote_repo,
+            chunk,
+            client,
+            files_to_retry,
+            synced_nodes,
+        )
+        .await?;
 
         if !files_to_retry.is_empty() {
             let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
@@ -359,6 +368,7 @@ pub async fn multipart_batch_upload(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
+    synced_nodes: &HashSet<MerkleHash>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = local_repo.version_store()?;
     let mut form = reqwest::multipart::Form::new();
@@ -370,6 +380,18 @@ pub async fn multipart_batch_upload(
     } else {
         files_to_retry.iter().map(|f| f.hash.clone()).collect()
     };
+
+    // If there are nodes to mark as synced, add them to the form first
+    if !synced_nodes.is_empty() {
+        let synced_nodes: Vec<MerkleHash> = synced_nodes.iter().cloned().collect();
+        let json_string = serde_json::to_string(&synced_nodes)?;
+
+        let node_sync_multipart = reqwest::multipart::Part::text(json_string)
+            .file_name("synced_nodes.json")
+            .mime_str("application/json")?;
+
+        form = form.part("synced_nodes", node_sync_multipart);
+    }
 
     for entry in chunk {
         let file_hash = entry.hash();
@@ -400,8 +422,13 @@ pub async fn multipart_batch_upload(
             .mime_str("application/gzip")?;
         form = form.part("file[]", file_part);
     }
+
+    // If there are nodes to mark as synced, re-route API call
     let uri = ("/versions").to_string();
+
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    // Post the node hashes to sync on the first chunk upload
 
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
@@ -414,6 +441,7 @@ pub async fn multipart_batch_upload(
 
 pub async fn workspace_multipart_batch_upload_versions_with_retry(
     remote_repo: &RemoteRepository,
+    local_repo: &Option<LocalRepository>,
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
 ) -> Result<UploadResult, OxenError> {
@@ -430,6 +458,7 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
 
         result = workspace_multipart_batch_upload_versions(
             remote_repo,
+            local_repo,
             client.clone(),
             paths.clone(),
             result,
@@ -446,6 +475,7 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
 
 pub async fn workspace_multipart_batch_upload_versions(
     remote_repo: &RemoteRepository,
+    local_repo: &Option<LocalRepository>,
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
     result: UploadResult,
@@ -454,7 +484,7 @@ pub async fn workspace_multipart_batch_upload_versions(
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     // keep track of the files hash
     let mut files_to_add: Vec<FileWithHash> = vec![];
-    log::debug!("Uploading {} files to {}", paths.len(), remote_repo.url());
+    //println!("Uploading {} files to {}", paths.len(), remote_repo.url());
 
     // generate retry hashes if it's not the first try
     let retry_hashes: std::collections::HashSet<String> = if result.err_files.is_empty() {
@@ -469,8 +499,36 @@ pub async fn workspace_multipart_batch_upload_versions(
         .map(|f| (f.path.clone(), f.hash.clone()))
         .collect();
 
+    let head_commit_maybe = if let Some(local_repo) = local_repo {
+        repositories::commits::head_commit_maybe(local_repo)?
+    } else {
+        None
+    };
+
+    // Get repo path if provided
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
     let mut form = reqwest::multipart::Form::new();
+
     for path in paths {
+        let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        // Skip adding files already present in tree
+        if let Some(ref head_commit) = head_commit_maybe {
+            if let Some(file_node) = repositories::tree::get_file_by_path(
+                &local_repo.clone().unwrap(),
+                head_commit,
+                &relative_path,
+            )? {
+                if !util::fs::is_modified_from_node(&path, &file_node)? {
+                    continue;
+                }
+            }
+        }
+
         // if it's not the first try
         if !result.err_files.is_empty() {
             // if the file doesn't have a hash it failed, so we need to retry it
@@ -482,7 +540,7 @@ pub async fn workspace_multipart_batch_upload_versions(
             }
         }
 
-        let Some(file_name) = path.file_name() else {
+        let Some(_file_name) = path.file_name() else {
             return Err(OxenError::basic_str(format!(
                 "Invalid file path: {:?}",
                 path
@@ -493,10 +551,22 @@ pub async fn workspace_multipart_batch_upload_versions(
             .map_err(|e| OxenError::basic_str(format!("Failed to read file '{:?}': {e}", path)))?;
 
         let hash = hasher::hash_buffer(&file);
-        files_to_add.push(FileWithHash {
-            hash: hash.clone(),
-            path: PathBuf::from(file_name),
-        });
+        let file_name = PathBuf::from(path.file_name().unwrap());
+
+        // Workspaces expect just the file name, while remote-mode repos expect the relative path
+        // TODO: Refactor this into separate modules later, but for now, remote-mode repos will always have
+        //       a local_repo, whereas workspaces will have local_repo be None
+        if local_repo.is_some() {
+            files_to_add.push(FileWithHash {
+                hash: hash.clone(),
+                path: relative_path,
+            });
+        } else {
+            files_to_add.push(FileWithHash {
+                hash: hash.clone(),
+                path: file_name,
+            });
+        }
 
         // gzip the file
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -529,6 +599,8 @@ pub async fn workspace_multipart_batch_upload_versions(
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
 
+    log::debug!("workspace_multipart_batch_upload got response: {response:?}");
+
     err_files.extend(response.err_files);
     let result = UploadResult {
         files_to_add,
@@ -538,6 +610,9 @@ pub async fn workspace_multipart_batch_upload_versions(
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
+    log::debug!(
+        "Exponential backoff got called with base_wait_time {base_wait_time}. n {n}, and max {max}"
+    );
     (base_wait_time + n.pow(2) + jitter()).min(max)
 }
 

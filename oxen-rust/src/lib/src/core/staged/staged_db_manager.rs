@@ -225,6 +225,7 @@ impl StagedDBManager {
             })?;
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
+
         Ok(())
     }
 
