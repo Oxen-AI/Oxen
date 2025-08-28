@@ -466,22 +466,22 @@ async fn chunk_and_send_large_entries(
     );
     let should_stop = Arc::new(AtomicBool::new(false));
     let first_error = Arc::new(Mutex::new(None));
-    
+
     for worker in 0..worker_count {
         let queue = queue.clone();
         let finished_queue = finished_queue.clone();
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
-        
+
         tokio::spawn(async move {
             loop {
                 if should_stop.load(Ordering::Relaxed) {
                     break;
                 }
-                
+
                 let (entry, repo, commit, remote_repo) = queue.pop().await;
-                
+
                 match upload_large_file_chunks(entry.clone(), repo, commit, remote_repo, chunk_size, &bar).await {
                     Ok(_) => {
                         log::debug!("worker[{}] successfully uploaded {:?}", worker, entry.path());
@@ -493,7 +493,7 @@ async fn chunk_and_send_large_entries(
                         break;
                     }
                 }
-    
+
                 finished_queue.pop().await;
             }
         });
@@ -724,7 +724,7 @@ async fn upload_large_file_chunks(
         log::debug!("upload_large_file_chunks Subchunk {i}/{num_sub_chunks} tasks done. :-)");
     }
     progress.add_files(1);
-    return Ok(());
+    Ok(())
 }
 
 /// Sends entries in tarballs of size ~chunk size
@@ -850,7 +850,7 @@ async fn bundle_and_send_small_entries(
             }
         });
     }
-    
+
     while !finished_queue.is_empty() {
         sleep(Duration::from_secs(1)).await;
     }
