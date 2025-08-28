@@ -1,4 +1,0 @@
-numpy
-Pillow
-tqdm
-pandas

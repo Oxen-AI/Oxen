@@ -1,0 +1,4 @@
+__pycache__
+.env
+oxen_cli_tests.egg-info
+tests/__pycache__
