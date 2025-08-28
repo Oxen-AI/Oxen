@@ -68,6 +68,7 @@ jobs:
             Created by https://github.com/mislav/bump-homebrew-formula-action
         env:
           COMMITTER_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
   publish_homebrew_oxen_server:
     name: Update oxen-server formula on Oxen-AI/homebrew-oxen-server
