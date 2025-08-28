@@ -1,7 +1,9 @@
 use futures::prelude::*;
+use tokio::sync::Mutex;
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -462,17 +464,36 @@ async fn chunk_and_send_large_entries(
         worker_count,
         entries.len()
     );
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let first_error = Arc::new(Mutex::new(None));
+    
     for worker in 0..worker_count {
         let queue = queue.clone();
         let finished_queue = finished_queue.clone();
         let bar = Arc::clone(progress);
+        let should_stop = should_stop.clone();
+        let first_error = first_error.clone();
+        
         tokio::spawn(async move {
             loop {
+                if should_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                
                 let (entry, repo, commit, remote_repo) = queue.pop().await;
-                log::debug!("worker[{}] processing task...", worker);
-
-                upload_large_file_chunks(entry, repo, commit, remote_repo, chunk_size, &bar).await;
-
+                
+                match upload_large_file_chunks(entry.clone(), repo, commit, remote_repo, chunk_size, &bar).await {
+                    Ok(_) => {
+                        log::debug!("worker[{}] successfully uploaded {:?}", worker, entry.path());
+                    }
+                    Err(err) => {
+                        log::error!("worker[{}] failed to upload {:?}: {}", worker, entry.path(), err);
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(err);
+                        break;
+                    }
+                }
+    
                 finished_queue.pop().await;
             }
         });
@@ -482,6 +503,12 @@ async fn chunk_and_send_large_entries(
         // log::debug!("Before waiting for {} workers to finish...", queue.len());
         sleep(Duration::from_secs(1)).await;
     }
+
+    // let errors = errors.lock().await;
+    // if !errors.is_empty() {
+    //     return Err(OxenError::basic_str(format!("Failed to upload {} files", errors.len())));
+    // }
+
     log::debug!("All large file tasks done. :-)");
 
     // Sleep again to let things sync...
@@ -498,7 +525,7 @@ async fn upload_large_file_chunks(
     remote_repo: RemoteRepository,
     chunk_size: u64,
     progress: &Arc<PushProgress>,
-) {
+) -> Result<(), OxenError> {
     // Open versioned file
     let version_store = repo.version_store().unwrap();
     let file = version_store.open_version(&entry.hash()).unwrap();
@@ -585,7 +612,7 @@ async fn upload_large_file_chunks(
                 Ok(_) => {}
                 Err(err) => {
                     log::error!("upload_large_file_chunks Error reading file {:?} chunk {total_chunk_idx}/{total_chunks} chunk size {chunk_size} total_bytes_read: {total_bytes_read} total_bytes: {total_bytes} {:?}", entry.path(), err);
-                    return;
+                    return Err(OxenError::from(err));
                 }
             }
             total_bytes_read += chunk_size;
@@ -697,6 +724,7 @@ async fn upload_large_file_chunks(
         log::debug!("upload_large_file_chunks Subchunk {i}/{num_sub_chunks} tasks done. :-)");
     }
     progress.add_files(1);
+    return Ok(());
 }
 
 /// Sends entries in tarballs of size ~chunk size
@@ -758,22 +786,44 @@ async fn bundle_and_send_small_entries(
         finished_queue.try_push(false).unwrap();
     }
 
-    // TODO: this needs some more robust error handling. What should we do if a single item fails?
-    // Currently no way to bubble up that error.
+    // Error handling similar to `chunk_and_send_large_entries`
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let first_error = Arc::new(Mutex::new(None::<String>));
+
     for worker in 0..worker_count {
         let queue = queue.clone();
         let finished_queue = finished_queue.clone();
         let bar = Arc::clone(progress);
+        let should_stop = should_stop.clone();
+        let first_error = first_error.clone();
         tokio::spawn(async move {
+            use tokio::time::sleep as tokio_sleep;
             loop {
-                let (chunk, repo, _commit, remote_repo, client) = queue.pop().await;
-                log::debug!("worker[{}] processing task...", worker);
-                log::debug!("Chunk size {}", chunk.len());
+                if should_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Pop work, but periodically check for stop signal
+                let (chunk, repo, _commit, remote_repo, client) = tokio::select! {
+                    item = queue.pop() => item,
+                    _ = tokio_sleep(Duration::from_millis(200)) => {
+                        if should_stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
+                log::debug!("🚚 worker[{}] pulled task: files={} (computing size)", worker, chunk.len());
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
                         log::error!("Failed to compute entries size: {}", e);
-                        continue; // or break or decide on another error-handling strategy
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        finished_queue.pop().await;
+                        break;
                     }
                 };
 
@@ -786,28 +836,29 @@ async fn bundle_and_send_small_entries(
                 .await
                 {
                     Ok(_err_files) => {
-                        // TODO: return err files info to the user
-                        log::debug!("Successfully uploaded data!")
+                        bar.add_bytes(chunk_size);
+                        bar.add_files(chunk.len() as u64);
+                        finished_queue.pop().await;
                     }
                     Err(e) => {
-                        // TODO: Surface the error to the user
-                        log::error!("Error uploading chunk: {:?}", e)
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        finished_queue.pop().await;
+                        break;
                     }
                 }
-
-                bar.add_bytes(chunk_size);
-                bar.add_files(chunk.len() as u64);
-                finished_queue.pop().await;
             }
         });
     }
+    
     while !finished_queue.is_empty() {
-        // log::debug!("Waiting for {} workers to finish...", queue.len());
         sleep(Duration::from_secs(1)).await;
     }
-    log::debug!("All tasks done. :-)");
 
-    // Sleep again to let things sync...
+    if let Some(err) = first_error.lock().await.clone() {
+        return Err(OxenError::basic_str(err));
+    }
+
     sleep(Duration::from_millis(100)).await;
 
     Ok(())
