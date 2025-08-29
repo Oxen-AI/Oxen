@@ -34,7 +34,6 @@ fn main() -> ExitCode {
     runtime.block_on(async_main())
 }
 
-
 async fn async_main() -> ExitCode {
     util::logging::init_logging();
 

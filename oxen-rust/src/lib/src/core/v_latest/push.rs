@@ -1,10 +1,10 @@
 use futures::prelude::*;
-use tokio::sync::Mutex;
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::time::Duration;
 
 use crate::api::client::commits::ChunkParams;
@@ -482,12 +482,30 @@ async fn chunk_and_send_large_entries(
 
                 let (entry, repo, commit, remote_repo) = queue.pop().await;
 
-                match upload_large_file_chunks(entry.clone(), repo, commit, remote_repo, chunk_size, &bar).await {
+                match upload_large_file_chunks(
+                    entry.clone(),
+                    repo,
+                    commit,
+                    remote_repo,
+                    chunk_size,
+                    &bar,
+                )
+                .await
+                {
                     Ok(_) => {
-                        log::debug!("worker[{}] successfully uploaded {:?}", worker, entry.path());
+                        log::debug!(
+                            "worker[{}] successfully uploaded {:?}",
+                            worker,
+                            entry.path()
+                        );
                     }
                     Err(err) => {
-                        log::error!("worker[{}] failed to upload {:?}: {}", worker, entry.path(), err);
+                        log::error!(
+                            "worker[{}] failed to upload {:?}: {}",
+                            worker,
+                            entry.path(),
+                            err
+                        );
                         should_stop.store(true, Ordering::Relaxed);
                         *first_error.lock().await = Some(err);
                         break;
@@ -815,7 +833,11 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
-                log::debug!("🚚 worker[{}] pulled task: files={} (computing size)", worker, chunk.len());
+                log::debug!(
+                    "🚚 worker[{}] pulled task: files={} (computing size)",
+                    worker,
+                    chunk.len()
+                );
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
