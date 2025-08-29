@@ -25,8 +25,6 @@ const LONG_ABOUT: &str = "
 ";
 
 fn oxen_stack_size() -> usize {
-    // Compute at runtime: OXEN_STACK_SIZE env var parsed as usize, with sane default.
-    // Default: 16 MiB (16777216 bytes)
     env::var("OXEN_STACK_SIZE")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
