@@ -21,11 +21,15 @@ pub struct StatusCache {
 
 /// In-memory cache data structure
 struct MemoryCache {
+    /// Files created since watcher started
+    created: HashMap<PathBuf, FileStatus>,
+    /// Files modified since watcher started
     modified: HashMap<PathBuf, FileStatus>,
-    added: HashMap<PathBuf, FileStatus>,
+    /// Files removed since watcher started
     removed: HashMap<PathBuf, FileStatus>,
-    untracked: HashMap<PathBuf, FileStatus>,
+    /// Whether initial scan is complete
     scan_complete: bool,
+    /// Last update time
     last_update: SystemTime,
 }
 
@@ -37,10 +41,9 @@ impl StatusCache {
 
         // Initialize memory cache
         let cache = Arc::new(RwLock::new(MemoryCache {
+            created: HashMap::new(),
             modified: HashMap::new(),
-            added: HashMap::new(),
             removed: HashMap::new(),
-            untracked: HashMap::new(),
             scan_complete: false,
             last_update: SystemTime::now(),
         }));
@@ -53,18 +56,18 @@ impl StatusCache {
         let cache = self.cache.read().await;
 
         // Filter by paths if requested
-        let (modified, added, removed, untracked) = if let Some(paths) = paths {
+        let (created, modified, removed) = if let Some(paths) = paths {
             let path_set: std::collections::HashSet<_> = paths.iter().collect();
 
             (
                 cache
-                    .modified
+                    .created
                     .values()
                     .filter(|f| path_set.contains(&f.path))
                     .cloned()
                     .collect(),
                 cache
-                    .added
+                    .modified
                     .values()
                     .filter(|f| path_set.contains(&f.path))
                     .cloned()
@@ -75,19 +78,12 @@ impl StatusCache {
                     .filter(|p| path_set.contains(p))
                     .cloned()
                     .collect(),
-                cache
-                    .untracked
-                    .keys()
-                    .filter(|p| path_set.contains(p))
-                    .cloned()
-                    .collect(),
             )
         } else {
             (
+                cache.created.values().cloned().collect(),
                 cache.modified.values().cloned().collect(),
-                cache.added.values().cloned().collect(),
                 cache.removed.keys().cloned().collect(),
-                cache.untracked.keys().cloned().collect(),
             )
         };
 
@@ -96,10 +92,9 @@ impl StatusCache {
         }
 
         StatusResult {
+            created,
             modified,
-            added,
             removed,
-            untracked,
             scan_complete: cache.scan_complete,
         }
     }
@@ -109,28 +104,25 @@ impl StatusCache {
     pub async fn update_file_status(&self, status: FileStatus) -> Result<(), WatcherError> {
         let mut cache = self.cache.write().await;
 
-        // Update memory cache
+        // Update memory cache based on event type
         match status.status {
+            FileStatusType::Created => {
+                cache.created.insert(status.path.clone(), status.clone());
+                // If a file is created, it's no longer modified or removed
+                cache.modified.remove(&status.path);
+                cache.removed.remove(&status.path);
+            }
             FileStatusType::Modified => {
                 cache.modified.insert(status.path.clone(), status.clone());
-                cache.added.remove(&status.path);
-                cache.untracked.remove(&status.path);
-            }
-            FileStatusType::Added => {
-                cache.added.insert(status.path.clone(), status.clone());
-                cache.modified.remove(&status.path);
-                cache.untracked.remove(&status.path);
+                // A modified file might have been previously created, keep that status
+                // But it's definitely not removed
+                cache.removed.remove(&status.path);
             }
             FileStatusType::Removed => {
                 cache.removed.insert(status.path.clone(), status.clone());
+                // If removed, clear from created and modified
+                cache.created.remove(&status.path);
                 cache.modified.remove(&status.path);
-                cache.added.remove(&status.path);
-                cache.untracked.remove(&status.path);
-            }
-            FileStatusType::Untracked => {
-                cache.untracked.insert(status.path.clone(), status.clone());
-                cache.modified.remove(&status.path);
-                cache.added.remove(&status.path);
             }
         }
 
@@ -144,28 +136,21 @@ impl StatusCache {
         let mut cache = self.cache.write().await;
 
         for status in statuses {
-            // Update memory cache
+            // Update memory cache based on event type
             match status.status {
+                FileStatusType::Created => {
+                    cache.created.insert(status.path.clone(), status.clone());
+                    cache.modified.remove(&status.path);
+                    cache.removed.remove(&status.path);
+                }
                 FileStatusType::Modified => {
                     cache.modified.insert(status.path.clone(), status.clone());
-                    cache.added.remove(&status.path);
-                    cache.untracked.remove(&status.path);
-                }
-                FileStatusType::Added => {
-                    cache.added.insert(status.path.clone(), status.clone());
-                    cache.modified.remove(&status.path);
-                    cache.untracked.remove(&status.path);
+                    cache.removed.remove(&status.path);
                 }
                 FileStatusType::Removed => {
                     cache.removed.insert(status.path.clone(), status.clone());
+                    cache.created.remove(&status.path);
                     cache.modified.remove(&status.path);
-                    cache.added.remove(&status.path);
-                    cache.untracked.remove(&status.path);
-                }
-                FileStatusType::Untracked => {
-                    cache.untracked.insert(status.path.clone(), status.clone());
-                    cache.modified.remove(&status.path);
-                    cache.added.remove(&status.path);
                 }
             }
         }
@@ -186,10 +171,9 @@ impl StatusCache {
     #[allow(dead_code)] // Used in tests
     pub async fn clear(&self) -> Result<(), WatcherError> {
         let mut cache = self.cache.write().await;
+        cache.created.clear();
         cache.modified.clear();
-        cache.added.clear();
         cache.removed.clear();
-        cache.untracked.clear();
         cache.scan_complete = false;
         cache.last_update = SystemTime::now();
         Ok(())

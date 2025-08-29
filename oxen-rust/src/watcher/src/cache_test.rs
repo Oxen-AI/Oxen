@@ -31,10 +31,9 @@ mod tests {
         let (cache, _temp_dir) = setup_test_cache().await;
         
         let status = cache.get_status(None).await;
+        assert!(status.created.is_empty());
         assert!(status.modified.is_empty());
-        assert!(status.added.is_empty());
         assert!(status.removed.is_empty());
-        assert!(status.untracked.is_empty());
         assert!(!status.scan_complete);
     }
 
@@ -55,9 +54,8 @@ mod tests {
         let status = cache.get_status(None).await;
         assert_eq!(status.modified.len(), 1);
         assert_eq!(status.modified[0].path, PathBuf::from("test.txt"));
-        assert!(status.added.is_empty());
+        assert!(status.created.is_empty());
         assert!(status.removed.is_empty());
-        assert!(status.untracked.is_empty());
     }
 
     #[tokio::test]
@@ -70,7 +68,7 @@ mod tests {
                 mtime: SystemTime::now(),
                 size: 100,
                 hash: None,
-                status: FileStatusType::Added,
+                status: FileStatusType::Created,
             },
             FileStatus {
                 path: PathBuf::from("file2.txt"),
@@ -91,10 +89,9 @@ mod tests {
         cache.batch_update(statuses).await.unwrap();
         
         let status = cache.get_status(None).await;
-        assert_eq!(status.added.len(), 1);
+        assert_eq!(status.created.len(), 1);
         assert_eq!(status.modified.len(), 1);
         assert_eq!(status.removed.len(), 1);
-        assert!(status.untracked.is_empty());
     }
 
     #[tokio::test]
@@ -103,30 +100,17 @@ mod tests {
         
         let path = PathBuf::from("test.txt");
         
-        // Start as untracked
+        // Start as created
         cache.update_file_status(FileStatus {
             path: path.clone(),
             mtime: SystemTime::now(),
             size: 100,
             hash: None,
-            status: FileStatusType::Untracked,
+            status: FileStatusType::Created,
         }).await.unwrap();
         
         let status = cache.get_status(None).await;
-        assert_eq!(status.untracked.len(), 1);
-        
-        // Transition to added
-        cache.update_file_status(FileStatus {
-            path: path.clone(),
-            mtime: SystemTime::now(),
-            size: 100,
-            hash: Some("hash".to_string()),
-            status: FileStatusType::Added,
-        }).await.unwrap();
-        
-        let status = cache.get_status(None).await;
-        assert_eq!(status.added.len(), 1);
-        assert_eq!(status.untracked.len(), 0);
+        assert_eq!(status.created.len(), 1);
         
         // Transition to modified
         cache.update_file_status(FileStatus {
@@ -139,7 +123,21 @@ mod tests {
         
         let status = cache.get_status(None).await;
         assert_eq!(status.modified.len(), 1);
-        assert_eq!(status.added.len(), 0);
+        assert_eq!(status.created.len(), 1); // Created status is preserved
+        
+        // Transition to removed
+        cache.update_file_status(FileStatus {
+            path: path.clone(),
+            mtime: SystemTime::now(),
+            size: 0,
+            hash: None,
+            status: FileStatusType::Removed,
+        }).await.unwrap();
+        
+        let status = cache.get_status(None).await;
+        assert_eq!(status.removed.len(), 1);
+        assert_eq!(status.created.len(), 0); // Removed clears created
+        assert_eq!(status.modified.len(), 0); // Removed clears modified
     }
 
     #[tokio::test]
@@ -199,7 +197,7 @@ mod tests {
                 mtime: SystemTime::now(),
                 size: 100,
                 hash: None,
-                status: FileStatusType::Added,
+                status: FileStatusType::Created,
             },
             FileStatus {
                 path: PathBuf::from("file2.txt"),
@@ -215,7 +213,7 @@ mod tests {
         
         // Verify data exists
         let status = cache.get_status(None).await;
-        assert_eq!(status.added.len(), 1);
+        assert_eq!(status.created.len(), 1);
         assert_eq!(status.modified.len(), 1);
         assert!(status.scan_complete);
         
@@ -224,7 +222,7 @@ mod tests {
         
         // Verify cache is empty
         let status = cache.get_status(None).await;
-        assert!(status.added.is_empty());
+        assert!(status.created.is_empty());
         assert!(status.modified.is_empty());
         assert!(!status.scan_complete);
     }
