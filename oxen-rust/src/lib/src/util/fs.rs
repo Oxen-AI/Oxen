@@ -1775,8 +1775,14 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
 pub fn is_modified_from_node_with_metadata(
     path: &Path,
     node: &FileNode,
-    metadata: std::fs::Metadata,
+    metadata: Result<std::fs::Metadata, OxenError>,
 ) -> Result<bool, OxenError> {
+    if !path.exists() {
+        log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
+        return Ok(false);
+    }
+
+    let metadata = metadata?;
     // Second, check the length of the file
     let file_size = metadata.len();
     let node_size = node.num_bytes();
@@ -1808,8 +1814,7 @@ pub fn is_modified_from_node_with_metadata(
 }
 
 pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    let metadata = util::fs::metadata(path)?;
-    is_modified_from_node_with_metadata(path, node, metadata)
+    is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
 }
 
 // Only uses the metadata to check for modification

@@ -476,7 +476,7 @@ fn find_changes(
     let mut removed = HashSet::new();
     let gitignore: Option<Gitignore> = oxenignore::create(repo);
 
-    let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
+    let mut entries: Vec<(PathBuf, bool, Result<std::fs::Metadata, OxenError>)> = Vec::new();
     if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
             return Err(OxenError::basic_str(format!(
@@ -484,20 +484,27 @@ fn find_changes(
                 full_path
             )));
         };
-        let mut metadata: Vec<_> = dir_entries
+        let new_entries: Vec<_> = dir_entries
             .par_bridge()
-            .map(|entry| {
-                let entry = entry?;
-                let path = entry.path();
-                let metadata = entry.metadata()?;
-                let is_dir = metadata.is_dir();
-                Ok((path, is_dir, metadata))
+            .filter_map(|res| match res {
+                Ok(entry) => {
+                    let path = entry.path();
+                    let is_dir = path.is_dir();
+                    let md = match entry.metadata() {
+                        Ok(md) => Ok(md),
+                        Err(err) => Err(OxenError::basic_str(err.to_string())),
+                    };
+                    Some((path, is_dir, md))
+                }
+                Err(err) => {
+                    log::debug!("Skipping unreadable entry: {}", err);
+                    None
+                }
             })
-            .collect::<Result<Vec<_>, std::io::Error>>()?;
-        metadata.sort_by_key(|(path, _, _)| path.to_path_buf());
-        entries.extend(metadata);
+            .collect();
+        entries.extend(new_entries);
     } else {
-        let metadata = util::fs::metadata(&full_path)?;
+        let metadata = util::fs::metadata(&full_path);
         entries.push((full_path.to_owned(), false, metadata));
     }
     let mut untracked_count = 0;
