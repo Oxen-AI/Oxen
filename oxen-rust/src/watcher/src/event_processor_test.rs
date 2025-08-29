@@ -2,14 +2,16 @@
 mod tests {
     use crate::cache::StatusCache;
     use crate::event_processor::EventProcessor;
-    use notify::{Event, EventKind};
+    use notify::EventKind;
+    use notify_debouncer_full::{DebounceEventResult, DebouncedEvent};
+    use notify::Event;
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time;
 
-    async fn setup_test_processor() -> (Arc<StatusCache>, mpsc::Sender<Event>, TempDir) {
+    async fn setup_test_processor() -> (Arc<StatusCache>, mpsc::Sender<DebounceEventResult>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path();
 
@@ -20,7 +22,7 @@ mod tests {
         liboxen::repositories::init::init(repo_path).unwrap();
 
         let cache = Arc::new(StatusCache::new(repo_path).unwrap());
-        let (event_tx, event_rx) = mpsc::channel::<Event>(100);
+        let (event_tx, event_rx) = mpsc::channel::<DebounceEventResult>(100);
 
         let processor = EventProcessor::new(cache.clone(), repo_path.to_path_buf());
 
@@ -35,28 +37,35 @@ mod tests {
         (cache, event_tx, temp_dir)
     }
 
+    fn create_debounced_event(paths: Vec<std::path::PathBuf>, kind: EventKind) -> DebouncedEvent {
+        let mut event = Event::new(kind);
+        event.paths = paths;
+        DebouncedEvent {
+            event,
+            time: std::time::Instant::now(),
+        }
+    }
+
     #[tokio::test]
-    async fn test_event_coalescing() {
+    async fn test_debounced_events() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
         let test_file = temp_dir.path().join("test.txt");
+        std::fs::write(&test_file, "content").unwrap();
 
-        // Send multiple events for the same file rapidly
-        for _ in 0..5 {
-            let event = Event {
-                kind: EventKind::Modify(notify::event::ModifyKind::Any),
-                paths: vec![test_file.clone()],
-                attrs: Default::default(),
-            };
-            event_tx.send(event).await.unwrap();
-        }
+        // Send a debounced create event
+        let event = create_debounced_event(
+            vec![test_file.clone()],
+            EventKind::Create(notify::event::CreateKind::File),
+        );
+        event_tx.send(Ok(vec![event])).await.unwrap();
 
-        // Wait for coalescing window
+        // Wait for processing
         time::sleep(Duration::from_millis(150)).await;
 
-        // Should only have one entry in cache
+        // Check cache was updated
         let status = cache.get_status(None).await;
-        assert!(status.modified.len() <= 1, "Events should be coalesced");
+        assert_eq!(status.created.len(), 1);
     }
 
     #[tokio::test]
@@ -65,13 +74,12 @@ mod tests {
 
         let oxen_file = temp_dir.path().join(".oxen").join("some_file.db");
 
-        let event = Event {
-            kind: EventKind::Create(notify::event::CreateKind::Any),
-            paths: vec![oxen_file],
-            attrs: Default::default(),
-        };
+        let event = create_debounced_event(
+            vec![oxen_file],
+            EventKind::Create(notify::event::CreateKind::File),
+        );
 
-        event_tx.send(event).await.unwrap();
+        event_tx.send(Ok(vec![event])).await.unwrap();
 
         // Wait for processing
         time::sleep(Duration::from_millis(150)).await;
@@ -90,13 +98,12 @@ mod tests {
         let dir_path = temp_dir.path().join("some_directory");
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let event = Event {
-            kind: EventKind::Create(notify::event::CreateKind::Any),
-            paths: vec![dir_path],
-            attrs: Default::default(),
-        };
+        let event = create_debounced_event(
+            vec![dir_path],
+            EventKind::Create(notify::event::CreateKind::Folder),
+        );
 
-        event_tx.send(event).await.unwrap();
+        event_tx.send(Ok(vec![event])).await.unwrap();
 
         // Wait for processing
         time::sleep(Duration::from_millis(150)).await;
@@ -111,29 +118,28 @@ mod tests {
     async fn test_batch_processing() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
-        // Send events for multiple files
-        for i in 0..10 {
+        let mut events = Vec::new();
+        
+        // Create multiple files and events
+        for i in 0..5 {
             let file_path = temp_dir.path().join(format!("file{}.txt", i));
-            // Create the file so metadata can be read
             std::fs::write(&file_path, format!("content{}", i)).unwrap();
-
-            let event = Event {
-                kind: EventKind::Create(notify::event::CreateKind::Any),
-                paths: vec![file_path],
-                attrs: Default::default(),
-            };
-
-            event_tx.send(event).await.unwrap();
+            
+            events.push(create_debounced_event(
+                vec![file_path],
+                EventKind::Create(notify::event::CreateKind::File),
+            ));
         }
+
+        // Send all events as a batch (this is what the debouncer does)
+        event_tx.send(Ok(events)).await.unwrap();
 
         // Wait for batch processing
         time::sleep(Duration::from_millis(200)).await;
 
         // Should have all files
         let status = cache.get_status(None).await;
-        let total = status.created.len() + status.modified.len() + status.removed.len();
-        assert!(total > 0, "Should have processed some files");
-        assert!(total <= 10, "Should not exceed number of files sent");
+        assert_eq!(status.created.len(), 5);
     }
 
     #[tokio::test]
@@ -145,11 +151,10 @@ mod tests {
         std::fs::write(&create_file, "content").unwrap();
 
         event_tx
-            .send(Event {
-                kind: EventKind::Create(notify::event::CreateKind::Any),
-                paths: vec![create_file.clone()],
-                attrs: Default::default(),
-            })
+            .send(Ok(vec![create_debounced_event(
+                vec![create_file.clone()],
+                EventKind::Create(notify::event::CreateKind::File),
+            )]))
             .await
             .unwrap();
 
@@ -158,11 +163,10 @@ mod tests {
         std::fs::write(&modify_file, "content").unwrap();
 
         event_tx
-            .send(Event {
-                kind: EventKind::Modify(notify::event::ModifyKind::Any),
-                paths: vec![modify_file.clone()],
-                attrs: Default::default(),
-            })
+            .send(Ok(vec![create_debounced_event(
+                vec![modify_file.clone()],
+                EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Any)),
+            )]))
             .await
             .unwrap();
 
@@ -170,11 +174,10 @@ mod tests {
         let remove_file = temp_dir.path().join("removed.txt");
 
         event_tx
-            .send(Event {
-                kind: EventKind::Remove(notify::event::RemoveKind::Any),
-                paths: vec![remove_file.clone()],
-                attrs: Default::default(),
-            })
+            .send(Ok(vec![create_debounced_event(
+                vec![remove_file.clone()],
+                EventKind::Remove(notify::event::RemoveKind::File),
+            )]))
             .await
             .unwrap();
 
@@ -199,21 +202,19 @@ mod tests {
 
         // Send Access event (should be ignored)
         event_tx
-            .send(Event {
-                kind: EventKind::Access(notify::event::AccessKind::Any),
-                paths: vec![file.clone()],
-                attrs: Default::default(),
-            })
+            .send(Ok(vec![create_debounced_event(
+                vec![file.clone()],
+                EventKind::Access(notify::event::AccessKind::Read),
+            )]))
             .await
             .unwrap();
 
         // Send Other event (should be ignored)
         event_tx
-            .send(Event {
-                kind: EventKind::Other,
-                paths: vec![file],
-                attrs: Default::default(),
-            })
+            .send(Ok(vec![create_debounced_event(
+                vec![file],
+                EventKind::Other,
+            )]))
             .await
             .unwrap();
 
@@ -221,6 +222,28 @@ mod tests {
         time::sleep(Duration::from_millis(150)).await;
 
         // Should have no entries
+        let status = cache.get_status(None).await;
+        assert!(status.created.is_empty());
+        assert!(status.modified.is_empty());
+        assert!(status.removed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_error_handling() {
+        let (cache, event_tx, _temp_dir) = setup_test_processor().await;
+
+        // Send an error result (simulating debouncer errors)
+        let errors = vec![
+            notify::Error::generic("Test error 1"),
+            notify::Error::generic("Test error 2"),
+        ];
+        
+        event_tx.send(Err(errors)).await.unwrap();
+
+        // Wait for processing
+        time::sleep(Duration::from_millis(50)).await;
+
+        // Should still be running and cache should be empty
         let status = cache.get_status(None).await;
         assert!(status.created.is_empty());
         assert!(status.modified.is_empty());

@@ -1,7 +1,9 @@
 use log::{error, info, warn};
-use notify::{Event, RecursiveMode, Watcher};
+use notify::RecursiveMode;
+use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use liboxen::core;
@@ -44,22 +46,46 @@ impl FileSystemWatcher {
         let pid_file = self.repo_path.join(".oxen/watcher.pid");
         std::fs::write(&pid_file, std::process::id().to_string())?;
 
-        // Create channel for filesystem events
-        let (event_tx, event_rx) = mpsc::channel::<Event>(1000);
+        // Create channel for debounced events
+        let (event_tx, event_rx) = mpsc::channel::<DebounceEventResult>(1000);
 
-        // Create the notify watcher
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            match res {
-                Ok(event) => {
-                    // Try to send event, drop if channel is full
-                    let _ = event_tx.blocking_send(event);
-                }
-                Err(e) => error!("Filesystem watch error: {}", e),
-            }
-        })?;
+        // Create the debounced watcher with a 100ms timeout
+        let mut debouncer = new_debouncer(
+            Duration::from_millis(100),
+            None, // No cache override
+            move |result: DebounceEventResult| {
+                // Filter out .oxen directory events before sending
+                let filtered_result = match result {
+                    Ok(events) => {
+                        let filtered: Vec<_> = events
+                            .into_iter()
+                            .filter(|event| {
+                                // Skip events for paths containing .oxen
+                                !event
+                                    .event
+                                    .paths
+                                    .iter()
+                                    .any(|p| p.components().any(|c| c.as_os_str() == ".oxen"))
+                            })
+                            .collect();
 
-        // Watch the repository directory (excluding .oxen)
-        watcher.watch(&self.repo_path, RecursiveMode::Recursive)?;
+                        if filtered.is_empty() {
+                            return; // Don't send empty events
+                        }
+                        Ok(filtered)
+                    }
+                    Err(e) => Err(e),
+                };
+
+                // Try to send filtered event, block if channel is full
+                // TODO: How should we handle this?
+                let _ = event_tx.blocking_send(filtered_result);
+            },
+        )?;
+
+        // Watch the repository directory
+        debouncer.watch(&self.repo_path, RecursiveMode::Recursive)?;
+
         info!("Watching directory: {}", self.repo_path.display());
 
         // Start the event processor
@@ -98,7 +124,7 @@ impl FileSystemWatcher {
 
         // Cleanup
         info!("Shutting down filesystem watcher");
-        drop(watcher);
+        drop(debouncer);
 
         // Remove PID file
         let _ = std::fs::remove_file(&pid_file);

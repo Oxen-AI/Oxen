@@ -1,13 +1,12 @@
 use crate::cache::StatusCache;
 use crate::protocol::{FileStatus, FileStatusType};
-use log::{debug, error, trace};
-use notify::{Event, EventKind};
-use std::collections::HashMap;
+use liboxen::util;
+use log::{debug, error, trace, warn};
+use notify::EventKind;
+use notify_debouncer_full::{DebounceEventResult, DebouncedEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tokio::time;
 
 #[path = "event_processor_test.rs"]
 mod event_processor_test;
@@ -20,136 +19,110 @@ pub struct EventProcessor {
 
 impl EventProcessor {
     pub fn new(cache: Arc<StatusCache>, repo_path: PathBuf) -> Self {
+        // Canonicalize the repo path once to handle symlinks properly
+        let repo_path = repo_path.canonicalize().unwrap_or(repo_path);
         Self { cache, repo_path }
     }
 
     /// Run the event processing loop
-    pub async fn run(self, mut event_rx: mpsc::Receiver<Event>) {
-        // Buffer for coalescing events
-        let mut event_buffer: HashMap<PathBuf, (EventKind, Instant)> = HashMap::new();
-        let coalesce_window = Duration::from_millis(100);
-        let batch_size = 1000;
-
-        let mut interval = time::interval(coalesce_window);
-
+    pub async fn run(self, mut event_rx: mpsc::Receiver<DebounceEventResult>) {
         loop {
-            tokio::select! {
-                // Process incoming events
-                Some(event) = event_rx.recv() => {
-                    self.handle_event(event, &mut event_buffer);
-
-                    // Flush if buffer is getting large
-                    if event_buffer.len() >= batch_size {
-                        self.flush_events(&mut event_buffer).await;
+            // Wait for debounced events
+            match event_rx.recv().await {
+                Some(Ok(events)) => {
+                    // Process the batch of debounced events
+                    self.handle_debounced_events(events).await;
+                }
+                Some(Err(errors)) => {
+                    // Log errors from the debouncer
+                    for error in errors {
+                        error!("Debouncer error: {:?}", error);
                     }
                 }
-
-                // Periodic flush of coalesced events
-                _ = interval.tick() => {
-                    if !event_buffer.is_empty() {
-                        self.flush_events(&mut event_buffer).await;
-                    }
+                None => {
+                    // Channel closed, exit
+                    debug!("Event channel closed, exiting processor");
+                    break;
                 }
             }
         }
     }
 
-    /// Handle a single filesystem event
-    fn handle_event(&self, event: Event, buffer: &mut HashMap<PathBuf, (EventKind, Instant)>) {
-        trace!("Received event: {:?}", event);
-
-        for path in event.paths {
-            // Skip .oxen directory
-            if path.components().any(|c| c.as_os_str() == ".oxen") {
-                continue;
-            }
-
-            // Skip non-file events for now
-            if path.is_dir() {
-                continue;
-            }
-
-            // Coalesce events for the same path
-            buffer.insert(path, (event.kind, Instant::now()));
-        }
-    }
-
-    /// Flush buffered events to the cache
-    async fn flush_events(&self, buffer: &mut HashMap<PathBuf, (EventKind, Instant)>) {
-        if buffer.is_empty() {
-            return;
-        }
-
-        debug!("Flushing {} events to cache", buffer.len());
-
+    /// Handle a batch of debounced events
+    async fn handle_debounced_events(&self, events: Vec<DebouncedEvent>) {
         let mut updates = Vec::new();
-        let now = Instant::now();
-        let stale_threshold = Duration::from_millis(200);
 
-        // Process each buffered event
-        for (path, (kind, timestamp)) in buffer.drain() {
-            trace!("Processing event for path '{}': {:?}", path.display(), kind);
+        for debounced_event in events {
+            trace!("Processing debounced event: {:?}", debounced_event);
 
-            // Skip stale events
-            if now.duration_since(timestamp) > stale_threshold {
-                debug!("Skipping stale event for path: {}", path.display());
-                continue;
+            let event = &debounced_event.event;
+
+            // Process each path in the event
+            // Note: .oxen paths are already filtered in the monitor
+            for path in &event.paths {
+                // Skip directories for now
+                if path.is_dir() {
+                    continue;
+                }
+
+                // Determine the status type based on event kind
+                let status_type = match event.kind {
+                    EventKind::Create(_) => FileStatusType::Created,
+                    EventKind::Modify(_) => FileStatusType::Modified,
+                    EventKind::Remove(_) => FileStatusType::Removed,
+                    EventKind::Any | EventKind::Access(_) | EventKind::Other => {
+                        // Skip these events
+                        continue;
+                    }
+                };
+
+                // Get file metadata if it exists
+                let (mtime, size) = if let Ok(metadata) = std::fs::metadata(path) {
+                    (
+                        metadata.modified().unwrap_or(std::time::SystemTime::now()),
+                        metadata.len(),
+                    )
+                } else if status_type == FileStatusType::Removed {
+                    // File was removed, use current time and zero size
+                    (std::time::SystemTime::now(), 0)
+                } else {
+                    // Skip if we can't get metadata for non-removed files
+                    warn!("Could not get metadata for file: {:?}", path);
+                    continue;
+                };
+
+                // Convert absolute path to relative path
+                let relative_path = match util::fs::path_relative_to_dir(path, &self.repo_path) {
+                    Ok(rel) => rel,
+                    Err(e) => {
+                        trace!(
+                            "Path not within repo, skipping: {:?} (repo: {:?}, error: {})",
+                            path,
+                            self.repo_path,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                debug!(
+                    "Processing event for {:?}: {:?}",
+                    relative_path, status_type
+                );
+
+                updates.push(FileStatus {
+                    path: relative_path,
+                    mtime,
+                    size,
+                    hash: None, // Will be computed later if needed
+                    status: status_type,
+                });
             }
-
-            // Determine the status type based on event kind
-            let status_type = match kind {
-                EventKind::Create(_) => {
-                    // New file created
-                    FileStatusType::Created
-                }
-                EventKind::Modify(_) => {
-                    // File modified
-                    FileStatusType::Modified
-                }
-                EventKind::Remove(_) => {
-                    // File removed
-                    FileStatusType::Removed
-                }
-                EventKind::Any | EventKind::Access(_) | EventKind::Other => {
-                    // Skip these events
-                    continue;
-                }
-            };
-
-            // Get file metadata if it exists
-            let (mtime, size) = if let Ok(metadata) = std::fs::metadata(&path) {
-                (
-                    metadata.modified().unwrap_or(std::time::SystemTime::now()),
-                    metadata.len(),
-                )
-            } else if status_type == FileStatusType::Removed {
-                // File was removed, use current time and zero size
-                (std::time::SystemTime::now(), 0)
-            } else {
-                // Skip if we can't get metadata for non-removed files
-                continue;
-            };
-
-            // Convert absolute path to relative path
-            let relative_path = match path.strip_prefix(&self.repo_path) {
-                Ok(rel) => rel.to_path_buf(),
-                Err(_) => {
-                    // Path is not within repo, skip it
-                    continue;
-                }
-            };
-
-            updates.push(FileStatus {
-                path: relative_path,
-                mtime,
-                size,
-                hash: None, // Will be computed later if needed
-                status: status_type,
-            });
         }
 
         // Batch update the cache
         if !updates.is_empty() {
+            debug!("Updating cache with {} file status changes", updates.len());
             if let Err(e) = self.cache.batch_update(updates).await {
                 error!("Failed to update cache: {}", e);
             }

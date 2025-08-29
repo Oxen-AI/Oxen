@@ -1,10 +1,10 @@
+use oxen_watcher::ipc::send_request;
+use oxen_watcher::protocol::{WatcherRequest, WatcherResponse};
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::process::Command;
 use tokio::time;
-use oxen_watcher::ipc::send_request;
-use oxen_watcher::protocol::{WatcherRequest, WatcherResponse};
 
 /// Helper to get the watcher binary path
 fn get_watcher_path() -> PathBuf {
@@ -32,7 +32,6 @@ fn get_watcher_path() -> PathBuf {
 }
 
 #[tokio::test]
-#[ignore] // Run with: cargo test --package oxen-watcher -- --ignored
 async fn test_watcher_lifecycle() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
@@ -99,7 +98,6 @@ async fn test_watcher_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watcher_file_detection() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
@@ -155,7 +153,6 @@ async fn test_watcher_file_detection() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_multiple_watcher_prevention() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
@@ -202,7 +199,6 @@ async fn test_multiple_watcher_prevention() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watcher_reports_relative_paths() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
@@ -221,7 +217,7 @@ async fn test_watcher_reports_relative_paths() {
         .expect("Failed to start watcher");
 
     // Give it time to start and do initial scan
-    time::sleep(Duration::from_secs(3)).await;
+    time::sleep(Duration::from_secs(1)).await;
 
     // Create test files in different directories
     std::fs::write(repo_path.join("root_file.txt"), "root content").unwrap();
@@ -234,20 +230,40 @@ async fn test_watcher_reports_relative_paths() {
     // Query the watcher via IPC
     let socket_path = repo_path.join(".oxen/watcher.sock");
     let request = WatcherRequest::GetStatus { paths: None };
-    let response = send_request(&socket_path, request).await.expect("Failed to send request");
+    let response = send_request(&socket_path, request)
+        .await
+        .expect("Failed to send request");
 
     // Verify the response contains relative paths
     if let WatcherResponse::Status(status) = response {
         // Check that all created file paths are relative
         for file_status in &status.created {
-            assert!(!file_status.path.is_absolute(), "Path should be relative, got: {:?}", file_status.path);
-            assert!(!file_status.path.starts_with("/"), "Path should not start with /, got: {:?}", file_status.path);
+            assert!(
+                !file_status.path.is_absolute(),
+                "Path should be relative, got: {:?}",
+                file_status.path
+            );
+            assert!(
+                !file_status.path.starts_with("/"),
+                "Path should not start with /, got: {:?}",
+                file_status.path
+            );
         }
-        
+
         // Verify specific files are present with correct relative paths
-        let paths: Vec<_> = status.created.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
-        assert!(paths.contains(&"root_file.txt".to_string()), "Should contain root_file.txt");
-        assert!(paths.contains(&"subdir/nested_file.txt".to_string()), "Should contain subdir/nested_file.txt");
+        let paths: Vec<_> = status
+            .created
+            .iter()
+            .map(|f| f.path.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            paths.contains(&"root_file.txt".to_string()),
+            "Should contain root_file.txt"
+        );
+        assert!(
+            paths.contains(&"subdir/nested_file.txt".to_string()),
+            "Should contain subdir/nested_file.txt"
+        );
     } else {
         panic!("Expected Status response, got: {:?}", response);
     }

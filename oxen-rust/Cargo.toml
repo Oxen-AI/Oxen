@@ -90,6 +90,7 @@ mp4 = "0.14.0"
 mime = "0.3.17"
 minus = { version = "5.4.0", features = ["static_output", "search"] }
 notify = "8.2"
+notify-debouncer-full = "0.6"
 num_cpus = "1.16.0"
 parking_lot = "0.12.1"
 par-stream = { version = "0.10.2", features = ["runtime-tokio"] }
