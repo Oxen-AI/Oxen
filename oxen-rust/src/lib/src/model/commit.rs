@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use time::OffsetDateTime;
 
 use super::{MerkleHash, User};
+use crate::config::UserConfig;
 use crate::error::OxenError;
 use crate::view::workspaces::WorkspaceCommit;
 
@@ -197,6 +198,16 @@ impl CommitWithBranchName {
             timestamp: commit.timestamp.to_owned(),
             size,
             branch_name,
+        }
+    }
+}
+
+impl NewCommitBody {
+    pub fn from_config(cfg: &UserConfig, message: &str) -> NewCommitBody {
+        NewCommitBody {
+            message: message.to_string(),
+            author: cfg.name.clone(),
+            email: cfg.email.clone(),
         }
     }
 }

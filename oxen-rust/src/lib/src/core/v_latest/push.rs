@@ -128,7 +128,6 @@ fn collect_missing_files(
         node.children.len()
     );
     for child in &node.children {
-        // println!("Child: {child:?}");
         if let EMerkleTreeNode::File(file_node) = &child.node {
             if !hashes.contains(&child.hash) {
                 continue;
@@ -827,11 +826,13 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
+                let _synced_nodes = HashSet::new();
                 match api::client::versions::multipart_batch_upload_with_retry(
                     &repo,
                     &remote_repo,
                     &chunk,
                     &client,
+                    &_synced_nodes,
                 )
                 .await
                 {
