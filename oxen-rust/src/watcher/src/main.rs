@@ -16,9 +16,9 @@ use crate::error::WatcherError;
 #[tokio::main]
 async fn main() -> Result<(), WatcherError> {
     env_logger::init();
-    
+
     let args = Args::parse();
-    
+
     match args.command {
         cli::Commands::Start { repo } => {
             info!("Starting watcher for repository: {}", repo.display());
@@ -41,7 +41,7 @@ async fn start_watcher(repo_path: PathBuf) -> Result<(), WatcherError> {
         info!("Watcher is already running for this repository");
         return Ok(());
     }
-    
+
     // Initialize and run the watcher
     let watcher = monitor::FileSystemWatcher::new(repo_path)?;
     watcher.run().await
@@ -49,7 +49,7 @@ async fn start_watcher(repo_path: PathBuf) -> Result<(), WatcherError> {
 
 async fn stop_watcher(repo_path: PathBuf) -> Result<(), WatcherError> {
     let socket_path = repo_path.join(".oxen/watcher.sock");
-    
+
     // Send shutdown request
     match ipc::send_request(&socket_path, protocol::WatcherRequest::Shutdown).await {
         Ok(_) => {
@@ -79,7 +79,7 @@ async fn check_status(repo_path: PathBuf) -> Result<(), WatcherError> {
 
 async fn is_watcher_running(repo_path: &Path) -> Result<bool, WatcherError> {
     let socket_path = repo_path.join(".oxen/watcher.sock");
-    
+
     // Try to ping the watcher
     match ipc::send_request(&socket_path, protocol::WatcherRequest::Ping).await {
         Ok(protocol::WatcherResponse::Ok) => Ok(true),

@@ -118,14 +118,28 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
     // Load the repository
     let repo = LocalRepository::from_dir(&repo_path)?;
 
-    // Use Oxen's existing status implementation for initial state
+    // Use liboxen status implementation to establish a baseline.
+    // Then the watcher tracks changes relative to this baseline.
     match liboxen::repositories::status::status(&repo) {
         Ok(status) => {
             let mut file_statuses = Vec::new();
 
-            // Convert Oxen status to our format
-            for path in status.modified_files {
-                if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone())) {
+            // Convert untracked files to "Created" events
+            for path in &status.untracked_files {
+                if let Ok(metadata) = std::fs::metadata(repo_path.join(path)) {
+                    file_statuses.push(crate::protocol::FileStatus {
+                        path: path.clone(),
+                        mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
+                        size: metadata.len(),
+                        hash: None,
+                        status: crate::protocol::FileStatusType::Created,
+                    });
+                }
+            }
+
+            // Convert modified files to "Modified" events
+            for path in &status.modified_files {
+                if let Ok(metadata) = std::fs::metadata(repo_path.join(path)) {
                     file_statuses.push(crate::protocol::FileStatus {
                         path: path.clone(),
                         mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
@@ -136,59 +150,29 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
                 }
             }
 
-            for (path, entry) in status.staged_files {
-                let file_status_type = match entry.status {
-                    liboxen::model::StagedEntryStatus::Added => {
-                        crate::protocol::FileStatusType::Added
-                    }
-                    liboxen::model::StagedEntryStatus::Modified => {
-                        crate::protocol::FileStatusType::Modified
-                    }
-                    liboxen::model::StagedEntryStatus::Removed => {
-                        crate::protocol::FileStatusType::Removed
-                    }
-                    liboxen::model::StagedEntryStatus::Unmodified => {
-                        continue; // Skip unmodified files
-                    }
-                };
-
-                let (mtime, size) =
-                    if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone())) {
-                        (
-                            metadata.modified().unwrap_or(std::time::SystemTime::now()),
-                            metadata.len(),
-                        )
-                    } else {
-                        // File might not exist if it was removed
-                        (std::time::SystemTime::now(), 0)
-                    };
-
+            // Convert removed files to "Removed" events
+            for path in &status.removed_files {
+                // For removed files, we can't get metadata since they don't exist
                 file_statuses.push(crate::protocol::FileStatus {
                     path: path.clone(),
-                    mtime,
-                    size,
-                    hash: Some(entry.hash),
-                    status: file_status_type,
+                    mtime: std::time::SystemTime::now(),
+                    size: 0,
+                    hash: None,
+                    status: crate::protocol::FileStatusType::Removed,
                 });
             }
 
-            for path in status.untracked_files {
-                if let Ok(metadata) = std::fs::metadata(repo_path.join(path.clone())) {
-                    file_statuses.push(crate::protocol::FileStatus {
-                        path: path.clone(),
-                        mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
-                        size: metadata.len(),
-                        hash: None,
-                        status: crate::protocol::FileStatusType::Untracked,
-                    });
-                }
+            // Batch update the cache with initial state
+            let total_files = status.untracked_files.len()
+                + status.modified_files.len()
+                + status.removed_files.len();
+            if !file_statuses.is_empty() {
+                cache.batch_update(file_statuses).await?;
+                info!("Populated cache with {} initial file states", total_files);
             }
 
-            // Batch update the cache
-            cache.batch_update(file_statuses).await?;
             cache.mark_scan_complete().await?;
-
-            info!("Initial scan complete");
+            info!("Initial scan complete - established baseline, now tracking filesystem changes");
         }
         Err(e) => {
             error!("Failed to get initial status: {}", e);

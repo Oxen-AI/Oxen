@@ -1,5 +1,6 @@
 use crate::error::OxenError;
 use crate::model::LocalRepository;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -14,10 +15,15 @@ pub struct WatcherClient {
 /// Status data received from the watcher
 #[derive(Debug, Clone)]
 pub struct WatcherStatus {
-    pub untracked: HashSet<PathBuf>,
+    /// Files created since watcher started (includes untracked files from initial scan)
+    pub created: HashSet<PathBuf>,
+    /// Files modified since watcher started
     pub modified: HashSet<PathBuf>,
+    /// Files removed since watcher started
     pub removed: HashSet<PathBuf>,
+    /// Whether the initial scan is complete
     pub scan_complete: bool,
+    /// Last update time
     pub last_updated: SystemTime,
 }
 
@@ -92,14 +98,14 @@ impl WatcherClient {
         // Deserialize response
         let response: WatcherResponse = rmp_serde::from_slice(&response_buf)
             .map_err(|e| OxenError::basic_str(&format!("Failed to deserialize response: {}", e)))?;
-        
+
         // Gracefully shutdown the connection
         let _ = stream.shutdown().await;
 
         // Convert response to WatcherStatus
         match response {
             WatcherResponse::Status(status_result) => Ok(WatcherStatus {
-                untracked: status_result.untracked.into_iter().collect(),
+                created: status_result.created.into_iter().map(|f| f.path).collect(),
                 modified: status_result.modified.into_iter().map(|f| f.path).collect(),
                 removed: status_result.removed.into_iter().collect(),
                 scan_complete: status_result.scan_complete,
@@ -162,12 +168,12 @@ impl WatcherClient {
     }
 }
 
-// We need to define the protocol types here temporarily
-// In a real implementation, these would be imported from the watcher crate
-// or defined in a shared protocol module
+//
+// Protocol types shared between liboxen and oxen-watcher
+//
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-enum WatcherRequest {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WatcherRequest {
     GetStatus { paths: Option<Vec<PathBuf>> },
     GetSummary,
     Refresh { paths: Vec<PathBuf> },
@@ -175,31 +181,64 @@ enum WatcherRequest {
     Ping,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-enum WatcherResponse {
+impl WatcherRequest {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+        rmp_serde::to_vec(self)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(bytes)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WatcherResponse {
     Status(StatusResult),
     Summary {
+        created: usize,
         modified: usize,
-        added: usize,
         removed: usize,
-        untracked: usize,
         last_updated: SystemTime,
     },
     Ok,
     Error(String),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct StatusResult {
+impl WatcherResponse {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+        rmp_serde::to_vec(self)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(bytes)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusResult {
+    pub created: Vec<FileStatus>,
     pub modified: Vec<FileStatus>,
-    pub added: Vec<FileStatus>,
     pub removed: Vec<PathBuf>,
-    pub untracked: Vec<PathBuf>,
     pub scan_complete: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct FileStatus {
+impl std::fmt::Display for StatusResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.created.iter().for_each(|status| {
+            writeln!(f, "[Created]\t{}", status.path.display()).unwrap();
+        });
+        self.modified.iter().for_each(|status| {
+            writeln!(f, "[Modified]\t{}", status.path.display()).unwrap();
+        });
+        self.removed.iter().for_each(|path| {
+            writeln!(f, "[Removed]\t{}", path.display()).unwrap();
+        });
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileStatus {
     pub path: PathBuf,
     pub mtime: SystemTime,
     pub size: u64,
@@ -207,10 +246,24 @@ struct FileStatus {
     pub status: FileStatusType,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-enum FileStatusType {
+impl std::fmt::Display for FileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[{:?}] {}  {}",
+            self.status,
+            self.mtime
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            self.path.display(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FileStatusType {
+    Created,
     Modified,
-    Added,
     Removed,
-    Untracked,
 }

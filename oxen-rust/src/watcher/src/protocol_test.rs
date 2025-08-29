@@ -25,10 +25,9 @@ mod tests {
     #[test]
     fn test_response_serialization() {
         let response = WatcherResponse::Summary {
+            created: 3,
             modified: 5,
-            added: 3,
             removed: 2,
-            untracked: 10,
             last_updated: SystemTime::now(),
         };
         
@@ -36,11 +35,10 @@ mod tests {
         let deserialized = WatcherResponse::from_bytes(&bytes).unwrap();
         
         match deserialized {
-            WatcherResponse::Summary { modified, added, removed, untracked, .. } => {
+            WatcherResponse::Summary { created, modified, removed, .. } => {
+                assert_eq!(created, 3);
                 assert_eq!(modified, 5);
-                assert_eq!(added, 3);
                 assert_eq!(removed, 2);
-                assert_eq!(untracked, 10);
             }
             _ => panic!("Wrong response type"),
         }
@@ -49,6 +47,13 @@ mod tests {
     #[test]
     fn test_status_result_serialization() {
         let status_result = StatusResult {
+            created: vec![FileStatus {
+                path: PathBuf::from("created.txt"),
+                mtime: SystemTime::now(),
+                size: 200,
+                hash: None,
+                status: FileStatusType::Created,
+            }],
             modified: vec![FileStatus {
                 path: PathBuf::from("modified.txt"),
                 mtime: SystemTime::now(),
@@ -56,15 +61,7 @@ mod tests {
                 hash: Some("hash1".to_string()),
                 status: FileStatusType::Modified,
             }],
-            added: vec![FileStatus {
-                path: PathBuf::from("added.txt"),
-                mtime: SystemTime::now(),
-                size: 200,
-                hash: None,
-                status: FileStatusType::Added,
-            }],
             removed: vec![PathBuf::from("removed.txt")],
-            untracked: vec![PathBuf::from("untracked.txt")],
             scan_complete: true,
         };
         
@@ -74,16 +71,14 @@ mod tests {
         
         match deserialized {
             WatcherResponse::Status(result) => {
+                assert_eq!(result.created.len(), 1);
                 assert_eq!(result.modified.len(), 1);
-                assert_eq!(result.added.len(), 1);
                 assert_eq!(result.removed.len(), 1);
-                assert_eq!(result.untracked.len(), 1);
                 assert!(result.scan_complete);
                 
+                assert_eq!(result.created[0].path, PathBuf::from("created.txt"));
                 assert_eq!(result.modified[0].path, PathBuf::from("modified.txt"));
-                assert_eq!(result.added[0].path, PathBuf::from("added.txt"));
                 assert_eq!(result.removed[0], PathBuf::from("removed.txt"));
-                assert_eq!(result.untracked[0], PathBuf::from("untracked.txt"));
             }
             _ => panic!("Wrong response type"),
         }
@@ -117,13 +112,13 @@ mod tests {
 
     #[test]
     fn test_file_status_type_equality() {
+        assert_eq!(FileStatusType::Created, FileStatusType::Created);
         assert_eq!(FileStatusType::Modified, FileStatusType::Modified);
-        assert_eq!(FileStatusType::Added, FileStatusType::Added);
         assert_eq!(FileStatusType::Removed, FileStatusType::Removed);
-        assert_eq!(FileStatusType::Untracked, FileStatusType::Untracked);
         
-        assert_ne!(FileStatusType::Modified, FileStatusType::Added);
-        assert_ne!(FileStatusType::Added, FileStatusType::Removed);
+        assert_ne!(FileStatusType::Created, FileStatusType::Modified);
+        assert_ne!(FileStatusType::Modified, FileStatusType::Removed);
+        assert_ne!(FileStatusType::Created, FileStatusType::Removed);
     }
 
     #[test]
@@ -155,10 +150,9 @@ mod tests {
         }
         
         let status_result = StatusResult {
+            created: vec![],
             modified,
-            added: vec![],
             removed: vec![],
-            untracked: vec![],
             scan_complete: true,
         };
         
