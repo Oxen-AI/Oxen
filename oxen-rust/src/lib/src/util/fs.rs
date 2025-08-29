@@ -1772,17 +1772,19 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
     }
 }
 
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    // First, check if the file exists; return false if not
+pub fn is_modified_from_node_with_metadata(
+    path: &Path,
+    node: &FileNode,
+    metadata: Result<std::fs::Metadata, OxenError>,
+) -> Result<bool, OxenError> {
     if !path.exists() {
         log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
         return Ok(false);
     }
 
+    let metadata = metadata?;
     // Second, check the length of the file
-    let meta = util::fs::metadata(path)?;
-
-    let file_size = meta.len();
+    let file_size = metadata.len();
     let node_size = node.num_bytes();
 
     if file_size != node_size {
@@ -1790,7 +1792,7 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
     }
 
     // Third, check the last modified times
-    let file_last_modified = FileTime::from_last_modification_time(&meta);
+    let file_last_modified = FileTime::from_last_modification_time(&metadata);
     let node_last_modified = util::fs::last_modified_time(
         node.last_modified_seconds(),
         node.last_modified_nanoseconds(),
@@ -1802,13 +1804,17 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
 
     // Finally, check the hashes
     let node_hash = node.hash().to_u128();
-    let working_hash = util::hasher::get_hash_given_metadata(path, &meta)?;
+    let working_hash = util::hasher::get_hash_given_metadata(path, &metadata)?;
 
     if node_hash == working_hash {
         Ok(false)
     } else {
         Ok(true)
     }
+}
+
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+    is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
 }
 
 // Only uses the metadata to check for modification
@@ -1955,8 +1961,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn version_path() -> Result<(), OxenError> {
+    #[test]
+    fn version_path() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
             let entry = CommitEntry {
                 commit_id: String::from("1234"),
@@ -1981,8 +1987,8 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn detect_file_type() -> Result<(), OxenError> {
+    #[test]
+    fn detect_file_type() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";
