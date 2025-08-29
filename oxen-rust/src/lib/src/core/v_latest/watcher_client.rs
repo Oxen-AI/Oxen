@@ -120,51 +120,61 @@ impl WatcherClient {
 
     /// Check if the watcher is responsive
     pub async fn ping(&self) -> bool {
-        match UnixStream::connect(&self.socket_path).await {
-            Ok(mut stream) => {
-                // Send ping request
-                let request = WatcherRequest::Ping;
-                if let Ok(request_bytes) = rmp_serde::to_vec(&request) {
-                    let len = request_bytes.len() as u32;
-                    if stream.write_all(&len.to_le_bytes()).await.is_ok()
-                        && stream.write_all(&request_bytes).await.is_ok()
-                        && stream.flush().await.is_ok()
-                    {
-                        // Try to read response
-                        let mut len_buf = [0u8; 4];
-                        if stream.read_exact(&mut len_buf).await.is_ok() {
-                            let response_len = u32::from_le_bytes(len_buf) as usize;
-                            if response_len < 1000 {
-                                // Ping response should be small
-                                let mut response_buf = vec![0u8; response_len];
-                                if stream.read_exact(&mut response_buf).await.is_ok() {
-                                    // Gracefully shutdown the connection before checking response
-                                    let _ = stream.shutdown().await;
-                                    if let Ok(response) =
-                                        rmp_serde::from_slice::<WatcherResponse>(&response_buf)
-                                    {
-                                        matches!(response, WatcherResponse::Ok)
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            }
-            Err(_) => false,
+        // Try to connect to the socket
+        let Ok(mut stream) = UnixStream::connect(&self.socket_path).await else {
+            return false;
+        };
+
+        // Serialize ping request
+        let request = WatcherRequest::Ping;
+        let Ok(request_bytes) = rmp_serde::to_vec(&request) else {
+            return false;
+        };
+
+        // Send request length
+        let len = request_bytes.len() as u32;
+        let Ok(_) = stream.write_all(&len.to_le_bytes()).await else {
+            return false;
+        };
+
+        // Send request
+        let Ok(_) = stream.write_all(&request_bytes).await else {
+            return false;
+        };
+
+        // Flush the stream
+        let Ok(_) = stream.flush().await else {
+            return false;
+        };
+
+        // Read response length
+        let mut len_buf = [0u8; 4];
+        let Ok(_) = stream.read_exact(&mut len_buf).await else {
+            return false;
+        };
+
+        let response_len = u32::from_le_bytes(len_buf) as usize;
+        
+        // Sanity check: ping response should be small
+        if response_len >= 1000 {
+            return false;
         }
+
+        // Read response
+        let mut response_buf = vec![0u8; response_len];
+        let Ok(_) = stream.read_exact(&mut response_buf).await else {
+            return false;
+        };
+
+        // Gracefully shutdown the connection
+        let _ = stream.shutdown().await;
+
+        // Check if we got an Ok response
+        let Ok(response) = rmp_serde::from_slice::<WatcherResponse>(&response_buf) else {
+            return false;
+        };
+
+        matches!(response, WatcherResponse::Ok)
     }
 }
 
