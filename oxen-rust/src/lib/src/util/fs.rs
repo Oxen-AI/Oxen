@@ -1772,17 +1772,52 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
     }
 }
 
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    // First, check if the file exists; return false if not
-    if !path.exists() {
-        log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
-        return Ok(false);
-    }
+// pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+//     // First, check if the file exists; return false if not
+//     // if !path.exists() {
+//     //     log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
+//     //     return Ok(false);
+//     // }
 
+//     // Second, check the length of the file
+//     let meta = util::fs::metadata(path)?;
+
+//     let file_size = meta.len();
+//     let node_size = node.num_bytes();
+
+//     if file_size != node_size {
+//         return Ok(true);
+//     }
+
+//     // Third, check the last modified times
+//     let file_last_modified = FileTime::from_last_modification_time(&meta);
+//     let node_last_modified = util::fs::last_modified_time(
+//         node.last_modified_seconds(),
+//         node.last_modified_nanoseconds(),
+//     );
+
+//     if file_last_modified == node_last_modified {
+//         return Ok(false);
+//     }
+
+//     // Finally, check the hashes
+//     let node_hash = node.hash().to_u128();
+//     let working_hash = util::hasher::get_hash_given_metadata(path, &meta)?;
+
+//     if node_hash == working_hash {
+//         Ok(false)
+//     } else {
+//         Ok(true)
+//     }
+// }
+
+pub fn is_modified_from_node_with_metadata(
+    path: &Path,
+    node: &FileNode,
+    metadata: std::fs::Metadata,
+) -> Result<bool, OxenError> {
     // Second, check the length of the file
-    let meta = util::fs::metadata(path)?;
-
-    let file_size = meta.len();
+    let file_size = metadata.len();
     let node_size = node.num_bytes();
 
     if file_size != node_size {
@@ -1790,7 +1825,7 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
     }
 
     // Third, check the last modified times
-    let file_last_modified = FileTime::from_last_modification_time(&meta);
+    let file_last_modified = FileTime::from_last_modification_time(&metadata);
     let node_last_modified = util::fs::last_modified_time(
         node.last_modified_seconds(),
         node.last_modified_nanoseconds(),
@@ -1802,13 +1837,18 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
 
     // Finally, check the hashes
     let node_hash = node.hash().to_u128();
-    let working_hash = util::hasher::get_hash_given_metadata(path, &meta)?;
+    let working_hash = util::hasher::get_hash_given_metadata(path, &metadata)?;
 
     if node_hash == working_hash {
         Ok(false)
     } else {
         Ok(true)
     }
+}
+
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+    let metadata = util::fs::metadata(path)?;
+    is_modified_from_node_with_metadata(path, node, metadata)
 }
 
 // Only uses the metadata to check for modification
@@ -1955,8 +1995,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn version_path() -> Result<(), OxenError> {
+    #[test]
+    fn version_path() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
             let entry = CommitEntry {
                 commit_id: String::from("1234"),
@@ -1981,8 +2021,8 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn detect_file_type() -> Result<(), OxenError> {
+    #[test]
+    fn detect_file_type() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";

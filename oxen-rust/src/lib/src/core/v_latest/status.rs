@@ -15,6 +15,7 @@ use crate::{repositories, util};
 
 use ignore::gitignore::Gitignore;
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use rocksdb::{DBWithThreadMode, IteratorMode, SingleThreaded};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -457,6 +458,7 @@ fn find_changes(
 ) -> Result<(UntrackedData, HashSet<PathBuf>, HashSet<PathBuf>), OxenError> {
     let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
+    let is_dir = full_path.is_dir();
     log::debug!(
         "find_changes search_node_path: {:?} full_path: {:?}",
         search_node_path,
@@ -474,25 +476,35 @@ fn find_changes(
     let mut removed = HashSet::new();
     let gitignore: Option<Gitignore> = oxenignore::create(repo);
 
-    let mut entries: Vec<PathBuf> = Vec::new();
-    if full_path.is_dir() {
+    let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
+    if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
             return Err(OxenError::basic_str(format!(
                 "Could not read dir {:?}",
                 full_path
             )));
         };
-        for entry in dir_entries {
-            entries.push(entry?.path());
-        }
+        let mut metadata: Vec<_> = dir_entries
+            .par_bridge()
+            .map(|entry| {
+                let entry = entry?;
+                let path = entry.path();
+                let metadata = entry.metadata()?;
+                let is_dir = metadata.is_dir();
+                Ok((path, is_dir, metadata))
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        metadata.sort_by_key(|(path, _, _)| path.to_path_buf());
+        entries.extend(metadata);
     } else {
-        entries.push(full_path.to_owned());
+        let metadata = util::fs::metadata(&full_path)?;
+        entries.push((full_path.to_owned(), false, metadata));
     }
     let mut untracked_count = 0;
     let search_node = maybe_get_node(repo, dir_hashes, search_node_path)?;
     let dir_children = maybe_get_dir_children(&search_node)?;
 
-    for path in entries {
+    for (path, is_dir, metadata) in entries {
         progress.set_message(format!(
             "🐂 checking ({total_entries} files) scanning {:?}",
             search_node_path
@@ -507,11 +519,11 @@ fn find_changes(
             search_node_path
         );
 
-        if oxenignore::is_ignored(&relative_path, &gitignore, path.is_dir()) {
+        if oxenignore::is_ignored(&relative_path, &gitignore, is_dir) {
             continue;
         }
 
-        if path.is_dir() {
+        if is_dir {
             log::debug!("find_changes entry is a directory {:?}", path);
             // If it's a directory, recursively find changes below it
             let (sub_untracked, sub_modified, sub_removed) = find_changes(
@@ -537,7 +549,8 @@ fn find_changes(
             // Either way, we know the directory is not all_untracked
             untracked.all_untracked = false;
             if let EMerkleTreeNode::File(file_node) = &node.node {
-                let is_modified = util::fs::is_modified_from_node(&path, file_node)?;
+                let is_modified =
+                    util::fs::is_modified_from_node_with_metadata(&path, file_node, metadata)?;
                 log::debug!("is_modified {} {:?}", is_modified, relative_path);
                 if is_modified {
                     modified.insert(relative_path.clone());
@@ -551,7 +564,7 @@ fn find_changes(
             if let Some(search_node) = &search_node {
                 if let EMerkleTreeNode::File(file_node) = &search_node.node {
                     found_file = true;
-                    if util::fs::is_modified_from_node(&path, file_node)? {
+                    if util::fs::is_modified_from_node_with_metadata(&path, file_node, metadata)? {
                         modified.insert(relative_path.clone());
                     }
                 }
@@ -570,7 +583,7 @@ fn find_changes(
     if untracked.all_untracked
         && search_node_path != Path::new("")
         && !is_staged(search_node_path, staged_db)?
-        && full_path.is_dir()
+        && is_dir
         && search_node.is_none()
     {
         untracked.add_dir(search_node_path.to_path_buf(), untracked_count);
@@ -656,6 +669,7 @@ fn find_local_changes(
 > {
     let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
+    let is_dir = full_path.is_dir();
 
     log::debug!(
         "find_changes search_node_path: {:?} full_path: {:?}",
@@ -681,25 +695,35 @@ fn find_local_changes(
 
     let gitignore: Option<Gitignore> = oxenignore::create(repo);
 
-    let mut entries: Vec<PathBuf> = Vec::new();
-    if full_path.is_dir() {
+    let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
+    if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
             return Err(OxenError::basic_str(format!(
                 "Could not read dir {:?}",
                 full_path
             )));
         };
-        for entry in dir_entries {
-            entries.push(entry?.path());
-        }
+        let metadata: Vec<_> = dir_entries
+            .par_bridge()
+            .map(|entry| {
+                let entry = entry?;
+                let path = entry.path();
+                let metadata = entry.metadata()?;
+                let is_dir = metadata.is_dir();
+                Ok((path, is_dir, metadata))
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        // metadata.sort_by_key(|(path, _, _)| path.to_path_buf());
+        entries.extend(metadata);
     } else {
-        entries.push(full_path.to_owned());
+        let metadata = util::fs::metadata(&full_path)?;
+        entries.push((full_path.to_owned(), false, metadata));
     }
     let mut untracked_count = 0;
     let search_node = maybe_get_node(repo, dir_hashes, search_node_path)?;
     let dir_children = maybe_get_dir_children(&search_node)?;
 
-    for path in entries {
+    for (path, is_dir, _) in entries {
         progress.set_message(format!(
             "🐂 checking ({total_entries} files) scanning {:?}",
             search_node_path
@@ -714,11 +738,11 @@ fn find_local_changes(
             search_node_path
         );
 
-        if oxenignore::is_ignored(&relative_path, &gitignore, path.is_dir()) {
+        if oxenignore::is_ignored(&relative_path, &gitignore, is_dir) {
             continue;
         }
 
-        if path.is_dir() {
+        if is_dir {
             log::debug!("find_changes entry is a directory {:?}", path);
             // If it's a directory, recursively find changes below it
             let (sub_untracked, sub_unsynced, sub_modified, sub_removed) = find_local_changes(
@@ -778,7 +802,7 @@ fn find_local_changes(
     if untracked.all_untracked
         && search_node_path != Path::new("")
         && !in_staged_data(search_node_path, staged_data)?
-        && full_path.is_dir()
+        && is_dir
         && search_node.is_none()
     {
         untracked.add_dir(search_node_path.to_path_buf(), untracked_count);
