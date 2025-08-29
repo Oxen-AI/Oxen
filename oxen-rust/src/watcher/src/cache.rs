@@ -33,6 +33,32 @@ struct MemoryCache {
     last_update: SystemTime,
 }
 
+impl MemoryCache {
+    /// Helper function to update cache for a single file status
+    fn update_single_status(&mut self, status: FileStatus) {
+        match status.status {
+            FileStatusType::Created => {
+                self.created.insert(status.path.clone(), status.clone());
+                // If a file is created, it's no longer modified or removed
+                self.modified.remove(&status.path);
+                self.removed.remove(&status.path);
+            }
+            FileStatusType::Modified => {
+                self.modified.insert(status.path.clone(), status.clone());
+                // A modified file might have been previously created, keep that status
+                // But it's definitely not removed
+                self.removed.remove(&status.path);
+            }
+            FileStatusType::Removed => {
+                self.removed.insert(status.path.clone(), status.clone());
+                // If removed, clear from created and modified
+                self.created.remove(&status.path);
+                self.modified.remove(&status.path);
+            }
+        }
+    }
+}
+
 impl StatusCache {
     /// Create a new status cache for a repository
     pub fn new(repo_path: &Path) -> Result<Self, WatcherError> {
@@ -103,60 +129,20 @@ impl StatusCache {
     #[allow(dead_code)] // Used in tests
     pub async fn update_file_status(&self, status: FileStatus) -> Result<(), WatcherError> {
         let mut cache = self.cache.write().await;
-
-        // Update memory cache based on event type
-        match status.status {
-            FileStatusType::Created => {
-                cache.created.insert(status.path.clone(), status.clone());
-                // If a file is created, it's no longer modified or removed
-                cache.modified.remove(&status.path);
-                cache.removed.remove(&status.path);
-            }
-            FileStatusType::Modified => {
-                cache.modified.insert(status.path.clone(), status.clone());
-                // A modified file might have been previously created, keep that status
-                // But it's definitely not removed
-                cache.removed.remove(&status.path);
-            }
-            FileStatusType::Removed => {
-                cache.removed.insert(status.path.clone(), status.clone());
-                // If removed, clear from created and modified
-                cache.created.remove(&status.path);
-                cache.modified.remove(&status.path);
-            }
-        }
-
+        cache.update_single_status(status);
         cache.last_update = SystemTime::now();
-
         Ok(())
     }
 
     /// Batch update multiple file statuses
     pub async fn batch_update(&self, statuses: Vec<FileStatus>) -> Result<(), WatcherError> {
         let mut cache = self.cache.write().await;
-
+        
         for status in statuses {
-            // Update memory cache based on event type
-            match status.status {
-                FileStatusType::Created => {
-                    cache.created.insert(status.path.clone(), status.clone());
-                    cache.modified.remove(&status.path);
-                    cache.removed.remove(&status.path);
-                }
-                FileStatusType::Modified => {
-                    cache.modified.insert(status.path.clone(), status.clone());
-                    cache.removed.remove(&status.path);
-                }
-                FileStatusType::Removed => {
-                    cache.removed.insert(status.path.clone(), status.clone());
-                    cache.created.remove(&status.path);
-                    cache.modified.remove(&status.path);
-                }
-            }
+            cache.update_single_status(status);
         }
-
+        
         cache.last_update = SystemTime::now();
-
         Ok(())
     }
 
