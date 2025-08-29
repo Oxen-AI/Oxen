@@ -108,10 +108,9 @@ async fn handle_client(
         WatcherRequest::GetSummary => {
             let status = cache.get_status(None).await;
             WatcherResponse::Summary {
+                created: status.created.len(),
                 modified: status.modified.len(),
-                added: status.added.len(),
                 removed: status.removed.len(),
-                untracked: status.untracked.len(),
                 last_updated: std::time::SystemTime::now(),
             }
         }

@@ -78,9 +78,9 @@ mod tests {
 
         // Should have no entries
         let status = cache.get_status(None).await;
-        assert!(status.added.is_empty());
-        assert!(status.untracked.is_empty());
+        assert!(status.created.is_empty());
         assert!(status.modified.is_empty());
+        assert!(status.removed.is_empty());
     }
 
     #[tokio::test]
@@ -103,8 +103,8 @@ mod tests {
 
         // Should have no entries (directories are skipped)
         let status = cache.get_status(None).await;
-        assert!(status.added.is_empty());
-        assert!(status.untracked.is_empty());
+        assert!(status.created.is_empty());
+        assert!(status.modified.is_empty());
     }
 
     #[tokio::test]
@@ -131,7 +131,7 @@ mod tests {
 
         // Should have all files
         let status = cache.get_status(None).await;
-        let total = status.added.len() + status.untracked.len() + status.modified.len();
+        let total = status.created.len() + status.modified.len() + status.removed.len();
         assert!(total > 0, "Should have processed some files");
         assert!(total <= 10, "Should not exceed number of files sent");
     }
@@ -184,8 +184,7 @@ mod tests {
         let status = cache.get_status(None).await;
 
         // Should have entries in different categories
-        let total = status.added.len()
-            + status.untracked.len()
+        let total = status.created.len()
             + status.modified.len()
             + status.removed.len();
         assert!(total > 0, "Should have processed events");
@@ -223,8 +222,8 @@ mod tests {
 
         // Should have no entries
         let status = cache.get_status(None).await;
-        assert!(status.added.is_empty());
-        assert!(status.untracked.is_empty());
+        assert!(status.created.is_empty());
         assert!(status.modified.is_empty());
+        assert!(status.removed.is_empty());
     }
 }

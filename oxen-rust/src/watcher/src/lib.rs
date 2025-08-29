@@ -7,4 +7,4 @@ pub mod monitor;
 pub mod protocol;
 
 pub use error::WatcherError;
-pub use protocol::{WatcherRequest, WatcherResponse};
+pub use protocol::{FileStatus, FileStatusType, StatusResult, WatcherRequest, WatcherResponse};

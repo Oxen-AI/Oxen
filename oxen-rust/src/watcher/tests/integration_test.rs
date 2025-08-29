@@ -238,14 +238,14 @@ async fn test_watcher_reports_relative_paths() {
 
     // Verify the response contains relative paths
     if let WatcherResponse::Status(status) = response {
-        // Check that all paths are relative
-        for path in &status.untracked {
-            assert!(!path.is_absolute(), "Path should be relative, got: {:?}", path);
-            assert!(!path.starts_with("/"), "Path should not start with /, got: {:?}", path);
+        // Check that all created file paths are relative
+        for file_status in &status.created {
+            assert!(!file_status.path.is_absolute(), "Path should be relative, got: {:?}", file_status.path);
+            assert!(!file_status.path.starts_with("/"), "Path should not start with /, got: {:?}", file_status.path);
         }
         
         // Verify specific files are present with correct relative paths
-        let paths: Vec<_> = status.untracked.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        let paths: Vec<_> = status.created.iter().map(|f| f.path.to_string_lossy().to_string()).collect();
         assert!(paths.contains(&"root_file.txt".to_string()), "Should contain root_file.txt");
         assert!(paths.contains(&"subdir/nested_file.txt".to_string()), "Should contain subdir/nested_file.txt");
     } else {
