@@ -106,7 +106,7 @@ fn merge_watcher_with_staged(
             .collect();
 
         staged_data.untracked_files = watcher
-            .untracked
+            .created
             .into_iter()
             .filter(|p| requested_paths.iter().any(|req| p.starts_with(req)))
             .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
@@ -128,7 +128,7 @@ fn merge_watcher_with_staged(
     } else {
         // Use all watcher data with oxenignore filtering
         staged_data.untracked_files = watcher
-            .untracked
+            .created
             .into_iter()
             .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
             .collect();
@@ -1273,7 +1273,7 @@ mod tests {
         test::run_empty_local_repo_test(|repo| {
             // Create empty watcher status
             let watcher_status = WatcherStatus {
-                untracked: HashSet::new(),
+                created: HashSet::new(),
                 modified: HashSet::new(),
                 removed: HashSet::new(),
                 scan_complete: true,
@@ -1305,7 +1305,7 @@ mod tests {
             untracked.insert(PathBuf::from("dir/subdir/file3.txt"));
 
             let watcher_status = WatcherStatus {
-                untracked: untracked.clone(),
+                created: untracked.clone(),
                 modified: HashSet::new(),
                 removed: HashSet::new(),
                 scan_complete: true,
@@ -1350,7 +1350,7 @@ mod tests {
             removed.insert(PathBuf::from("dir/removed2.txt"));
 
             let watcher_status = WatcherStatus {
-                untracked: HashSet::new(),
+                created: HashSet::new(),
                 modified,
                 removed,
                 scan_complete: true,
@@ -1398,7 +1398,7 @@ mod tests {
             modified.insert(PathBuf::from("dir2/modified.txt"));
 
             let watcher_status = WatcherStatus {
-                untracked,
+                created: untracked,
                 modified,
                 removed: HashSet::new(),
                 scan_complete: true,
@@ -1444,7 +1444,7 @@ mod tests {
             untracked.insert(PathBuf::from("data/file.txt"));
 
             let watcher_status = WatcherStatus {
-                untracked,
+                created: untracked,
                 modified: HashSet::new(),
                 removed: HashSet::new(),
                 scan_complete: true,
@@ -1484,7 +1484,7 @@ mod tests {
             untracked.insert(PathBuf::from("d/file6.txt"));
 
             let watcher_status = WatcherStatus {
-                untracked,
+                created: untracked,
                 modified: HashSet::new(),
                 removed: HashSet::new(),
                 scan_complete: true,
@@ -1527,7 +1527,7 @@ mod tests {
             removed.insert(PathBuf::from("deleted2.txt"));
 
             let watcher_status = WatcherStatus {
-                untracked: untracked.clone(),
+                created: untracked.clone(),
                 modified: modified.clone(),
                 removed: removed.clone(),
                 scan_complete: true,
