@@ -676,9 +676,7 @@ mod tests {
             println!("Writing file to {}", path.display());
             repositories::add(&local_repo, path).await?;
             println!("adding file to index at path {}", path.display());
-            println!("First commit");
             repositories::commit(&local_repo, "Adding file for first time")?;
-            println!("Commit successfull");
             // Write the same file to newfolder/a.txt
 
             let new_path = &local_repo.path.join("newfolder").join("a.txt");
@@ -698,7 +696,6 @@ mod tests {
             let new_path = local_repo.path.join(path);
             util::fs::remove_file(&new_path)?;
             repositories::add(&local_repo, &new_path).await?;
-            println!("Second commit");
             repositories::commit(
                 &local_repo,
                 "Moved file to 2 new places and deleted original",

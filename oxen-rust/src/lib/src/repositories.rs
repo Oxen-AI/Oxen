@@ -40,6 +40,7 @@ pub mod merge;
 pub mod metadata;
 pub mod pull;
 pub mod push;
+pub mod remote_mode;
 pub mod restore;
 pub mod revisions;
 pub mod rm;

@@ -89,7 +89,7 @@ pub async fn clone_repo_remote_mode(
     local_repo.set_min_version(remote_repo.min_version());
     local_repo.set_remote_mode(Some(true));
 
-    let workspace = api::client::workspaces::create_with_path(
+    let workspace = api::client::workspaces::create_with_new_branch(
         &remote_repo,
         &branch_name,
         &workspace_id,

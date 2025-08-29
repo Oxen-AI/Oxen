@@ -1,15 +1,19 @@
 use crate::api::client;
 use crate::constants::AVG_CHUNK_SIZE;
+use crate::core::oxenignore;
 use crate::error::OxenError;
-use crate::model::RemoteRepository;
+use crate::model::{LocalRepository, RemoteRepository};
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
-use crate::{api, view::workspaces::ValidateUploadFeasibilityRequest};
+use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
 use futures_util::StreamExt;
+use glob::glob;
+use glob_match::glob_match;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -25,11 +29,13 @@ pub struct UploadResult {
     pub err_files: Vec<ErrorFileInfo>,
 }
 
+// TODO: Test adding removed files
 pub async fn add(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
@@ -39,29 +45,116 @@ pub async fn add(
         return Ok(());
     }
 
-    let mut expanded_paths = Vec::new();
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
+    let gitignore = local_repo.as_ref().map(oxenignore::create);
+
+    // Parse glob paths
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+
     for path in paths.clone() {
-        if path.is_dir() {
-            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    expanded_paths.push(entry.path().to_path_buf());
+        // Get repo path if provided
+        let path_str = &path
+            .to_str()
+            .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
+
+        if util::fs::is_glob_path(path_str) {
+            // Match against any untracked entries in the current dir
+            let glob_path = if local_repo.is_some() {
+                let relative_glob_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+                repo_path.join(relative_glob_path)
+            } else {
+                path.clone()
+            };
+
+            log::debug!("glob path: {glob_path:?}");
+            let glob_path_str = &glob_path
+                .to_str()
+                .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
+
+            for entry in glob(glob_path_str)? {
+                let entry_path = entry?;
+                let relative_path = util::fs::path_relative_to_dir(&entry_path, &repo_path)?;
+
+                if gitignore.is_some()
+                    && oxenignore::is_ignored(
+                        &relative_path,
+                        &gitignore.clone().unwrap(),
+                        relative_path.is_dir(),
+                    )
+                {
+                    continue;
+                }
+
+                let full_path = repo_path.join(relative_path);
+                if full_path.is_dir() {
+                    for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
+                        // Walkdir outputs full paths
+                        let entry_path = entry.path().to_path_buf();
+                        if entry.file_type().is_file() {
+                            expanded_paths.insert(entry_path);
+                        }
+                    }
+                } else {
+                    // Correction for unit tests
+                    if path.exists() {
+                        expanded_paths.insert(path.clone());
+                    } else {
+                        expanded_paths.insert(full_path);
+                    }
                 }
             }
         } else {
-            expanded_paths.push(path);
+            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+            let full_path = repo_path.join(&relative_path);
+            if full_path.is_dir() {
+                for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
+                    let entry_path = entry.path().to_path_buf();
+
+                    if entry.file_type().is_file() {
+                        expanded_paths.insert(entry_path);
+                    }
+                }
+            } else {
+                // Correction for unit tests
+                if path.exists() {
+                    expanded_paths.insert(path);
+                } else {
+                    expanded_paths.insert(full_path);
+                }
+            }
         }
     }
 
-    // TODO: add a progress bar
-    upload_multiple_files(remote_repo, workspace_id, directory, expanded_paths).await?;
+    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+    log::debug!("expanded paths: {expanded_paths:?}");
 
-    // TODO: We should only be printing this if files were actually added
-    /*
-    println!(
-        "🐂 oxen successfully added paths {paths:?} to workspace {}",
-        workspace_id
-    );
-    */
+    // TODO: add a progress bar
+    // TODO: need to handle error files and not display the `oxen added` message if files weren't added
+    match upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        directory,
+        expanded_paths.clone(),
+        local_repo,
+    )
+    .await
+    {
+        Ok(()) => {
+            println!(
+                "🐂 oxen added {} entries to workspace {}",
+                expanded_paths.len(),
+                workspace_id
+            );
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
 
     Ok(())
 }
@@ -104,6 +197,7 @@ async fn upload_multiple_files(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -118,6 +212,7 @@ async fn upload_multiple_files(
     let mut small_files_size = 0;
 
     // Group files by size
+    // TODO: NEED NEED NEED full paths to be fed in this far;
     for path in paths {
         if !path.exists() {
             log::warn!("File does not exist: {:?}", path);
@@ -149,8 +244,7 @@ async fn upload_multiple_files(
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
     // Process large files individually with parallel upload
-    for (path, size) in large_files {
-        log::info!("Uploading large file: {:?} ({} bytes)", path, size);
+    for (path, _size) in large_files {
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
@@ -171,6 +265,7 @@ async fn upload_multiple_files(
         directory,
         small_files,
         small_files_size,
+        local_repo,
     )
     .await?;
 
@@ -183,13 +278,14 @@ async fn parallel_batched_small_file_upload(
     directory: impl AsRef<Path>,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
     }
 
     // Batch small files in chunks of ~AVG_CHUNK_SIZE
-    log::info!(
+    log::debug!(
         "Uploading {} small files (total {} bytes)",
         small_files.len(),
         small_files_size
@@ -203,6 +299,7 @@ async fn parallel_batched_small_file_upload(
     let mut current_batch = Vec::new();
     let mut current_batch_size = 0;
 
+    // OPT: Try better chunking
     for (idx, (path, file_size)) in small_files.iter().enumerate() {
         current_batch.push(path.clone());
         current_batch_size += file_size;
@@ -241,6 +338,7 @@ async fn parallel_batched_small_file_upload(
         let queue = queue.clone();
         let finished_queue = finished_queue.clone();
         let client = client.clone();
+        let local_repo = local_repo.clone();
 
         tokio::spawn(async move {
             loop {
@@ -254,13 +352,13 @@ async fn parallel_batched_small_file_upload(
                 // first, upload the files to the version store
                 match api::client::versions::workspace_multipart_batch_upload_versions_with_retry(
                     &remote_repo,
+                    &local_repo,
                     client.clone(),
                     batch,
                 )
                 .await
                 {
                     Ok(result) => {
-                        log::debug!("Successfully uploaded batch of files");
                         // second, stage the files to workspace
                         match add_version_files_to_workspace_with_retry(
                             &remote_repo,
@@ -271,16 +369,16 @@ async fn parallel_batched_small_file_upload(
                         )
                         .await
                         {
-                            Ok(_err_files) => {
-                                log::debug!("Successfully added version files to workspace");
+                            Ok(err_files) => {
+                                log::debug!("Successfully added version files to workspace with errs {err_files:?}");
                                 // TODO: return err files info to the user
                             }
                             Err(err) => {
-                                log::error!("Failed to add version files to workspace: {}", err)
+                                log::debug!("Failed to add version files to workspace: {}", err)
                             }
                         }
                     }
-                    Err(err) => log::error!("Failed to upload batch of files: {}", err),
+                    Err(err) => log::debug!("Failed to upload batch of files: {}", err),
                 }
 
                 finished_queue.pop().await;
@@ -357,7 +455,6 @@ pub async fn add_version_files_to_workspace(
     } else {
         files_to_add.to_vec()
     };
-
     let response = client.post(&url).json(&files_to_send).send().await?;
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
@@ -484,43 +581,158 @@ pub async fn rm(
 }
 
 pub async fn rm_files(
+    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
+
+    // Parse glob paths
+    let repo_path = local_repo.path.clone();
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+
+    for path in paths.clone() {
+        let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
+        let full_path = repo_path.join(&relative_path);
+        if util::fs::is_glob_path(&full_path) {
+            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
+            else {
+                // TODO: Better error message?
+                return Err(OxenError::basic_str(
+                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
+                ));
+            };
+            let glob_pattern = relative_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            let root_path = PathBuf::from("");
+            let parent_path = relative_path.parent().unwrap_or(&root_path);
+
+            // If dir not found in tree, skip glob path
+            let Some(dir_node) =
+                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
+            else {
+                continue;
+            };
+
+            let dir_children = dir_node.list_paths()?;
+            for child_path in dir_children {
+                let child_str = child_path.to_string_lossy().to_string();
+                if glob_match(&glob_pattern, &child_str) {
+                    expanded_paths.insert(parent_path.join(child_path.clone()));
+                }
+            }
+        } else {
+            expanded_paths.insert(relative_path);
+        }
+    }
+
+    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+    log::debug!("expanded paths: {expanded_paths:?}");
 
     let uri = format!("/workspaces/{workspace_id}/versions");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("rm_files: {}", url);
     let client = client::new_for_url(&url)?;
-    let response = client.delete(&url).json(&paths).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_files got body: {}", body);
+    let response = client.delete(&url).json(&expanded_paths).send().await?;
+    // TODO: Same issue as with add, will display same message even if rm doesn't stage the files
 
-    // TODO: We should only be printing this if files were actually removed
-    /*
-    println!(
-        "🐂 oxen successfully staged paths {paths:?} as removed for workspace {}",
-        workspace_id
-    );
-    */
+    if response.status().is_success() {
+        log::debug!("rm_files successful, status: {}", response.status());
+        let body = client::parse_json_body(&url, response).await?;
+        log::debug!("rm_files got body: {}", body);
+
+        println!(
+            "🐂 oxen staged paths {paths:?} as removed for workspace {}",
+            workspace_id
+        );
+
+        // Remove files locally
+        for path in expanded_paths {
+            let full_path = local_repo.path.join(&path);
+            if full_path.is_dir() {
+                util::fs::remove_dir_all(&full_path)?;
+            }
+
+            if full_path.is_file() {
+                util::fs::remove_file(&full_path)?;
+            }
+        }
+    } else {
+        log::debug!("rm_files failed with status: {}", response.status());
+        let body = client::parse_json_body(&url, response).await?;
+
+        return Err(OxenError::basic_str(format!(
+            "Error: Could not remove paths {:?}",
+            body
+        )));
+    }
 
     Ok(())
 }
 
 pub async fn rm_files_from_staged(
+    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
 
+    // Parse glob paths
+    let repo_path = local_repo.path.clone();
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+
+    for path in paths.clone() {
+        let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
+        let full_path = repo_path.join(&relative_path);
+        if util::fs::is_glob_path(&full_path) {
+            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
+            else {
+                // TODO: Better error message?
+                return Err(OxenError::basic_str(
+                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
+                ));
+            };
+            let glob_pattern = relative_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            let root_path = PathBuf::from("");
+            let parent_path = relative_path.parent().unwrap_or(&root_path);
+
+            // If dir not found in tree, skip glob path
+            let Some(dir_node) =
+                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
+            else {
+                continue;
+            };
+
+            let dir_children = dir_node.list_paths()?;
+            for child_path in dir_children {
+                let child_str = child_path.to_string_lossy().to_string();
+                if glob_match(&glob_pattern, &child_str) {
+                    expanded_paths.insert(parent_path.join(child_path.clone()));
+                }
+            }
+        } else {
+            expanded_paths.insert(relative_path);
+        }
+    }
+
+    log::debug!("expanded paths: {expanded_paths:?}");
+
+    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+
     let uri = format!("/workspaces/{workspace_id}/staged");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("rm_files: {}", url);
     let client = client::new_for_url(&url)?;
-    let response = client.delete(&url).json(&paths).send().await?;
+    let response = client.delete(&url).json(&expanded_paths).send().await?;
     let body = client::parse_json_body(&url, response).await?;
     log::debug!("rm_files got body: {}", body);
     Ok(())
@@ -625,6 +837,7 @@ mod tests {
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -678,6 +891,7 @@ mod tests {
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -1326,9 +1540,14 @@ mod tests {
             let directory = "test_data";
 
             // Call the add function with multiple files
-            let result =
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, directory, paths)
-                    .await;
+            let result = api::client::workspaces::files::add(
+                &remote_repo,
+                &workspace_id,
+                directory,
+                paths,
+                &None,
+            )
+            .await;
             assert!(result.is_ok());
 
             // Verify that both files were added
@@ -1376,6 +1595,7 @@ mod tests {
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -1405,24 +1625,4 @@ mod tests {
         })
         .await
     }
-
-    // Test adding and committing file in remote mode in empty repo
-    /*
-
-        1. Make remote mode repo w/ empty remote;
-        2. Check whether repo exists, is_remote, has a branch, has created workspace
-        3. Create file in the working dir: run status, ensure that the file is untracked
-        4. Add the file; Call status, check for added file
-        5. Commit; Call status, check for is_clean message; check for new file node locally
-        6. Modify file locally; Call status, check for modified file
-        7. Add + Commit; Call status, check for is_clean message; check for new file node locally
-        8. Clone new local repo with same remote. Check for identical commit tree, both files in the versions folder, modified file in the working dir
-
-    */
-
-    // Test adding/committing multiple files in remote mode from populated repo
-    /*
-        Copy/Paste the above, except with populated repo. Add multiple files before committing, track which are modified when
-
-    */
 }

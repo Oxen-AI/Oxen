@@ -579,7 +579,6 @@ mod tests {
             util::fs::rename(&og_dir, &new_dir)?;
 
             let status = repositories::status(&repo)?;
-            println!("status after rename: {status:?}");
             status.print();
             assert_eq!(status.moved_files.len(), 0);
             // TODO: v0_10_0 logic should have root and new_train/train2
