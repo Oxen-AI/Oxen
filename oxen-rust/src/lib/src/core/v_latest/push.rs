@@ -464,7 +464,7 @@ async fn chunk_and_send_large_entries(
         entries.len()
     );
     let should_stop = Arc::new(AtomicBool::new(false));
-    let first_error = Arc::new(Mutex::new(None));
+    let first_error = Arc::new(Mutex::new(None::<String>));
 
     for worker in 0..worker_count {
         let queue = queue.clone();
@@ -506,7 +506,7 @@ async fn chunk_and_send_large_entries(
                             err
                         );
                         should_stop.store(true, Ordering::Relaxed);
-                        *first_error.lock().await = Some(err);
+                        *first_error.lock().await = Some(err.to_string());
                         break;
                     }
                 }
@@ -521,10 +521,9 @@ async fn chunk_and_send_large_entries(
         sleep(Duration::from_secs(1)).await;
     }
 
-    // let errors = errors.lock().await;
-    // if !errors.is_empty() {
-    //     return Err(OxenError::basic_str(format!("Failed to upload {} files", errors.len())));
-    // }
+    if let Some(err) = first_error.lock().await.clone() {
+        return Err(OxenError::basic_str(err));
+    }
 
     log::debug!("All large file tasks done. :-)");
 
@@ -817,6 +816,7 @@ async fn bundle_and_send_small_entries(
         tokio::spawn(async move {
             use tokio::time::sleep as tokio_sleep;
             loop {
+                log::debug!("worker[{worker}] processing task");
                 if should_stop.load(Ordering::Relaxed) {
                     break;
                 }
@@ -832,11 +832,6 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
-                log::debug!(
-                    "🚚 worker[{}] pulled task: files={} (computing size)",
-                    worker,
-                    chunk.len()
-                );
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
