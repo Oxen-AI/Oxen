@@ -67,6 +67,7 @@ dependencies = [
  "mockito",
  "mp4",
  "notify",
+ "notify-debouncer-full",
  "num_cpus",
  "os_path",
  "par-stream",
@@ -2504,6 +2505,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "file-id"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1fc6a637b6dc58414714eddd9170ff187ecb0933d4c7024d1abbd23a3cc26e9"
+dependencies = [
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4233,6 +4243,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "notify-debouncer-full"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "375bd3a138be7bfeff3480e4a623df4cbfb55b79df617c055cd810ba466fa078"
+dependencies = [
+ "file-id",
+ "log",
+ "notify",
+ "notify-types",
+ "walkdir",
+]
+
+[[package]]
 name = "notify-types"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4569,6 +4592,7 @@ dependencies = [
  "liboxen",
  "log",
  "notify",
+ "notify-debouncer-full",
  "rmp-serde",
  "serde",
  "serde_json",
