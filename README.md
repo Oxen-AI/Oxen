@@ -29,9 +29,9 @@
 
 ## 🐂 What is Oxen?
 
-Oxen is a lightning fast data version control system for structured and unstructured machine learning datasets. We aim to make versioning datasets as easy as versioning code.
+Oxen is a lightning fast data version control system for large datasets. We aim to make versioning data as easy as versioning code.
 
-The interface mirrors git, but shines in many areas that git or git-lfs fall short. Oxen is built from the ground up for data, and is optimized to handle large datasets, and large files.
+The interface mirrors git, but shines in many areas that git or git-lfs fall short. Oxen is built from the ground up for any data type, and is optimized to handle repositories with millions of files and scales to terrabytes of data.
 
 ```bash
 oxen init
@@ -45,7 +45,7 @@ Oxen is comprised of a [command line interface](https://docs.oxen.ai/getting-sta
 
 ## 🌾 What kind of data?
 
-Oxen is designed to efficiently manage large datasets, including those with large individual files, for example CSV files with millions of rows. It also handles datasets comprising millions of individual files and directories such as the complete collection of ImageNet images.
+Oxen is designed to efficiently manage large data in any format - including images, audio, video, text or tabular data like parquet files with millions of rows. Behind the scenes Oxen can store any blob type, but has specialized metadata extractors for certain filetypes and caches this information in the merkle tree for fast access later.
 
 ## 🚀 Built for speed
 
@@ -72,20 +72,6 @@ Oxen is built around ergonomics, ease of use, and it is easy to learn. If you kn
 * 🤝 Collaborate with your team (sync to an oxen-server)
 * 🌎 [Workspaces](https://docs.oxen.ai/concepts/workspace) to interact with the data without downloading it
 * 👀 Better data visualization on [OxenHub](https://oxen.ai)
-
-## 🔨 Next Up
-
-- [ ] Hugging face compatible APIs
-  - [ ] Upload model to hub
-  - [ ] Download model with `transformers` library
-  - [ ] Upload dataset to hub
-  - [ ] Download dataset with `datasets` library
-- [ ] Configurable storage backends
-  - [ ] S3
-  - [ ] Backblaze
-  - [ ] GCS
-  - [ ] Azure
-- [ ] Block level deduplication
 
 ## 🐮 Learn The Basics
 
@@ -117,16 +103,6 @@ Clone your first Oxen repository from the [OxenHub](https://oxen.ai/explore).
 ```bash CLI
 oxen clone https://hub.oxen.ai/ox/CatDogBBox
 ```
-
-## ⭐️ Every GitHub star gives an ox its wings
-
-No really.
-
-We hooked up the GitHub webhook for stars to an [OxenHub Repository](https://www.oxen.ai/ox/FlyingOxen). Learn how we did it and go find your own in our [ox/FlyingOxen](https://www.oxen.ai/ox/FlyingOxen) repository.
-
-<p align="center">
-    <img src="https://github.com/Oxen-AI/oxen-release/blob/main/images/ox-with-wings.png?raw=true" alt="oxen repo with wings" />
-</p>
 
 ## 🤝 Support
 
@@ -184,7 +160,7 @@ We built Oxen to be the tool we wish we had.
 
 ## Why the name Oxen?
 
-"Oxen" 🐂 comes from the fact that the tooling will plow, maintain, and version your data like a good farmer tends to their fields 🌾. Let Oxen take care of the grunt work of your infrastructure so you can focus on the higher-level ML problems that matter to your product.
+"Oxen" 🐂 comes from the fact that the tooling will plow, maintain, and version your data like a good farmer tends to their fields 🌾. Let Oxen take care of the grunt work of your infrastructure so you can focus on the higher-level problems that matter to your product.
 
 <!---------------------------------------------------------------------------->
 
