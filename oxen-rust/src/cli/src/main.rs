@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::process::ExitCode;
 
 use crate::cmd::RemoteModeCmd;
@@ -23,8 +24,25 @@ const LONG_ABOUT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn oxen_stack_size() -> usize {
+    env::var("OXEN_STACK_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(liboxen::constants::OXEN_STACK_SIZE)
+}
+
+fn main() -> ExitCode {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(oxen_stack_size())
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     util::logging::init_logging();
 
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![
