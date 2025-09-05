@@ -98,6 +98,24 @@ pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteReposito
     api::client::repositories::create_from_local(repo, repo_new).await
 }
 
+// Create new remote repo, deleting it if it already exists
+pub async fn create_or_clear_remote_repo(
+    repo: &LocalRepository,
+) -> Result<RemoteRepository, OxenError> {
+    let repo_new = RepoNew::from_namespace_name_host(
+        constants::DEFAULT_NAMESPACE,
+        repo.dirname(),
+        test_host(),
+    );
+
+    let remote_name = format!("/{}/{}", constants::DEFAULT_NAMESPACE, repo.dirname());
+    let host = repo_new.host();
+    let url = api::endpoint::url_from_host(&host, &remote_name);
+
+    let _ = api::client::repositories::delete_from_url(url).await;
+    api::client::repositories::create_from_local(repo, repo_new).await
+}
+
 pub async fn add_n_files_m_dirs(
     repo: &LocalRepository,
     num_files: u64,

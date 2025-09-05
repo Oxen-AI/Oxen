@@ -369,8 +369,25 @@ pub async fn create_from_local(
 
 pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, OxenError> {
     let url = repository.api_url()?;
-    log::debug!("Deleting repository: {}", url);
 
+    let client = client::new_for_url(&url)?;
+    if let Ok(res) = client.delete(&url).send().await {
+        let body = client::parse_json_body(&url, res).await?;
+        let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
+        match response {
+            Ok(val) => Ok(val),
+            Err(_) => Err(OxenError::basic_str(format!(
+                "Could not delete repository \n\n{body}"
+            ))),
+        }
+    } else {
+        Err(OxenError::basic_str(
+            "api::repositories::delete() Request failed",
+        ))
+    }
+}
+
+pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.delete(&url).send().await {
         let body = client::parse_json_body(&url, res).await?;
