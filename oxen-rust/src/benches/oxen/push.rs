@@ -1,12 +1,11 @@
 use criterion::{black_box, BenchmarkId, Criterion};
-use liboxen::api;
-use liboxen::command;
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, RemoteRepository};
+use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::test::create_or_clear_remote_repo;
 use liboxen::util;
+use liboxen::{api, command};
 use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
@@ -44,7 +43,7 @@ async fn setup_repo_for_push_benchmark(
     num_files_to_push_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
-) -> Result<(LocalRepository, RemoteRepository), OxenError> {
+) -> Result<LocalRepository, OxenError> {
     println!(
         "setup_repo_for_push_benchmark got repo_size {}, num_files_to_push {}, and dir_size {}",
         repo_size, num_files_to_push_in_benchmark, dir_size,
@@ -58,8 +57,6 @@ async fn setup_repo_for_push_benchmark(
     }
 
     let mut repo = repositories::init(&repo_dir)?;
-
-    // TODO: Properly clear original remote repo
     let remote_repo = create_or_clear_remote_repo(&repo).await?;
     command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
 
@@ -103,6 +100,10 @@ async fn setup_repo_for_push_benchmark(
                 - (max_large_file_ratio - min_large_file_ratio) * normalized_log_repo_size;
         }
 
+        // Note: If we want to have the push benchmark actually push to remotes with the proper repo_size,
+        //       We would need to do this every iteration, which would be slow
+
+        /*
         for i in 0..repo_size {
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
@@ -114,6 +115,7 @@ async fn setup_repo_for_push_benchmark(
         repositories::add(&repo, black_box(&files_dir)).await?;
         repositories::commit(&repo, "Init")?;
         repositories::push(&repo).await?;
+        */
 
         for i in repo_size..(repo_size + num_files_to_push_in_benchmark) {
             let dir_idx = rng.gen_range(0..dirs.len());
@@ -129,7 +131,7 @@ async fn setup_repo_for_push_benchmark(
     repositories::add(&repo, black_box(&files_dir)).await?;
     repositories::commit(&repo, "Prepare test files for push benchmark")?;
 
-    Ok((repo, remote_repo))
+    Ok(repo)
 }
 
 pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
@@ -152,7 +154,7 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
     ];
     for &(repo_size, dir_size) in params.iter() {
         let num_files_to_push = repo_size / 1000;
-        let (repo, remote_repo) = rt
+        let mut repo = rt
             .block_on(setup_repo_for_push_benchmark(
                 &base_dir,
                 repo_size,
@@ -169,15 +171,24 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
             ),
             &(num_files_to_push, dir_size),
             |b, _| {
+                // TODO: Refactor to do the push to remotes that already have 'repo_size' files in them
+                //       Should be possible, but may be slow unless there's a good way to 'reverse' a push
+                let remote_repo = rt.block_on(create_or_clear_remote_repo(&repo)).unwrap();
+                let _ = command::config::set_remote(
+                    &mut repo,
+                    DEFAULT_REMOTE_NAME,
+                    &remote_repo.remote.url,
+                );
+
                 b.to_async(&rt).iter(|| async {
                     repositories::push(&repo).await.unwrap();
-                })
+                });
+
+                let _ = rt
+                    .block_on(api::client::repositories::delete(&remote_repo))
+                    .unwrap();
             },
         );
-
-        let _ = rt
-            .block_on(api::client::repositories::delete(&remote_repo))
-            .unwrap();
     }
     group.finish();
 
