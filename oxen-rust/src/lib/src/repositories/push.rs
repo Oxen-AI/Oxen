@@ -7,6 +7,7 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository};
+use crate::opts::PushOpts;
 
 /// # Get a log of all the commits
 ///
@@ -57,12 +58,11 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
 /// Push to a specific remote branch on the default remote repository
 pub async fn push_remote_branch(
     repo: &LocalRepository,
-    remote: impl AsRef<str>,
-    branch_name: impl AsRef<str>,
+    opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is deprecated"),
-        _ => core::v_latest::push::push_remote_branch(repo, remote, branch_name).await,
+        _ => core::v_latest::push::push_remote_branch(repo, opts).await,
     }
 }
 
@@ -71,11 +71,11 @@ mod tests {
     use crate::api;
     use crate::command;
     use crate::constants;
-    use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
+    use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
     use crate::core::progress::push_progress::PushProgress;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
-    use crate::opts::CloneOpts;
+    use crate::opts::{CloneOpts, PushOpts};
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
@@ -438,12 +438,13 @@ mod tests {
             repositories::branches::create_checkout(&repo, new_branch_name)?;
 
             // Push new branch, without any new commits, should still create the branch
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                new_branch_name,
-            )
-            .await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: new_branch_name.to_string(),
+                delete: false,
+                force: false,
+            };
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let remote_branches = api::client::branches::list(&remote_repo).await?;
             assert_eq!(2, remote_branches.len());
@@ -611,12 +612,13 @@ mod tests {
             repositories::commit(&local_repo, "Adding first file path.")?;
 
             // Push new branch to remote without first syncing main
-            repositories::push::push_remote_branch(
-                &local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                new_branch_name,
-            )
-            .await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: new_branch_name.to_string(),
+                delete: false,
+                force: false,
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Should now have 26 commits on remote on new branch
             let history_new =

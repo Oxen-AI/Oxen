@@ -16,6 +16,7 @@ use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
+use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
 
@@ -24,32 +25,34 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
         log::debug!("Push, no current branch found");
         return Err(OxenError::must_be_on_valid_branch());
     };
-    push_remote_branch(repo, DEFAULT_REMOTE_NAME, current_branch.name).await
+    let opts = PushOpts {
+        remote: DEFAULT_REMOTE_NAME.to_string(),
+        branch: current_branch.name,
+        delete: false,
+        force: false,
+    };
+    push_remote_branch(repo, &opts).await
 }
 
 pub async fn push_remote_branch(
     repo: &LocalRepository,
-    remote: impl AsRef<str>,
-    branch_name: impl AsRef<str>,
+    opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
     // start a timer
     let start = std::time::Instant::now();
 
-    let remote = remote.as_ref();
-    let branch_name = branch_name.as_ref();
-
-    let Some(local_branch) = repositories::branches::get_by_name(repo, branch_name)? else {
-        return Err(OxenError::local_branch_not_found(branch_name));
+    let Some(local_branch) = repositories::branches::get_by_name(repo, &opts.branch)? else {
+        return Err(OxenError::local_branch_not_found(&opts.branch));
     };
 
     println!(
         "🐂 oxen push {} {} -> {}",
-        remote, local_branch.name, local_branch.commit_id
+        opts.remote, local_branch.name, local_branch.commit_id
     );
 
     let remote = repo
-        .get_remote(remote)
-        .ok_or(OxenError::remote_not_set(remote))?;
+        .get_remote(&opts.remote)
+        .ok_or_else(|| OxenError::remote_not_set(&opts.remote))?;
 
     let remote_repo = match api::client::repositories::get_by_remote(&remote).await {
         Ok(Some(repo)) => repo,
@@ -57,7 +60,7 @@ pub async fn push_remote_branch(
         Err(err) => return Err(err),
     };
 
-    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch).await?;
+    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts).await?;
     let duration = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);
     println!(
         "🐂 push complete 🎉 took {}",
@@ -70,6 +73,7 @@ async fn push_local_branch_to_remote_repo(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     local_branch: &Branch,
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Get the commit from the branch
     let Some(commit) = repositories::commits::get_by_id(repo, &local_branch.commit_id)? else {
@@ -84,7 +88,7 @@ async fn push_local_branch_to_remote_repo(
     // Check if the remote branch exists, and either push to it or create a new one
     match api::client::branches::get_by_name(remote_repo, &local_branch.name).await? {
         Some(remote_branch) => {
-            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch).await?
+            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch, opts.force).await?
         }
         None => push_to_new_branch(repo, remote_repo, local_branch, &commit).await?,
     }
@@ -151,6 +155,7 @@ async fn push_to_existing_branch(
     commit: &Commit,
     remote_repo: &RemoteRepository,
     remote_branch: &Branch,
+    force: bool,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
     if remote_branch.commit_id == commit.id {
@@ -173,6 +178,12 @@ async fn push_to_existing_branch(
                 commits.reverse();
 
                 push_commits(repo, remote_repo, Some(latest_remote_commit), &commits).await?;
+                api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
+            } else if force {
+                // We are force pushing, so we will just overwrite the remote
+                log::debug!("Force pushing branch {}", remote_branch.name);
+                let commits = repositories::commits::list_from(repo, &commit.id)?;
+                push_commits(repo, remote_repo, None, &commits).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
                 //we're behind
