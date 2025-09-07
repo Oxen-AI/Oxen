@@ -182,11 +182,15 @@ pub async fn add_files(
                 Arc::clone(&staged_db),
                 version_store,
                 excluded_hashes.clone(),
-                &gitignore,
+                &Some(gitignore.clone()),
             )
             .await?;
         } else if corrected_path.is_file() {
-            if oxenignore::is_ignored(&corrected_path, &gitignore, corrected_path.is_dir()) {
+            if oxenignore::is_ignored(
+                &corrected_path,
+                &Some(gitignore.clone()),
+                corrected_path.is_dir(),
+            ) {
                 continue;
             }
 

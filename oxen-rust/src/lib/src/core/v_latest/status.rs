@@ -1,3 +1,4 @@
+use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::core::oxenignore;
@@ -27,6 +28,55 @@ use std::time::Duration;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
+
+struct Entry {
+    path: PathBuf,
+    is_dir: bool,
+    metadata: Result<std::fs::Metadata, OxenError>,
+}
+
+struct Status {
+    repo: LocalRepository,
+    entries: Vec<Entry>,
+    oxenignore: Gitignore,
+}
+
+impl Status {
+    fn new(repo: &LocalRepository) -> Self {
+        Self {
+            repo: repo.clone(),
+            entries: Vec::new(),
+            oxenignore: oxenignore::create(repo),
+        }
+    }
+
+    fn push(&mut self, entry: Entry) {
+        let path = entry.path.clone();
+        let is_dir = entry.is_dir;
+
+        if path.starts_with(OXEN_HIDDEN_DIR) {
+            self.entries.push(entry);
+        } else if self
+            .oxenignore
+            .matched_path_or_any_parents(&path, is_dir)
+            .is_ignore()
+        {
+            return;
+        } else {
+            self.entries.push(entry);
+        }
+    }
+
+    fn pop(&mut self) -> Option<Entry> {
+        self.entries.pop()
+    }
+
+    fn extend(&mut self, entries: Vec<Entry>) {
+        for entry in entries {
+            self.push(entry);
+        }
+    }
+}
 
 pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
     status_from_dir(repo, &repo.path)
@@ -62,21 +112,25 @@ pub fn status_from_opts(
     let mut modified = HashSet::new();
     let mut removed = HashSet::new();
 
-    for dir in opts.paths.iter() {
-        let relative_dir = util::fs::path_relative_to_dir(dir, &repo.path)?;
-        let (sub_untracked, sub_modified, sub_removed) = find_changes(
-            repo,
-            opts,
-            &relative_dir,
-            &staged_db_maybe,
-            &dir_hashes,
-            &read_progress,
-            &mut total_entries,
-        )?;
-        untracked.merge(sub_untracked);
-        modified.extend(sub_modified);
-        removed.extend(sub_removed);
-    }
+    let root = CommitMerkleTree::root_with_children(repo, &head_commit.as_ref().unwrap())?.unwrap();
+
+    // for dir in opts.paths.iter() {
+    //     let relative_dir = util::fs::path_relative_to_dir(dir, &repo.path)?;
+    //     // TODO: This is a bit of a hack, we should just pass in the root node
+    //     let (sub_untracked, sub_modified, sub_removed) = find_changes(
+    //         repo,
+    //         opts,
+    //         &relative_dir,
+    //         &staged_db_maybe,
+    //         &dir_hashes,
+    //         &read_progress,
+    //         &mut total_entries,
+    //         &root,
+    //     )?;
+    //     untracked.merge(sub_untracked);
+    //     modified.extend(sub_modified);
+    //     removed.extend(sub_removed);
+    // }
 
     log::debug!("find_changes untracked: {:?}", untracked);
     log::debug!("find_changes modified: {:?}", modified);
@@ -91,26 +145,26 @@ pub fn status_from_opts(
     // Find merge conflicts
     let conflicts = repositories::merge::list_conflicts(repo)?;
     //log::debug!("list_conflicts found {} conflicts", conflicts.len());
-    for conflict in conflicts {
-        staged_data
-            .merge_conflicts
-            .push(conflict.to_entry_merge_conflict());
-    }
+    // for conflict in conflicts {
+    //     staged_data
+    //         .merge_conflicts
+    //         .push(conflict.to_entry_merge_conflict());
+    // }
 
-    let Some(staged_db) = staged_db_maybe else {
-        log::debug!("status_from_dir no staged db, returning early");
-        return Ok(staged_data);
-    };
+    // let Some(staged_db) = staged_db_maybe else {
+    //     log::debug!("status_from_dir no staged db, returning early");
+    //     return Ok(staged_data);
+    // };
 
-    // TODO: Consider moving this to the top to keep track of removed dirs and avoid unnecessary recursion with count_removed_entries
+    // // TODO: Consider moving this to the top to keep track of removed dirs and avoid unnecessary recursion with count_removed_entries
     let mut dir_entries = HashMap::new();
-    for dir in opts.paths.iter() {
-        let (sub_dir_entries, _) =
-            read_staged_entries_below_path(repo, &staged_db, dir, &read_progress)?;
-        dir_entries.extend(sub_dir_entries);
-        // log::debug!("status_from_dir dir_entries: {:?}", dir_entries);
-    }
-    read_progress.finish_and_clear();
+    // for dir in opts.paths.iter() {
+    //     let (sub_dir_entries, _) =
+    //         read_staged_entries_below_path(repo, &staged_db, dir, &read_progress)?;
+    //     dir_entries.extend(sub_dir_entries);
+    //     // log::debug!("status_from_dir dir_entries: {:?}", dir_entries);
+    // }
+    // read_progress.finish_and_clear();
 
     status_from_dir_entries(&mut staged_data, dir_entries)
 }
@@ -455,6 +509,7 @@ fn find_changes(
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     progress: &ProgressBar,
     total_entries: &mut usize,
+    root: &MerkleTreeNode,
 ) -> Result<(UntrackedData, HashSet<PathBuf>, HashSet<PathBuf>), OxenError> {
     let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
@@ -474,7 +529,7 @@ fn find_changes(
     let mut untracked = UntrackedData::new();
     let mut modified = HashSet::new();
     let mut removed = HashSet::new();
-    let gitignore: Option<Gitignore> = oxenignore::create(repo);
+    let gitignore = oxenignore::create(repo);
 
     let mut entries: Vec<(PathBuf, bool, Result<std::fs::Metadata, OxenError>)> = Vec::new();
     if is_dir {
@@ -508,7 +563,8 @@ fn find_changes(
         entries.push((full_path.to_owned(), false, metadata));
     }
     let mut untracked_count = 0;
-    let search_node = maybe_get_node(repo, dir_hashes, search_node_path)?;
+    // let search_node = maybe_get_node(repo, dir_hashes, search_node_path)?;
+    let search_node = root.get_by_path(search_node_path)?;
     let dir_children = maybe_get_dir_children(&search_node)?;
 
     for (path, is_dir, metadata) in entries {
@@ -526,7 +582,7 @@ fn find_changes(
             search_node_path
         );
 
-        if oxenignore::is_ignored(&relative_path, &gitignore, is_dir) {
+        if oxenignore::is_ignored(&relative_path, &Some(gitignore.clone()), is_dir) {
             continue;
         }
 
@@ -541,6 +597,7 @@ fn find_changes(
                 dir_hashes,
                 progress,
                 total_entries,
+                root,
             )?;
             untracked.merge(sub_untracked);
             modified.extend(sub_modified);
@@ -642,7 +699,7 @@ fn find_changes(
                             repo,
                             &relative_dir_path,
                             dir.hash(),
-                            &gitignore,
+                            &Some(gitignore.clone()),
                             &mut count,
                         )?;
 
@@ -700,7 +757,7 @@ fn find_local_changes(
     let mut modified = HashSet::new();
     let mut removed = HashSet::new();
 
-    let gitignore: Option<Gitignore> = oxenignore::create(repo);
+    let gitignore = oxenignore::create(repo);
 
     let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
     if is_dir {
@@ -745,7 +802,7 @@ fn find_local_changes(
             search_node_path
         );
 
-        if oxenignore::is_ignored(&relative_path, &gitignore, is_dir) {
+        if oxenignore::is_ignored(&relative_path, &Some(gitignore.clone()), is_dir) {
             continue;
         }
 
@@ -871,7 +928,7 @@ fn find_local_changes(
                             repo,
                             &relative_dir_path,
                             dir.hash(),
-                            &gitignore,
+                            &Some(gitignore.clone()),
                             &mut count,
                         )?;
 

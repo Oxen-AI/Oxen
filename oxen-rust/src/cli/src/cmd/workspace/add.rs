@@ -88,9 +88,8 @@ impl RunCmd for WorkspaceAddCmd {
 
         // Handle .oxenignore filtering
         let ignore = oxenignore::create(&repository);
-        if let Some(ignore) = &ignore {
-            paths.retain(|path| !ignore.matched(path, path.is_dir()).is_ignore());
-        }
+
+        paths.retain(|path| !ignore.matched(path, path.is_dir()).is_ignore());
 
         // If no paths left after filtering, return early
         if paths.is_empty() {

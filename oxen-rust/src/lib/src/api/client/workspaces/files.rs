@@ -83,7 +83,7 @@ pub async fn add(
                 if gitignore.is_some()
                     && oxenignore::is_ignored(
                         &relative_path,
-                        &gitignore.clone().unwrap(),
+                        &gitignore.clone(),
                         relative_path.is_dir(),
                     )
                 {
