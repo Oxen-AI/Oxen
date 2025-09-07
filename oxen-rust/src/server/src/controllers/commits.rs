@@ -12,15 +12,11 @@ use liboxen::opts::PaginateOpts;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::branch::BranchName;
+use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
-use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::{
-    CommitResponse,
-    ListCommitResponse,
-    PaginatedCommits,
-    Pagination,
-    RootCommitResponse,
+    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
     StatusMessage,
 };
 use os_path::OsPath;

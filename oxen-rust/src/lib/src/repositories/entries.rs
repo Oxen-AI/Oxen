@@ -2,20 +2,20 @@
 //!
 
 use crate::core;
-use rayon::prelude::*;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::{Entry, SchemaEntry};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::PaginateOpts;
 use crate::repositories;
+use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
 use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
-use crate::view::PaginatedDirEntries;
 use crate::util::fs;
+use crate::view::PaginatedDirEntries;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

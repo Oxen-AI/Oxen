@@ -32,7 +32,6 @@ pub struct MerkleHashesResponse {
     pub hashes: HashSet<MerkleHash>,
 }
 
-
 #[serde_as]
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ListCommitEntryResponse {
