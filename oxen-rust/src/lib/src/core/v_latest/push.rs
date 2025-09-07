@@ -89,9 +89,9 @@ async fn push_local_branch_to_remote_repo(
     // Check if the remote branch exists, and either push to it or create a new one
     match api::client::branches::get_by_name(remote_repo, &local_branch.name).await? {
         Some(remote_branch) => {
-            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch, opts.force).await?
+            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch, opts).await?
         }
-        None => push_to_new_branch(repo, remote_repo, local_branch, &commit).await?,
+        None => push_to_new_branch(repo, remote_repo, local_branch, &commit, opts).await?,
     }
 
     // Notify the server that we are done pushing
@@ -105,6 +105,7 @@ async fn push_to_new_branch(
     remote_repo: &RemoteRepository,
     branch: &Branch,
     commit: &Commit,
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
     let history = repositories::commits::list_from(repo, &commit.id)?;
@@ -113,7 +114,7 @@ async fn push_to_new_branch(
     let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
 
     // Push the commits
-    push_commits(repo, remote_repo, latest_remote_commit, &history).await?;
+    push_commits(repo, remote_repo, latest_remote_commit, &history, opts).await?;
 
     // Create the remote branch from the commit
     api::client::branches::create_from_commit(remote_repo, &branch.name, commit).await?;
@@ -156,12 +157,12 @@ async fn push_to_existing_branch(
     commit: &Commit,
     remote_repo: &RemoteRepository,
     remote_branch: &Branch,
-    force: bool,
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
-    if remote_branch.commit_id == commit.id {
+    if remote_branch.commit_id == commit.id && !opts.missing_files {
         println!("Everything is up to date");
-        return Ok(());
+        return Ok(()); 
     }
 
     match repositories::commits::list_from(repo, &commit.id) {
@@ -178,13 +179,13 @@ async fn push_to_existing_branch(
                     repositories::commits::list_between(repo, &latest_remote_commit, commit)?;
                 commits.reverse();
 
-                push_commits(repo, remote_repo, Some(latest_remote_commit), &commits).await?;
+                push_commits(repo, remote_repo, Some(latest_remote_commit), &commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
-            } else if force {
+            } else if opts.force {
                 // We are force pushing, so we will just overwrite the remote
                 log::debug!("Force pushing branch {}", remote_branch.name);
                 let commits = repositories::commits::list_from(repo, &commit.id)?;
-                push_commits(repo, remote_repo, None, &commits).await?;
+                push_commits(repo, remote_repo, None, &commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
                 //we're behind
@@ -208,6 +209,7 @@ async fn push_commits(
     remote_repo: &RemoteRepository,
     latest_remote_commit: Option<Commit>,
     history: &[Commit],
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
     let node_hashes = history
@@ -215,6 +217,31 @@ async fn push_commits(
         .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
 
+    if opts.missing_files {
+        let Some(base_commit) = latest_remote_commit.clone() else {
+            return Err(OxenError::basic_str("Cannot push missing files without a base commit"));
+        };
+        let Some(head_commit) = history.last() else {
+            return Err(OxenError::basic_str("Cannot push missing files without a head commit"));
+        };
+
+        let missing_entries = api::client::commits::list_missing_files(remote_repo, &base_commit.id, &head_commit.id).await?;
+        log::debug!("Got {} missing entries", missing_entries.len());
+
+        let missing_files: Vec<Entry> = missing_entries.into_iter().map(Entry::CommitEntry).collect();
+
+        let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
+
+        let progress = Arc::new(PushProgress::new_with_totals(
+            missing_files.len() as u64,
+            total_bytes,
+        ));
+
+        push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
+
+        return Ok(());
+
+    }
     // Given the missing commits on the server, filter the history
     let missing_commit_hashes =
         api::client::commits::list_missing_hashes(remote_repo, node_hashes).await?;

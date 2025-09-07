@@ -16,7 +16,7 @@ use crate::model::{
 };
 use crate::util::fs;
 use crate::view::PaginatedDirEntries;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
