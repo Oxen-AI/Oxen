@@ -30,6 +30,7 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
         branch: current_branch.name,
         delete: false,
         force: false,
+        missing_files: false,
     };
     push_remote_branch(repo, &opts).await
 }

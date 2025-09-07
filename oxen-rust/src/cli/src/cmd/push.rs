@@ -46,6 +46,12 @@ impl RunCmd for PushCmd {
                     .help("Force push")
                     .action(clap::ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("missing-files")
+                    .long("missing-files")
+                    .help("Push missing files only")
+                    .action(clap::ArgAction::SetTrue),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -55,6 +61,7 @@ impl RunCmd for PushCmd {
             .expect("Must supply a remote");
         let delete = args.get_flag("delete");
         let force = args.get_flag("force");
+        let missing_files = args.get_flag("missing-files");
 
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
@@ -75,6 +82,7 @@ impl RunCmd for PushCmd {
             branch: branch_name,
             delete,
             force,
+            missing_files,
         };
 
         // Call into liboxen to push or delete

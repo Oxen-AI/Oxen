@@ -4,4 +4,5 @@ pub struct PushOpts {
     pub branch: String,
     pub delete: bool,
     pub force: bool,
+    pub missing_files: bool,
 }
