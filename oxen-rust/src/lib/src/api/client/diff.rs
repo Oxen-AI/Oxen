@@ -128,11 +128,7 @@ mod tests {
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -216,11 +212,7 @@ mod tests {
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -438,11 +430,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -584,11 +572,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -723,11 +707,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -830,11 +810,7 @@ who won the game?,The packers beat up on the bears,packers
                 force: false,
                 missing_files: false,
             };
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -941,11 +917,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1062,11 +1034,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1317,11 +1285,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1437,11 +1401,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1583,11 +1543,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1835,11 +1791,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1952,11 +1904,7 @@ who won the game?,The packers beat up on the bears,packers
             };
 
             // Push it real good
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,

@@ -9,7 +9,6 @@ pub struct PushOpts {
     pub missing_files: bool,
 }
 
-
 impl Default for PushOpts {
     fn default() -> Self {
         Self {

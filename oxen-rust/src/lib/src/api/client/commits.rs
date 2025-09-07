@@ -12,8 +12,11 @@ use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
-use crate::view::{CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse, StatusMessage};
-use crate::view::entries::{ListCommitEntryResponse};
+use crate::view::entries::ListCommitEntryResponse;
+use crate::view::{
+    CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
+    StatusMessage,
+};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

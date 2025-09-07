@@ -87,7 +87,6 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-
     #[tokio::test]
     async fn test_command_push_one_commit() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async {

@@ -314,11 +314,7 @@ mod tests {
                 };
 
                 // Push it back
-                repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    &opts,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 let fetch_opts = &FetchOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -347,12 +343,7 @@ mod tests {
                     missing_files: false,
                 };
 
-
-                repositories::push::push_remote_branch(
-                    &repo,
-                    &opts,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&repo, &opts).await?;
 
                 // Pull it on the second side again
                 repositories::pull_remote_branch(
@@ -440,11 +431,7 @@ mod tests {
                 };
 
                 // Push it back
-                repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    &opts,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
                 // Pull it on the OG side
                 repositories::pull_remote_branch(
                     &repo,
@@ -767,11 +754,7 @@ mod tests {
                 };
 
                 // Try to push upstream branch
-                let push_result = repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    &opts,
-                )
-                .await;
+                let push_result = repositories::push::push_remote_branch(&cloned_repo, &opts).await;
 
                 log::debug!("Push result: {:?}", push_result);
 
@@ -1950,11 +1933,7 @@ mod tests {
                 };
 
                 // 5. Push to origin branch1
-                repositories::push::push_remote_branch(
-                    &repo,
-                    &opts,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&repo, &opts).await?;
 
                 // 6. Pull from main
                 let pull_result = repositories::pull_remote_branch(

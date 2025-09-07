@@ -547,11 +547,7 @@ mod tests {
             };
 
             // Push new branch
-            repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             // Delete the branch
             api::client::branches::delete(&remote_repo, new_branch_name).await?;
@@ -599,12 +595,9 @@ mod tests {
             };
 
             // Then try to push branch that doesn't exist
-            if repositories::push::push_remote_branch(
-                &repo,
-                &opts,
-            )
-            .await
-            .is_ok()
+            if repositories::push::push_remote_branch(&repo, &opts)
+                .await
+                .is_ok()
             {
                 panic!("Should not be able to push branch that does not exist");
             }

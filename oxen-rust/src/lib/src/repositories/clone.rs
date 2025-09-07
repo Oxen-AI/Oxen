@@ -503,11 +503,7 @@ mod tests {
                 missing_files: false,
             };
 
-            repositories::push::push_remote_branch(
-                &local_repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Clone with the --all flag
             test::run_empty_dir_test_async(|new_repo_dir| async move {
@@ -721,11 +717,7 @@ mod tests {
                 force: false,
                 missing_files: false,
             };
-            repositories::push::push_remote_branch(
-                &local_repo,
-                &opts,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Switch original_local_repo back to main for good measure, though not strictly necessary for this test's focus
             repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
