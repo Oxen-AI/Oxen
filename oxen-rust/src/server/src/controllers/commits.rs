@@ -14,8 +14,13 @@ use liboxen::util;
 use liboxen::view::branch::BranchName;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
+use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::{
-    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
+    CommitResponse,
+    ListCommitResponse,
+    PaginatedCommits,
+    Pagination,
+    RootCommitResponse,
     StatusMessage,
 };
 use os_path::OsPath;
@@ -174,6 +179,60 @@ pub async fn list_missing(
     let response = MerkleHashesResponse {
         status: StatusMessage::resource_found(),
         hashes: missing_commits,
+    };
+    Ok(HttpResponse::Ok().json(response))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ListMissingFilesQuery {
+    pub base: String,
+    pub head: String,
+}
+
+pub async fn list_missing_files(
+    req: HttpRequest,
+    query: web::Query<ListMissingFilesQuery>,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    log::debug!(
+        "!!!! list_missing_files repo -> {}/{}",
+        namespace,
+        repo_name
+    );
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    log::debug!(
+        "list_missing_files base_commit -> {} head_commit -> {}",
+        &query.base,
+        &query.head
+    );
+    let base_commit = repositories::commits::get_by_id(&repo, &query.base)?
+        .ok_or(OxenError::revision_not_found(query.base.clone().into()))?;
+    let head_commit = repositories::commits::get_by_id(&repo, &query.head)?
+        .ok_or(OxenError::revision_not_found(query.head.clone().into()))?;
+
+    log::debug!(
+        "ðŸ”Ž list_missing_files resolved base_commit -> {} head_commit -> {}",
+        &base_commit.id,
+        &head_commit.id
+    );
+
+    let missing_files = repositories::entries::list_missing_files_in_commit_range(
+        &repo,
+        &base_commit,
+        &head_commit,
+    )?;
+
+    log::debug!(
+        "list_missing_files found {} missing files",
+        missing_files.len()
+    );
+
+    let response = ListCommitEntryResponse {
+        status: StatusMessage::resource_found(),
+        entries: missing_files,
     };
     Ok(HttpResponse::Ok().json(response))
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::model::merkle_tree::merkle_hash::MerkleHashAsString;
-use crate::model::MerkleHash;
+use crate::model::{CommitEntry, MerkleHash};
 use crate::view::StatusMessage;
 
 #[serde_as]
@@ -30,4 +30,13 @@ pub struct MerkleHashesResponse {
     pub status: StatusMessage,
     #[serde_as(as = "HashSet<MerkleHashAsString>")]
     pub hashes: HashSet<MerkleHash>,
+}
+
+
+#[serde_as]
+#[derive(Deserialize, Serialize, Debug)]
+pub struct ListCommitEntryResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub entries: Vec<CommitEntry>,
 }

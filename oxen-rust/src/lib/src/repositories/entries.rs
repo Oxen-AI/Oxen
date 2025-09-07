@@ -2,20 +2,21 @@
 //!
 
 use crate::core;
+use rayon::prelude::*;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::{Entry, SchemaEntry};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::PaginateOpts;
 use crate::repositories;
-use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
 use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
-use std::collections::HashMap;
+use crate::util::fs;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
@@ -284,6 +285,38 @@ pub fn group_schemas_to_parent_dirs(
     }
 
     results
+}
+
+pub fn list_missing_files_in_commit_range(
+    repo: &LocalRepository,
+    base_commit: &Commit,
+    head_commit: &Commit,
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
+
+    let mut all_entries: Vec<CommitEntry> = Vec::new();
+    for commit in commits {
+        let entries = list_for_commit(repo, &commit)?;
+        all_entries.extend(entries);
+    }
+
+    all_entries.sort_by(|a, b| a.path.cmp(&b.path));
+    all_entries.dedup_by(|a, b| a.path == b.path);
+
+    let missing_files: Vec<CommitEntry> = all_entries
+        .into_par_iter()
+        .filter(|entry| {
+            let version_path = fs::version_path(repo, entry);
+            println!("version_path: {:?}", version_path);
+            if !version_path.exists() {
+                true
+            } else {
+                false
+            }
+        })
+        .collect();
+
+    Ok(missing_files)
 }
 
 pub fn list_tabular_files_in_repo(
