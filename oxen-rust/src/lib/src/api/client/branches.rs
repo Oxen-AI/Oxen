@@ -283,6 +283,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::opts::PaginateOpts;
+    use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -537,11 +538,18 @@ mod tests {
             let new_branch_name = "my-branch";
             repositories::branches::create_checkout(&repo, new_branch_name)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: new_branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                new_branch_name,
+                &opts,
             )
             .await?;
 
@@ -567,20 +575,33 @@ mod tests {
 
             // Create Remote
             let remote_repo = test::create_remote_repo(&repo).await?;
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: "main".to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
 
             // Push main branch first
-            if repositories::push::push_remote_branch(&repo, constants::DEFAULT_REMOTE_NAME, "main")
+            if repositories::push::push_remote_branch(&repo, &opts)
                 .await
                 .is_err()
             {
                 panic!("Pushing main branch should work");
             }
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: "branch-does-not-exist".to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
 
             // Then try to push branch that doesn't exist
             if repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                "branch-does-not-exist",
+                &opts,
             )
             .await
             .is_ok()

@@ -69,6 +69,7 @@ mod tests {
     use crate::model::diff::generic_diff_summary::GenericDiffSummary;
     use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::model::EntryDataType;
+    use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
@@ -118,12 +119,18 @@ mod tests {
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
 
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -200,11 +207,18 @@ mod tests {
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -285,8 +299,16 @@ mod tests {
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(&repo, constants::DEFAULT_REMOTE_NAME, branch_name).await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -407,11 +429,18 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -546,11 +575,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -678,11 +714,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -780,10 +823,16 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding columns to train.csv")?;
 
             // Push it real good
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -883,11 +932,18 @@ who won the game?,The packers beat up on the bears,packers
             // let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -997,11 +1053,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -1245,11 +1308,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -1358,11 +1428,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -1497,11 +1574,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -1742,11 +1826,18 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push new branch real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
@@ -1852,11 +1943,18 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding dwight and vince")?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                delete: false,
+                force: false,
+                missing_files: false,
+            };
+
             // Push it real good
             repositories::push::push_remote_branch(
                 &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
+                &opts,
             )
             .await?;
 
