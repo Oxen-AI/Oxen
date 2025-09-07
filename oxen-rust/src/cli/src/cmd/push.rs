@@ -50,7 +50,9 @@ impl RunCmd for PushCmd {
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse args
-        let remote = args.get_one::<String>("REMOTE").expect("Must supply a remote");
+        let remote = args
+            .get_one::<String>("REMOTE")
+            .expect("Must supply a remote");
         let delete = args.get_flag("delete");
         let force = args.get_flag("force");
 

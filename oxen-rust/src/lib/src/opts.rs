@@ -20,7 +20,6 @@ pub mod restore_opts;
 pub mod rm_opts;
 pub mod upload_opts;
 
-
 pub use crate::opts::add_opts::AddOpts;
 pub use crate::opts::clone_opts::CloneOpts;
 pub use crate::opts::count_lines_opts::CountLinesOpts;

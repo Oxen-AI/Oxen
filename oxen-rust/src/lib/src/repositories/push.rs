@@ -75,8 +75,8 @@ mod tests {
     use crate::core::progress::push_progress::PushProgress;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
-    use crate::opts::{CloneOpts, PushOpts};
     use crate::opts::RmOpts;
+    use crate::opts::{CloneOpts, PushOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
