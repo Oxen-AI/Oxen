@@ -305,15 +305,7 @@ pub fn list_missing_files_in_commit_range(
 
     let missing_files: Vec<CommitEntry> = all_entries
         .into_par_iter()
-        .filter(|entry| {
-            let version_path = fs::version_path(repo, entry);
-            println!("version_path: {:?}", version_path);
-            if !version_path.exists() {
-                true
-            } else {
-                false
-            }
-        })
+        .filter(|entry| !fs::version_path(repo, entry).exists())
         .collect();
 
     Ok(missing_files)
