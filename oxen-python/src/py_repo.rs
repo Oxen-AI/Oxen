@@ -5,6 +5,7 @@ use liboxen::error::OxenError;
 use liboxen::model::Branch;
 use liboxen::model::LocalRepository;
 use liboxen::opts::CloneOpts;
+use liboxen::opts::PushOpts;
 use liboxen::opts::RmOpts;
 use pyo3::prelude::*;
 
@@ -202,8 +203,14 @@ impl PyRepo {
                     // Delete the remote branch
                     api::client::branches::delete_remote(&repo, remote, branch).await
                 } else {
+                    let opts = PushOpts {
+                        remote: remote.to_string(),
+                        branch: branch.to_string(),
+                        delete,
+                        missing_files: false,
+                    };
                     // Push to the remote branch
-                    repositories::push::push_remote_branch(&repo, remote, branch).await
+                    repositories::push::push_remote_branch(&repo, &opts).await
                 }
             });
 
