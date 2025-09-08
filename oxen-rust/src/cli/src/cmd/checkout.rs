@@ -39,6 +39,14 @@ impl RunCmd for CheckoutCmd {
                     .help("Checkout the content of the merge branch and take it as the working directories version. Will overwrite your working file.")
                     .action(clap::ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .short('f')
+                    .help("Allow checkout to overwrite changes in working directory")
+                    .action(clap::ArgAction::SetTrue),
+
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -65,15 +73,16 @@ impl RunCmd for CheckoutCmd {
 
             self.checkout_theirs(&repo, name).await?
         } else if let Some(name) = args.get_one::<String>("name") {
-            self.checkout(&repo, name).await?;
+            let force = args.get_flag("force");
+            self.checkout(&repo, name, force).await?;
         }
         Ok(())
     }
 }
 
 impl CheckoutCmd {
-    pub async fn checkout(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-        match repositories::checkout(repo, name).await {
+    pub async fn checkout(&self, repo: &LocalRepository, name: &str, force: bool) -> Result<(), OxenError> {
+        match repositories::checkout(repo, name, force).await {
             Ok(Some(branch)) => {
                 println!("Checked out branch: {}", branch.name);
             }

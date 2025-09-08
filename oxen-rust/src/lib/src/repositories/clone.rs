@@ -394,7 +394,7 @@ mod tests {
                 assert!(!test_dir_path.exists());
 
                 // checkout the commit
-                repositories::checkout(&cloned_repo, &commit.unwrap().id).await?;
+                repositories::checkout(&cloned_repo, &commit.unwrap().id, false).await?;
                 // Make sure we restored the directory
                 assert!(test_dir_path.exists());
 
@@ -698,7 +698,7 @@ mod tests {
             .await?;
 
             // Switch original_local_repo back to main for good measure, though not strictly necessary for this test's focus
-            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
+            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME, false).await?;
 
             // 2. Clone ONLY the subtree "annotations/test" from the new feature branch.
             let remote_for_inner_closure = remote_repo_copy.clone();
@@ -749,7 +749,7 @@ mod tests {
                     &fetch_opts,
                 )
                 .await?;
-                repositories::checkout(&cloned_repo_a, DEFAULT_BRANCH_NAME).await?;
+                repositories::checkout(&cloned_repo_a, DEFAULT_BRANCH_NAME, false).await?;
 
                 assert!(
                     !expected_new_file_in_a.exists(),
