@@ -309,7 +309,6 @@ mod tests {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
                     delete: false,
-                    force: false,
                     missing_files: false,
                 };
 
@@ -339,7 +338,6 @@ mod tests {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
                     delete: false,
-                    force: false,
                     missing_files: false,
                 };
 
@@ -426,7 +424,6 @@ mod tests {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
                     delete: false,
-                    force: false,
                     missing_files: false,
                 };
 
@@ -749,7 +746,6 @@ mod tests {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
                     delete: false,
-                    force: false,
                     missing_files: false,
                 };
 
@@ -1928,7 +1924,6 @@ mod tests {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
                     delete: false,
-                    force: false,
                     missing_files: false,
                 };
 

@@ -442,7 +442,6 @@ mod tests {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: new_branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
             repositories::push::push_remote_branch(&repo, &opts).await?;
@@ -617,7 +616,6 @@ mod tests {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: new_branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;

@@ -41,12 +41,6 @@ impl RunCmd for PushCmd {
                     .action(clap::ArgAction::SetTrue),
             )
             .arg(
-                Arg::new("force")
-                    .long("force")
-                    .help("Force push")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
                 Arg::new("missing-files")
                     .long("missing-files")
                     .help("Push missing files only")
@@ -60,7 +54,6 @@ impl RunCmd for PushCmd {
             .get_one::<String>("REMOTE")
             .expect("Must supply a remote");
         let delete = args.get_flag("delete");
-        let force = args.get_flag("force");
         let missing_files = args.get_flag("missing-files");
 
         let repo = LocalRepository::from_current_dir()?;
@@ -81,7 +74,6 @@ impl RunCmd for PushCmd {
             remote: remote.to_string(),
             branch: branch_name,
             delete,
-            force,
             missing_files,
         };
 

@@ -123,7 +123,6 @@ mod tests {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -207,7 +206,6 @@ mod tests {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -295,7 +293,6 @@ mod tests {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -425,7 +422,6 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -567,7 +563,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -702,7 +697,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -807,7 +801,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
             repositories::push::push_remote_branch(&repo, &opts).await?;
@@ -912,7 +905,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -1029,7 +1021,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -1280,7 +1271,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -1396,7 +1386,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -1538,7 +1527,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -1786,7 +1774,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -1899,7 +1886,6 @@ who won the game?,The packers beat up on the bears,packers
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 

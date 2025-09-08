@@ -542,7 +542,6 @@ mod tests {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: new_branch_name.to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -575,7 +574,6 @@ mod tests {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: "main".to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 
@@ -590,7 +588,6 @@ mod tests {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: "branch-does-not-exist".to_string(),
                 delete: false,
-                force: false,
                 missing_files: false,
             };
 

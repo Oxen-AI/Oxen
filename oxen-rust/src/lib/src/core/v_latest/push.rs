@@ -29,7 +29,6 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
         remote: DEFAULT_REMOTE_NAME.to_string(),
         branch: current_branch.name,
         delete: false,
-        force: false,
         missing_files: false,
     };
     push_remote_branch(repo, &opts).await
@@ -187,12 +186,6 @@ async fn push_to_existing_branch(
                     opts,
                 )
                 .await?;
-                api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
-            } else if opts.force {
-                // We are force pushing, so we will just overwrite the remote
-                log::debug!("Force pushing branch {}", remote_branch.name);
-                let commits = repositories::commits::list_from(repo, &commit.id)?;
-                push_commits(repo, remote_repo, None, &commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
                 //we're behind
