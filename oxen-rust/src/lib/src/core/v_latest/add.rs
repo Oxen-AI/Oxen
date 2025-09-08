@@ -1,6 +1,6 @@
 use filetime::FileTime;
 use futures::stream::{self, Stream, StreamExt};
-use glob::glob;
+use glob::{glob_with, MatchOptions};
 use par_stream::prelude::*;
 use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, MultiThreaded};
@@ -82,6 +82,13 @@ pub async fn add<T: AsRef<Path>>(
     let mut repo_path = repo.path.clone();
     let repo_in_working_tree = repo_path.exists();
 
+    // Fix for case sensitivity issue on Windows
+    let glob_options = MatchOptions {
+        case_sensitive: false,
+        require_literal_separator: false,
+        require_literal_leading_dot: false,
+    };
+
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
     for path in paths {
         let path_str = path
@@ -100,12 +107,13 @@ pub async fn add<T: AsRef<Path>>(
             repo_path = util::fs::full_path_from_child_path(&repo_path, &path)?;
         }
 
-        // TODO: At least on Windows, this is improperly case sensitive
+        
         if util::fs::is_glob_path(path_str) {
             log::debug!("glob path: {path_str}");
             // Match against any untracked entries in the current dir
-            for entry in glob(path_str)? {
+            for entry in glob_with(path_str, glob_options)? {
                 expanded_paths.insert(entry?);
+
             }
 
             // For removed files?
