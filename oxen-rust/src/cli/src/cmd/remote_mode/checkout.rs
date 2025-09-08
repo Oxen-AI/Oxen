@@ -27,6 +27,13 @@ impl RunCmd for RemoteModeCheckoutCmd {
                     .value_name("BRANCH_NAME")
                     .num_args(1),
             )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .short('f')
+                    .help("Allow checkout to overwrite changes in working directory")
+                    .action(clap::ArgAction::SetTrue),
+            )
             .group(
                 clap::ArgGroup::new("checkout_args")
                     .args(["name", "create"])
@@ -36,12 +43,13 @@ impl RunCmd for RemoteModeCheckoutCmd {
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         let mut repo = LocalRepository::from_current_dir()?;
+        let force = args.get_flag("force");
 
         // Parse Args
         if let Some(name) = args.get_one::<String>("create") {
             repositories::remote_mode::create_checkout(&mut repo, name).await?
         } else if let Some(name) = args.get_one::<String>("name") {
-            repositories::remote_mode::checkout(&mut repo, name).await?;
+            repositories::remote_mode::checkout(&mut repo, name, force).await?;
         }
 
         Ok(())

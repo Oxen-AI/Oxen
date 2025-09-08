@@ -156,6 +156,7 @@ pub async fn checkout(
     repo: &LocalRepository,
     branch_name: &str,
     from_commit: &Option<Commit>,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     log::debug!("checkout {branch_name}");
     let branch = repositories::branches::get_by_name(repo, branch_name)?
@@ -164,7 +165,7 @@ pub async fn checkout(
     let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?
         .ok_or(OxenError::commit_id_does_not_exist(&branch.commit_id))?;
 
-    checkout_commit(repo, &commit, from_commit).await?;
+    checkout_commit(repo, &commit, from_commit, force_checkout).await?;
 
     Ok(())
 }
@@ -174,6 +175,7 @@ pub async fn checkout_subtrees(
     to_commit: &Commit,
     subtree_paths: &[PathBuf],
     depth: i32,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     for subtree_path in subtree_paths {
         let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
@@ -230,9 +232,10 @@ pub async fn checkout_subtrees(
             &mut partial_nodes,
             &mut hashes,
             depth,
+            &force_checkout,
         )?;
 
-        // If there are conflicts, return an error without restoring anything
+        // If there are conflicts, return an error without restoring anything unless '-f' flag set   
         if !results.cannot_overwrite_entries.is_empty() {
             return Err(OxenError::cannot_overwrite_files(
                 &results.cannot_overwrite_entries,
@@ -240,8 +243,8 @@ pub async fn checkout_subtrees(
         }
 
         if from_root.is_some() {
-            log::debug!("🔥 from node: {from_root:?}");
-            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
+            log::debug!("🔥 from node: {:?}", from_root);
+            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes, &force_checkout).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
@@ -281,6 +284,7 @@ pub async fn checkout_commit(
     repo: &LocalRepository,
     to_commit: &Commit,
     from_commit: &Option<Commit>,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     log::debug!("checkout_commit to {to_commit} from {from_commit:?}");
 
@@ -294,7 +298,7 @@ pub async fn checkout_commit(
     fetch::maybe_fetch_missing_entries(repo, to_commit).await?;
 
     // Set working repo to commit
-    set_working_repo_to_commit(repo, to_commit, from_commit).await?;
+    set_working_repo_to_commit(repo, to_commit, from_commit, force_checkout).await?;
 
     Ok(())
 }
@@ -307,6 +311,7 @@ pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     to_commit: &Commit,
     maybe_from_commit: &Option<Commit>,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
 
@@ -359,10 +364,11 @@ pub async fn set_working_repo_to_commit(
         &mut partial_nodes,
         &mut hashes,
         i32::MAX,
+        &force_checkout,
     )?;
 
     // If there are conflicts, return an error without restoring anything
-    if !results.cannot_overwrite_entries.is_empty() {
+    if !results.cannot_overwrite_entries.is_empty() && !force_checkout {
         return Err(OxenError::cannot_overwrite_files(
             &results.cannot_overwrite_entries,
         ));
@@ -371,7 +377,7 @@ pub async fn set_working_repo_to_commit(
     // Cleanup files if checking out from another commit
     if maybe_from_commit.is_some() {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes).await?;
+        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes, &force_checkout).await?;
     }
 
     for file_to_restore in results.files_to_restore {
@@ -394,6 +400,7 @@ async fn cleanup_removed_files(
     from_node: &MerkleTreeNode,
     progress: &mut CheckoutProgressBar,
     hashes: &mut CheckoutHashes,
+    force_checkout: &bool,
 ) -> Result<(), OxenError> {
     // Compare the nodes in the from tree to the nodes in the target tree
     // If the file node is in the from tree, but not in the target tree, remove it
@@ -410,6 +417,7 @@ async fn cleanup_removed_files(
         &mut files_to_store,
         &mut cannot_overwrite_entries,
         hashes,
+        force_checkout,
     )?;
 
     if !cannot_overwrite_entries.is_empty() {
@@ -442,6 +450,7 @@ async fn cleanup_removed_files(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn r_remove_if_not_in_target(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
@@ -450,6 +459,7 @@ fn r_remove_if_not_in_target(
     files_to_store: &mut Vec<(MerkleHash, PathBuf)>,
     cannot_overwrite_entries: &mut Vec<PathBuf>,
     hashes: &mut CheckoutHashes,
+    force_checkout: &bool,
 ) -> Result<(), OxenError> {
     // Iterate through the from tree, removing files not present in the target tree
     match &from_node.node {
@@ -462,7 +472,7 @@ fn r_remove_if_not_in_target(
 
                 // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
-                    if util::fs::is_modified_from_node(&full_path, file_node)? {
+                    if !force_checkout && util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
                         // If in remote mode, save file to version store before removing
@@ -509,6 +519,7 @@ fn r_remove_if_not_in_target(
                     files_to_store,
                     cannot_overwrite_entries,
                     hashes,
+                    force_checkout,
                 )?;
             }
             log::debug!(
@@ -533,6 +544,7 @@ fn r_remove_if_not_in_target(
                 files_to_store,
                 cannot_overwrite_entries,
                 hashes,
+                force_checkout,
             )?;
         }
         _ => {}
@@ -550,6 +562,7 @@ fn r_restore_missing_or_modified_files(
     partial_nodes: &mut HashMap<PathBuf, PartialNode>,
     hashes: &mut CheckoutHashes,
     depth: i32,
+    force_checkout: &bool,
 ) -> Result<(), OxenError> {
     // Recursively iterate through the tree, checking each file against the working repo
     // If the file is not in the working repo, restore it from the commit
@@ -629,9 +642,19 @@ fn r_restore_missing_or_modified_files(
                     return Ok(());
                 }
 
-                // If neither hash matches, the file is modified in the working directory and cannot be overwritten
-                results.cannot_overwrite_entries.push(file_path.clone());
-                progress.increment_modified();
+                // If neither hash matches, the file is modified in the working directory 
+                // If force flag set, restore from target
+                // Otherwise, it cannot be overwritten
+                if *force_checkout {
+                    results.files_to_restore.push(FileToRestore {
+                        file_node: file_node.clone(),
+                        path: file_path.clone(),
+                    });
+                    progress.increment_modified();
+                } else {
+                    results.cannot_overwrite_entries.push(file_path.clone());
+                    progress.increment_modified();
+                }
             }
         }
         EMerkleTreeNode::Directory(dir_node) => {
@@ -666,6 +689,7 @@ fn r_restore_missing_or_modified_files(
                     partial_nodes,
                     hashes,
                     depth - 1,
+                    force_checkout,
                 )?;
             }
         }
@@ -681,6 +705,7 @@ fn r_restore_missing_or_modified_files(
                 partial_nodes,
                 hashes,
                 depth - 1,
+                force_checkout,
             )?;
         }
         _ => {

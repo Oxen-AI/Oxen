@@ -319,7 +319,7 @@ mod tests {
                     ..FetchOpts::new()
                 };
                 repositories::fetch::fetch_branch(&repo, fetch_opts).await?;
-                repositories::checkout::checkout(&repo, branch_name).await?;
+                repositories::checkout::checkout(&repo, branch_name, false).await?;
 
                 let num_new_files = util::fs::rcount_files_in_dir(&repo.path);
                 // Now there should be a new hotdog file
@@ -578,7 +578,7 @@ mod tests {
 
                 // Switch to main branch and pull
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
-                repositories::checkout(&cloned_repo, "main").await?;
+                repositories::checkout(&cloned_repo, "main", false).await?;
 
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
                 assert_eq!(cloned_num_files, 2);
@@ -651,7 +651,7 @@ mod tests {
                 // Switch to main branch and pull
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
 
-                repositories::checkout(&cloned_repo, branch_name).await?;
+                repositories::checkout(&cloned_repo, branch_name, false).await?;
 
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
                 assert_eq!(cloned_num_files, 5);
@@ -839,7 +839,7 @@ mod tests {
                 status.print();
 
                 // Checkout your version and add the changes
-                repositories::checkout::checkout_ours(&user_b_repo, new_file).await?;
+                repositories::checkout::checkout_ours(&user_b_repo, new_file, false).await?;
                 repositories::add(&user_b_repo, &new_file_path).await?;
                 // Commit the changes
                 repositories::commit(&user_b_repo, "Taking my changes")?;
@@ -926,7 +926,7 @@ mod tests {
                 assert_eq!(status.removed_files.len(), 0);
 
                 // Checkout your version and add the changes
-                repositories::checkout::checkout_ours(&user_b_repo, new_file).await?;
+                repositories::checkout::checkout_ours(&user_b_repo, new_file, false).await?;
                 repositories::add(&user_b_repo, &new_file_path).await?;
                 // Commit the changes
                 repositories::commit(&user_b_repo, "Taking my changes")?;
@@ -999,7 +999,7 @@ mod tests {
                     status.print();
 
                     // Checkout your version and add the changes
-                    repositories::checkout::checkout_ours(&user_b_repo, new_file).await?;
+                    repositories::checkout::checkout_ours(&user_b_repo, new_file, false).await?;
                     repositories::add(&user_b_repo, &new_file_path).await?;
                     // Commit the changes
                     repositories::commit(&user_b_repo, "Taking my changes")?;

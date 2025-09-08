@@ -487,11 +487,11 @@ mod tests {
             repositories::commit(&repo, "Adding test dir")?;
 
             // checkout OG and make sure it removes the train dir
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
             assert!(!test_dir_path.exists());
 
             // checkout branch again and make sure it reverts
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             assert!(test_dir_path.exists());
             assert_eq!(util::fs::rcount_files_in_dir(&test_dir_path), og_num_files);
 
@@ -552,7 +552,7 @@ mod tests {
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, og_branch.name, false).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;
