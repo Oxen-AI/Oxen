@@ -315,12 +315,13 @@ pub async fn checkout_branch_from_commit(
     repo: &LocalRepository,
     name: impl AsRef<str>,
     from_commit: &Option<Commit>,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     let name = name.as_ref();
     log::debug!("checkout_branch {name}");
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::branches::checkout(repo, name, from_commit).await,
+        _ => core::v_latest::branches::checkout(repo, name, from_commit, force_checkout).await,
     }
 }
 
@@ -330,13 +331,14 @@ pub async fn checkout_subtrees_to_commit(
     to_commit: &Commit,
     subtree_paths: &[PathBuf],
     depth: i32,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("checkout_subtree_from_commit not implemented for oxen v0.10.0")
         }
         _ => {
-            core::v_latest::branches::checkout_subtrees(repo, to_commit, subtree_paths, depth).await
+            core::v_latest::branches::checkout_subtrees(repo, to_commit, subtree_paths, depth, force_checkout).await
         }
     }
 }
@@ -346,10 +348,11 @@ pub async fn checkout_commit_from_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit).await,
+        _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit, force_checkout).await,
     }
 }
 
@@ -424,12 +427,13 @@ pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
+    force_checkout: bool,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("set_working_repo_to_commit not implemented for oxen v0.10.0")
         }
-        _ => core::v_latest::branches::set_working_repo_to_commit(repo, commit, from_commit).await,
+        _ => core::v_latest::branches::set_working_repo_to_commit(repo, commit, from_commit, force_checkout).await,
     }
 }
 
@@ -620,7 +624,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Must checkout main again before deleting
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, og_branch.name, false).await?;
 
             // Now we can delete
             repositories::branches::delete(&repo, branch_name)?;

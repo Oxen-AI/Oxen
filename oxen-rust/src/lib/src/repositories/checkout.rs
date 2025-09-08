@@ -17,6 +17,7 @@ use crate::{repositories, util};
 pub async fn checkout(
     repo: &LocalRepository,
     value: impl AsRef<str>,
+    force_checkout: bool,
 ) -> Result<Option<Branch>, OxenError> {
     let value = value.as_ref();
     log::debug!("--- CHECKOUT START {value} ----");
@@ -26,7 +27,7 @@ pub async fn checkout(
             return repositories::branches::get_by_name(repo, value);
         }
 
-        println!("Checkout branch: {value}");
+        log::debug!("Checkout branch: {value}");
         let commit = repositories::revisions::get(repo, value)?
             .ok_or(OxenError::revision_not_found(value.into()))?;
         let subtree_paths = match repo.subtree_paths() {
@@ -37,7 +38,7 @@ pub async fn checkout(
             Some(d) => d,
             None => i32::MAX,
         }; //TODO: make repo depth not an option so that we use depth from the repo consistently.
-        repositories::branches::checkout_subtrees_to_commit(repo, &commit, &subtree_paths, depth)
+        repositories::branches::checkout_subtrees_to_commit(repo, &commit, &subtree_paths, depth, force_checkout)
             .await?;
         repositories::branches::set_head(repo, value)?;
         repositories::branches::get_by_name(repo, value)
@@ -47,12 +48,12 @@ pub async fn checkout(
             eprintln!("Commit already checked out {value}");
             return Ok(None);
         }
-
+        
         let commit = repositories::revisions::get(repo, value)?
             .ok_or(OxenError::revision_not_found(value.into()))?;
 
         let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
-        repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit)
+        repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit, force_checkout)
             .await?;
         repositories::branches::update(repo, value, &commit.id)?;
         repositories::branches::set_head(repo, value)?;
@@ -216,7 +217,7 @@ mod tests {
     async fn test_command_checkout_non_existant_commit_id() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // This shouldn't work
-            let checkout_result = repositories::checkout(&repo, "non-existant").await;
+            let checkout_result = repositories::checkout(&repo, "non-existant", false).await;
             assert!(checkout_result.is_err());
 
             Ok(())
@@ -250,7 +251,7 @@ mod tests {
             assert!(world_file.exists());
 
             // We checkout the previous commit
-            repositories::checkout(&repo, first_commit.id).await?;
+            repositories::checkout(&repo, first_commit.id, false).await?;
 
             // // Then we do not have the world file anymore
             assert!(!world_file.exists());
@@ -303,7 +304,7 @@ mod tests {
             assert!(branch_file.exists());
 
             // Checkout the previous commit
-            repositories::checkout(&repo, first_commit.id).await?;
+            repositories::checkout(&repo, first_commit.id, false).await?;
 
             // Then we do not have the branch file anymore
             assert!(!branch_file.exists());
@@ -314,12 +315,12 @@ mod tests {
             assert!(status.is_clean());
 
             // Checkout branch again
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
 
             // // Merge to main again
             // let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             // // Checkout the branch
-            // repositories::checkout(&repo, second_commit.id).await?;
+            // repositories::checkout(&repo, second_commit.id, false).await?;
 
             let has_merges = repositories::merge::merge(&repo, DEFAULT_BRANCH_NAME)
                 .await
@@ -349,7 +350,7 @@ mod tests {
             // Create and checkout branch
             let branch_name = "feature/world-explorer";
             repositories::branches::create_checkout(&repo, branch_name)?;
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
 
             Ok(())
         })
@@ -415,14 +416,14 @@ mod tests {
             assert!(world_file.exists());
 
             // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
 
             // The world file should no longer be there
             assert!(hello_file.exists());
             assert!(!world_file.exists());
 
             // Go back to the world branch
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             assert!(hello_file.exists());
             assert!(world_file.exists());
 
@@ -471,7 +472,7 @@ mod tests {
             repositories::commit(&repo, "Changed hello.txt on branch")?;
 
             // Checkout the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
 
             // Modify the hello file on the main branch
             let hello_file = test::modify_txt_file(hello_file, "Hello from main")?;
@@ -528,7 +529,7 @@ mod tests {
             repositories::commit(&repo, "Changed hello.txt on branch")?;
 
             // Checkout the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
 
             // Add a new file on main
             let new_file = repo.path.join("new_file.txt");
@@ -588,7 +589,7 @@ mod tests {
             assert!(keep_file.exists());
 
             // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
 
             // The world file should no longer be there
             assert!(hello_file.exists());
@@ -596,7 +597,7 @@ mod tests {
             assert!(keep_file.exists());
 
             // Go back to the world branch
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             assert!(hello_file.exists());
             assert!(world_file.exists());
             assert!(keep_file.exists());
@@ -635,7 +636,7 @@ mod tests {
             assert_eq!(util::fs::read_from_path(&hello_file)?, "World");
 
             // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
 
             // The file contents should be Hello, not World
             log::debug!("HELLO FILE NAME: {hello_file:?}");
@@ -677,12 +678,12 @@ mod tests {
             repositories::commit(&repo, "Changing one shot")?;
 
             // checkout OG and make sure it reverts
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
             let updated_content = util::fs::read_from_path(&one_shot_path)?;
             assert_eq!(og_content, updated_content);
 
             // checkout branch again and make sure it reverts
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             let updated_content = util::fs::read_from_path(&one_shot_path)?;
             assert_eq!(file_contents, updated_content);
 
@@ -724,12 +725,12 @@ mod tests {
             repositories::commit(&repo, "Changing one shot")?;
 
             // checkout OG and make sure it reverts
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
             let updated_content = util::fs::read_from_path(&one_shot_path)?;
             assert_eq!(og_content, updated_content);
 
             // checkout branch again and make sure it reverts
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             let updated_content = util::fs::read_from_path(&one_shot_path)?;
             assert_eq!(file_contents, updated_content);
 
@@ -764,12 +765,12 @@ mod tests {
             repositories::commit(&repo, "Removing train dir")?;
 
             // checkout OG and make sure it restores the train dir
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, orig_branch.name, false).await?;
             assert!(dir_to_remove.exists());
             assert_eq!(util::fs::rcount_files_in_dir(&dir_to_remove), og_num_files);
 
             // checkout branch again and make sure it reverts
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             assert!(!dir_to_remove.exists());
 
             Ok(())
@@ -808,7 +809,7 @@ mod tests {
                 assert!(!test_dir_path.exists());
 
                 // checkout the commit
-                repositories::checkout(&cloned_repo, &commit.unwrap().id).await?;
+                repositories::checkout(&cloned_repo, &commit.unwrap().id, false).await?;
                 // Make sure we restored the directory
                 assert!(test_dir_path.exists());
 
@@ -864,7 +865,7 @@ mod tests {
                         "TEST checking out commit: {} -> '{}'",
                         commit.id, commit.message
                     );
-                    repositories::checkout(&cloned_repo, &commit.id).await?;
+                    repositories::checkout(&cloned_repo, &commit.id, false).await?;
                 }
 
                 Ok(())
@@ -893,7 +894,7 @@ mod tests {
                 repositories::branches::create_checkout(&user_a_repo, branch_name)?;
 
                 // Back to main
-                repositories::checkout(&user_a_repo, DEFAULT_BRANCH_NAME).await?;
+                repositories::checkout(&user_a_repo, DEFAULT_BRANCH_NAME, false).await?;
 
                 // Create some untracked files...
                 let file_1 = user_a_repo.path.join("file_1.txt");
@@ -915,7 +916,7 @@ mod tests {
                 test::write_txt_file_to_path(&file_in_subdir_2, "this is file in subdir 2")?;
 
                 // Switch back over to the other branch
-                repositories::checkout(&user_a_repo, branch_name).await?;
+                repositories::checkout(&user_a_repo, branch_name, false).await?;
 
                 // Files should exist
                 assert!(file_1.exists());
@@ -977,7 +978,7 @@ mod tests {
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
 
                 // Checkout the new branch
-                repositories::checkout(&cloned_repo, branch_name).await?;
+                repositories::checkout(&cloned_repo, branch_name, false).await?;
 
                 // Files should exist
                 assert!(file_1.exists());
@@ -1040,7 +1041,7 @@ mod tests {
                 assert!(!test_dir_path.exists());
 
                 // checkout the commit
-                repositories::checkout(&cloned_repo, &commit.unwrap().id).await?;
+                repositories::checkout(&cloned_repo, &commit.unwrap().id, false).await?;
                 // Make sure we restored the directory
                 assert!(test_dir_path.exists());
                 // Make sure the untracked files are still there
