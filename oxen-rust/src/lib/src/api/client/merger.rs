@@ -63,8 +63,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
@@ -90,8 +89,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
@@ -105,8 +103,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: base.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -130,8 +127,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -154,8 +150,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -185,8 +180,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -211,8 +205,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -226,8 +219,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: base.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -252,8 +244,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
@@ -266,8 +257,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: head.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
             // Merge the head branch into base

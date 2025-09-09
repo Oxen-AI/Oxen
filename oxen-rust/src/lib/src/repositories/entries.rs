@@ -14,7 +14,6 @@ use crate::constants::ROOT_PATH;
 use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
-use crate::util::fs;
 use crate::view::PaginatedDirEntries;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -303,9 +302,15 @@ pub fn list_missing_files_in_commit_range(
     all_entries.sort_by(|a, b| a.path.cmp(&b.path));
     all_entries.dedup_by(|a, b| a.path == b.path);
 
+    let version_store = repo.version_store()?;
     let missing_files: Vec<CommitEntry> = all_entries
         .into_par_iter()
-        .filter(|entry| !fs::version_path(repo, entry).exists())
+        .filter(|entry| {
+            match version_store.version_exists(&entry.hash) {
+                Ok(exists) => exists,
+                Err(_) => false,
+            }
+        })
         .collect();
 
     Ok(missing_files)

@@ -448,8 +448,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: remote_name.to_string(),
                     branch: "main".to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 // Should be able to push all data successfully
@@ -497,8 +496,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: DEFAULT_BRANCH_NAME.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
@@ -526,8 +524,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: remote_name.to_string(),
                     branch: "main".to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 // Should be able to push all data successfully
@@ -710,8 +707,7 @@ mod tests {
             let opts = PushOpts {
                 remote: DEFAULT_REMOTE_NAME.to_string(),
                 branch: feature_branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 

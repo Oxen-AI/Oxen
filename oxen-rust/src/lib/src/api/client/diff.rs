@@ -122,8 +122,7 @@ mod tests {
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -205,8 +204,7 @@ mod tests {
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -292,8 +290,7 @@ mod tests {
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -421,8 +418,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -562,8 +558,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -696,8 +691,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -800,8 +794,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
             repositories::push::push_remote_branch(&repo, &opts).await?;
 
@@ -904,8 +897,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -1020,8 +1012,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -1270,8 +1261,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -1385,8 +1375,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -1526,8 +1515,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -1773,8 +1761,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch real good
@@ -1885,8 +1872,7 @@ who won the game?,The packers beat up on the bears,packers
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push it real good

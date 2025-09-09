@@ -28,8 +28,7 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
     let opts = PushOpts {
         remote: DEFAULT_REMOTE_NAME.to_string(),
         branch: current_branch.name,
-        delete: false,
-        missing_files: false,
+        ..Default::default()
     };
     push_remote_branch(repo, &opts).await
 }
@@ -204,6 +203,46 @@ async fn push_to_existing_branch(
     Ok(())
 }
 
+async fn push_missing_files(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: &Option<Commit>,
+    history: &[Commit],
+) -> Result<(), OxenError> {
+
+    let Some(base_commit) = latest_remote_commit.clone() else {
+        return Err(OxenError::basic_str(
+            "Cannot push missing files without a base commit",
+        ));
+    };
+    let Some(head_commit) = history.last() else {
+        return Err(OxenError::basic_str(
+            "Cannot push missing files without a head commit",
+        ));
+    };
+
+    let missing_entries =
+        api::client::commits::list_missing_files(remote_repo, &base_commit.id, &head_commit.id)
+            .await?;
+    log::debug!("Got {} missing entries", missing_entries.len());
+
+    let missing_files: Vec<Entry> = missing_entries
+        .into_iter()
+        .map(Entry::CommitEntry)
+        .collect();
+
+    let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
+
+    let progress = Arc::new(PushProgress::new_with_totals(
+        missing_files.len() as u64,
+        total_bytes,
+    ));
+
+    push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
+
+    return Ok(());
+}
+
 async fn push_commits(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -218,37 +257,7 @@ async fn push_commits(
         .collect::<HashSet<MerkleHash>>();
 
     if opts.missing_files {
-        let Some(base_commit) = latest_remote_commit.clone() else {
-            return Err(OxenError::basic_str(
-                "Cannot push missing files without a base commit",
-            ));
-        };
-        let Some(head_commit) = history.last() else {
-            return Err(OxenError::basic_str(
-                "Cannot push missing files without a head commit",
-            ));
-        };
-
-        let missing_entries =
-            api::client::commits::list_missing_files(remote_repo, &base_commit.id, &head_commit.id)
-                .await?;
-        log::debug!("Got {} missing entries", missing_entries.len());
-
-        let missing_files: Vec<Entry> = missing_entries
-            .into_iter()
-            .map(Entry::CommitEntry)
-            .collect();
-
-        let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
-
-        let progress = Arc::new(PushProgress::new_with_totals(
-            missing_files.len() as u64,
-            total_bytes,
-        ));
-
-        push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
-
-        return Ok(());
+        return push_missing_files(repo, remote_repo, &latest_remote_commit, history).await;
     }
     // Given the missing commits on the server, filter the history
     let missing_commit_hashes =

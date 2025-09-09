@@ -308,8 +308,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 // Push it back
@@ -337,8 +336,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 repositories::push::push_remote_branch(&repo, &opts).await?;
@@ -423,8 +421,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 // Push it back
@@ -745,8 +742,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 // Try to push upstream branch
@@ -1923,8 +1919,7 @@ mod tests {
                 let opts = PushOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                     branch: branch_name.to_string(),
-                    delete: false,
-                    missing_files: false,
+                    ..Default::default()
                 };
 
                 // 5. Push to origin branch1

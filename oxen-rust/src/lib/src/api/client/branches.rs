@@ -541,8 +541,7 @@ mod tests {
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: new_branch_name.to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push new branch
@@ -573,8 +572,7 @@ mod tests {
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: "main".to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Push main branch first
@@ -587,8 +585,7 @@ mod tests {
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: "branch-does-not-exist".to_string(),
-                delete: false,
-                missing_files: false,
+                ..Default::default()
             };
 
             // Then try to push branch that doesn't exist
