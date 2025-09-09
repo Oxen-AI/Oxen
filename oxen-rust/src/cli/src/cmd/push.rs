@@ -43,7 +43,7 @@ impl RunCmd for PushCmd {
             .arg(
                 Arg::new("missing-files")
                     .long("missing-files")
-                    .help("Push missing files only")
+                    .help("Push files missing from server (useful in case of a failed push)")
                     .action(clap::ArgAction::SetTrue),
             )
     }

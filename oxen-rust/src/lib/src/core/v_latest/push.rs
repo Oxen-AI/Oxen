@@ -209,7 +209,6 @@ async fn push_missing_files(
     latest_remote_commit: &Option<Commit>,
     history: &[Commit],
 ) -> Result<(), OxenError> {
-
     let Some(base_commit) = latest_remote_commit.clone() else {
         return Err(OxenError::basic_str(
             "Cannot push missing files without a base commit",
