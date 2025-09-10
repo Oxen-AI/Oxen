@@ -247,15 +247,14 @@ async fn fetch_file(
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
 
-    let content_length = response.content_length().ok_or_else(|| {
-        OxenError::file_import_error("Fetch file response missing content length")
-    })?;
-
-    if content_length > MAX_CONTENT_LENGTH {
-        return Err(OxenError::file_import_error(format!(
-            "Content length {} exceeds maximum allowed size of 1GB",
-            content_length
-        )));
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length {
+        if content_length > MAX_CONTENT_LENGTH {
+            return Err(OxenError::file_import_error(format!(
+                "Content length {} exceeds maximum allowed size of 1GB",
+                content_length
+            )));
+        }
     }
     let is_zip = content_type.contains("zip");
 
@@ -268,12 +267,20 @@ async fn fetch_file(
     let mut stream = response.bytes_stream();
     let mut buffer = web::BytesMut::new();
     let mut save_path = PathBuf::new();
+    let mut bytes_downloaded: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| OxenError::file_import_error("Error reading file stream"))?;
         let processed_chunk = chunk.to_vec();
         buffer.extend_from_slice(&processed_chunk);
+        bytes_downloaded += processed_chunk.len() as u64;
 
+        if bytes_downloaded > MAX_CONTENT_LENGTH {
+            delete_file(workspace, &filepath)?;
+            return Err(OxenError::file_import_error(
+                "Content length exceeds maximum allowed size of 1GB",
+            ));
+        }
         if buffer.len() > BUFFER_SIZE_THRESHOLD {
             save_path = save_stream(workspace, &filepath, buffer.split().freeze().to_vec())
                 .await
@@ -299,22 +306,24 @@ async fn fetch_file(
     log::debug!("workspace::files::import_file save_path is {:?}", save_path);
 
     // check if the file size matches
-    let bytes_written = if save_path.exists() {
-        util::fs::metadata(&save_path)?.len()
-    } else {
-        0
-    };
+    if let Some(content_length) = content_length {
+        let bytes_written = if save_path.exists() {
+            util::fs::metadata(&save_path)?.len()
+        } else {
+            0
+        };
 
-    log::debug!(
-        "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
-        bytes_written,
-        content_length
-    );
+        log::debug!(
+            "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
+            bytes_written,
+            content_length
+        );
 
-    if bytes_written != content_length {
-        return Err(OxenError::file_import_error(
-            "Content length does not match. File incomplete.",
-        ));
+        if bytes_written != content_length {
+            return Err(OxenError::file_import_error(
+                "Content length does not match. File incomplete.",
+            ));
+        }
     }
 
     // decompress and stage file
@@ -333,6 +342,24 @@ async fn fetch_file(
         log::debug!("file::import add file ✅ success! staged file {:?}", path);
     }
 
+    Ok(())
+}
+
+fn delete_file(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+    let path = path.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let full_path = workspace_repo.path.join(&relative_path);
+
+    if full_path.exists() {
+        std::fs::remove_file(&full_path).map_err(|e| {
+            OxenError::file_import_error(format!(
+                "Failed to remove file {}: {}",
+                full_path.display(),
+                e
+            ))
+        })?;
+    }
     Ok(())
 }
 
