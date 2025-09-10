@@ -50,10 +50,18 @@ impl MemoryCache {
                 self.removed.remove(&status.path);
             }
             FileStatusType::Removed => {
-                self.removed.insert(status.path.clone(), status.clone());
-                // If removed, clear from created and modified
-                self.created.remove(&status.path);
+                // Check if this file was created in the current session
+                let was_created_in_session = self.created.remove(&status.path).is_some();
                 self.modified.remove(&status.path);
+                
+                // Only add to removed list if the file existed before this session
+                // If file was created in this session and then deleted, 
+                // net effect is nothing, so don't add to removed
+                if !was_created_in_session {
+                    // File existed before watcher started (or was in initial scan), 
+                    // so track its removal
+                    self.removed.insert(status.path.clone(), status.clone());
+                }
             }
         }
     }

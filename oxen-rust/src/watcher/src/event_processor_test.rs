@@ -249,4 +249,57 @@ mod tests {
         assert!(status.modified.is_empty());
         assert!(status.removed.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_file_create_then_delete() {
+        let (cache, event_tx, temp_dir) = setup_test_processor().await;
+
+        let test_file = temp_dir.path().join("test_create_delete.txt");
+        
+        // First create the file and send a create event
+        std::fs::write(&test_file, "content").unwrap();
+        
+        let create_event = create_debounced_event(
+            vec![test_file.clone()],
+            EventKind::Create(notify::event::CreateKind::File),
+        );
+        event_tx.send(Ok(vec![create_event])).await.unwrap();
+
+        // Wait for processing
+        time::sleep(Duration::from_millis(150)).await;
+
+        // Verify file is in created list
+        let status = cache.get_status(None).await;
+        assert_eq!(status.created.len(), 1, "File should be in created list");
+        assert!(status.modified.is_empty());
+        assert!(status.removed.is_empty());
+
+        // Now delete the file and send a remove event
+        std::fs::remove_file(&test_file).unwrap();
+        
+        let remove_event = create_debounced_event(
+            vec![test_file.clone()],
+            EventKind::Remove(notify::event::RemoveKind::File),
+        );
+        event_tx.send(Ok(vec![remove_event])).await.unwrap();
+
+        // Wait for processing
+        time::sleep(Duration::from_millis(150)).await;
+
+        // After deletion, file should be removed from created list
+        // and should either be in removed list or completely gone
+        let status = cache.get_status(None).await;
+        
+        assert!(
+            status.created.is_empty(), 
+            "File should not be in created list after deletion"
+        );
+        assert!(status.modified.is_empty());
+        // The file was created and deleted within the watcher session,
+        // so it should not appear in any list (net effect is no change)
+        assert!(
+            status.removed.is_empty(),
+            "File created and deleted in same session should not appear in removed list"
+        );
+    }
 }
