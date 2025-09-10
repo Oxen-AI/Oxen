@@ -286,6 +286,31 @@ pub fn group_schemas_to_parent_dirs(
     results
 }
 
+pub fn list_missing_files_in_commit_range(
+    repo: &LocalRepository,
+    base_commit: &Commit,
+    head_commit: &Commit,
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
+
+    let mut all_entries: Vec<CommitEntry> = Vec::new();
+    for commit in commits {
+        let entries = list_for_commit(repo, &commit)?;
+        all_entries.extend(entries);
+    }
+
+    all_entries.sort_by(|a, b| a.path.cmp(&b.path));
+    all_entries.dedup_by(|a, b| a.path == b.path);
+
+    let version_store = repo.version_store()?;
+    let missing_files: Vec<CommitEntry> = all_entries
+        .into_par_iter()
+        .filter(|entry| version_store.version_exists(&entry.hash).unwrap_or(false))
+        .collect();
+
+    Ok(missing_files)
+}
+
 pub fn list_tabular_files_in_repo(
     local_repo: &LocalRepository,
     commit: &Commit,
