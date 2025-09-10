@@ -182,6 +182,13 @@ fn merge_watcher_with_staged(
 
         // Process staged entries and build staged data
         status_from_dir_entries(&mut staged_data, dir_entries)?;
+
+        // Filter out staged files from untracked files
+        // Files that have been staged should not appear as untracked
+        let staged_paths: HashSet<&PathBuf> = staged_data.staged_files.keys().collect();
+        staged_data
+            .untracked_files
+            .retain(|path| !staged_paths.contains(&path));
     }
 
     // Find merge conflicts
@@ -1050,7 +1057,6 @@ fn count_removed_entries(
     Ok(())
 }
 
-// Helper functions (implement these based on your existing code)
 fn open_staged_db(
     repo: &LocalRepository,
 ) -> Result<Option<DBWithThreadMode<SingleThreaded>>, OxenError> {
@@ -1529,5 +1535,60 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    #[tokio::test]
+    async fn test_merge_watcher_filters_staged_from_untracked() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // First, create some files and stage one of them
+            let file1_path = repo.path.join("file1.txt");
+            let file2_path = repo.path.join("file2.txt");
+            let file3_path = repo.path.join("file3.txt");
+
+            test::write_txt_file_to_path(&file1_path, "content1")?;
+            test::write_txt_file_to_path(&file2_path, "content2")?;
+            test::write_txt_file_to_path(&file3_path, "content3")?;
+
+            // Stage file1.txt
+            repositories::add(&repo, &file1_path).await?;
+
+            // Create watcher status that reports all three files as created/untracked
+            let mut untracked = HashSet::new();
+            untracked.insert(PathBuf::from("file1.txt")); // This one is staged
+            untracked.insert(PathBuf::from("file2.txt")); // This one is not staged
+            untracked.insert(PathBuf::from("file3.txt")); // This one is not staged
+
+            let watcher_status = WatcherStatus {
+                created: untracked,
+                modified: HashSet::new(),
+                removed: HashSet::new(),
+                scan_complete: true,
+                last_updated: SystemTime::now(),
+            };
+
+            let opts = StagedDataOpts::default();
+
+            // Run merge function
+            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
+
+            // Verify file1.txt is in staged_files but NOT in untracked_files
+            assert!(result
+                .staged_files
+                .contains_key(&PathBuf::from("file1.txt")));
+            assert!(!result.untracked_files.contains(&PathBuf::from("file1.txt")));
+
+            // Verify file2.txt and file3.txt are still in untracked_files
+            assert!(result.untracked_files.contains(&PathBuf::from("file2.txt")));
+            assert!(result.untracked_files.contains(&PathBuf::from("file3.txt")));
+
+            // Verify we have exactly 2 untracked files (file2 and file3)
+            assert_eq!(result.untracked_files.len(), 2);
+
+            // Verify we have exactly 1 staged file (file1)
+            assert_eq!(result.staged_files.len(), 1);
+
+            Ok(())
+        })
+        .await
     }
 }
