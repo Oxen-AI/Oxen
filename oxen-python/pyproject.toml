@@ -13,7 +13,7 @@ classifiers = [
     "Topic :: Software Development :: Version Control",
 ]
 dependencies = [
-    "fsspec>=2025.7.0",
+    "fsspec>=2025.3.0",
     "maturin>=1.9.3",
     "pandas>=2.3.1",
     "polars>=1.32.0",
