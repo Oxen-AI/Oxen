@@ -135,9 +135,51 @@ mod tests {
         }).await.unwrap();
         
         let status = cache.get_status(None).await;
-        assert_eq!(status.removed.len(), 1);
+        // File was created and removed in same session, so should not appear anywhere
+        assert_eq!(status.removed.len(), 0); // Not in removed (net effect is nothing)
         assert_eq!(status.created.len(), 0); // Removed clears created
         assert_eq!(status.modified.len(), 0); // Removed clears modified
+    }
+
+    #[tokio::test]
+    async fn test_remove_existing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+        
+        // Initialize a proper oxen repo
+        liboxen::repositories::init::init(repo_path).unwrap();
+        
+        let cache = StatusCache::new(repo_path).unwrap();
+        
+        let path = PathBuf::from("existing.txt");
+        
+        // File starts as Modified (existed before watcher, was modified)
+        cache.update_file_status(FileStatus {
+            path: path.clone(),
+            mtime: SystemTime::now(),
+            size: 100,
+            hash: None,
+            status: FileStatusType::Modified,
+        }).await.unwrap();
+        
+        let status = cache.get_status(None).await;
+        assert_eq!(status.modified.len(), 1);
+        assert_eq!(status.created.len(), 0);
+        
+        // Now remove it
+        cache.update_file_status(FileStatus {
+            path: path.clone(),
+            mtime: SystemTime::now(),
+            size: 0,
+            hash: None,
+            status: FileStatusType::Removed,
+        }).await.unwrap();
+        
+        let status = cache.get_status(None).await;
+        // File existed before session and was removed, should show in removed list
+        assert_eq!(status.removed.len(), 1);
+        assert_eq!(status.created.len(), 0);
+        assert_eq!(status.modified.len(), 0);
     }
 
     #[tokio::test]

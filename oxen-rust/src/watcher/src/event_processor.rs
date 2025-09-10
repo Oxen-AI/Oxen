@@ -19,8 +19,6 @@ pub struct EventProcessor {
 
 impl EventProcessor {
     pub fn new(cache: Arc<StatusCache>, repo_path: PathBuf) -> Self {
-        // Canonicalize the repo path once to handle symlinks properly
-        let repo_path = repo_path.canonicalize().unwrap_or(repo_path);
         Self { cache, repo_path }
     }
 
@@ -91,7 +89,7 @@ impl EventProcessor {
                     continue;
                 };
 
-                // Convert absolute path to relative path
+                // Convert absolute path to relative path using liboxen
                 let relative_path = match util::fs::path_relative_to_dir(path, &self.repo_path) {
                     Ok(rel) => rel,
                     Err(e) => {

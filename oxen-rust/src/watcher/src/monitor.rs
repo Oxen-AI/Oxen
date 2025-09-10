@@ -30,6 +30,9 @@ impl FileSystemWatcher {
             ));
         }
 
+        // Canonicalize the repo path to handle symlinks
+        let repo_path = repo_path.canonicalize()?;
+
         let cache = Arc::new(StatusCache::new(&repo_path)?);
 
         Ok(Self { repo_path, cache })
