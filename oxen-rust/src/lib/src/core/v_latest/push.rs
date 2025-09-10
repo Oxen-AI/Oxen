@@ -239,7 +239,7 @@ async fn push_missing_files(
 
     push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
 
-    return Ok(());
+    Ok(())
 }
 
 async fn push_commits(

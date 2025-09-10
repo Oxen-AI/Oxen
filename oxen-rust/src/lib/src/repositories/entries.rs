@@ -305,10 +305,7 @@ pub fn list_missing_files_in_commit_range(
     let version_store = repo.version_store()?;
     let missing_files: Vec<CommitEntry> = all_entries
         .into_par_iter()
-        .filter(|entry| match version_store.version_exists(&entry.hash) {
-            Ok(exists) => exists,
-            Err(_) => false,
-        })
+        .filter(|entry| version_store.version_exists(&entry.hash).unwrap_or(false))
         .collect();
 
     Ok(missing_files)
