@@ -86,13 +86,13 @@ You can install through homebrew or pip or from our [releases page](https://gith
 Install via [Homebrew](https://brew.sh/):
 
 ```bash
-$ brew install oxen
+brew install oxen
 ```
 
 ### 🐍 Install Python Library
 
 ```bash
-$ pip install oxenai
+pip install oxenai
 ```
 
 ### ⬇️ Clone Dataset
@@ -102,7 +102,7 @@ Clone your first Oxen repository from the [OxenHub](https://oxen.ai/explore).
 <CodeGroup>
 
 ```bash
-$ oxen clone https://hub.oxen.ai/ox/CatDogBBox
+oxen clone https://hub.oxen.ai/ox/CatDogBBox
 ```
 
 ## 🤝 Support
