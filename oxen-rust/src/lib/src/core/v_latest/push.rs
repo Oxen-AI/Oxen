@@ -205,30 +205,46 @@ async fn push_to_existing_branch(
 
 async fn push_missing_files(
     repo: &LocalRepository,
+    opts: &PushOpts,
     remote_repo: &RemoteRepository,
     latest_remote_commit: &Option<Commit>,
-    history: &[Commit],
+    commits: &[Commit],
 ) -> Result<(), OxenError> {
-    let Some(base_commit) = latest_remote_commit.clone() else {
-        return Err(OxenError::basic_str(
-            "Cannot push missing files without a base commit",
-        ));
-    };
-    let Some(head_commit) = history.last() else {
+    let Some(head_commit) = commits.last() else {
         return Err(OxenError::basic_str(
             "Cannot push missing files without a head commit",
         ));
     };
 
-    let missing_entries =
-        api::client::commits::list_missing_files(remote_repo, &base_commit.id, &head_commit.id)
-            .await?;
-    log::debug!("Got {} missing entries", missing_entries.len());
+    if let Some(commit_id) = &opts.missing_files_commit_id {
+        let commit = repositories::commits::get_by_id(repo, commit_id)?
+            .ok_or_else(|| OxenError::commit_id_does_not_exist(commit_id))?;
+        list_and_push_missing_files(repo, remote_repo, None, &commit).await?;
+    } else if head_commit.id == latest_remote_commit.clone().unwrap().id {
+        //both remote and local are at same commit
 
-    let missing_files: Vec<Entry> = missing_entries
-        .into_iter()
-        .map(Entry::CommitEntry)
-        .collect();
+        let history = repositories::commits::list_from(repo, &head_commit.id)?;
+
+        for commit in history {
+            // check missing files for each commit
+            list_and_push_missing_files(repo, remote_repo, None, &commit).await?;
+        }
+    } else {
+        list_and_push_missing_files(repo, remote_repo, latest_remote_commit.clone(), head_commit)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn list_and_push_missing_files(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    base_commit: Option<Commit>,
+    head_commit: &Commit,
+) -> Result<(), OxenError> {
+    let missing_files =
+        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
+    let missing_files: Vec<Entry> = missing_files.into_iter().map(Entry::CommitEntry).collect();
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
 
@@ -238,25 +254,23 @@ async fn push_missing_files(
     ));
 
     push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
-
     Ok(())
 }
-
 async fn push_commits(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     latest_remote_commit: Option<Commit>,
-    history: &[Commit],
+    commits: &[Commit],
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
-    let node_hashes = history
+    let node_hashes = commits
         .iter()
         .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
 
     if opts.missing_files {
-        return push_missing_files(repo, remote_repo, &latest_remote_commit, history).await;
+        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, commits).await;
     }
     // Given the missing commits on the server, filter the history
     let missing_commit_hashes =
@@ -266,7 +280,7 @@ async fn push_commits(
         missing_commit_hashes.len()
     );
 
-    let missing_commits: Vec<Commit> = history
+    let missing_commits: Vec<Commit> = commits
         .iter()
         .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
         .map(|c| c.to_owned())
@@ -397,7 +411,7 @@ async fn push_commits(
         total_bytes,
     ));
     log::debug!("pushing {} entries", missing_files.len());
-    let commit = &history.last().unwrap();
+    let commit = &commits.last().unwrap();
     push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
 
     // Mark commits as synced on the server

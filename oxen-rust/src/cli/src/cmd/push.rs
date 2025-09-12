@@ -43,8 +43,10 @@ impl RunCmd for PushCmd {
             .arg(
                 Arg::new("missing-files")
                     .long("missing-files")
-                    .help("Push files missing from server (useful in case of a failed push)")
-                    .action(clap::ArgAction::SetTrue),
+                    .help("Push files missing from server (useful in case of a failed push). Optionally specify a commit id to push files from.")
+                    .num_args(0..=1)
+                    .value_name("COMMIT_ID")
+                    .default_missing_value("true")
             )
     }
 
@@ -54,7 +56,16 @@ impl RunCmd for PushCmd {
             .get_one::<String>("REMOTE")
             .expect("Must supply a remote");
         let delete = args.get_flag("delete");
-        let missing_files = args.get_flag("missing-files");
+        let (missing_files, missing_files_commit_id) =
+            if let Some(value) = args.get_one::<String>("missing-files") {
+                if value == "true" {
+                    (true, None)
+                } else {
+                    (true, Some(value.clone()))
+                }
+            } else {
+                (false, None)
+            };
 
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
@@ -75,6 +86,7 @@ impl RunCmd for PushCmd {
             branch: branch_name,
             delete,
             missing_files,
+            missing_files_commit_id,
         };
 
         // Call into liboxen to push or delete

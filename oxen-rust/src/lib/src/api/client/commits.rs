@@ -155,11 +155,20 @@ pub async fn list_missing_hashes(
 
 pub async fn list_missing_files(
     remote_repo: &RemoteRepository,
-    base_commit_id: &str,
+    base_commit: Option<Commit>,
     head_commit_id: &str,
 ) -> Result<Vec<CommitEntry>, OxenError> {
-    let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
-    let url = crate::api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let url = match base_commit {
+        Some(base_commit) => {
+            let base_commit_id = base_commit.id;
+            let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+        None => {
+            let uri = format!("/commits/missing_files?head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+    };
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
