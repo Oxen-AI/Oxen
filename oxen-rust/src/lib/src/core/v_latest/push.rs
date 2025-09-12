@@ -209,19 +209,19 @@ async fn push_missing_files(
     latest_remote_commit: &Option<Commit>,
     history: &[Commit],
 ) -> Result<(), OxenError> {
-    let Some(base_commit) = latest_remote_commit.clone() else {
-        return Err(OxenError::basic_str(
-            "Cannot push missing files without a base commit",
-        ));
-    };
     let Some(head_commit) = history.last() else {
         return Err(OxenError::basic_str(
             "Cannot push missing files without a head commit",
         ));
     };
+    let base_commit = if head_commit.id == latest_remote_commit.clone().unwrap().id {
+        None
+    } else {
+        latest_remote_commit.clone()
+    };
 
     let missing_entries =
-        api::client::commits::list_missing_files(remote_repo, &base_commit.id, &head_commit.id)
+        api::client::commits::list_missing_files(remote_repo, base_commit.clone(), &head_commit.id)
             .await?;
     log::debug!("Got {} missing entries", missing_entries.len());
 
