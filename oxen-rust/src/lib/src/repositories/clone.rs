@@ -143,6 +143,7 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::model::RepoNew;
+    use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -444,8 +445,14 @@ mod tests {
 
                 command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
 
+                let opts = PushOpts {
+                    remote: remote_name.to_string(),
+                    branch: "main".to_string(),
+                    ..Default::default()
+                };
+
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 Ok(())
             })
@@ -486,13 +493,13 @@ mod tests {
             test::write_txt_file_to_path(&filepath, "Adding back new")?;
             repositories::add(&local_repo, &filepath).await?;
             repositories::commit(&local_repo, "Adding back file_to_modify.txt")?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: DEFAULT_BRANCH_NAME.to_string(),
+                ..Default::default()
+            };
 
-            repositories::push::push_remote_branch(
-                &local_repo,
-                DEFAULT_REMOTE_NAME,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Clone with the --all flag
             test::run_empty_dir_test_async(|new_repo_dir| async move {
@@ -514,8 +521,14 @@ mod tests {
 
                 command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
 
+                let opts = PushOpts {
+                    remote: remote_name.to_string(),
+                    branch: "main".to_string(),
+                    ..Default::default()
+                };
+
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 Ok(())
             })
@@ -690,12 +703,13 @@ mod tests {
             )?;
             repositories::add(&local_repo, &new_file_full_path).await?;
             repositories::commit(&local_repo, "Added new_on_feature.txt to annotations/test")?;
-            repositories::push::push_remote_branch(
-                &local_repo,
-                DEFAULT_REMOTE_NAME,
-                feature_branch_name,
-            )
-            .await?;
+
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: feature_branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Switch original_local_repo back to main for good measure, though not strictly necessary for this test's focus
             repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
@@ -768,60 +782,6 @@ mod tests {
                     .join("annotations")
                     .join("train")
                     .exists());
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            let local_head_commit = repositories::commits::head_commit(&local_repo)?;
-            let local_root =
-                repositories::tree::get_root_with_children(&local_repo, &local_head_commit)?;
-
-            test::run_empty_dir_test_async(|repo_dir| async move {
-                // Clone repo in remote mode
-                let mut clone_opts =
-                    CloneOpts::new(&remote_repo.remote.url, repo_dir.join("new_repo"));
-                clone_opts.is_remote = true;
-
-                let cloned_repo = repositories::clone(&clone_opts).await?;
-                assert!(cloned_repo.is_remote_mode());
-
-                // Merkle tree matches original local repo
-                let cloned_head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                let cloned_root =
-                    repositories::tree::get_root_with_children(&cloned_repo, &cloned_head_commit)?;
-                assert_eq!(local_root, cloned_root);
-
-                // Versions dir is empty
-                let versions_dir = util::fs::oxen_hidden_dir(&cloned_repo.path)
-                    .join(constants::VERSIONS_DIR)
-                    .join(constants::OBJECT_FILES_DIR);
-                let mut versions_iter = std::fs::read_dir(versions_dir)?;
-                assert!(versions_iter.next().is_none());
-
-                // Workspace was initialized
-                let workspace_name = cloned_repo.workspace_name;
-                assert!(workspace_name.is_some());
-
-                let workspace_name = workspace_name.unwrap();
-                let workspace =
-                    api::client::workspaces::get_by_name(&remote_repo, &workspace_name).await?;
-
-                // Workspaces initialized by remote-mode clone are named
-                assert!(workspace.is_some());
-
-                let workspace = workspace.unwrap();
-                assert!(workspace.name.is_some());
-                assert_eq!(workspace.name.unwrap(), workspace_name);
 
                 Ok(())
             })

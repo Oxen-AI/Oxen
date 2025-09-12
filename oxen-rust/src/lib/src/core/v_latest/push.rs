@@ -2,7 +2,9 @@ use futures::prelude::*;
 use std::collections::HashSet;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::time::Duration;
 
 use crate::api::client::commits::ChunkParams;
@@ -14,6 +16,7 @@ use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
+use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
 
@@ -22,32 +25,33 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
         log::debug!("Push, no current branch found");
         return Err(OxenError::must_be_on_valid_branch());
     };
-    push_remote_branch(repo, DEFAULT_REMOTE_NAME, current_branch.name).await
+    let opts = PushOpts {
+        remote: DEFAULT_REMOTE_NAME.to_string(),
+        branch: current_branch.name,
+        ..Default::default()
+    };
+    push_remote_branch(repo, &opts).await
 }
 
 pub async fn push_remote_branch(
     repo: &LocalRepository,
-    remote: impl AsRef<str>,
-    branch_name: impl AsRef<str>,
+    opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
     // start a timer
     let start = std::time::Instant::now();
 
-    let remote = remote.as_ref();
-    let branch_name = branch_name.as_ref();
-
-    let Some(local_branch) = repositories::branches::get_by_name(repo, branch_name)? else {
-        return Err(OxenError::local_branch_not_found(branch_name));
+    let Some(local_branch) = repositories::branches::get_by_name(repo, &opts.branch)? else {
+        return Err(OxenError::local_branch_not_found(&opts.branch));
     };
 
     println!(
         "🐂 oxen push {} {} -> {}",
-        remote, local_branch.name, local_branch.commit_id
+        opts.remote, local_branch.name, local_branch.commit_id
     );
 
     let remote = repo
-        .get_remote(remote)
-        .ok_or(OxenError::remote_not_set(remote))?;
+        .get_remote(&opts.remote)
+        .ok_or_else(|| OxenError::remote_not_set(&opts.remote))?;
 
     let remote_repo = match api::client::repositories::get_by_remote(&remote).await {
         Ok(Some(repo)) => repo,
@@ -55,7 +59,7 @@ pub async fn push_remote_branch(
         Err(err) => return Err(err),
     };
 
-    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch).await?;
+    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts).await?;
     let duration = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);
     println!(
         "🐂 push complete 🎉 took {}",
@@ -68,6 +72,7 @@ async fn push_local_branch_to_remote_repo(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     local_branch: &Branch,
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Get the commit from the branch
     let Some(commit) = repositories::commits::get_by_id(repo, &local_branch.commit_id)? else {
@@ -82,9 +87,9 @@ async fn push_local_branch_to_remote_repo(
     // Check if the remote branch exists, and either push to it or create a new one
     match api::client::branches::get_by_name(remote_repo, &local_branch.name).await? {
         Some(remote_branch) => {
-            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch).await?
+            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch, opts).await?
         }
-        None => push_to_new_branch(repo, remote_repo, local_branch, &commit).await?,
+        None => push_to_new_branch(repo, remote_repo, local_branch, &commit, opts).await?,
     }
 
     // Notify the server that we are done pushing
@@ -98,6 +103,7 @@ async fn push_to_new_branch(
     remote_repo: &RemoteRepository,
     branch: &Branch,
     commit: &Commit,
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
     let history = repositories::commits::list_from(repo, &commit.id)?;
@@ -106,7 +112,7 @@ async fn push_to_new_branch(
     let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
 
     // Push the commits
-    push_commits(repo, remote_repo, latest_remote_commit, &history).await?;
+    push_commits(repo, remote_repo, latest_remote_commit, &history, opts).await?;
 
     // Create the remote branch from the commit
     api::client::branches::create_from_commit(remote_repo, &branch.name, commit).await?;
@@ -126,7 +132,6 @@ fn collect_missing_files(
         node.children.len()
     );
     for child in &node.children {
-        // println!("Child: {child:?}");
         if let EMerkleTreeNode::File(file_node) = &child.node {
             if !hashes.contains(&child.hash) {
                 continue;
@@ -150,9 +155,10 @@ async fn push_to_existing_branch(
     commit: &Commit,
     remote_repo: &RemoteRepository,
     remote_branch: &Branch,
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
-    if remote_branch.commit_id == commit.id {
+    if remote_branch.commit_id == commit.id && !opts.missing_files {
         println!("Everything is up to date");
         return Ok(());
     }
@@ -171,7 +177,14 @@ async fn push_to_existing_branch(
                     repositories::commits::list_between(repo, &latest_remote_commit, commit)?;
                 commits.reverse();
 
-                push_commits(repo, remote_repo, Some(latest_remote_commit), &commits).await?;
+                push_commits(
+                    repo,
+                    remote_repo,
+                    Some(latest_remote_commit),
+                    &commits,
+                    opts,
+                )
+                .await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
                 //we're behind
@@ -190,18 +203,75 @@ async fn push_to_existing_branch(
     Ok(())
 }
 
+async fn push_missing_files(
+    repo: &LocalRepository,
+    opts: &PushOpts,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: &Option<Commit>,
+    commits: &[Commit],
+) -> Result<(), OxenError> {
+    let Some(head_commit) = commits.last() else {
+        return Err(OxenError::basic_str(
+            "Cannot push missing files without a head commit",
+        ));
+    };
+
+    if let Some(commit_id) = &opts.missing_files_commit_id {
+        let commit = repositories::commits::get_by_id(repo, commit_id)?
+            .ok_or_else(|| OxenError::commit_id_does_not_exist(commit_id))?;
+        list_and_push_missing_files(repo, remote_repo, None, &commit).await?;
+    } else if head_commit.id == latest_remote_commit.clone().unwrap().id {
+        //both remote and local are at same commit
+
+        let history = repositories::commits::list_from(repo, &head_commit.id)?;
+
+        for commit in history {
+            // check missing files for each commit
+            list_and_push_missing_files(repo, remote_repo, None, &commit).await?;
+        }
+    } else {
+        list_and_push_missing_files(repo, remote_repo, latest_remote_commit.clone(), head_commit)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn list_and_push_missing_files(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    base_commit: Option<Commit>,
+    head_commit: &Commit,
+) -> Result<(), OxenError> {
+    let missing_files =
+        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
+    let missing_files: Vec<Entry> = missing_files.into_iter().map(Entry::CommitEntry).collect();
+
+    let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
+
+    let progress = Arc::new(PushProgress::new_with_totals(
+        missing_files.len() as u64,
+        total_bytes,
+    ));
+
+    push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
+    Ok(())
+}
 async fn push_commits(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     latest_remote_commit: Option<Commit>,
-    history: &[Commit],
+    commits: &[Commit],
+    opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
-    let node_hashes = history
+    let node_hashes = commits
         .iter()
         .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
 
+    if opts.missing_files {
+        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, commits).await;
+    }
     // Given the missing commits on the server, filter the history
     let missing_commit_hashes =
         api::client::commits::list_missing_hashes(remote_repo, node_hashes).await?;
@@ -210,7 +280,7 @@ async fn push_commits(
         missing_commit_hashes.len()
     );
 
-    let missing_commits: Vec<Commit> = history
+    let missing_commits: Vec<Commit> = commits
         .iter()
         .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
         .map(|c| c.to_owned())
@@ -341,7 +411,7 @@ async fn push_commits(
         total_bytes,
     ));
     log::debug!("pushing {} entries", missing_files.len());
-    let commit = &history.last().unwrap();
+    let commit = &commits.last().unwrap();
     push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
 
     // Mark commits as synced on the server
@@ -462,16 +532,53 @@ async fn chunk_and_send_large_entries(
         worker_count,
         entries.len()
     );
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let first_error = Arc::new(Mutex::new(None::<String>));
+
     for worker in 0..worker_count {
         let queue = queue.clone();
         let finished_queue = finished_queue.clone();
         let bar = Arc::clone(progress);
+        let should_stop = should_stop.clone();
+        let first_error = first_error.clone();
+
         tokio::spawn(async move {
             loop {
-                let (entry, repo, commit, remote_repo) = queue.pop().await;
-                log::debug!("worker[{}] processing task...", worker);
+                if should_stop.load(Ordering::Relaxed) {
+                    break;
+                }
 
-                upload_large_file_chunks(entry, repo, commit, remote_repo, chunk_size, &bar).await;
+                let (entry, repo, commit, remote_repo) = queue.pop().await;
+
+                match upload_large_file_chunks(
+                    entry.clone(),
+                    repo,
+                    commit,
+                    remote_repo,
+                    chunk_size,
+                    &bar,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        log::debug!(
+                            "worker[{}] successfully uploaded {:?}",
+                            worker,
+                            entry.path()
+                        );
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "worker[{}] failed to upload {:?}: {}",
+                            worker,
+                            entry.path(),
+                            err
+                        );
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(err.to_string());
+                        break;
+                    }
+                }
 
                 finished_queue.pop().await;
             }
@@ -482,6 +589,11 @@ async fn chunk_and_send_large_entries(
         // log::debug!("Before waiting for {} workers to finish...", queue.len());
         sleep(Duration::from_secs(1)).await;
     }
+
+    if let Some(err) = first_error.lock().await.clone() {
+        return Err(OxenError::basic_str(err));
+    }
+
     log::debug!("All large file tasks done. :-)");
 
     // Sleep again to let things sync...
@@ -498,7 +610,7 @@ async fn upload_large_file_chunks(
     remote_repo: RemoteRepository,
     chunk_size: u64,
     progress: &Arc<PushProgress>,
-) {
+) -> Result<(), OxenError> {
     // Open versioned file
     let version_store = repo.version_store().unwrap();
     let file = version_store.open_version(&entry.hash()).unwrap();
@@ -585,7 +697,7 @@ async fn upload_large_file_chunks(
                 Ok(_) => {}
                 Err(err) => {
                     log::error!("upload_large_file_chunks Error reading file {:?} chunk {total_chunk_idx}/{total_chunks} chunk size {chunk_size} total_bytes_read: {total_bytes_read} total_bytes: {total_bytes} {:?}", entry.path(), err);
-                    return;
+                    return Err(OxenError::from(err));
                 }
             }
             total_bytes_read += chunk_size;
@@ -697,6 +809,7 @@ async fn upload_large_file_chunks(
         log::debug!("upload_large_file_chunks Subchunk {i}/{num_sub_chunks} tasks done. :-)");
     }
     progress.add_files(1);
+    Ok(())
 }
 
 /// Sends entries in tarballs of size ~chunk size
@@ -758,56 +871,81 @@ async fn bundle_and_send_small_entries(
         finished_queue.try_push(false).unwrap();
     }
 
-    // TODO: this needs some more robust error handling. What should we do if a single item fails?
-    // Currently no way to bubble up that error.
+    // Error handling similar to `chunk_and_send_large_entries`
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let first_error = Arc::new(Mutex::new(None::<String>));
+
     for worker in 0..worker_count {
         let queue = queue.clone();
         let finished_queue = finished_queue.clone();
         let bar = Arc::clone(progress);
+        let should_stop = should_stop.clone();
+        let first_error = first_error.clone();
         tokio::spawn(async move {
+            use tokio::time::sleep as tokio_sleep;
             loop {
-                let (chunk, repo, _commit, remote_repo, client) = queue.pop().await;
-                log::debug!("worker[{}] processing task...", worker);
-                log::debug!("Chunk size {}", chunk.len());
+                log::debug!("worker[{worker}] processing task");
+                if should_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Pop work, but periodically check for stop signal
+                let (chunk, repo, _commit, remote_repo, client) = tokio::select! {
+                    item = queue.pop() => item,
+                    _ = tokio_sleep(Duration::from_millis(200)) => {
+                        if should_stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
                         log::error!("Failed to compute entries size: {}", e);
-                        continue; // or break or decide on another error-handling strategy
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        finished_queue.pop().await;
+                        break;
                     }
                 };
 
+                let _synced_nodes = HashSet::new();
                 match api::client::versions::multipart_batch_upload_with_retry(
                     &repo,
                     &remote_repo,
                     &chunk,
                     &client,
+                    &_synced_nodes,
                 )
                 .await
                 {
                     Ok(_err_files) => {
-                        // TODO: return err files info to the user
-                        log::debug!("Successfully uploaded data!")
+                        bar.add_bytes(chunk_size);
+                        bar.add_files(chunk.len() as u64);
+                        finished_queue.pop().await;
                     }
                     Err(e) => {
-                        // TODO: Surface the error to the user
-                        log::error!("Error uploading chunk: {:?}", e)
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        finished_queue.pop().await;
+                        break;
                     }
                 }
-
-                bar.add_bytes(chunk_size);
-                bar.add_files(chunk.len() as u64);
-                finished_queue.pop().await;
             }
         });
     }
+
     while !finished_queue.is_empty() {
-        // log::debug!("Waiting for {} workers to finish...", queue.len());
         sleep(Duration::from_secs(1)).await;
     }
-    log::debug!("All tasks done. :-)");
 
-    // Sleep again to let things sync...
+    if let Some(err) = first_error.lock().await.clone() {
+        return Err(OxenError::basic_str(err));
+    }
+
     sleep(Duration::from_millis(100)).await;
 
     Ok(())

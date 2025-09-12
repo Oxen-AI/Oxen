@@ -22,6 +22,8 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
 use crate::model::{Branch, Commit, StagedEntryStatus};
@@ -50,19 +52,19 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
     Ok(relative_path)
 }
 
-// TODO: Support for removing dirs
-// p_rm_file cannot remove dirs
-pub async fn rm(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub async fn rm(
+    workspace: &Workspace,
+    filepath: impl AsRef<Path>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    p_rm_file(base_repo, workspace_repo, filepath).await?;
+    let err_files = p_rm(base_repo, workspace_repo, filepath).await?;
 
-    // Return the relative path of the file in the workspace
-    let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
-    Ok(relative_path)
+    // Return the Err files
+    Ok(err_files)
 }
 
 pub fn add_version_file(
@@ -115,7 +117,10 @@ pub fn add_version_files(
                 staged_db_manager,
                 &seen_dirs,
             ) {
-                Ok(_) => (),
+                Ok(_) => {
+                    // Add parents to staged db
+                    // let parent_dirs = item.parents;
+                }
                 Err(e) => {
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
@@ -283,15 +288,14 @@ async fn fetch_file(
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
 
-    let content_length = response.content_length().ok_or_else(|| {
-        OxenError::file_import_error("Fetch file response missing content length")
-    })?;
-
-    if content_length > MAX_CONTENT_LENGTH {
-        return Err(OxenError::file_import_error(format!(
-            "Content length {} exceeds maximum allowed size of 1GB",
-            content_length
-        )));
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length {
+        if content_length > MAX_CONTENT_LENGTH {
+            return Err(OxenError::file_import_error(format!(
+                "Content length {} exceeds maximum allowed size of 1GB",
+                content_length
+            )));
+        }
     }
     let is_zip = content_type.contains("zip");
 
@@ -304,12 +308,20 @@ async fn fetch_file(
     let mut stream = response.bytes_stream();
     let mut buffer = web::BytesMut::new();
     let mut save_path = PathBuf::new();
+    let mut bytes_downloaded: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| OxenError::file_import_error("Error reading file stream"))?;
         let processed_chunk = chunk.to_vec();
         buffer.extend_from_slice(&processed_chunk);
+        bytes_downloaded += processed_chunk.len() as u64;
 
+        if bytes_downloaded > MAX_CONTENT_LENGTH {
+            delete_file(workspace, &filepath)?;
+            return Err(OxenError::file_import_error(
+                "Content length exceeds maximum allowed size of 1GB",
+            ));
+        }
         if buffer.len() > BUFFER_SIZE_THRESHOLD {
             save_path = save_stream(workspace, &filepath, buffer.split().freeze().to_vec())
                 .await
@@ -335,22 +347,24 @@ async fn fetch_file(
     log::debug!("workspace::files::import_file save_path is {:?}", save_path);
 
     // check if the file size matches
-    let bytes_written = if save_path.exists() {
-        util::fs::metadata(&save_path)?.len()
-    } else {
-        0
-    };
+    if let Some(content_length) = content_length {
+        let bytes_written = if save_path.exists() {
+            util::fs::metadata(&save_path)?.len()
+        } else {
+            0
+        };
 
-    log::debug!(
-        "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
-        bytes_written,
-        content_length
-    );
+        log::debug!(
+            "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
+            bytes_written,
+            content_length
+        );
 
-    if bytes_written != content_length {
-        return Err(OxenError::file_import_error(
-            "Content length does not match. File incomplete.",
-        ));
+        if bytes_written != content_length {
+            return Err(OxenError::file_import_error(
+                "Content length does not match. File incomplete.",
+            ));
+        }
     }
 
     // decompress and stage file
@@ -369,6 +383,24 @@ async fn fetch_file(
         log::debug!("file::import add file ✅ success! staged file {:?}", path);
     }
 
+    Ok(())
+}
+
+fn delete_file(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+    let path = path.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let full_path = workspace_repo.path.join(&relative_path);
+
+    if full_path.exists() {
+        std::fs::remove_file(&full_path).map_err(|e| {
+            OxenError::file_import_error(format!(
+                "Failed to remove file {}: {}",
+                full_path.display(),
+                e
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -608,29 +640,50 @@ async fn p_add_file(
     )
 }
 
-// TODO: Make separate method for removing dirs
-async fn p_rm_file(
+async fn p_rm(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
     path: &Path,
-) -> Result<(), OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let head_commit = repositories::commits::head_commit(base_repo)?;
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+
     let parent_path = path.parent().unwrap_or(Path::new(""));
     let maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, &head_commit, parent_path)?;
 
-    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let file_name = util::fs::path_relative_to_dir(path, parent_path)?;
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    if let Some(mut file_node) = get_file_node(&maybe_dir_node, &file_name)? {
+        file_node.set_name(&path.to_string_lossy());
+        err_files.extend(core::v_latest::rm::remove_file_with_db_manager(
+            workspace_repo,
+            &relative_path,
+            &file_node,
+            &seen_dirs,
+        )?);
+    } else if has_dir_node(&maybe_dir_node, file_name)? {
+        if let Some(dir_node) =
+            CommitMerkleTree::dir_with_children_recursive(base_repo, &head_commit, &relative_path)?
+        {
+            core::v_latest::rm::remove_dir_with_db_manager(
+                workspace_repo,
+                &dir_node,
+                &relative_path,
+                &seen_dirs,
+            )?;
+        };
+    } else {
+        // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
+        // Return as err_file
+        err_files.push(ErrorFileInfo {
+            hash: "".to_string(),
+            path: Some(path.to_path_buf()),
+            error: "Cannot call `oxen rm` on uncommitted files".to_string(),
+        });
+    }
 
-    // Get file node to remove
-    let file_node = get_file_node(&maybe_dir_node, path)?;
-    let Some(file_node) = file_node else {
-        return Err(OxenError::basic_str(format!(
-            "Error: Cannot remove file `{path:?}` because it is not committed"
-        )));
-    };
-
-    core::v_latest::rm::remove_file(workspace_repo, &relative_path, &file_node)?;
-
-    Ok(())
+    Ok(err_files)
 }
 
 fn p_modify_file(
@@ -657,5 +710,24 @@ fn p_modify_file(
         )
     } else {
         Err(OxenError::basic_str("file not found in head commit"))
+    }
+}
+
+fn has_dir_node(
+    dir_node: &Option<MerkleTreeNode>,
+    path: impl AsRef<Path>,
+) -> Result<bool, OxenError> {
+    if let Some(node) = dir_node {
+        if let Some(node) = node.get_by_path(path)? {
+            if let EMerkleTreeNode::Directory(_dir_node) = &node.node {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
+    } else {
+        Ok(false)
     }
 }

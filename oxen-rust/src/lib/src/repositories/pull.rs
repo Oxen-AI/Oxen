@@ -50,6 +50,7 @@ mod tests {
     use crate::opts::CloneOpts;
     use crate::opts::DFOpts;
     use crate::opts::FetchOpts;
+    use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
@@ -304,14 +305,14 @@ mod tests {
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&cloned_repo, &new_file_path).await?;
                 repositories::commit(&cloned_repo, "Adding one file to train dir")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // Push it back
-                repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 let fetch_opts = &FetchOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -332,12 +333,13 @@ mod tests {
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&repo, &train_path).await?;
                 repositories::commit(&repo, "Adding next file to train dir")?;
-                repositories::push::push_remote_branch(
-                    &repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
+
+                repositories::push::push_remote_branch(&repo, &opts).await?;
 
                 // Pull it on the second side again
                 repositories::pull_remote_branch(
@@ -416,14 +418,14 @@ mod tests {
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&cloned_repo, &new_file_path).await?;
                 repositories::commit(&cloned_repo, "Adding one file to train dir")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // Push it back
-                repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
                 // Pull it on the OG side
                 repositories::pull_remote_branch(
                     &repo,
@@ -676,9 +678,7 @@ mod tests {
             println!("Writing file to {}", path.display());
             repositories::add(&local_repo, path).await?;
             println!("adding file to index at path {}", path.display());
-            println!("First commit");
             repositories::commit(&local_repo, "Adding file for first time")?;
-            println!("Commit successfull");
             // Write the same file to newfolder/a.txt
 
             let new_path = &local_repo.path.join("newfolder").join("a.txt");
@@ -698,7 +698,6 @@ mod tests {
             let new_path = local_repo.path.join(path);
             util::fs::remove_file(&new_path)?;
             repositories::add(&local_repo, &new_path).await?;
-            println!("Second commit");
             repositories::commit(
                 &local_repo,
                 "Moved file to 2 new places and deleted original",
@@ -740,14 +739,14 @@ mod tests {
 
                 repositories::add(&cloned_repo, path).await?;
                 let commit = repositories::commit(&cloned_repo, "Adding file for first time")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // Try to push upstream branch
-                let push_result = repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await;
+                let push_result = repositories::push::push_remote_branch(&cloned_repo, &opts).await;
 
                 log::debug!("Push result: {:?}", push_result);
 
@@ -1917,14 +1916,14 @@ mod tests {
                 // 4. Add and commit the new file
                 repositories::add(&repo, &new_file).await?;
                 repositories::commit(&repo, "Adding new file in dir1")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // 5. Push to origin branch1
-                repositories::push::push_remote_branch(
-                    &repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&repo, &opts).await?;
 
                 // 6. Pull from main
                 let pull_result = repositories::pull_remote_branch(

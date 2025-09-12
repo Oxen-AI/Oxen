@@ -40,8 +40,6 @@ fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Resu
     Ok(())
 }
 
-// TODO: Should removing dirs from staged require -r?
-// Collect paths for removal. Returns error if dir found and -r not set
 fn parse_glob_path(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
     let mut paths: HashSet<PathBuf> = HashSet::new();
     log::debug!("Parsing paths: {path:?}");
@@ -107,7 +105,6 @@ mod tests {
                 recursive: true,
                 staged: false,
             };
-            println!("Before rm");
             repositories::rm(&repo, &opts)?;
 
             // Make sure we staged these removals
@@ -117,7 +114,6 @@ mod tests {
             for (path, entry) in status.staged_files.iter() {
                 // The root path will be added as staged
                 if path != Path::new("") {
-                    println!("Path is : {path:?}, entry is: {entry:?} ");
                     assert_eq!(entry.status, StagedEntryStatus::Removed);
                 }
             }
@@ -246,7 +242,6 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -423,17 +418,6 @@ mod tests {
             let status = repositories::status(&repo)?;
             status.print();
 
-            println!("status: {:?}", status);
-
-            /*
-            added: images/cats/subdir1_level_1 with 3 files
-            added: images/cats/subdir2_level_1 with 3 files
-            added: images/cats/subdir2_level_1/subdir2_level_2 with 3 files
-            added: images/cats/subdir3_level_1 with 3 files
-            added: images/cats/subdir1_level_1/subdir1_level_2/subdir1_level_3 with 3 files
-            added: images/cats/subdir1_level_1/subdir1_level_2 with 3 files
-            added: images/cats with 3 files
-            */
             assert_eq!(status.staged_dirs.len(), 7);
 
             // 3 * (cats + level 1 * 3 + level 2 * 2 + level 3 * 1)
@@ -616,18 +600,13 @@ mod tests {
             assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
 
-            println!("BEFORE ADD");
             status.print();
 
             // Add the removed nlp dir with a wildcard
             repositories::add(&repo, "nlp/*").await?;
-            println!("AFTER ADD");
-            println!("status: {:?}", status);
             status.print();
 
             let status = repositories::status(&repo)?;
-            println!("AFTER STATUS");
-            println!("status: {:?}", status);
             status.print();
 
             // There is one rolled up dir
@@ -676,7 +655,6 @@ mod tests {
             std::fs::remove_file(repo.path.join("images").join("dog_1.jpg"))?;
 
             let status = repositories::status(&repo)?;
-            println!("status: {:?}", status);
             status.print();
             assert_eq!(status.removed_files.len(), 3);
             assert_eq!(status.staged_files.len(), 0);
@@ -691,7 +669,6 @@ mod tests {
             repositories::rm(&repo, &rm_opts)?;
 
             let status = repositories::status(&repo)?;
-            println!("status: {:?}", status);
             status.print();
             // Should now have 7 staged for removal
             assert_eq!(status.staged_files.len(), 7);

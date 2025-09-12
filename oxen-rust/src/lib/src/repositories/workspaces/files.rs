@@ -2,8 +2,10 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
+use crate::model::Commit;
+use crate::model::Workspace;
 use crate::model::{Branch, User};
-use crate::model::{Commit, Workspace};
+use crate::view::ErrorFileInfo;
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +23,10 @@ pub async fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBu
     }
 }
 
-pub async fn rm(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub async fn rm(
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::rm(workspace, path).await,

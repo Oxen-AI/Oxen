@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::process::ExitCode;
 
 use crate::cmd::RemoteModeCmd;
@@ -23,8 +24,25 @@ const LONG_ABOUT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn oxen_stack_size() -> usize {
+    env::var("OXEN_STACK_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(liboxen::constants::OXEN_STACK_SIZE)
+}
+
+fn main() -> ExitCode {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(oxen_stack_size())
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     util::logging::init_logging();
 
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![
@@ -46,6 +64,7 @@ async fn main() -> ExitCode {
         Box::new(cmd::InitCmd),
         Box::new(cmd::LoadCmd),
         Box::new(cmd::LogCmd),
+        Box::new(cmd::LsCmd),
         Box::new(cmd::MergeCmd),
         Box::new(cmd::MigrateCmd),
         Box::new(cmd::MooCmd),
@@ -97,7 +116,7 @@ async fn main() -> ExitCode {
                 if is_remote_repo {
                     match command {
                         // Workspace commands
-                        "add" | "df" | "diff" | "restore" | "rm" => {
+                        "add" | "df" | "diff" | "rm" => {
                             match WorkspaceCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
@@ -109,7 +128,7 @@ async fn main() -> ExitCode {
                             return ExitCode::SUCCESS;
                         }
                         // Remote-mode specific commands
-                        "commit" | "checkout" | "status" => {
+                        "commit" | "checkout" | "pull" | "restore" | "status" => {
                             match RemoteModeCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
@@ -120,7 +139,7 @@ async fn main() -> ExitCode {
                             return ExitCode::SUCCESS;
                         }
                         // Disallowed commands
-                        "embeddings" | "merge" | "push" | "pull" | "schemas" | "workspace" => {
+                        "embeddings" | "merge" | "push" | "workspace" => {
                             eprintln!("Command `oxen {command}` not implemented for remote-mode repositories");
                             return ExitCode::FAILURE;
                         }

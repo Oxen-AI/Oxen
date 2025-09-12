@@ -3,16 +3,6 @@
 data/test/runs
 data/test/config/user_config.toml
 .vscode
-cli-test/.bundle/
-cli-test/.yardoc
-cli-test/Gemfile.lock
-cli-test/_yardoc/
-cli-test/coverage/
-cli-test/doc/
-cli-test/pkg/
-cli-test/spec/reports/
-cli-test/tmp/
-cli-test/.env
 src/server/.env.local
 
 # rspec failure tracking

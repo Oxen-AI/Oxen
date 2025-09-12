@@ -23,7 +23,6 @@ pub struct FileToRestore {
 pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore: start");
     if opts.staged {
-        log::debug!("restore::restore: handling staged restore");
         return restore_staged(repo, opts);
     }
 
@@ -33,7 +32,6 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     let path = opts.path;
     let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
-    log::debug!("restore::restore: got path {:?}", path);
 
     let dir = CommitMerkleTree::dir_with_children_recursive(repo, &commit, &path)?;
 
