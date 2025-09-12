@@ -579,8 +579,6 @@ async fn parse_multipart_fields_for_upload_zip(
                     sanitize_filename::sanitize,
                 );
 
-                println!("this is directory {:?}", directory);
-
                 let workspace_path = workspace.dir().join(directory.clone()).join(&filename);
 
                 // Create parent directories if they don't exist
@@ -591,8 +589,6 @@ async fn parse_multipart_fields_for_upload_zip(
                         )
                     })?;
                 }
-
-                println!("this is workspace_path {:?}", workspace_path);
 
                 // Create the file in the workspace directory
                 let mut file = tokio::fs::File::create(&workspace_path)
