@@ -195,7 +195,7 @@ pub async fn list_missing_files(
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let base_commit = match &query.base {
-        Some(base) => repositories::commits::get_by_id(&repo, &base)?,
+        Some(base) => repositories::commits::get_by_id(&repo, base)?,
         None => None,
     };
 

@@ -316,7 +316,7 @@ pub fn list_missing_files_in_commit_range(
         None => {
             // we only receive a head commit, so we need to find all the commits between the head and the first commit
 
-            let entries = list_for_commit(repo, &head_commit)?;
+            let entries = list_for_commit(repo, head_commit)?;
             let missing_files: Vec<CommitEntry> = entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
