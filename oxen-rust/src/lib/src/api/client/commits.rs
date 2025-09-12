@@ -158,7 +158,6 @@ pub async fn list_missing_files(
     base_commit: Option<Commit>,
     head_commit_id: &str,
 ) -> Result<Vec<CommitEntry>, OxenError> {
-
     let url = match base_commit {
         Some(base_commit) => {
             let base_commit_id = base_commit.id;

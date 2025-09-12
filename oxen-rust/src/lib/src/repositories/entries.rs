@@ -291,9 +291,8 @@ pub fn list_missing_files_in_commit_range(
     base_commit: &Option<Commit>,
     head_commit: &Commit,
 ) -> Result<Vec<CommitEntry>, OxenError> {
-    
     let version_store = repo.version_store()?;
-    
+
     match base_commit {
         Some(base_commit) => {
             let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
@@ -303,34 +302,28 @@ pub fn list_missing_files_in_commit_range(
                 let entries = list_for_commit(repo, &commit)?;
                 all_entries.extend(entries);
             }
-        
+
             all_entries.sort_by(|a, b| a.path.cmp(&b.path));
             all_entries.dedup_by(|a, b| a.path == b.path);
-        
+
             let missing_files: Vec<CommitEntry> = all_entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(true))
                 .collect();
-        
+
             Ok(missing_files)
         }
-        None => { // we only receive a head commit, so we need to find all the commits between the head and the first commit
-            let commits = repositories::commits::list_from(repo, &head_commit.id)?;
-            let mut missing_files: Vec<CommitEntry> = Vec::new();
+        None => {
+            // we only receive a head commit, so we need to find all the commits between the head and the first commit
 
-            for commit in commits {
-                let entries = list_for_commit(repo, &commit)?;
-                let missing_entries: Vec<CommitEntry> = entries
-                    .into_par_iter()
-                    .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
-                    .collect();
-                missing_files.extend(missing_entries);
-            }
-
+            let entries = list_for_commit(repo, &head_commit)?;
+            let missing_files: Vec<CommitEntry> = entries
+                .into_par_iter()
+                .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
+                .collect();
             Ok(missing_files)
         }
     }
-
 }
 
 pub fn list_tabular_files_in_repo(
