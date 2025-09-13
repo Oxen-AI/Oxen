@@ -1,7 +1,10 @@
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::file::TempFilePathNew;
+use crate::model::Commit;
 use crate::model::Workspace;
+use crate::model::{Branch, User};
 use crate::view::ErrorFileInfo;
 
 use std::path::{Path, PathBuf};
@@ -50,6 +53,28 @@ pub async fn import(
             core::v_latest::workspaces::files::import(url, auth, directory, filename, workspace)
                 .await?;
             Ok(())
+        }
+    }
+}
+
+pub async fn upload_zip(
+    commit_message: &str,
+    user: &User,
+    temp_files: Vec<TempFilePathNew>,
+    workspace: &Workspace,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    match workspace.base_repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            core::v_latest::workspaces::files::upload_zip(
+                commit_message,
+                user,
+                temp_files,
+                workspace,
+                branch,
+            )
+            .await
         }
     }
 }

@@ -21,11 +21,13 @@ use crate::core::v_latest::add::{
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
 use crate::error::OxenError;
+use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::LocalRepository;
-use crate::model::{Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
 use crate::view::{ErrorFileInfo, FileWithHash};
@@ -224,6 +226,45 @@ pub async fn import(
     fetch_file(url, auth_header_value, directory, filename, workspace).await?;
 
     Ok(())
+}
+
+pub async fn upload_zip(
+    commit_message: &str,
+    user: &User,
+    temp_files: Vec<TempFilePathNew>,
+    workspace: &Workspace,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    for temp_file in temp_files {
+        let files = decompress_zip(&temp_file.temp_file_path).await?;
+
+        for file in files.iter() {
+            repositories::workspaces::files::add(workspace, file).await?;
+        }
+    }
+    let data = NewCommitBody {
+        message: commit_message.to_string(),
+        author: user.name.clone(),
+        email: user.email.clone(),
+    };
+    let res = repositories::workspaces::commit(workspace, &data, &branch.name);
+    match res {
+        Ok(commit) => {
+            log::debug!("workspace::commit ✅ success! commit {:?}", commit);
+            Ok(commit)
+        }
+        Err(OxenError::WorkspaceBehind(workspace)) => {
+            log::error!(
+                "unable to commit branch {:?}. Workspace behind",
+                branch.name
+            );
+            Err(OxenError::WorkspaceBehind(workspace))
+        }
+        Err(err) => {
+            log::error!("unable to commit branch {:?}. Err: {}", branch.name, err);
+            Err(err)
+        }
+    }
 }
 
 async fn fetch_file(
@@ -425,13 +466,21 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         let compressed_size = zip_file.compressed_size();
 
         // Check individual file compression ratio
-        let compression_ratio = uncompressed_size / compressed_size;
-        if compressed_size > 0 && (compression_ratio) > MAX_COMPRESSION_RATIO {
-            return Err(OxenError::basic_str(format!(
-                "Suspicious zip compression ratio: {} detected",
-                compression_ratio
-            )));
+        if compressed_size > 0 {
+            let compression_ratio = uncompressed_size / compressed_size;
+            if compression_ratio > MAX_COMPRESSION_RATIO {
+                return Err(OxenError::basic_str(format!(
+                    "Suspicious zip compression ratio: {} detected",
+                    compression_ratio
+                )));
+            }
+        } else if uncompressed_size > 0 {
+            // If compressed size is 0 but uncompressed isn't, that's suspicious
+            return Err(OxenError::basic_str(
+                "Suspicious zip file: compressed size is 0 but uncompressed size is not",
+            ));
         }
+        // If both are 0, it's likely a directory entry, which is fine
 
         total_size += uncompressed_size;
 
@@ -506,7 +555,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
             }
         }
 
-        files.push(outpath);
+        files.push(outpath.clone());
     }
 
     log::debug!(
