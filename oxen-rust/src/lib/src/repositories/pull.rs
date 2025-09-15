@@ -839,7 +839,7 @@ mod tests {
                 status.print();
 
                 // Checkout your version and add the changes
-                repositories::checkout::checkout_ours(&user_b_repo, new_file, false).await?;
+                repositories::checkout::checkout_ours(&user_b_repo, new_file).await?;
                 repositories::add(&user_b_repo, &new_file_path).await?;
                 // Commit the changes
                 repositories::commit(&user_b_repo, "Taking my changes")?;
@@ -926,7 +926,7 @@ mod tests {
                 assert_eq!(status.removed_files.len(), 0);
 
                 // Checkout your version and add the changes
-                repositories::checkout::checkout_ours(&user_b_repo, new_file, false).await?;
+                repositories::checkout::checkout_ours(&user_b_repo, new_file).await?;
                 repositories::add(&user_b_repo, &new_file_path).await?;
                 // Commit the changes
                 repositories::commit(&user_b_repo, "Taking my changes")?;
@@ -999,7 +999,7 @@ mod tests {
                     status.print();
 
                     // Checkout your version and add the changes
-                    repositories::checkout::checkout_ours(&user_b_repo, new_file, false).await?;
+                    repositories::checkout::checkout_ours(&user_b_repo, new_file).await?;
                     repositories::add(&user_b_repo, &new_file_path).await?;
                     // Commit the changes
                     repositories::commit(&user_b_repo, "Taking my changes")?;
