@@ -1,7 +1,7 @@
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param};
+use crate::params::{app_data, path_param};
 
 use futures_util::stream::StreamExt; // Import StreamExt for the next() method
 use futures_util::TryStreamExt;
@@ -9,7 +9,6 @@ use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::repositories;
-use liboxen::util;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
     DataTypeView, RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
@@ -23,7 +22,6 @@ use liboxen::view::{
 use actix_multipart::Multipart; // Gives us Multipart
 use liboxen::model::{RepoNew, User};
 
-use actix_files::NamedFile;
 use actix_web::{web, HttpRequest, HttpResponse, Result};
 use serde_json::from_slice;
 use std::path::PathBuf;
@@ -430,47 +428,6 @@ pub async fn transfer_namespace(
             is_empty: repositories::is_empty(&repo)?,
         },
     }))
-}
-
-pub async fn get_file_for_branch(req: HttpRequest) -> Result<NamedFile, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let filepath: PathBuf = req.match_info().query("filename").parse().unwrap();
-    let branch_name: &str = req.match_info().get("branch_name").unwrap();
-
-    let branch = repositories::branches::get_by_name(&repo, branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(branch_name))?;
-    let version_path = util::fs::version_path_for_commit_id(&repo, &branch.commit_id, &filepath)?;
-    log::debug!(
-        "get_file_for_branch looking for {:?} -> {:?}",
-        filepath,
-        version_path
-    );
-    Ok(NamedFile::open(version_path)?)
-}
-
-pub async fn get_file_for_commit_id(req: HttpRequest) -> Result<NamedFile, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let resource = parse_resource(&req, &repo)?;
-    let commit = resource
-        .clone()
-        .commit
-        .ok_or(OxenError::resource_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
-
-    let version_path = util::fs::version_path_for_commit_id(&repo, &commit.id, &resource.path)?;
-    log::debug!(
-        "get_file_for_commit_id looking for {:?} -> {:?}",
-        resource.path,
-        version_path
-    );
-    Ok(NamedFile::open(version_path)?)
 }
 
 #[cfg(test)]

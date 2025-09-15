@@ -22,25 +22,22 @@ pub struct ChunkQuery {
 
 pub async fn upload(
     req: HttpRequest,
+    query: web::Query<ChunkQuery>,
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let version_id = path_param(&req, "version_id")?;
-    let chunk_number = path_param(&req, "chunk_number")?;
-    let chunk_number = chunk_number.parse::<u32>().map_err(|_| {
-        OxenHttpError::BadRequest(
-            format!("Invalid chunk number, must be a number: {}", chunk_number).into(),
-        )
-    })?;
+
+    let offset = query.offset.unwrap_or(0);
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     log::debug!(
-        "/upload version {} chunk {} to repo: {:?}",
+        "/upload version {} chunk offset{} to repo: {:?}",
         version_id,
-        chunk_number,
+        offset,
         repo.path
     );
 
@@ -52,7 +49,7 @@ pub async fn upload(
         buffered.extend_from_slice(&chunk);
     }
     version_store
-        .store_version_chunk(&version_id, chunk_number, &buffered)
+        .store_version_chunk(&version_id, offset, &buffered)
         .await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
@@ -158,7 +155,9 @@ pub async fn download(
     let chunk_data = version_store
         .get_version_chunk(&version_id, offset, size)
         .await?;
-    Ok(HttpResponse::Ok().body(chunk_data))
+    Ok(HttpResponse::Ok()
+        .insert_header(("Content-Length", chunk_data.len()))
+        .body(chunk_data))
 }
 
 pub async fn create(_req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {

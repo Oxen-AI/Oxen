@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fs::Metadata;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -73,12 +74,12 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `chunk_number` - The chunk number to store
+    /// * `offset` - The starting byte position of the chunk
     /// * `data` - The raw bytes to store
     async fn store_version_chunk(
         &self,
         hash: &str,
-        chunk_number: u32,
+        offset: u64,
         data: &[u8],
     ) -> Result<(), OxenError>;
 
@@ -112,7 +113,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u32>, OxenError>;
+    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
 
     /// Combine all the chunks for a version file into a single file
     ///
@@ -128,6 +129,12 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     fn open_version(&self, hash: &str) -> Result<Box<dyn ReadSeek + Send + Sync>, OxenError>;
+
+    /// Get metadata of a version file
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    async fn get_version_metadata(&self, hash: &str) -> Result<Metadata, OxenError>;
 
     /// Retrieve a version file's contents as bytes (less efficient for large files)
     ///
