@@ -4,7 +4,7 @@ use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
 use crate::model::entry::unsynced_commit_entry::UnsyncedCommitEntries;
-use crate::model::{Branch, Commit, LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::PaginateOpts;
 use crate::util::hasher::hash_buffer;
 use crate::util::progress_bar::{oxify_bar, ProgressBarType};
@@ -12,6 +12,7 @@ use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
+use crate::view::entries::ListCommitEntryResponse;
 use crate::view::{
     CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
     StatusMessage,
@@ -148,6 +149,35 @@ pub async fn list_missing_hashes(
         Ok(response) => Ok(response.hashes),
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
+        ))),
+    }
+}
+
+pub async fn list_missing_files(
+    remote_repo: &RemoteRepository,
+    base_commit: Option<Commit>,
+    head_commit_id: &str,
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let url = match base_commit {
+        Some(base_commit) => {
+            let base_commit_id = base_commit.id;
+            let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+        None => {
+            let uri = format!("/commits/missing_files?head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+    };
+
+    let client = client::new_for_url(&url)?;
+    let res = client.get(&url).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<ListCommitEntryResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(response) => Ok(response.entries),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "api::client::commits::list_missing_files() Could not deserialize response [{err}]\n{body}"
         ))),
     }
 }

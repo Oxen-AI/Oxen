@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 use super::{Pagination, StatusMessage};
 
 #[derive(Deserialize, Serialize, Debug)]
+pub struct ListCommitEntryResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub entries: Vec<CommitEntry>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct EntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

@@ -21,11 +21,13 @@ use crate::core::v_latest::add::{
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
 use crate::error::OxenError;
+use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::LocalRepository;
-use crate::model::{Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
 use crate::view::{ErrorFileInfo, FileWithHash};
@@ -226,6 +228,45 @@ pub async fn import(
     Ok(())
 }
 
+pub async fn upload_zip(
+    commit_message: &str,
+    user: &User,
+    temp_files: Vec<TempFilePathNew>,
+    workspace: &Workspace,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    for temp_file in temp_files {
+        let files = decompress_zip(&temp_file.temp_file_path).await?;
+
+        for file in files.iter() {
+            repositories::workspaces::files::add(workspace, file).await?;
+        }
+    }
+    let data = NewCommitBody {
+        message: commit_message.to_string(),
+        author: user.name.clone(),
+        email: user.email.clone(),
+    };
+    let res = repositories::workspaces::commit(workspace, &data, &branch.name);
+    match res {
+        Ok(commit) => {
+            log::debug!("workspace::commit ✅ success! commit {:?}", commit);
+            Ok(commit)
+        }
+        Err(OxenError::WorkspaceBehind(workspace)) => {
+            log::error!(
+                "unable to commit branch {:?}. Workspace behind",
+                branch.name
+            );
+            Err(OxenError::WorkspaceBehind(workspace))
+        }
+        Err(err) => {
+            log::error!("unable to commit branch {:?}. Err: {}", branch.name, err);
+            Err(err)
+        }
+    }
+}
+
 async fn fetch_file(
     url: &str,
     auth_header_value: HeaderValue,
@@ -247,15 +288,14 @@ async fn fetch_file(
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
 
-    let content_length = response.content_length().ok_or_else(|| {
-        OxenError::file_import_error("Fetch file response missing content length")
-    })?;
-
-    if content_length > MAX_CONTENT_LENGTH {
-        return Err(OxenError::file_import_error(format!(
-            "Content length {} exceeds maximum allowed size of 1GB",
-            content_length
-        )));
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length {
+        if content_length > MAX_CONTENT_LENGTH {
+            return Err(OxenError::file_import_error(format!(
+                "Content length {} exceeds maximum allowed size of 1GB",
+                content_length
+            )));
+        }
     }
     let is_zip = content_type.contains("zip");
 
@@ -268,12 +308,20 @@ async fn fetch_file(
     let mut stream = response.bytes_stream();
     let mut buffer = web::BytesMut::new();
     let mut save_path = PathBuf::new();
+    let mut bytes_downloaded: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| OxenError::file_import_error("Error reading file stream"))?;
         let processed_chunk = chunk.to_vec();
         buffer.extend_from_slice(&processed_chunk);
+        bytes_downloaded += processed_chunk.len() as u64;
 
+        if bytes_downloaded > MAX_CONTENT_LENGTH {
+            delete_file(workspace, &filepath)?;
+            return Err(OxenError::file_import_error(
+                "Content length exceeds maximum allowed size of 1GB",
+            ));
+        }
         if buffer.len() > BUFFER_SIZE_THRESHOLD {
             save_path = save_stream(workspace, &filepath, buffer.split().freeze().to_vec())
                 .await
@@ -299,22 +347,24 @@ async fn fetch_file(
     log::debug!("workspace::files::import_file save_path is {:?}", save_path);
 
     // check if the file size matches
-    let bytes_written = if save_path.exists() {
-        util::fs::metadata(&save_path)?.len()
-    } else {
-        0
-    };
+    if let Some(content_length) = content_length {
+        let bytes_written = if save_path.exists() {
+            util::fs::metadata(&save_path)?.len()
+        } else {
+            0
+        };
 
-    log::debug!(
-        "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
-        bytes_written,
-        content_length
-    );
+        log::debug!(
+            "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
+            bytes_written,
+            content_length
+        );
 
-    if bytes_written != content_length {
-        return Err(OxenError::file_import_error(
-            "Content length does not match. File incomplete.",
-        ));
+        if bytes_written != content_length {
+            return Err(OxenError::file_import_error(
+                "Content length does not match. File incomplete.",
+            ));
+        }
     }
 
     // decompress and stage file
@@ -333,6 +383,24 @@ async fn fetch_file(
         log::debug!("file::import add file ✅ success! staged file {:?}", path);
     }
 
+    Ok(())
+}
+
+fn delete_file(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+    let path = path.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let full_path = workspace_repo.path.join(&relative_path);
+
+    if full_path.exists() {
+        std::fs::remove_file(&full_path).map_err(|e| {
+            OxenError::file_import_error(format!(
+                "Failed to remove file {}: {}",
+                full_path.display(),
+                e
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -398,13 +466,21 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         let compressed_size = zip_file.compressed_size();
 
         // Check individual file compression ratio
-        let compression_ratio = uncompressed_size / compressed_size;
-        if compressed_size > 0 && (compression_ratio) > MAX_COMPRESSION_RATIO {
-            return Err(OxenError::basic_str(format!(
-                "Suspicious zip compression ratio: {} detected",
-                compression_ratio
-            )));
+        if compressed_size > 0 {
+            let compression_ratio = uncompressed_size / compressed_size;
+            if compression_ratio > MAX_COMPRESSION_RATIO {
+                return Err(OxenError::basic_str(format!(
+                    "Suspicious zip compression ratio: {} detected",
+                    compression_ratio
+                )));
+            }
+        } else if uncompressed_size > 0 {
+            // If compressed size is 0 but uncompressed isn't, that's suspicious
+            return Err(OxenError::basic_str(
+                "Suspicious zip file: compressed size is 0 but uncompressed size is not",
+            ));
         }
+        // If both are 0, it's likely a directory entry, which is fine
 
         total_size += uncompressed_size;
 
@@ -479,7 +555,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
             }
         }
 
-        files.push(outpath);
+        files.push(outpath.clone());
     }
 
     log::debug!(
