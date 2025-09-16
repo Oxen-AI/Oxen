@@ -166,13 +166,11 @@ impl CommitEntry {
     }
 
     pub fn from_node(node: &EMerkleTreeNode) -> CommitEntry {
-
         match node {
             EMerkleTreeNode::Directory(dir_node) => CommitEntry::from_dir_node(dir_node),
             EMerkleTreeNode::File(file_node) => CommitEntry::from_file_node(file_node),
             _ => panic!("Cannot convert EMerkleTreeNode to CommitEntry"),
         }
-
     }
 
     pub fn from_file_node(file_node: &FileNode) -> CommitEntry {

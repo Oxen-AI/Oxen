@@ -1249,7 +1249,10 @@ pub fn get_node_hashes_between_commits(
 
     if new_commits.is_empty() {
         // If there are no new commits, then we just return the node hashes for the first commit
-        return Ok(starting_node_hashes.into_iter().map(|(hash, _)| hash).collect());
+        return Ok(starting_node_hashes
+            .into_iter()
+            .map(|(hash, _)| hash)
+            .collect());
     }
 
     let mut new_node_hashes: HashSet<MerkleHash> = HashSet::new();
@@ -1380,7 +1383,7 @@ pub fn populate_starting_hashes(
     };
 
     Ok(())
-}   
+}
 
 // Commit db is the directories per commit
 // This helps us skip to a directory in the tree

@@ -18,10 +18,10 @@ use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{
     Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
 };
-use derive_more::FromStr;
 use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
+use derive_more::FromStr;
 
 pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
     let Some(current_branch) = repositories::branches::current_branch(repo)? else {
@@ -330,8 +330,18 @@ async fn get_commit_missing_hashes(
             .collect::<HashSet<CommitEntry>>();
         log::debug!("✅unique_file_entries: {:#?}", unique_file_entries);
 
-        shared_hashes.extend(&unique_dir_nodes.iter().map(|h| (h.clone(), MerkleTreeNodeType::Dir)).collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>());
-        shared_hashes.extend(&unique_files.iter().map(|h| (h.clone(), MerkleTreeNodeType::File)).collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>());
+        shared_hashes.extend(
+            &unique_dir_nodes
+                .iter()
+                .map(|h| (h.clone(), MerkleTreeNodeType::Dir))
+                .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>(),
+        );
+        shared_hashes.extend(
+            &unique_files
+                .iter()
+                .map(|h| (h.clone(), MerkleTreeNodeType::File))
+                .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>(),
+        );
 
         let push_commit_info = PushCommitInfo {
             unique_dir_nodes,

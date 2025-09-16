@@ -133,7 +133,11 @@ pub async fn list_missing_file_hashes_from_nodes(
     );
 
     let commit_hashes = request.commit_hashes;
-    let mut shared_hashes = request.dir_hashes.into_iter().map(|h| (h, MerkleTreeNodeType::Dir)).collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>();
+    let mut shared_hashes = request
+        .dir_hashes
+        .into_iter()
+        .map(|h| (h, MerkleTreeNodeType::Dir))
+        .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>();
 
     let subtree_paths = get_subtree_paths(&query.subtrees)?;
     let hashes = repositories::tree::list_missing_file_hashes_from_nodes(

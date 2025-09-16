@@ -321,19 +321,20 @@ pub fn list_missing_files_in_commit_range(
                 .collect();
             Ok(missing_files)
         }
-        (None, None) => {
-            match commit_entries {
-                Some(commit_entries) => {
-                    let missing_files = commit_entries.into_par_iter()
+        (None, None) => match commit_entries {
+            Some(commit_entries) => {
+                let missing_files = commit_entries
+                    .into_par_iter()
                     .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
                     .collect();
-                    Ok(missing_files)
-                },
-                None => Ok(vec![]),
+                Ok(missing_files)
             }
-        }
+            None => Ok(vec![]),
+        },
         _ => {
-            return Err(OxenError::basic_str("Can't list missing files without base commit"));
+            return Err(OxenError::basic_str(
+                "Can't list missing files without base commit",
+            ));
         }
     }
 }

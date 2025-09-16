@@ -178,7 +178,9 @@ pub async fn list_missing_files(
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
         _ => {
-            return Err(OxenError::basic_str("Can't list missing files without HEAD commit"));
+            return Err(OxenError::basic_str(
+                "Can't list missing files without HEAD commit",
+            ));
         }
     };
 

@@ -1336,7 +1336,6 @@ impl CommitMerkleTree {
 
         // If found a unique hash, insert it into unique_hashes so we won't step on it in future runs
         unique_hashes.insert((node.hash, dtype));
-        
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
         // log::debug!("load_unique_children Got {} children", children.len());

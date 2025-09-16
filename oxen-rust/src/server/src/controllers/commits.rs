@@ -16,7 +16,10 @@ use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::entries::ListMissingFilesRequest;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
-use liboxen::view::{CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse, StatusMessage};
+use liboxen::view::{
+    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
+    StatusMessage,
+};
 use os_path::OsPath;
 
 use crate::app_data::OxenAppData;
