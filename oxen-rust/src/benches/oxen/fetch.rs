@@ -141,7 +141,7 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
         (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_fetch = repo_size / 100;
+        let num_files_to_fetch = repo_size / 10;
         let (repo, remote_repo, repo_dir) = rt
             .block_on(setup_repo_for_fetch_benchmark(
                 &base_dir,

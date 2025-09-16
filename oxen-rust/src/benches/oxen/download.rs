@@ -140,7 +140,7 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
         (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_download = repo_size / 100;
+        let num_files_to_download = repo_size / 10;
         let (repo, remote_repo, repo_dir) = rt
             .block_on(setup_repo_for_download_benchmark(
                 &base_dir,
