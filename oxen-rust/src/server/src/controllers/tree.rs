@@ -5,12 +5,14 @@ use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
+use liboxen::model::MerkleTreeNodeType;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::tree::merkle_hashes::NodeHashes;
 use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -131,7 +133,7 @@ pub async fn list_missing_file_hashes_from_nodes(
     );
 
     let commit_hashes = request.commit_hashes;
-    let mut shared_hashes = request.dir_hashes;
+    let mut shared_hashes = request.dir_hashes.into_iter().map(|h| (h, MerkleTreeNodeType::Dir)).collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>();
 
     let subtree_paths = get_subtree_paths(&query.subtrees)?;
     let hashes = repositories::tree::list_missing_file_hashes_from_nodes(

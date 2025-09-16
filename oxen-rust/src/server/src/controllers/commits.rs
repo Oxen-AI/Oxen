@@ -13,12 +13,10 @@ use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::branch::BranchName;
 use liboxen::view::entries::ListCommitEntryResponse;
+use liboxen::view::entries::ListMissingFilesRequest;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
-use liboxen::view::{
-    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
-    StatusMessage,
-};
+use liboxen::view::{CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse, StatusMessage};
 use os_path::OsPath;
 
 use crate::app_data::OxenAppData;
@@ -179,15 +177,16 @@ pub async fn list_missing(
     Ok(HttpResponse::Ok().json(response))
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 pub struct ListMissingFilesQuery {
     pub base: Option<String>,
-    pub head: String,
+    pub head: Option<String>,
 }
 
 pub async fn list_missing_files(
     req: HttpRequest,
     query: web::Query<ListMissingFilesQuery>,
+    body: web::Json<ListMissingFilesRequest>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -199,13 +198,16 @@ pub async fn list_missing_files(
         None => None,
     };
 
-    let head_commit = repositories::commits::get_by_id(&repo, &query.head)?
-        .ok_or(OxenError::revision_not_found(query.head.clone().into()))?;
+    let head_commit = match &query.head {
+        Some(head) => repositories::commits::get_by_id(&repo, head)?,
+        None => None,
+    };
 
     let missing_files = repositories::entries::list_missing_files_in_commit_range(
         &repo,
         &base_commit,
         &head_commit,
+        body.into_inner().commit_entries,
     )?;
 
     let response = ListCommitEntryResponse {

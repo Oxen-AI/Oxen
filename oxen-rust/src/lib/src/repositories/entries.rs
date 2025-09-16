@@ -289,12 +289,12 @@ pub fn group_schemas_to_parent_dirs(
 pub fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
     base_commit: &Option<Commit>,
-    head_commit: &Commit,
+    head_commit: &Option<Commit>,
+    commit_entries: Option<std::collections::HashSet<CommitEntry>>,
 ) -> Result<Vec<CommitEntry>, OxenError> {
     let version_store = repo.version_store()?;
-
-    match base_commit {
-        Some(base_commit) => {
+    match (base_commit, head_commit) {
+        (Some(base_commit), Some(head_commit)) => {
             let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
 
             let mut all_entries: Vec<CommitEntry> = Vec::new();
@@ -313,15 +313,27 @@ pub fn list_missing_files_in_commit_range(
 
             Ok(missing_files)
         }
-        None => {
-            // we only receive a head commit, so we need to find all the commits between the head and the first commit
-
+        (None, Some(head_commit)) => {
             let entries = list_for_commit(repo, head_commit)?;
             let missing_files: Vec<CommitEntry> = entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
                 .collect();
             Ok(missing_files)
+        }
+        (None, None) => {
+            match commit_entries {
+                Some(commit_entries) => {
+                    let missing_files = commit_entries.into_par_iter()
+                    .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
+                    .collect();
+                    Ok(missing_files)
+                },
+                None => Ok(vec![]),
+            }
+        }
+        _ => {
+            return Err(OxenError::basic_str("Can't list missing files without base commit"));
         }
     }
 }
@@ -658,7 +670,7 @@ mod tests {
             )?;
 
             for entry in paginated.entries.iter() {
-                println!("{:?}", entry.filename());
+                println!("{entry:?}");
             }
 
             assert_eq!(paginated.entries.first().unwrap().filename(), "dir_010");

@@ -1,5 +1,5 @@
 use crate::constants::VERSION_FILE_NAME;
-use crate::model::merkle_tree::node::{DirNode, FileNode};
+use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::{Commit, ContentHashable, LocalRepository, RemoteEntry, Schema};
 use crate::util;
 
@@ -163,6 +163,16 @@ impl CommitEntry {
             last_modified_seconds: 0,
             last_modified_nanoseconds: 0,
         }
+    }
+
+    pub fn from_node(node: &EMerkleTreeNode) -> CommitEntry {
+
+        match node {
+            EMerkleTreeNode::Directory(dir_node) => CommitEntry::from_dir_node(dir_node),
+            EMerkleTreeNode::File(file_node) => CommitEntry::from_file_node(file_node),
+            _ => panic!("Cannot convert EMerkleTreeNode to CommitEntry"),
+        }
+
     }
 
     pub fn from_file_node(file_node: &FileNode) -> CommitEntry {

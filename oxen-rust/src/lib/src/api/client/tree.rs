@@ -54,7 +54,7 @@ pub async fn has_node(
 pub async fn create_nodes(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    nodes: HashSet<MerkleTreeNode>,
+    nodes: HashSet<MerkleHash>,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     // Compress the node
@@ -64,34 +64,25 @@ pub async fn create_nodes(
     log::debug!("create_nodes compressing nodes");
     let mut tar = tar::Builder::new(enc);
     log::debug!("create_nodes creating tar");
-    let mut children_count = 0;
     let node_path = local_repo
         .path
         .join(OXEN_HIDDEN_DIR)
         .join(TREE_DIR)
         .join(NODES_DIR);
 
-    for (i, node) in nodes.iter().enumerate() {
-        let dir_prefix = node_db_prefix(&node.hash);
+    for (i, node_hash) in nodes.iter().enumerate() {
+        let dir_prefix = node_db_prefix(&node_hash);
         let node_dir = node_path.join(&dir_prefix);
         // log::debug!(
         //     "create_nodes appending objects dir {:?} to tar at path {:?}",
         //     dir_prefix,
         //     node_dir
         // );
-        progress.set_message(format!(
-            "Packing {}/{} nodes with {} children",
-            i + 1,
-            nodes.len(),
-            children_count
-        ));
+        progress.set_message(format!("Packing {}/{} nodes", i + 1, nodes.len()));
 
         log::debug!("create_nodes appending dir to tar");
         tar.append_dir_all(dir_prefix, node_dir)?;
-        children_count += node.children.len();
-        log::debug!("create_nodes appended dir to tar {}", children_count);
     }
-    log::debug!("create_nodes packed {} nodes", children_count);
 
     tar.finish()?;
     log::debug!("create_nodes finished tar");

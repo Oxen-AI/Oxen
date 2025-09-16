@@ -1,5 +1,5 @@
 use futures::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +15,10 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{
+    Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
+};
+use derive_more::FromStr;
 use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
@@ -242,9 +245,13 @@ async fn list_and_push_missing_files(
     base_commit: Option<Commit>,
     head_commit: &Commit,
 ) -> Result<(), OxenError> {
-    let missing_files =
-        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
-    let missing_files: Vec<Entry> = missing_files.into_iter().map(Entry::CommitEntry).collect();
+    let missing_files = api::client::commits::list_missing_files(
+        remote_repo,
+        base_commit,
+        Some(head_commit.clone()),
+        None,
+    )
+    .await?;
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
 
@@ -256,41 +263,12 @@ async fn list_and_push_missing_files(
     push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
     Ok(())
 }
-async fn push_commits(
+
+async fn get_commit_missing_hashes(
     repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
     latest_remote_commit: Option<Commit>,
     commits: &[Commit],
-    opts: &PushOpts,
-) -> Result<(), OxenError> {
-    // We need to find all the commits that need to be pushed
-    let node_hashes = commits
-        .iter()
-        .map(|c| c.hash().unwrap())
-        .collect::<HashSet<MerkleHash>>();
-
-    if opts.missing_files {
-        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, commits).await;
-    }
-    // Given the missing commits on the server, filter the history
-    let missing_commit_hashes =
-        api::client::commits::list_missing_hashes(remote_repo, node_hashes).await?;
-    log::debug!(
-        "push_commits missing_commit_hashes count: {}",
-        missing_commit_hashes.len()
-    );
-
-    let missing_commits: Vec<Commit> = commits
-        .iter()
-        .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
-        .map(|c| c.to_owned())
-        .collect();
-
-    // Collect all the nodes that could be missing from the server
-    let progress = Arc::new(PushProgress::new());
-    progress.set_message("Collecting candidate nodes...");
-
-    // Get the node hashes for the starting commit (if we have one)
+) -> Result<HashMap<MerkleHash, PushCommitInfo>, OxenError> {
     let mut starting_node_hashes = HashSet::new();
     if let Some(ref commit) = latest_remote_commit {
         repositories::tree::populate_starting_hashes(
@@ -305,125 +283,313 @@ async fn push_commits(
     log::debug!("starting hashes: {:?}", starting_node_hashes.len());
 
     let mut shared_hashes = starting_node_hashes.clone();
-    let mut unique_hashes = HashSet::new();
 
-    let mut candidate_nodes: HashSet<MerkleTreeNode> = HashSet::new();
-    for commit in &missing_commits {
+    let mut result = HashMap::new();
+
+    for commit in commits {
+        let mut unique_hashes_and_type = HashSet::new();
         log::debug!("push_commits adding candidate nodes for commit: {}", commit);
         let Some(commit_node) = CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
             &mut shared_hashes,
-            &mut unique_hashes,
+            &mut unique_hashes_and_type,
         )?
         else {
             log::error!("push_commits commit node not found for commit: {}", commit);
             continue;
         };
+        log::debug!("✅ unique_hashes_and_type: {:?}", unique_hashes_and_type);
+        let (file_entries, _) = repositories::tree::list_files_and_dirs(&commit_node)?;
+        log::debug!("✅ file_entries: {:?}", file_entries);
+        let entries = file_entries
+            .into_iter()
+            .map(|entry| CommitEntry::from_file_node(&entry.file_node))
+            .collect::<Vec<CommitEntry>>();
+        log::debug!("✅ entries: {:?}", entries);
 
-        shared_hashes.extend(&unique_hashes);
-        unique_hashes.clear();
-        candidate_nodes.insert(commit_node.clone());
+        let unique_files = unique_hashes_and_type
+            .iter()
+            .filter(|(_, t)| *t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
+            .map(|(h, _)| h.clone())
+            .collect::<HashSet<MerkleHash>>();
+        log::debug!("✅unique_files: {:#?}", unique_files);
 
-        commit_node.walk_tree_without_leaves(|node| {
-            if !starting_node_hashes.contains(&node.hash) {
-                candidate_nodes.insert(node.clone());
-                progress.set_message(format!(
-                    "Collecting candidate nodes... {}",
-                    candidate_nodes.len()
-                ));
-            }
-        });
+        let unique_dir_nodes = unique_hashes_and_type
+            .iter()
+            .filter(|(_, t)| {
+                !(*t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
+            })
+            .map(|(h, _)| h.clone())
+            .collect::<HashSet<MerkleHash>>();
+        log::debug!("✅unique_dir_nodes: {:#?}", unique_dir_nodes);
+
+        let unique_file_entries = entries
+            .into_iter()
+            .filter(|e| unique_files.contains(&MerkleHash::from_str(&e.hash).unwrap()))
+            .collect::<HashSet<CommitEntry>>();
+        log::debug!("✅unique_file_entries: {:#?}", unique_file_entries);
+
+        shared_hashes.extend(&unique_dir_nodes.iter().map(|h| (h.clone(), MerkleTreeNodeType::Dir)).collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>());
+        shared_hashes.extend(&unique_files.iter().map(|h| (h.clone(), MerkleTreeNodeType::File)).collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>());
+
+        let push_commit_info = PushCommitInfo {
+            unique_dir_nodes,
+            unique_files,
+            unique_file_entries,
+        };
+        result.insert(commit.hash().unwrap(), push_commit_info);
     }
-    log::debug!(
-        "push_commits candidate_nodes count: {}",
-        candidate_nodes.len()
-    );
 
-    // Check which of the candidate nodes are missing from the server (just use the hashes)
-    let candidate_node_hashes = candidate_nodes
+    Ok(result)
+}
+
+struct PushCommitInfo {
+    unique_dir_nodes: HashSet<MerkleHash>,
+    unique_files: HashSet<MerkleHash>,
+    unique_file_entries: HashSet<CommitEntry>,
+}
+
+async fn push_commits(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: Option<Commit>,
+    commits: &[Commit],
+    opts: &PushOpts,
+) -> Result<(), OxenError> {
+    let progress = Arc::new(PushProgress::new());
+
+    if opts.missing_files {
+        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, commits).await;
+    }
+
+    // We need to find all the commits that need to be pushed
+    let commit_hashes = commits
         .iter()
-        .map(|n| n.hash)
+        .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
-    progress.set_message(format!(
-        "Considering {} nodes...",
-        candidate_node_hashes.len()
-    ));
 
-    log::debug!("Candidate Hashes: {candidate_node_hashes:?}");
-    let missing_node_hashes =
-        api::client::tree::list_missing_node_hashes(remote_repo, candidate_node_hashes).await?;
-    log::debug!(
-        "push_commits missing_node_hashes count: {:?}",
-        missing_node_hashes.len()
-    );
+    let commit_info = get_commit_missing_hashes(repo, latest_remote_commit, commits).await?;
 
-    // Separate the candidate nodes into present and missing nodes
-    let mut missing_nodes: HashSet<MerkleTreeNode> = HashSet::new();
-    let mut present_node_hashes: HashSet<MerkleHash> = HashSet::new();
+    let missing_commit_hashes =
+        api::client::commits::list_missing_hashes(remote_repo, commit_hashes).await?;
 
-    for node in candidate_nodes.into_iter() {
-        if missing_node_hashes.contains(&node.hash) {
-            missing_nodes.insert(node);
-        } else {
-            present_node_hashes.insert(node.hash);
-        }
-    }
-
-    // As well, don't collect anything in the
-    log::debug!(
-        "push_commits missing_nodes count: {:?}",
-        missing_nodes.len()
-    );
-    progress.set_message(format!("Pushing {} nodes...", missing_nodes.len()));
-    api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
+    let missing_commits: Vec<Commit> = commits
+        .iter()
+        .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
+        .map(|c| c.to_owned())
+        .collect();
 
     // Create the dir hashes for the missing commits
     api::client::commits::post_commits_dir_hashes_to_server(repo, remote_repo, &missing_commits)
         .await?;
 
-    progress.set_message("Checking for missing files...".to_string());
+    for commit in missing_commits {
+        let commit_hash = commit.hash().unwrap();
 
-    starting_node_hashes.extend(present_node_hashes);
-    let missing_file_hashes = api::client::tree::list_missing_file_hashes_from_nodes(
-        repo,
-        remote_repo,
-        missing_commit_hashes.clone(),
-        starting_node_hashes,
-    )
-    .await?;
-    progress.set_message(format!("Pushing {} files...", missing_file_hashes.len()));
-    let mut missing_files: HashSet<Entry> = HashSet::new();
-    let mut total_bytes = 0;
-    for node in missing_nodes {
-        collect_missing_files(
-            &node,
-            &missing_file_hashes,
-            &mut missing_files,
-            &mut total_bytes,
-        )?;
+        let commit_info = commit_info.get(&commit_hash).unwrap();
+
+        // Get a list of missing file hashes from local
+        // Call list_missing_files API to find the missing files from the given list of file hashes.
+        // Push the missing files to the server
+        let missing_files = api::client::commits::list_missing_files(
+            remote_repo,
+            None,
+            None,
+            Some(commit_info.unique_file_entries.clone()),
+        )
+        .await?;
+
+        push_entries(repo, remote_repo, &missing_files, &commit, &progress).await?;
+
+        let missing_node_hashes = api::client::tree::list_missing_node_hashes(
+            remote_repo,
+            commit_info.unique_dir_nodes.clone(),
+        )
+        .await?;
+
+        log::debug!("✅ missing_node_hashes: {:?}", missing_node_hashes);
+
+        api::client::tree::create_nodes(repo, remote_repo, missing_node_hashes.clone(), &progress)
+            .await?;
+
+        log::debug!("✅ create_nodes: {:?}", missing_node_hashes);
+
+        api::client::commits::mark_commits_as_synced(remote_repo, HashSet::from([commit_hash]))
+            .await?;
     }
-
-    let missing_files: Vec<Entry> = missing_files.into_iter().collect();
-    progress.finish();
-    let progress = Arc::new(PushProgress::new_with_totals(
-        missing_files.len() as u64,
-        total_bytes,
-    ));
-    log::debug!("pushing {} entries", missing_files.len());
-    let commit = &commits.last().unwrap();
-    push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
-
-    // Mark commits as synced on the server
-    api::client::commits::mark_commits_as_synced(remote_repo, missing_commit_hashes).await?;
-
-    // Mark dirs/vnodes as synced on the server
-    // TODO
-
-    progress.finish();
 
     Ok(())
 }
+
+// async fn push_commits1(
+//     repo: &LocalRepository,
+//     remote_repo: &RemoteRepository,
+//     latest_remote_commit: Option<Commit>,
+//     commits: &[Commit],
+//     opts: &PushOpts,
+// ) -> Result<(), OxenError> {
+//     // We need to find all the commits that need to be pushed
+//     let commit_hashes = commits
+//         .iter()
+//         .map(|c| c.hash().unwrap())
+//         .collect::<HashSet<MerkleHash>>();
+
+//     if opts.missing_files {
+//         return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, commits).await;
+//     }
+//     // Given the missing commits on the server, filter the history
+//     let missing_commit_hashes =
+//         api::client::commits::list_missing_hashes(remote_repo, commit_hashes).await?;
+//     log::debug!(
+//         "push_commits missing_commit_hashes count: {}",
+//         missing_commit_hashes.len()
+//     );
+
+//     let missing_commits: Vec<Commit> = commits
+//         .iter()
+//         .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
+//         .map(|c| c.to_owned())
+//         .collect();
+
+//     // Collect all the nodes that could be missing from the server
+//     let progress = Arc::new(PushProgress::new());
+//     progress.set_message("Collecting candidate nodes...");
+
+//     // Get the node hashes for the starting commit (if we have one)
+//     let mut starting_node_hashes = HashSet::new();
+//     if let Some(ref commit) = latest_remote_commit {
+//         repositories::tree::populate_starting_hashes(
+//             repo,
+//             commit,
+//             &None,
+//             &None,
+//             &mut starting_node_hashes,
+//         )?;
+//     }
+
+//     log::debug!("starting hashes: {:?}", starting_node_hashes.len());
+
+//     let mut shared_hashes = starting_node_hashes.clone();
+//     let mut unique_hashes = HashSet::new();
+
+//     let mut candidate_nodes = HashSet::new();
+//     for commit in &missing_commits {
+//         log::debug!("push_commits adding candidate nodes for commit: {}", commit);
+//         let Some(commit_node) = CommitMerkleTree::get_unique_children_for_commit(
+//             repo,
+//             commit,
+//             &mut shared_hashes,
+//             &mut unique_hashes,
+//         )?
+//         else {
+//             log::error!("push_commits commit node not found for commit: {}", commit);
+//             continue;
+//         };
+
+//         shared_hashes.extend(&unique_hashes);
+//         unique_hashes.clear();
+//         candidate_nodes.insert(commit_node.clone());
+
+//         commit_node.walk_tree_without_leaves(|node| {
+//             if !starting_node_hashes.contains(&node.hash) {
+//                 candidate_nodes.insert(node.clone());
+//                 progress.set_message(format!(
+//                     "Collecting candidate nodes... {}",
+//                     candidate_nodes.len()
+//                 ));
+//             }
+//         });
+//     }
+//     log::debug!(
+//         "push_commits candidate_nodes count: {}",
+//         candidate_nodes.len()
+//     );
+
+//     // Check which of the candidate nodes are missing from the server (just use the hashes)
+//     let candidate_node_hashes = candidate_nodes
+//         .iter()
+//         .map(|n| n.hash)
+//         .collect::<HashSet<MerkleHash>>();
+//     progress.set_message(format!(
+//         "Considering {} nodes...",
+//         candidate_node_hashes.len()
+//     ));
+
+//     log::debug!("Candidate Hashes: {candidate_node_hashes:?}");
+//     let missing_node_hashes =
+//         api::client::tree::list_missing_node_hashes(remote_repo, candidate_node_hashes).await?;
+//     log::debug!(
+//         "push_commits missing_node_hashes count: {:?}",
+//         missing_node_hashes.len()
+//     );
+
+//     // Separate the candidate nodes into present and missing nodes
+//     let mut missing_nodes: HashSet<MerkleTreeNode> = HashSet::new();
+//     let mut present_node_hashes: HashSet<MerkleHash> = HashSet::new();
+
+//     for node in candidate_nodes.into_iter() {
+//         if missing_node_hashes.contains(&node.hash) {
+//             missing_nodes.insert(node);
+//         } else {
+//             present_node_hashes.insert(node.hash);
+//         }
+//     }
+
+//     // As well, don't collect anything in the
+//     log::debug!(
+//         "push_commits missing_nodes count: {:?}",
+//         missing_nodes.len()
+//     );
+//     progress.set_message(format!("Pushing {} nodes...", missing_nodes.len()));
+//     api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
+
+//     // Create the dir hashes for the missing commits
+//     api::client::commits::post_commits_dir_hashes_to_server(repo, remote_repo, &missing_commits)
+//         .await?;
+
+//     progress.set_message("Checking for missing files...".to_string());
+
+//     starting_node_hashes.extend(present_node_hashes);
+//     let missing_file_hashes = api::client::tree::list_missing_file_hashes_from_nodes(
+//         repo,
+//         remote_repo,
+//         missing_commit_hashes.clone(),
+//         starting_node_hashes,
+//     )
+//     .await?;
+//     progress.set_message(format!("Pushing {} files...", missing_file_hashes.len()));
+//     let mut missing_files = HashSet::new();
+//     let mut total_bytes = 0;
+//     for node in missing_nodes {
+//         collect_missing_files(
+//             &node,
+//             &missing_file_hashes,
+//             &mut missing_files,
+//             &mut total_bytes,
+//         )?;
+//     }
+
+//     let missing_files: Vec<Entry> = missing_files.into_iter().collect();
+//     progress.finish();
+//     let progress = Arc::new(PushProgress::new_with_totals(
+//         missing_files.len() as u64,
+//         total_bytes,
+//     ));
+//     log::debug!("pushing {} entries", missing_files.len());
+//     let commit = &commits.last().unwrap();
+//     push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
+
+//     // Mark commits as synced on the server
+//     api::client::commits::mark_commits_as_synced(remote_repo, missing_commit_hashes).await?;
+
+//     // Mark dirs/vnodes as synced on the server
+//     // TODO
+
+//     progress.finish();
+
+//     Ok(())
+// }
 
 pub async fn push_entries(
     local_repo: &LocalRepository,

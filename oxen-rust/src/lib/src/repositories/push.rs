@@ -1666,7 +1666,7 @@ A: Checkout Oxen.ai
             api::client::tree::create_nodes(
                 &local_repo,
                 &remote_repo,
-                candidate_nodes.clone(),
+                candidate_nodes.clone().into_iter().map(|node| node.hash).collect(),
                 &progress,
             )
             .await?;

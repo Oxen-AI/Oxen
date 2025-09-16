@@ -3,6 +3,7 @@ use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
 
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
+use crate::model::entry::commit_entry::Entry;
 use crate::model::entry::unsynced_commit_entry::UnsyncedCommitEntries;
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::PaginateOpts;
@@ -13,6 +14,7 @@ use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
 use crate::view::entries::ListCommitEntryResponse;
+use crate::view::entries::ListMissingFilesRequest;
 use crate::view::{
     CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
     StatusMessage,
@@ -156,26 +158,37 @@ pub async fn list_missing_hashes(
 pub async fn list_missing_files(
     remote_repo: &RemoteRepository,
     base_commit: Option<Commit>,
-    head_commit_id: &str,
-) -> Result<Vec<CommitEntry>, OxenError> {
-    let url = match base_commit {
-        Some(base_commit) => {
+    head_commit_id: Option<Commit>,
+    commit_entries: Option<HashSet<CommitEntry>>,
+) -> Result<Vec<Entry>, OxenError> {
+    let url = match (base_commit, head_commit_id) {
+        (Some(base_commit), Some(head_commit)) => {
             let base_commit_id = base_commit.id;
+            let head_commit_id = head_commit.id;
             let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
-        None => {
+        (None, Some(head_commit)) => {
+            let head_commit_id = head_commit.id;
             let uri = format!("/commits/missing_files?head={head_commit_id}");
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+        (None, None) => {
+            let uri = format!("/commits/missing_files");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+        _ => {
+            return Err(OxenError::basic_str("Can't list missing files without HEAD commit"));
         }
     };
 
     let client = client::new_for_url(&url)?;
-    let res = client.get(&url).send().await?;
+    let req_body = ListMissingFilesRequest { commit_entries };
+    let res = client.get(&url).json(&req_body).send().await?;
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<ListCommitEntryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(response) => Ok(response.entries),
+        Ok(response) => Ok(response.entries.into_iter().map(Entry::CommitEntry).collect()),
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::commits::list_missing_files() Could not deserialize response [{err}]\n{body}"
         ))),

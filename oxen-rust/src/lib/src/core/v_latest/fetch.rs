@@ -238,7 +238,7 @@ fn collect_missing_entries(
     total_bytes: &mut u64,
 ) -> Result<HashSet<Entry>, OxenError> {
     let mut missing_entries: HashSet<Entry> = HashSet::new();
-    let mut unique_hashes: HashSet<MerkleHash> = HashSet::new();
+    let mut unique_hashes = HashSet::new();
 
     let mut shared_hashes =
         if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
