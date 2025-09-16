@@ -331,8 +331,7 @@ pub async fn pull_large_entry(
     // Read chunks
     let chunk_size = AVG_CHUNK_SIZE;
     let total_size = entry.num_bytes();
-    let num_chunks = ((total_size / chunk_size) + 1) as usize;
-    let mut chunk_size = chunk_size;
+    let num_chunks = total_size.div_ceil(chunk_size) as usize;
     let hash = entry.hash();
     let revision = entry.commit_id();
     let version_store = repo.version_store()?;
@@ -355,9 +354,7 @@ pub async fn pull_large_entry(
     for i in 0..num_chunks {
         // Make sure we read the last size correctly
         let chunk_start = (i as u64) * chunk_size;
-        if (chunk_start + chunk_size) > total_size {
-            chunk_size = total_size % chunk_size;
-        }
+        let this_chunk_size = std::cmp::min(chunk_size, total_size - chunk_start);
 
         tasks.push((
             Arc::clone(&version_store),
@@ -366,7 +363,7 @@ pub async fn pull_large_entry(
             hash.to_string(),
             revision.to_string(),
             chunk_start,
-            chunk_size,
+            this_chunk_size,
         ));
     }
 
@@ -833,7 +830,7 @@ pub async fn download_data_from_version_paths(
                     err,
                     sleep_time
                 );
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
@@ -889,8 +886,23 @@ pub async fn try_download_data_from_version_paths(
                 }
             };
 
-            let file_hash = file.header().path().unwrap().to_string_lossy().to_string();
-            let entry_path = content_ids.get(&file_hash).unwrap();
+            let file_hash = match file.header().path() {
+                Ok(path) => path.to_string_lossy().to_string(),
+                Err(e) => {
+                    return Err(OxenError::basic_str(format!(
+                        "Invalid tar entry path: {}",
+                        e
+                    )))
+                }
+            };
+
+            let Some(entry_path) = content_ids.get(&file_hash) else {
+                log::warn!(
+                    "Skipping unexpected tar entry not in requested set: {}",
+                    file_hash
+                );
+                continue;
+            };
             log::debug!(
                 "download_data_from_version_paths Unpacking {:?} -> {:?}",
                 file_hash,

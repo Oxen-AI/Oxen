@@ -181,11 +181,7 @@ pub async fn download_data_from_version_paths(
                     err,
                     sleep_time
                 );
-                println!(
-                    "Could not download content {:?} sleeping {}",
-                    err, sleep_time
-                );
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }

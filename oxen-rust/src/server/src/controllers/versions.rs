@@ -119,7 +119,7 @@ pub async fn download(
 pub async fn batch_download(
     req: HttpRequest,
     mut body: web::Payload,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
+) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -138,11 +138,16 @@ pub async fn batch_download(
 
     let mut gz = GzDecoder::new(&bytes[..]);
     let mut line_delimited_files = String::new();
-    gz.read_to_string(&mut line_delimited_files).unwrap();
+    if let Err(e) = gz.read_to_string(&mut line_delimited_files) {
+        log::error!("Failed to decompress gzip payload: {}", e);
+        return Err(OxenHttpError::from(e));
+    }
 
     let file_hashes: Vec<String> = line_delimited_files
         .split('\n')
+        .map(str::trim)
         .filter(|hash| !hash.is_empty())
+        .filter(|hash| hash.chars().all(|c| c.is_ascii_hexdigit()))
         .map(|hash| hash.to_string())
         .collect();
 
@@ -154,6 +159,8 @@ pub async fn batch_download(
     let version_store_clone = version_store.clone();
     let file_hashes_clone = file_hashes.clone();
 
+    // create an error channel to surface errors
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
     // stream to the client while reading
     tokio::spawn(async move {
         let enc = GzipEncoder::new(writer);
@@ -166,7 +173,8 @@ pub async fn batch_download(
                         Ok(metadata) => metadata,
                         Err(e) => {
                             log::error!("Failed to get metadata for {}: {}", file_hash, e);
-                            break;
+                            error_tx.send(e).ok();
+                            return;
                         }
                     };
                     let file_size = metadata.len();
@@ -175,7 +183,13 @@ pub async fn batch_download(
                     header.set_size(file_size as u64);
                     if let Err(e) = header.set_path(file_hash) {
                         log::error!("Failed to set path for {}: {}", file_hash, e);
-                        continue;
+                        error_tx
+                            .send(OxenError::basic_str(format!(
+                                "Failed to set path for {}: {}",
+                                file_hash, e
+                            )))
+                            .ok();
+                        return;
                     }
                     header.set_mode(0o644);
                     header.set_uid(0);
@@ -185,7 +199,8 @@ pub async fn batch_download(
                     let mut reader = StreamReader::new(data);
                     if let Err(e) = tar.append(&header, &mut reader).await {
                         log::error!("Failed to append {} to tar: {}", file_hash, e);
-                        break;
+                        error_tx.send(OxenError::IO(e)).ok();
+                        return;
                     }
                     log::info!(
                         "Successfully appended data to tarball for hash: {}",
@@ -194,13 +209,15 @@ pub async fn batch_download(
                 }
                 Err(e) => {
                     log::error!("Failed to get version {}: {}", file_hash, e);
-                    break;
+                    error_tx.send(e).ok();
+                    return;
                 }
             }
         }
 
         if let Err(e) = tar.finish().await {
             log::error!("Failed to finish tar: {}", e);
+            error_tx.send(OxenError::IO(e)).ok();
             return;
         }
 
@@ -209,23 +226,30 @@ pub async fn batch_download(
             Ok(enc) => enc,
             Err(e) => {
                 log::error!("Failed to get encoder: {}", e);
+                error_tx.send(OxenError::IO(e)).ok();
                 return;
             }
         };
 
         if let Err(e) = enc.flush().await {
             log::error!("Failed to flush encoder: {}", e);
+            error_tx.send(OxenError::IO(e)).ok();
             return;
         }
 
         // shutdown encoder
         if let Err(e) = enc.shutdown().await {
             log::error!("Failed to shutdown encoder: {}", e);
+            error_tx.send(OxenError::IO(e)).ok();
             return;
         }
 
         log::info!("Tar streaming completed successfully");
     });
+
+    if let Ok(error) = error_rx.try_recv() {
+        return Err(OxenHttpError::from(error));
+    }
 
     // convert reader to stream
     let stream =

@@ -156,7 +156,10 @@ pub async fn download(
         .get_version_chunk(&version_id, offset, size)
         .await?;
     Ok(HttpResponse::Ok()
-        .insert_header(("Content-Length", chunk_data.len()))
+        .insert_header((
+            actix_web::http::header::CONTENT_LENGTH,
+            chunk_data.len().to_string(),
+        ))
         .body(chunk_data))
 }
 
