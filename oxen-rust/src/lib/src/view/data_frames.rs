@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::view::data_frames::columns::NewColumn;
+
 pub mod columns;
 pub mod embeddings;
 
@@ -28,4 +30,14 @@ pub struct DataFrameRowChange {
     pub operation: String,
     pub value: Value,
     pub new_value: Option<Value>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct FromDirectoryRequest {
+    pub output_path: Option<String>,
+    pub extra_columns: Option<Vec<NewColumn>>,
+    pub commit_message: Option<String>,
+    pub user_name: Option<String>,
+    pub user_email: Option<String>,
+    pub recursive: Option<bool>,
 }
