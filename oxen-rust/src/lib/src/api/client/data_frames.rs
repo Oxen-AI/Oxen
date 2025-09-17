@@ -574,6 +574,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
+            println!("{:?}", p_df);
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);
