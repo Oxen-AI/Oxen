@@ -806,7 +806,7 @@ mod tests {
 
             // Verify response
             assert!(response.status.status_message == "resource_created");
-            assert!(response.commit.id.len() > 0);
+            assert!(!response.commit.id.is_empty());
             assert_eq!(response.commit.message, "Generated directory listing");
 
             Ok(())

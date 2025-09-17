@@ -285,6 +285,7 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn from_directory(
     repo: &LocalRepository,
     workspace: &Workspace,
@@ -321,7 +322,7 @@ pub async fn from_directory(
         .map(|file_with_dir| {
             file_with_dir
                 .dir
-                .join(&file_with_dir.file_node.name())
+                .join(file_with_dir.file_node.name())
                 .to_string_lossy()
                 .to_string()
         })
