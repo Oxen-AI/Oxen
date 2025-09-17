@@ -1,3 +1,5 @@
+use crate::core::df::tabular::write_df_parquet;
+use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
 
 use sql_query_builder::Select;
@@ -11,7 +13,7 @@ use crate::core::db::data_frames::{df_db, workspace_df_db};
 use crate::core::df::sql;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{Commit, LocalRepository, Workspace};
+use crate::model::{Branch, Commit, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
 
@@ -21,6 +23,8 @@ use crate::model::diff::tabular_diff::{
 };
 use crate::model::diff::{AddRemoveModifyCounts, DiffResult, TabularDiff};
 
+use crate::core::db::data_frames::columns::polar_insert_column;
+use duckdb::arrow::array::RecordBatch;
 use std::path::{Path, PathBuf};
 
 pub mod columns;
@@ -279,6 +283,111 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
             Ok(DiffResult::Tabular(diff_result))
         })
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn from_directory(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    extra_columns: &[NewColumn],
+    recursive: bool,
+    new_commit: &NewCommitBody,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    let has_dir = repositories::tree::has_dir(repo, &workspace.commit, path.as_ref())?;
+    if !has_dir {
+        return Err(OxenError::basic_str(format!(
+            "Directory not found: {:?}",
+            path.as_ref()
+        )));
+    }
+
+    let depth = if recursive { -1 } else { 1 };
+
+    let subtree = repositories::tree::get_subtree_by_depth(
+        repo,
+        &workspace.commit,
+        &Some(path.as_ref().to_path_buf()),
+        &Some(depth),
+    )?;
+
+    let files =
+        repositories::tree::list_all_files(&subtree.unwrap(), &path.as_ref().to_path_buf())?;
+
+    // Extract file paths from FileNodeWithDir
+    let file_paths: Vec<String> = files
+        .iter()
+        .map(|file_with_dir| {
+            file_with_dir
+                .dir
+                .join(file_with_dir.file_node.name())
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    let db_path = workspace.dir().join("temp_file_listing.db");
+
+    let mut df = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            // Create initial table with just file_path column
+            conn.execute("CREATE TABLE file_listing (file_path VARCHAR);", [])?;
+
+            // Insert file paths using bulk insert
+            if !file_paths.is_empty() {
+                let values_clause = file_paths
+                    .iter()
+                    .map(|_| "(?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let bulk_insert_sql = format!(
+                    "INSERT INTO file_listing (file_path) VALUES {}",
+                    values_clause
+                );
+
+                let params: Vec<&dyn duckdb::ToSql> = file_paths
+                    .iter()
+                    .map(|path| path as &dyn duckdb::ToSql)
+                    .collect();
+
+                conn.execute(&bulk_insert_sql, params.as_slice())?;
+            }
+
+            // Add each extra column using the existing function
+            for new_column in extra_columns {
+                polar_insert_column(conn, "file_listing", new_column)?;
+            }
+
+            // Get the final DataFrame
+            let sql_query = "SELECT * FROM file_listing";
+            let result_set: Vec<RecordBatch> = conn.prepare(sql_query)?.query_arrow([])?.collect();
+            df_db::record_batches_to_polars_df(result_set)
+        })
+    })?;
+
+    // Write the DataFrame as a parquet file
+    let output_path = workspace.dir().join(output_path);
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    write_df_parquet(&mut df, &output_path)?;
+
+    repositories::workspaces::files::add(workspace, &output_path).await?;
+
+    let commit = repositories::workspaces::commit(workspace, new_commit, branch.name.as_str())?;
+    println!(
+        "Created parquet file with {} file paths at: {:?}",
+        file_paths.len(),
+        output_path
+    );
+
+    Ok(commit)
 }
 
 pub fn duckdb_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
