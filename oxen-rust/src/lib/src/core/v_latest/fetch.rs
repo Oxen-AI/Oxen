@@ -237,7 +237,7 @@ fn collect_missing_entries(
     depth: &Option<i32>,
     total_bytes: &mut u64,
 ) -> Result<HashSet<Entry>, OxenError> {
-    let mut missing_entries: HashSet<Entry> = HashSet::new();
+    let mut missing_entries = HashSet::new();
     let mut unique_hashes = HashSet::new();
 
     let mut shared_hashes =
@@ -291,6 +291,7 @@ fn collect_missing_entries(
                 )?;
             }
         } else {
+            log::debug!("🎉 collect_missing_entries for commit: {}", commit);
             let Some(tree) = CommitMerkleTree::from_path_depth_unique_children(
                 repo,
                 commit,
@@ -316,6 +317,7 @@ fn collect_missing_entries(
                 &mut missing_entries,
                 total_bytes,
             )?;
+            log::debug!("😂 collect_missing_entries {:?} total_bytes: {}", missing_entries, total_bytes);
         }
     }
     Ok(missing_entries)
@@ -328,7 +330,10 @@ fn collect_missing_entries_for_subtree(
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
     let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree, subtree_path)?;
+    log::debug!("collect_missing_entries_for_subtree fileslen: {:?}", files.len());
+    log::debug!("collect_missing_entries_for_subtree files: {:?}", files);
     for file in files {
+        log::debug!("collect_missing_entries_for_subtree file: {:?}", file);
         *total_bytes += file.file_node.num_bytes();
         missing_entries.insert(Entry::CommitEntry(CommitEntry {
             commit_id: file.file_node.last_commit_id().to_string(),

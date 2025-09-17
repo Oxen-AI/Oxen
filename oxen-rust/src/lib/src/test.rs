@@ -605,7 +605,7 @@ where
     };
 
     // Cleanup local repo
-    maybe_cleanup_repo_with_remote(&repo_dir, &remote_repo).await?;
+    // maybe_cleanup_repo_with_remote(&repo_dir, &remote_repo).await?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);

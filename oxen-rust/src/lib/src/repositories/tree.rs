@@ -753,20 +753,24 @@ fn r_list_all_files(
     file_nodes: &mut HashSet<FileNodeWithDir>,
 ) -> Result<(), OxenError> {
     let traversed_path = traversed_path.as_ref();
+    log::debug!("🌳 r_list_all_files traversed_path: {:?}", traversed_path);
     for child in &node.children {
-        // log::debug!("Found child: {child}");
+        log::debug!("👶 r_list_all_files child: {:?}", child);
         match &child.node {
             EMerkleTreeNode::File(file_node) => {
+                log::debug!("📄 r_list_all_files file_node: {:?}", file_node);
                 file_nodes.insert(FileNodeWithDir {
                     file_node: file_node.to_owned(),
                     dir: traversed_path.to_owned(),
                 });
             }
             EMerkleTreeNode::Directory(dir_node) => {
+                log::debug!("📁 r_list_all_files dir_node: {:?}", dir_node);
                 let new_path = traversed_path.join(dir_node.name());
                 r_list_all_files(child, new_path, file_nodes)?;
             }
             EMerkleTreeNode::VNode(_) => {
+                log::debug!("👻 r_list_all_files vnode: {:?}", child);
                 r_list_all_files(child, traversed_path, file_nodes)?;
             }
             _ => {}

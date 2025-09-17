@@ -1,0 +1,422 @@
+[WARN] 2025-09-16T09:08:31.475 - util/fs.rs:372 util::fs::read_from_path could not open: /Users/surya/.oxen/config.toml
+[WARN] 2025-09-16T09:08:31.475 - util/fs.rs:372 util::fs::read_from_path could not open: /Users/surya/.oxen/config.toml
+[WARN] 2025-09-16T09:08:31.476 - util/fs.rs:372 util::fs::read_from_path could not open: /Users/surya/.oxen/config.toml
+[WARN] 2025-09-16T09:08:31.476 - util/fs.rs:372 util::fs::read_from_path could not open: /Users/surya/.oxen/config.toml
+[WARN] 2025-09-16T09:08:31.476 - util/fs.rs:372 util::fs::read_from_path could not open: /Users/surya/.oxen/config.toml
+[WARN] 2025-09-16T09:08:31.476 - util/fs.rs:372 util::fs::read_from_path could not open: /Users/surya/.oxen/config.toml
+[DEBUG] 2025-09-16T09:08:31.476 - api/client/oxen_version.rs:30 Checking min cli version at url http://localhost:3000/api/min_version
+[DEBUG] 2025-09-16T09:08:31.476 - api/client/oxen_version.rs:30 Checking min cli version at url http://localhost:3000/api/min_version
+[DEBUG] 2025-09-16T09:08:31.479 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.479 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.479 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.479 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.480 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.480 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.480 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.480 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.480 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.480 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.480 - api/client/oxen_version.rs:34 get_remote_version got status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.480 - api/client/oxen_version.rs:34 get_remote_version got status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.480 - api/client.rs:181 url: http://localhost:3000/api/min_version
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2","version":"0.36.0"}
+[DEBUG] 2025-09-16T09:08:31.480 - api/client.rs:181 url: http://localhost:3000/api/min_version
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2","version":"0.36.0"}
+[DEBUG] 2025-09-16T09:08:31.481 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.481 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.481 - api/client/oxen_version.rs:36 get_remote_version got body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2","version":"0.36.0"}
+[DEBUG] 2025-09-16T09:08:31.481 - api/client/oxen_version.rs:36 get_remote_version got body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2","version":"0.36.0"}
+[DEBUG] 2025-09-16T09:08:31.481 - api/client/oxen_version.rs:8 Checking version at url http://localhost:3000/api/version
+[DEBUG] 2025-09-16T09:08:31.481 - api/client/oxen_version.rs:8 Checking version at url http://localhost:3000/api/version
+[DEBUG] 2025-09-16T09:08:31.481 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.481 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.481 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.481 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.481 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.481 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.481 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.481 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.482 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.482 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.482 - api/client/oxen_version.rs:12 get_remote_version got status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.482 - api/client/oxen_version.rs:12 get_remote_version got status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.482 - api/client.rs:181 url: http://localhost:3000/api/version
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2"}
+[DEBUG] 2025-09-16T09:08:31.482 - api/client.rs:181 url: http://localhost:3000/api/version
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2"}
+[DEBUG] 2025-09-16T09:08:31.482 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.482 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.482 - api/client/oxen_version.rs:14 get_remote_version got body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2"}
+[DEBUG] 2025-09-16T09:08:31.482 - api/client/oxen_version.rs:14 get_remote_version got body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2"}
+[DEBUG] 2025-09-16T09:08:31.482 - repositories/clone.rs:60 clone_remote http://localhost:3000/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2 -> "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2" -> subtree? None -> depth? None -> all? false -> is remote? false
+[DEBUG] 2025-09-16T09:08:31.482 - repositories/clone.rs:60 clone_remote http://localhost:3000/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2 -> "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2" -> subtree? None -> depth? None -> all? false -> is remote? false
+[DEBUG] 2025-09-16T09:08:31.482 - api/client/repositories.rs:115 get_by_remote url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+[DEBUG] 2025-09-16T09:08:31.482 - api/client/repositories.rs:115 get_by_remote url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+[DEBUG] 2025-09-16T09:08:31.482 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.482 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.482 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.482 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.483 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.483 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.483 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.483 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.484 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.484 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.484 - api/client/repositories.rs:119 get_by_remote status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.484 - api/client/repositories.rs:119 get_by_remote status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.484 - api/client.rs:181 url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.484 - api/client.rs:181 url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.484 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.484 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.484 - api/client/repositories.rs:125 repositories::get_by_remote http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+ {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.484 - api/client/repositories.rs:125 repositories::get_by_remote http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+ {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.485 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.485 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.485 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.486 - api/client/repositories.rs:115 get_by_remote url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+[DEBUG] 2025-09-16T09:08:31.486 - api/client/repositories.rs:115 get_by_remote url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+[DEBUG] 2025-09-16T09:08:31.486 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.486 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.486 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.486 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.486 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.486 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.486 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.486 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.488 - api/client/repositories.rs:119 get_by_remote status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.488 - api/client/repositories.rs:119 get_by_remote status: 200 OK
+[DEBUG] 2025-09-16T09:08:31.488 - api/client.rs:181 url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.488 - api/client.rs:181 url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.488 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.488 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.488 - api/client/repositories.rs:125 repositories::get_by_remote http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+ {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.488 - api/client/repositories.rs:125 repositories::get_by_remote http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2
+ {"status":"success","status_message":"resource_found","repository":{"namespace":"ox","name":"87fd7b58-3b94-4169-9ce6-71b3689fdbc2","size":9779804,"data_types":[{"count":5,"data_type":"text"},{"count":7,"data_type":"image"},{"count":8,"data_type":"tabular"}],"min_version":"0.36.0","is_empty":false}}
+[DEBUG] 2025-09-16T09:08:31.488 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.488 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.488 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.489 - core/v_latest/fetch.rs:27 fetching remote branch with opts FetchOpts { remote: "origin", branch: "main", subtree_paths: None, depth: None, all: false, should_update_branch_head: true }
+[DEBUG] 2025-09-16T09:08:31.489 - core/v_latest/fetch.rs:27 fetching remote branch with opts FetchOpts { remote: "origin", branch: "main", subtree_paths: None, depth: None, all: false, should_update_branch_head: true }
+[DEBUG] 2025-09-16T09:08:31.489 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.489 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.489 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.490 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.490 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.490 - api/client.rs:181 url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/branches/main
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2","branch":{"name":"main","commit_id":"20b6bf14246559b6ae33e7d963463d5a"}}
+[DEBUG] 2025-09-16T09:08:31.490 - api/client.rs:181 url: http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/branches/main
+status: 200 OK
+body: {"status":"success","status_message":"resource_found","oxen_version":"0.37.2","branch":{"name":"main","commit_id":"20b6bf14246559b6ae33e7d963463d5a"}}
+[DEBUG] 2025-09-16T09:08:31.490 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.490 - api/client.rs:212 Status success: 200 OK
+[DEBUG] 2025-09-16T09:08:31.494 - core/v_latest/fetch.rs:68 Fetching all commits from remote branch 20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.494 - core/v_latest/fetch.rs:68 Fetching all commits from remote branch 20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.494 - api/client/tree.rs:271 downloading trees 20b6bf14246559b6ae33e7d963463d5a from http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/tree/download/20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.494 - api/client/tree.rs:271 downloading trees 20b6bf14246559b6ae33e7d963463d5a from http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/tree/download/20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.494 - api/client/tree.rs:365 node_download_request about to send request http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/tree/download/20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.494 - api/client/tree.rs:365 node_download_request about to send request http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/tree/download/20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.494 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.494 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.494 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.494 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.494 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.494 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.494 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.494 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.543 - api/client/tree.rs:379 node_download_request unpacking to "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen"
+[DEBUG] 2025-09-16T09:08:31.543 - api/client/tree.rs:379 node_download_request unpacking to "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen"
+[DEBUG] 2025-09-16T09:08:31.544 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.544 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.565 - api/client/tree.rs:275 unpacked trees 20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.565 - api/client/tree.rs:275 unpacked trees 20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.565 - api/client/commits.rs:350 calling download_dir_hashes_from_commit for commit 20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.565 - api/client/commits.rs:350 calling download_dir_hashes_from_commit for commit 20b6bf14246559b6ae33e7d963463d5a
+[DEBUG] 2025-09-16T09:08:31.565 - api/client/commits.rs:378 download_dir_hashes_from_url downloading from http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/commits/20b6bf14246559b6ae33e7d963463d5a/download_dir_hashes_db
+[DEBUG] 2025-09-16T09:08:31.565 - api/client/commits.rs:378 download_dir_hashes_from_url downloading from http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/commits/20b6bf14246559b6ae33e7d963463d5a/download_dir_hashes_db
+[DEBUG] 2025-09-16T09:08:31.566 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.566 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.566 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.566 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.566 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.566 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.566 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.566 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.587 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.587 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:31.587 - api/client/commits.rs:403 unpacking to "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen"
+[DEBUG] 2025-09-16T09:08:31.587 - api/client/commits.rs:403 unpacking to "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen"
+[DEBUG] 2025-09-16T09:08:31.596 - api/client/commits.rs:405 archive_result for url http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/commits/20b6bf14246559b6ae33e7d963463d5a/download_dir_hashes_db is Ok(())
+[DEBUG] 2025-09-16T09:08:31.596 - api/client/commits.rs:405 archive_result for url http://localhost:3000/api/repos/ox/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/commits/20b6bf14246559b6ae33e7d963463d5a/download_dir_hashes_db is Ok(())
+[DEBUG] 2025-09-16T09:08:31.596 - core/commit_sync_status.rs:11 Checking if commit is synced: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED"
+[DEBUG] 2025-09-16T09:08:31.596 - core/commit_sync_status.rs:11 Checking if commit is synced: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED"
+[DEBUG] 2025-09-16T09:08:31.596 - core/commit_sync_status.rs:18 Could not read is_synced file "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED": No such file or directory (os error 2)
+[DEBUG] 2025-09-16T09:08:31.596 - core/commit_sync_status.rs:18 Could not read is_synced file "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED": No such file or directory (os error 2)
+[DEBUG] 2025-09-16T09:08:31.596 - core/v_latest/fetch.rs:111 Fetch got 1 commits
+[DEBUG] 2025-09-16T09:08:31.596 - core/v_latest/fetch.rs:111 Fetch got 1 commits
+[DEBUG] 2025-09-16T09:08:31.596 - core/v_latest/index/commit_merkle_tree.rs:247 Read path "" in commit Commit { id: "20b6bf14246559b6ae33e7d963463d5a", parent_ids: ["25e680986792368e4370eb37570b681a"], message: "Adding rest of data", author: "Ox", email: "ox@oxen.ai", timestamp: 2025-09-16 13:05:55.887951 +00:00:00 } depth: -1
+[DEBUG] 2025-09-16T09:08:31.596 - core/v_latest/index/commit_merkle_tree.rs:247 Read path "" in commit Commit { id: "20b6bf14246559b6ae33e7d963463d5a", parent_ids: ["25e680986792368e4370eb37570b681a"], message: "Adding rest of data", author: "Ox", email: "ox@oxen.ai", timestamp: 2025-09-16 13:05:55.887951 +00:00:00 } depth: -1
+[DEBUG] 2025-09-16T09:08:31.597 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 0 node [Dir] 2ef1267271 "" (9.8 MB) (20 files) (commit 20b6bf1424)  (21 entries) 
+[DEBUG] 2025-09-16T09:08:31.597 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 0 node [Dir] 2ef1267271 "" (9.8 MB) (20 files) (commit 20b6bf1424)  (21 entries) 
+[DEBUG] 2025-09-16T09:08:31.597 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 0 node [VNode] be5c4d3d5d  (8 entries) 
+[DEBUG] 2025-09-16T09:08:31.597 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 0 node [VNode] be5c4d3d5d  (8 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] f461cdc21d "annotations" (779 B) (6 files) (commit cd7ef005f4)  (3 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] f461cdc21d "annotations" (779 B) (6 files) (commit cd7ef005f4)  (3 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] c53e7c6dd2  (3 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] c53e7c6dd2  (3 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [Dir] 8eaad2cd8e "test" (147 B) (1 files) (commit cd7ef005f4)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [Dir] 8eaad2cd8e "test" (147 B) (1 files) (commit cd7ef005f4)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [VNode] 83c3b0d349  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [VNode] 83c3b0d349  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [Dir] ce415b9917 "train" (547 B) (4 files) (commit cd7ef005f4)  (4 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [Dir] ce415b9917 "train" (547 B) (4 files) (commit cd7ef005f4)  (4 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [VNode] e30e40117d  (4 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [VNode] e30e40117d  (4 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] be2847f2cd "large_files" (9.6 MB) (1 files) (commit 20b6bf1424)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] be2847f2cd "large_files" (9.6 MB) (1 files) (commit 20b6bf1424)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] dddcf33bae  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] dddcf33bae  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] 70aed8f798 "nlp" (578 B) (2 files) (commit 4e13ddfd7c)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] 70aed8f798 "nlp" (578 B) (2 files) (commit 4e13ddfd7c)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] 31e13474cf  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] 31e13474cf  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [Dir] df911a4f7b "classification" (578 B) (2 files) (commit 4e13ddfd7c)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [Dir] df911a4f7b "classification" (578 B) (2 files) (commit 4e13ddfd7c)  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [VNode] 334cdbc125  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 2 node [VNode] 334cdbc125  (1 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 3 node [Dir] 1d0c9ae2af "annotations" (578 B) (2 files) (commit 4e13ddfd7c)  (2 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 3 node [Dir] 1d0c9ae2af "annotations" (578 B) (2 files) (commit 4e13ddfd7c)  (2 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 3 node [VNode] 71f7b2f562  (2 entries) 
+[DEBUG] 2025-09-16T09:08:31.598 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 3 node [VNode] 71f7b2f562  (2 entries) 
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] 3dbc43e2b4 "train" (124.3 KB) (5 files) (commit af1e6bfa2c)  (5 entries) 
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [Dir] 3dbc43e2b4 "train" (124.3 KB) (5 files) (commit af1e6bfa2c)  (5 entries) 
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] 11b2c93037  (5 entries) 
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/index/commit_merkle_tree.rs:1018 load_children_until_depth_unique_children requested_depth -1 traversed_depth 1 node [VNode] 11b2c93037  (5 entries) 
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:122 Fetch got 18 potentially missing entries
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:122 Fetch got 18 potentially missing entries
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:764 pull_small_entries got 18 missing content IDs
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:764 pull_small_entries got 18 missing content IDs
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:775 pull_small_entries creating 1 chunks from 9730895 bytes with size 18
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:775 pull_small_entries creating 1 chunks from 9730895 bytes with size 18
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:802 worker[2] processing task...
+[DEBUG] 2025-09-16T09:08:31.599 - core/v_latest/fetch.rs:802 worker[2] processing task...
+[DEBUG] 2025-09-16T09:08:31.603 - api/client/entries.rs:637 download_data_from_version_paths body len: 414
+[DEBUG] 2025-09-16T09:08:31.603 - api/client/entries.rs:637 download_data_from_version_paths body len: 414
+[DEBUG] 2025-09-16T09:08:31.603 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.603 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:31.603 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.603 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:31.604 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.604 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.604 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:31.604 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:32.177 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data"
+[DEBUG] 2025-09-16T09:08:32.177 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data"
+[DEBUG] 2025-09-16T09:08:32.227 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:32.227 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:32.252 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.252 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.252 - api/client/entries.rs:696 Unpacked 9604701 bytes ".oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data"
+[DEBUG] 2025-09-16T09:08:32.252 - api/client/entries.rs:696 Unpacked 9604701 bytes ".oxen/versions/files/98/c96efc3b6ea3795f3cfe517fcea53b/data"
+[DEBUG] 2025-09-16T09:08:32.252 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data"
+[DEBUG] 2025-09-16T09:08:32.252 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:696 Unpacked 17462 bytes ".oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:696 Unpacked 17462 bytes ".oxen/versions/files/79/0d949d7b080c21b37488a07d1e612c/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:696 Unpacked 69 bytes ".oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:696 Unpacked 69 bytes ".oxen/versions/files/b8/a89d5618a8547592b03b361b7d1b85/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:696 Unpacked 75 bytes ".oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:696 Unpacked 75 bytes ".oxen/versions/files/83/02f035637c6d07c8c9677759399e83/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data"
+[DEBUG] 2025-09-16T09:08:32.253 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:696 Unpacked 22964 bytes ".oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:696 Unpacked 22964 bytes ".oxen/versions/files/19/ea812602dd5e8575adb22561e346a8/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:696 Unpacked 29 bytes ".oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:696 Unpacked 29 bytes ".oxen/versions/files/32/fe6b6cc41698b78f901e58aa511df1/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:696 Unpacked 265 bytes ".oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:696 Unpacked 265 bytes ".oxen/versions/files/df/51d2e6d9364dfdb4215959e6d0cf42/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data"
+[DEBUG] 2025-09-16T09:08:32.254 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:696 Unpacked 147 bytes ".oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:696 Unpacked 147 bytes ".oxen/versions/files/9f/e58c364f0e1290b8c1596d885720d/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:696 Unpacked 85 bytes ".oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:696 Unpacked 85 bytes ".oxen/versions/files/fc/bbcd2bb71a7244c8889030bdcfd4c/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:696 Unpacked 112 bytes ".oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:696 Unpacked 112 bytes ".oxen/versions/files/75/c1d9ad22e50eca57b322ea6aee6658/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data"
+[DEBUG] 2025-09-16T09:08:32.255 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:696 Unpacked 34690 bytes ".oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:696 Unpacked 34690 bytes ".oxen/versions/files/ec/5e4a2be90a371eca8aede72ac19782/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:696 Unpacked 315 bytes ".oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:696 Unpacked 315 bytes ".oxen/versions/files/3b/2f8e8213b919319971827db0ed4d/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/30/c8797597385fb51654280925e20b47/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/30/c8797597385fb51654280925e20b47/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/30/c8797597385fb51654280925e20b47/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/30/c8797597385fb51654280925e20b47/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/30/c8797597385fb51654280925e20b47/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/30/c8797597385fb51654280925e20b47/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:696 Unpacked 138 bytes ".oxen/versions/files/30/c8797597385fb51654280925e20b47/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:696 Unpacked 138 bytes ".oxen/versions/files/30/c8797597385fb51654280925e20b47/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data"
+[DEBUG] 2025-09-16T09:08:32.256 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:696 Unpacked 24178 bytes ".oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:696 Unpacked 24178 bytes ".oxen/versions/files/5e/a3e10ec670f176a69888624d5de149/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:696 Unpacked 25049 bytes ".oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:696 Unpacked 25049 bytes ".oxen/versions/files/ed/9f361c067b654832f134ba4da02e14/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:696 Unpacked 263 bytes ".oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:696 Unpacked 263 bytes ".oxen/versions/files/67/75275bac681fce0b9fe8d647effc50/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data"
+[DEBUG] 2025-09-16T09:08:32.257 - api/client/entries.rs:682 Unpacking ".oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data" into path "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data"
+[DEBUG] 2025-09-16T09:08:32.258 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.258 - api/client/entries.rs:685 Successfully unpacked ".oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data" into dst "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2"
+[DEBUG] 2025-09-16T09:08:32.258 - api/client/entries.rs:696 Unpacked 95 bytes ".oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data"
+[DEBUG] 2025-09-16T09:08:32.258 - api/client/entries.rs:696 Unpacked 95 bytes ".oxen/versions/files/b4/77650ce7a15772427558a4ff7dde31/data"
+[DEBUG] 2025-09-16T09:08:32.260 - core/v_latest/fetch.rs:828 All tasks done. :-)
+[DEBUG] 2025-09-16T09:08:32.260 - core/v_latest/fetch.rs:828 All tasks done. :-)
+[DEBUG] 2025-09-16T09:08:32.260 - core/v_latest/fetch.rs:635 Successfully synced entries!
+[DEBUG] 2025-09-16T09:08:32.260 - core/v_latest/fetch.rs:635 Successfully synced entries!
+[DEBUG] 2025-09-16T09:08:32.260 - model/repository/local_repository.rs:432 Write is shallow [false] to path: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/SHALLOW"
+[DEBUG] 2025-09-16T09:08:32.260 - model/repository/local_repository.rs:432 Write is shallow [false] to path: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/SHALLOW"
+[DEBUG] 2025-09-16T09:08:32.260 - core/commit_sync_status.rs:30 Creating parent directory: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a"
+[DEBUG] 2025-09-16T09:08:32.260 - core/commit_sync_status.rs:30 Creating parent directory: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a"
+[DEBUG] 2025-09-16T09:08:32.260 - core/commit_sync_status.rs:34 Writing is synced: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED"
+[DEBUG] 2025-09-16T09:08:32.260 - core/commit_sync_status.rs:34 Writing is synced: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED"
+[DEBUG] 2025-09-16T09:08:32.260 - core/commit_sync_status.rs:38 Wrote is synced file: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED"
+[DEBUG] 2025-09-16T09:08:32.260 - core/commit_sync_status.rs:38 Wrote is synced file: "/Users/surya/code/Oxen-AI/Oxen/oxen-rust/87fd7b58-3b94-4169-9ce6-71b3689fdbc2/.oxen/tree/sync_status/commits/20b/6bf14246559b6ae33e7d963463d5a/IS_SYNCED"
+[DEBUG] 2025-09-16T09:08:32.261 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:32.261 - reqwest/connect.rs:789 starting new connection: http://localhost:3000/
+[DEBUG] 2025-09-16T09:08:32.261 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:32.261 - hyper_util/client/legacy/connect/http.rs:768 connecting to [::1]:3000
+[DEBUG] 2025-09-16T09:08:32.261 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:32.261 - hyper_util/client/legacy/connect/http.rs:768 connecting to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:32.261 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:32.261 - hyper_util/client/legacy/connect/http.rs:771 connected to 127.0.0.1:3000
+[DEBUG] 2025-09-16T09:08:32.262 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:32.262 - hyper_util/client/legacy/pool.rs:395 pooling idle connection for ("http", localhost:3000)
+[DEBUG] 2025-09-16T09:08:32.262 - repositories/checkout.rs:22 --- CHECKOUT START main ----
+[DEBUG] 2025-09-16T09:08:32.262 - repositories/checkout.rs:22 --- CHECKOUT START main ----
+[DEBUG] 2025-09-16T09:08:32.262 - repositories/revisions.rs:21 revision is a branch: main
+[DEBUG] 2025-09-16T09:08:32.262 - repositories/revisions.rs:21 revision is a branch: main
+[DEBUG] 2025-09-16T09:08:32.262 - core/v_latest/index/commit_merkle_tree.rs:204 Read path "" in commit Commit { id: "20b6bf14246559b6ae33e7d963463d5a", parent_ids: ["25e680986792368e4370eb37570b681a"], message: "Adding rest of data", author: "Ox", email: "ox@oxen.ai", timestamp: 2025-09-16 13:05:55.887951 +00:00:00 } depth: 2147483647
+[DEBUG] 2025-09-16T09:08:32.262 - core/v_latest/index/commit_merkle_tree.rs:204 Read path "" in commit Commit { id: "20b6bf14246559b6ae33e7d963463d5a", parent_ids: ["25e680986792368e4370eb37570b681a"], message: "Adding rest of data", author: "Ox", email: "ox@oxen.ai", timestamp: 2025-09-16 13:05:55.887951 +00:00:00 } depth: 2147483647
+[WARN] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:223 head commit missing, might be a clone
+[WARN] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:223 head commit missing, might be a clone
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "LICENSE"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "LICENSE"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "README.md"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "README.md"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/README.md"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/README.md"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/test/annotations.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/test/annotations.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/annotations.txt"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/annotations.txt"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/bounding_box.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/bounding_box.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/one_shot.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/one_shot.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/two_shot.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "annotations/train/two_shot.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "labels.txt"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "labels.txt"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "large_files/test.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "large_files/test.csv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "nlp/classification/annotations/test.tsv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "nlp/classification/annotations/test.tsv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "nlp/classification/annotations/train.tsv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "nlp/classification/annotations/train.tsv"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "prompts.jsonl"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "prompts.jsonl"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/cat_1.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/cat_1.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/cat_2.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/cat_2.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/dog_1.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/dog_1.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/dog_2.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/dog_2.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/dog_3.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:580 Restoring missing file: "train/dog_3.jpg"
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:254 head commit missing, no cleanup
+[DEBUG] 2025-09-16T09:08:32.264 - core/v_latest/branches.rs:254 head commit missing, no cleanup
+IO(Os { code: 2, kind: NotFoundIO(Os { code: 2, kind: NotFound, message: "No such file or directory" })
+, message: "No such file or directory" })

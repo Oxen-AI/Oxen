@@ -250,8 +250,10 @@ impl CommitMerkleTree {
             commit,
             depth
         );
-
+        log::debug!("shared_hashes before: {:?}", shared_hashes);
+        log::debug!("unique_hashes before: {:?}", unique_hashes);
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        log::debug!("dir_hashes: {:?}", dir_hashes);
         let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
             /*log::debug!(
                 "dir_hashes {:?} does not contain path: {:?}",
@@ -278,6 +280,11 @@ impl CommitMerkleTree {
                 node_hash
             )));
         };
+                
+        log::debug!("shared_hashes afterlen: {:?}", shared_hashes.len());
+        log::debug!("unique_hashes afterlen: {:?}", unique_hashes.len());
+        log::debug!("shared_hashes after: {:?}", shared_hashes);
+        log::debug!("unique_hashes after: {:?}", unique_hashes);
         Ok(Some(root))
     }
 
@@ -1082,7 +1089,8 @@ impl CommitMerkleTree {
                 }
                 // FileChunks and Schemas are leaf nodes
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    node.children.push(child);
+                    node.children.push(child.clone());
+                    unique_hashes.insert((child.hash, child.node.node_type()));
                 }
             }
         }
@@ -1342,7 +1350,8 @@ impl CommitMerkleTree {
         for (_key, child) in children {
             let mut child = child.to_owned();
             // log::debug!("load_unique_children child: {} -> {}", key, child);
-            match &child.node.node_type() {
+            let dtype = child.node.node_type();
+            match dtype {
                 // Directories, VNodes, and Files have children
                 MerkleTreeNodeType::Commit
                 | MerkleTreeNodeType::Dir
@@ -1368,7 +1377,7 @@ impl CommitMerkleTree {
                 // TODO: Error handling for unknown MerkleTreeNode type?
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
                     node.children.push(child.clone());
-                    unique_hashes.insert((child.hash, child.node.node_type()));
+                    unique_hashes.insert((child.hash, dtype));  
                 }
             }
         }

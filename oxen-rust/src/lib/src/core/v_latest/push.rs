@@ -1,7 +1,6 @@
 use futures::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,7 +13,6 @@ use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{
     Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
 };
@@ -123,35 +121,35 @@ async fn push_to_new_branch(
     Ok(())
 }
 
-fn collect_missing_files(
-    node: &MerkleTreeNode,
-    hashes: &HashSet<MerkleHash>,
-    entries: &mut HashSet<Entry>,
-    total_bytes: &mut u64,
-) -> Result<(), OxenError> {
-    log::debug!(
-        "collect_missing_files node: {} children: {}",
-        node,
-        node.children.len()
-    );
-    for child in &node.children {
-        if let EMerkleTreeNode::File(file_node) = &child.node {
-            if !hashes.contains(&child.hash) {
-                continue;
-            }
-            *total_bytes += file_node.num_bytes();
-            entries.insert(Entry::CommitEntry(CommitEntry {
-                commit_id: file_node.last_commit_id().to_string(),
-                path: PathBuf::from(file_node.name()),
-                hash: child.hash.to_string(),
-                num_bytes: file_node.num_bytes(),
-                last_modified_seconds: file_node.last_modified_seconds(),
-                last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
-            }));
-        }
-    }
-    Ok(())
-}
+// fn collect_missing_files(
+//     node: &MerkleTreeNode,
+//     hashes: &HashSet<MerkleHash>,
+//     entries: &mut HashSet<Entry>,
+//     total_bytes: &mut u64,
+// ) -> Result<(), OxenError> {
+//     log::debug!(
+//         "collect_missing_files node: {} children: {}",
+//         node,
+//         node.children.len()
+//     );
+//     for child in &node.children {
+//         if let EMerkleTreeNode::File(file_node) = &child.node {
+//             if !hashes.contains(&child.hash) {
+//                 continue;
+//             }
+//             *total_bytes += file_node.num_bytes();
+//             entries.insert(Entry::CommitEntry(CommitEntry {
+//                 commit_id: file_node.last_commit_id().to_string(),
+//                 path: PathBuf::from(file_node.name()),
+//                 hash: child.hash.to_string(),
+//                 num_bytes: file_node.num_bytes(),
+//                 last_modified_seconds: file_node.last_modified_seconds(),
+//                 last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
+//             }));
+//         }
+//     }
+//     Ok(())
+// }
 
 async fn push_to_existing_branch(
     repo: &LocalRepository,
@@ -345,7 +343,7 @@ async fn get_commit_missing_hashes(
 
         let push_commit_info = PushCommitInfo {
             unique_dir_nodes,
-            unique_files,
+            // unique_files,
             unique_file_entries,
         };
         result.insert(commit.hash().unwrap(), push_commit_info);
@@ -356,7 +354,7 @@ async fn get_commit_missing_hashes(
 
 struct PushCommitInfo {
     unique_dir_nodes: HashSet<MerkleHash>,
-    unique_files: HashSet<MerkleHash>,
+    // unique_files: HashSet<MerkleHash>,
     unique_file_entries: HashSet<CommitEntry>,
 }
 

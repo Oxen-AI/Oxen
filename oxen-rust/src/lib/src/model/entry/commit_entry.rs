@@ -1,5 +1,5 @@
 use crate::constants::VERSION_FILE_NAME;
-use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode, MerkleTreeNode};
+use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
 use crate::model::{Commit, ContentHashable, LocalRepository, RemoteEntry, Schema};
 use crate::util;
 
