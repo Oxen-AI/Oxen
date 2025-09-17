@@ -149,6 +149,7 @@ pub async fn from_directory(
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+    let branch = resource.clone().branch.ok_or(OxenHttpError::NotFound)?;
     let path = resource.path.clone();
     let data: Result<FromDirectoryRequest, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
@@ -179,6 +180,7 @@ pub async fn from_directory(
         &extra_columns,
         recursive,
         &new_commit,
+        &branch,
     )
     .await?;
     Ok(HttpResponse::Ok().json(CommitResponse {

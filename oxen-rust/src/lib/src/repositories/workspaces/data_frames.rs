@@ -13,8 +13,7 @@ use crate::core::db::data_frames::{df_db, workspace_df_db};
 use crate::core::df::sql;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::{Commit, LocalRepository, NewCommitBody, Workspace};
+use crate::model::{Branch, Commit, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
 
@@ -294,15 +293,15 @@ pub async fn from_directory(
     extra_columns: &[NewColumn],
     recursive: bool,
     new_commit: &NewCommitBody,
+    branch: &Branch,
 ) -> Result<Commit, OxenError> {
-    let Some(_dir_node) =
-        repositories::tree::get_dir_with_children(repo, &workspace.commit, path.as_ref())?
-    else {
+    let has_dir = repositories::tree::has_dir(repo, &workspace.commit, path.as_ref())?;
+    if !has_dir {
         return Err(OxenError::basic_str(format!(
             "Directory not found: {:?}",
             path.as_ref()
         )));
-    };
+    }
 
     let depth = if recursive { -1 } else { 1 };
 
@@ -313,14 +312,18 @@ pub async fn from_directory(
         &Some(depth),
     )?;
 
-    let dirs_and_files = subtree.unwrap().list_files_and_dirs()?;
+    let files =
+        repositories::tree::list_all_files(&subtree.unwrap(), &path.as_ref().to_path_buf())?;
 
-    // Extract only file paths (not directories)
-    let file_paths: Vec<String> = dirs_and_files
+    // Extract file paths from FileNodeWithDir
+    let file_paths: Vec<String> = files
         .iter()
-        .filter_map(|(path, node)| match &node.node {
-            EMerkleTreeNode::File(_) => Some(path.to_string_lossy().to_string()),
-            _ => None,
+        .map(|file_with_dir| {
+            file_with_dir
+                .dir
+                .join(&file_with_dir.file_node.name())
+                .to_string_lossy()
+                .to_string()
         })
         .collect();
 
@@ -331,12 +334,25 @@ pub async fn from_directory(
             // Create initial table with just file_path column
             conn.execute("CREATE TABLE file_listing (file_path VARCHAR);", [])?;
 
-            // Insert file paths
-            for file_path in &file_paths {
-                conn.execute(
-                    "INSERT INTO file_listing (file_path) VALUES (?);",
-                    [file_path],
-                )?;
+            // Insert file paths using bulk insert
+            if !file_paths.is_empty() {
+                let values_clause = file_paths
+                    .iter()
+                    .map(|_| "(?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let bulk_insert_sql = format!(
+                    "INSERT INTO file_listing (file_path) VALUES {}",
+                    values_clause
+                );
+
+                let params: Vec<&dyn duckdb::ToSql> = file_paths
+                    .iter()
+                    .map(|path| path as &dyn duckdb::ToSql)
+                    .collect();
+
+                conn.execute(&bulk_insert_sql, params.as_slice())?;
             }
 
             // Add each extra column using the existing function
@@ -363,7 +379,7 @@ pub async fn from_directory(
 
     repositories::workspaces::files::add(workspace, &output_path).await?;
 
-    let commit = repositories::workspaces::commit(workspace, new_commit, "main")?;
+    let commit = repositories::workspaces::commit(workspace, new_commit, branch.name.as_str())?;
     println!(
         "Created parquet file with {} file paths at: {:?}",
         file_paths.len(),
