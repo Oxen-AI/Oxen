@@ -43,12 +43,15 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Err(OxenHttpError::NotFound);
     }
 
-    let data = repo.version_store()?.get_version(&version_id).await?;
+    let metadata = repo
+        .version_store()?
+        .get_version_metadata(&version_id)
+        .await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
             hash: version_id,
-            size: data.len() as u64,
+            size: metadata.len() as u64,
         },
     }))
 }
@@ -130,6 +133,7 @@ pub async fn batch_download(
     while let Some(item) = body.next().await {
         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
     }
+
     log::debug!(
         "batch_download got repo [{}] and content_ids size {}",
         repo_name,
@@ -144,7 +148,7 @@ pub async fn batch_download(
     }
 
     let file_hashes: Vec<String> = line_delimited_files
-        .split('\n')
+        .lines()
         .map(str::trim)
         .filter(|hash| !hash.is_empty())
         .filter(|hash| hash.chars().all(|c| c.is_ascii_hexdigit()))

@@ -386,7 +386,12 @@ async fn parallel_batched_small_file_upload(
         handles.push(handle);
     }
 
-    futures::future::join_all(handles).await;
+    let join_results = futures::future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
     log::debug!("All upload tasks completed");
 
     tokio::time::sleep(Duration::from_millis(100)).await;

@@ -687,7 +687,12 @@ async fn pull_large_entries(
         });
         handles.push(handle);
     }
-    future::join_all(handles).await;
+    let join_results = future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
 
     log::debug!("All large file tasks done. :-)");
 
@@ -771,7 +776,12 @@ async fn pull_small_entries(
         });
         handles.push(handle);
     }
-    future::join_all(handles).await;
+    let join_results = future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
 
     log::debug!("All tasks done. :-)");
 
@@ -922,7 +932,12 @@ async fn download_large_entries(
         });
         handles.push(handle);
     }
-    future::join_all(handles).await;
+    let join_results = future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
 
     log::debug!("All large file tasks done. :-)");
 
@@ -949,13 +964,16 @@ async fn download_small_entries(
         chunk_size = entries.len();
     }
 
-    log::debug!("pull_small_entries got {} missing entries", entries.len());
+    log::debug!(
+        "download_small_entries got {} missing entries",
+        entries.len()
+    );
 
     // Split into chunks, zip up, and post to server
     type PieceOfWork = (RemoteRepository, HashMap<String, PathBuf>, PathBuf);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
-    log::debug!("pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
+    log::debug!("download_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
@@ -1005,7 +1023,12 @@ async fn download_small_entries(
         handles.push(handle);
     }
 
-    future::join_all(handles).await;
+    let join_results = future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
     log::debug!("All tasks done. :-)");
 
     Ok(())
@@ -1054,35 +1077,3 @@ fn working_dir_paths_from_large_entries(entries: &[Entry], dst: &Path) -> Vec<Pa
     }
     paths
 }
-
-// // This one redundantly is just going to pass in two copies of
-// // the version path so we don't have to change download_data_from_version_paths
-// fn version_dir_paths_from_small_entries(entries: &[Entry], dst: &Path) -> Vec<(String, PathBuf)> {
-//     let mut content_ids: Vec<(String, PathBuf)> = vec![];
-//     for entry in entries.iter() {
-//         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
-//         let version_path = util::fs::path_relative_to_dir(&version_path, dst).unwrap();
-
-//         // TODO: This is annoying but the older client passes in the full path to the version file with the extension
-//         // ie .oxen/versions/files/71/7783cda74ceeced8d45fae3155382c/data.jpg
-//         // but the new client passes in the path without the extension
-//         // ie .oxen/versions/files/71/7783cda74ceeced8d45fae3155382c/data
-//         // So we need to support both formats.
-//         // In an ideal world we would just pass in the HASH and not the full path to save on bandwidth as well
-//         let content_id = String::from(version_path.to_str().unwrap()).replace('\\', "/");
-
-//         // Again...annoying that we need to pass in .oxen/versions/files/71/7783cda74ceeced8d45fae3155382c/data.jpg for now
-//         // instead of just "717783cda74ceeced8d45fae3155382c" but here we are.
-//         content_ids.push((content_id, version_path.to_owned()))
-//     }
-//     content_ids
-// }
-
-// fn version_dir_paths_from_large_entries(entries: &[Entry], dst: &Path) -> Vec<PathBuf> {
-//     let mut paths: Vec<PathBuf> = vec![];
-//     for entry in entries.iter() {
-//         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
-//         paths.push(version_path);
-//     }
-//     paths
-// }

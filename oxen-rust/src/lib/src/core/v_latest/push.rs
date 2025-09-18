@@ -584,7 +584,12 @@ async fn chunk_and_send_large_entries(
         handles.push(handle);
     }
 
-    futures::future::join_all(handles).await;
+    let join_results = futures::future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
 
     if let Some(err) = first_error.lock().await.clone() {
         return Err(OxenError::basic_str(err));
@@ -929,7 +934,12 @@ async fn bundle_and_send_small_entries(
         handles.push(handle);
     }
 
-    futures::future::join_all(handles).await;
+    let join_results = futures::future::join_all(handles).await;
+    for res in join_results {
+        if let Err(e) = res {
+            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        }
+    }
 
     if let Some(err) = first_error.lock().await.clone() {
         return Err(OxenError::basic_str(err));

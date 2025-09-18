@@ -481,7 +481,7 @@ async fn try_pull_entry_chunk(
                 );
                 try_num += 1;
                 let sleep_time = try_num * try_num;
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
@@ -745,7 +745,7 @@ async fn try_download_entry_chunk(
                 );
                 try_num += 1;
                 let sleep_time = try_num * try_num;
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }

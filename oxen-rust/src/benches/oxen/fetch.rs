@@ -113,7 +113,7 @@ async fn setup_repo_for_fetch_benchmark(
     };
 
     repositories::add(&repo, black_box(&files_dir)).await?;
-    repositories::commit(&repo, "Prepare test files for push benchmark")?;
+    repositories::commit(&repo, "Prepare test files for fetch benchmark")?;
     repositories::push(&repo).await?;
 
     std::fs::remove_dir_all(&repo_dir)?;
@@ -159,33 +159,45 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
             ),
             &(num_files_to_fetch, dir_size),
             |b, _| {
-                // Create a clean local repo without the files
-                let oxen_hidden_path = util::fs::oxen_hidden_dir(&repo_dir);
-                util::fs::create_dir_all(&oxen_hidden_path).unwrap();
+                b.to_async(&rt).iter_batched(
+                    || {
+                        let iter_dir =
+                            repo_dir.join(format!("run-{}", rand::thread_rng().gen::<u64>()));
 
-                // set remote
-                let mut local_repo =
-                    LocalRepository::from_remote(remote_repo.clone(), &repo_dir).unwrap();
-                repo_dir.clone_into(&mut local_repo.path);
-                local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-                local_repo.set_min_version(repo.min_version());
-                local_repo.set_subtree_paths(repo.subtree_paths());
-                local_repo.set_depth(repo.depth());
+                        // Create a clean local repo without the files
+                        let oxen_hidden_path = util::fs::oxen_hidden_dir(&iter_dir);
+                        util::fs::create_dir_all(&oxen_hidden_path).unwrap();
 
-                local_repo.save().unwrap();
+                        // create a clean local repo ready for the fetch
+                        let mut local_repo =
+                            LocalRepository::from_remote(remote_repo.clone(), &iter_dir).unwrap();
+                        iter_dir.clone_into(&mut local_repo.path);
+                        local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+                        local_repo.set_min_version(repo.min_version());
+                        local_repo.set_subtree_paths(repo.subtree_paths());
+                        local_repo.set_depth(repo.depth());
 
-                let mut fetch_opts = FetchOpts::new();
-                let subtrees = local_repo.subtree_paths();
-                fetch_opts.subtree_paths = subtrees;
+                        local_repo.save().unwrap();
 
-                b.to_async(&rt).iter(|| async {
-                    repositories::fetch_all(&repo, &fetch_opts).await.unwrap();
-                });
+                        let mut fetch_opts = FetchOpts::new();
+                        let subtrees = local_repo.subtree_paths();
+                        fetch_opts.subtree_paths = subtrees;
 
-                std::fs::remove_dir_all(&repo_dir).unwrap();
-                std::thread::sleep(std::time::Duration::from_millis(1000));
+                        (local_repo.clone(), fetch_opts, iter_dir.clone())
+                    },
+                    |(local_repo, fetch_opts, iter_dir)| async move {
+                        repositories::fetch_all(&local_repo, &fetch_opts)
+                            .await
+                            .unwrap();
+
+                        std::fs::remove_dir_all(&iter_dir).unwrap();
+                    },
+                    criterion::BatchSize::PerIteration,
+                );
             },
         );
+        std::fs::remove_dir_all(&repo_dir).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
 
         let _ = rt
             .block_on(api::client::repositories::delete(&remote_repo))
