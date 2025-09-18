@@ -152,24 +152,6 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
             ))
             .unwrap();
 
-        // Create a clean local repo without the files
-        let oxen_hidden_path = util::fs::oxen_hidden_dir(&repo_dir);
-        util::fs::create_dir_all(&oxen_hidden_path).unwrap();
-
-        // set remote
-        let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), &repo_dir).unwrap();
-        repo_dir.clone_into(&mut local_repo.path);
-        local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-        local_repo.set_min_version(repo.min_version());
-        local_repo.set_subtree_paths(repo.subtree_paths());
-        local_repo.set_depth(repo.depth());
-
-        local_repo.save().unwrap();
-
-        let mut fetch_opts = FetchOpts::new();
-        let subtrees = local_repo.subtree_paths();
-        fetch_opts.subtree_paths = subtrees;
-
         group.bench_with_input(
             BenchmarkId::new(
                 format!("{}_files_in_{}dirs", num_files_to_fetch, dir_size),
@@ -177,16 +159,34 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
             ),
             &(num_files_to_fetch, dir_size),
             |b, _| {
+                // Create a clean local repo without the files
+                let oxen_hidden_path = util::fs::oxen_hidden_dir(&repo_dir);
+                util::fs::create_dir_all(&oxen_hidden_path).unwrap();
+
+                // set remote
+                let mut local_repo =
+                    LocalRepository::from_remote(remote_repo.clone(), &repo_dir).unwrap();
+                repo_dir.clone_into(&mut local_repo.path);
+                local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+                local_repo.set_min_version(repo.min_version());
+                local_repo.set_subtree_paths(repo.subtree_paths());
+                local_repo.set_depth(repo.depth());
+
+                local_repo.save().unwrap();
+
+                let mut fetch_opts = FetchOpts::new();
+                let subtrees = local_repo.subtree_paths();
+                fetch_opts.subtree_paths = subtrees;
+
                 b.to_async(&rt).iter(|| async {
-                    repositories::fetch_all(&local_repo, &fetch_opts)
-                        .await
-                        .unwrap();
+                    repositories::fetch_all(&repo, &fetch_opts).await.unwrap();
                 });
+
+                std::fs::remove_dir_all(&repo_dir).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(1000));
             },
         );
 
-        std::fs::remove_dir_all(&repo_dir).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = rt
             .block_on(api::client::repositories::delete(&remote_repo))
             .unwrap();

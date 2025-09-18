@@ -151,20 +151,6 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
             ))
             .unwrap();
 
-        // Create a clean local repo without the files
-        let oxen_hidden_path = util::fs::oxen_hidden_dir(&repo_dir);
-        util::fs::create_dir_all(&oxen_hidden_path).unwrap();
-
-        // create a clean local repo ready for the fetch
-        let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), &repo_dir).unwrap();
-        repo_dir.clone_into(&mut local_repo.path);
-        local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-        local_repo.set_min_version(repo.min_version());
-        local_repo.set_subtree_paths(repo.subtree_paths());
-        local_repo.set_depth(repo.depth());
-
-        local_repo.save().unwrap();
-
         group.bench_with_input(
             BenchmarkId::new(
                 format!("{}k_files_in_{}dirs", num_files_to_download, dir_size),
@@ -172,15 +158,31 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
             ),
             &(num_files_to_download, dir_size),
             |b, _| {
+                // Create a clean local repo without the files
+                let oxen_hidden_path = util::fs::oxen_hidden_dir(&repo_dir);
+                util::fs::create_dir_all(&oxen_hidden_path).unwrap();
+
+                // create a clean local repo ready for the fetch
+                let mut local_repo =
+                    LocalRepository::from_remote(remote_repo.clone(), &repo_dir).unwrap();
+                repo_dir.clone_into(&mut local_repo.path);
+                local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+                local_repo.set_min_version(repo.min_version());
+                local_repo.set_subtree_paths(repo.subtree_paths());
+                local_repo.set_depth(repo.depth());
+
+                local_repo.save().unwrap();
+
                 b.to_async(&rt).iter(|| async {
                     repositories::download(&remote_repo, Path::new("files"), &repo_dir, "main")
                         .await
                         .unwrap();
                 });
+
+                std::fs::remove_dir_all(&repo_dir).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(1000));
             },
         );
-        std::fs::remove_dir_all(&repo_dir).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = rt
             .block_on(api::client::repositories::delete(&remote_repo))
             .unwrap();

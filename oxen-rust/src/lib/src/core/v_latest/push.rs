@@ -504,7 +504,6 @@ async fn chunk_and_send_large_entries(
     use tokio::time::sleep;
     type PieceOfWork = (Entry, LocalRepository, Commit, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
     let entries: Vec<PieceOfWork> = entries
@@ -520,10 +519,8 @@ async fn chunk_and_send_large_entries(
         .collect();
 
     let queue = Arc::new(TaskQueue::new(entries.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(entries.len()));
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
-        finished_queue.try_push(false).unwrap();
     }
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
@@ -534,21 +531,24 @@ async fn chunk_and_send_large_entries(
     );
     let should_stop = Arc::new(AtomicBool::new(false));
     let first_error = Arc::new(Mutex::new(None::<String>));
+    let mut handles = vec![];
 
     for worker in 0..worker_count {
         let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 if should_stop.load(Ordering::Relaxed) {
                     break;
                 }
 
-                let (entry, repo, commit, remote_repo) = queue.pop().await;
+                let Some((entry, repo, commit, remote_repo)) = queue.try_pop() else {
+                    // reached end of queue
+                    break;
+                };
 
                 match upload_large_file_chunks(
                     entry.clone(),
@@ -579,16 +579,12 @@ async fn chunk_and_send_large_entries(
                         break;
                     }
                 }
-
-                finished_queue.pop().await;
             }
         });
+        handles.push(handle);
     }
 
-    while !finished_queue.is_empty() {
-        // log::debug!("Before waiting for {} workers to finish...", queue.len());
-        sleep(Duration::from_secs(1)).await;
-    }
+    futures::future::join_all(handles).await;
 
     if let Some(err) = first_error.lock().await.clone() {
         return Err(OxenError::basic_str(err));
@@ -875,6 +871,7 @@ async fn bundle_and_send_small_entries(
     use std::sync::atomic::{AtomicBool, Ordering};
     let should_stop = Arc::new(AtomicBool::new(false));
     let first_error = Arc::new(Mutex::new(None::<String>));
+    let mut handles = vec![];
 
     for worker in 0..worker_count {
         let queue = queue.clone();
@@ -882,23 +879,16 @@ async fn bundle_and_send_small_entries(
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
-        tokio::spawn(async move {
-            use tokio::time::sleep as tokio_sleep;
+        let handle = tokio::spawn(async move {
             loop {
                 log::debug!("worker[{worker}] processing task");
                 if should_stop.load(Ordering::Relaxed) {
                     break;
                 }
 
-                // Pop work, but periodically check for stop signal
-                let (chunk, repo, _commit, remote_repo, client) = tokio::select! {
-                    item = queue.pop() => item,
-                    _ = tokio_sleep(Duration::from_millis(200)) => {
-                        if should_stop.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        continue;
-                    }
+                let Some((chunk, repo, _commit, remote_repo, client)) = queue.try_pop() else {
+                    // reached end of queue
+                    break;
                 };
 
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
@@ -936,11 +926,10 @@ async fn bundle_and_send_small_entries(
                 }
             }
         });
+        handles.push(handle);
     }
 
-    while !finished_queue.is_empty() {
-        sleep(Duration::from_secs(1)).await;
-    }
+    futures::future::join_all(handles).await;
 
     if let Some(err) = first_error.lock().await.clone() {
         return Err(OxenError::basic_str(err));

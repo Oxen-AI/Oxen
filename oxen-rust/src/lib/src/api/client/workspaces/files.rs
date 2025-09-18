@@ -313,11 +313,9 @@ async fn parallel_batched_small_file_upload(
 
     type PieceOfWork = (Vec<PathBuf>, String, String, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
     let worker_count = concurrency::num_threads_for_items(batches.len());
     let queue = Arc::new(TaskQueue::new(batches.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(batches.len()));
 
     for batch in batches {
         queue
@@ -328,21 +326,24 @@ async fn parallel_batched_small_file_upload(
                 remote_repo.clone(),
             ))
             .unwrap();
-        finished_queue.try_push(false).unwrap();
     }
 
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
-
+    let mut handles = vec![];
     for worker in 0..worker_count {
         let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
         let client = client.clone();
         let local_repo = local_repo.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
-                let (batch, workspace_id, directory_str, remote_repo) = queue.pop().await;
+                let Some((batch, workspace_id, directory_str, remote_repo)) = queue.try_pop()
+                else {
+                    // reached end of queue
+                    break;
+                };
+
                 log::debug!(
                     "worker[{}] processing batch of {} files",
                     worker,
@@ -380,15 +381,12 @@ async fn parallel_batched_small_file_upload(
                     }
                     Err(err) => log::debug!("Failed to upload batch of files: {}", err),
                 }
-
-                finished_queue.pop().await;
             }
         });
+        handles.push(handle);
     }
 
-    while !finished_queue.is_empty() {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+    futures::future::join_all(handles).await;
     log::debug!("All upload tasks completed");
 
     tokio::time::sleep(Duration::from_millis(100)).await;

@@ -1,3 +1,4 @@
+use futures::future;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -628,10 +629,8 @@ async fn pull_large_entries(
         return Ok(());
     }
     // Pull the large entries in parallel
-    use tokio::time::{sleep, Duration};
     type PieceOfWork = (LocalRepository, RemoteRepository, Entry);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
     let entries: Vec<PieceOfWork> = entries
@@ -640,10 +639,8 @@ async fn pull_large_entries(
         .collect();
 
     let queue = Arc::new(TaskQueue::new(entries.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(entries.len()));
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
-        finished_queue.try_push(false).unwrap();
     }
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
@@ -652,15 +649,17 @@ async fn pull_large_entries(
         worker_count,
         entries.len()
     );
+    let mut handles = vec![];
 
     for worker in 0..worker_count {
         let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
-                let (repo, remote_repo, entry) = queue.pop().await;
-
+                let Some((repo, remote_repo, entry)) = queue.try_pop() else {
+                    // reached end of queue
+                    break;
+                };
                 log::debug!("worker[{}] processing task...", worker);
 
                 // Chunk and individual files
@@ -676,7 +675,7 @@ async fn pull_large_entries(
                 .await
                 {
                     Ok(_) => {
-                        // log::debug!("Downloaded large entry {:?} to versions dir", remote_path);
+                        log::debug!("Pulled large entry {:?} to versions dir", remote_path);
                         progress_bar.add_bytes(entry.num_bytes());
                         progress_bar.add_files(1);
                     }
@@ -684,16 +683,12 @@ async fn pull_large_entries(
                         log::error!("Could not download chunk... {}", err)
                     }
                 }
-
-                finished_queue.pop().await;
             }
         });
+        handles.push(handle);
     }
+    future::join_all(handles).await;
 
-    while !finished_queue.is_empty() {
-        // log::debug!("Before waiting for {} workers to finish...", queue.len());
-        sleep(Duration::from_secs(1)).await;
-    }
     log::debug!("All large file tasks done. :-)");
 
     Ok(())
@@ -725,10 +720,8 @@ async fn pull_small_entries(
     );
 
     // Split into chunks, zip up, and post to server
-    use tokio::time::{sleep, Duration};
     type PieceOfWork = (RemoteRepository, Vec<String>, LocalRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
     log::debug!("pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
 
@@ -743,19 +736,20 @@ async fn pull_small_entries(
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     let queue = Arc::new(TaskQueue::new(chunks.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(entries.len()));
     for chunk in chunks {
         queue.try_push(chunk).unwrap();
-        finished_queue.try_push(false).unwrap();
     }
+    let mut handles = vec![];
 
     for worker in 0..worker_count {
         let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
-                let (remote_repo, chunk, local_repo) = queue.pop().await;
+                let Some((remote_repo, chunk, local_repo)) = queue.try_pop() else {
+                    // reached end of queue
+                    break;
+                };
                 log::debug!("worker[{}] processing task...", worker);
 
                 match api::client::versions::download_data_from_version_paths(
@@ -773,15 +767,12 @@ async fn pull_small_entries(
                         log::error!("Could not pull entries... {}", err)
                     }
                 }
-
-                finished_queue.pop().await;
             }
         });
+        handles.push(handle);
     }
-    while !finished_queue.is_empty() {
-        // log::debug!("Waiting for {} workers to finish...", queue.len());
-        sleep(Duration::from_millis(1)).await;
-    }
+    future::join_all(handles).await;
+
     log::debug!("All tasks done. :-)");
 
     Ok(())
@@ -862,10 +853,8 @@ async fn download_large_entries(
         return Ok(());
     }
     // Pull the large entries in parallel
-    use tokio::time::{sleep, Duration};
     type PieceOfWork = (RemoteRepository, Entry, PathBuf, PathBuf);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
     let large_entry_paths = working_dir_paths_from_large_entries(&entries, dst.as_ref());
@@ -883,10 +872,8 @@ async fn download_large_entries(
         .collect();
 
     let queue = Arc::new(TaskQueue::new(entries.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(entries.len()));
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
-        finished_queue.try_push(false).unwrap();
     }
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
@@ -895,16 +882,18 @@ async fn download_large_entries(
         worker_count,
         entries.len()
     );
+    let mut handles = vec![];
     let tmp_dir = util::fs::oxen_hidden_dir(dst).join("tmp").join("pulled");
     log::debug!("Backing up pulls to tmp dir: {:?}", &tmp_dir);
     for worker in 0..worker_count {
         let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
-                let (remote_repo, entry, _dst, download_path) = queue.pop().await;
-
+                let Some((remote_repo, entry, _dst, download_path)) = queue.try_pop() else {
+                    // reached end of queue
+                    break;
+                };
                 log::debug!("worker[{}] processing task...", worker);
 
                 // Chunk and individual files
@@ -929,16 +918,12 @@ async fn download_large_entries(
                         log::error!("Could not download chunk... {}", err)
                     }
                 }
-
-                finished_queue.pop().await;
             }
         });
+        handles.push(handle);
     }
+    future::join_all(handles).await;
 
-    while !finished_queue.is_empty() {
-        // log::debug!("Before waiting for {} workers to finish...", queue.len());
-        sleep(Duration::from_secs(1)).await;
-    }
     log::debug!("All large file tasks done. :-)");
 
     Ok(())
@@ -967,10 +952,8 @@ async fn download_small_entries(
     log::debug!("pull_small_entries got {} missing entries", entries.len());
 
     // Split into chunks, zip up, and post to server
-    use tokio::time::{sleep, Duration};
     type PieceOfWork = (RemoteRepository, HashMap<String, PathBuf>, PathBuf);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
     log::debug!("pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
     let chunks: Vec<PieceOfWork> = entries
@@ -986,19 +969,20 @@ async fn download_small_entries(
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     let queue = Arc::new(TaskQueue::new(chunks.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(entries.len()));
     for chunk in chunks {
         queue.try_push(chunk).unwrap();
-        finished_queue.try_push(false).unwrap();
     }
+    let mut handles = vec![];
 
     for worker in 0..worker_count {
         let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
-                let (remote_repo, chunk, path) = queue.pop().await;
+                let Some((remote_repo, chunk, path)) = queue.try_pop() else {
+                    // reached end of queue
+                    break;
+                };
                 log::debug!("worker[{}] processing task...", worker);
 
                 match api::client::entries::download_data_from_version_paths(
@@ -1016,15 +1000,12 @@ async fn download_small_entries(
                         log::error!("Could not download entries... {}", err)
                     }
                 }
-
-                finished_queue.pop().await;
             }
         });
+        handles.push(handle);
     }
-    while !finished_queue.is_empty() {
-        // log::debug!("Waiting for {} workers to finish...", queue.len());
-        sleep(Duration::from_millis(1)).await;
-    }
+
+    future::join_all(handles).await;
     log::debug!("All tasks done. :-)");
 
     Ok(())
