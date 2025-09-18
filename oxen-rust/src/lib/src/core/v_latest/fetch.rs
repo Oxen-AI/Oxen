@@ -317,7 +317,11 @@ fn collect_missing_entries(
                 &mut missing_entries,
                 total_bytes,
             )?;
-            log::debug!("😂 collect_missing_entries {:?} total_bytes: {}", missing_entries, total_bytes);
+            log::debug!(
+                "😂 collect_missing_entries {:?} total_bytes: {}",
+                missing_entries,
+                total_bytes
+            );
         }
     }
     Ok(missing_entries)
@@ -330,7 +334,10 @@ fn collect_missing_entries_for_subtree(
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
     let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree, subtree_path)?;
-    log::debug!("collect_missing_entries_for_subtree fileslen: {:?}", files.len());
+    log::debug!(
+        "collect_missing_entries_for_subtree fileslen: {:?}",
+        files.len()
+    );
     log::debug!("collect_missing_entries_for_subtree files: {:?}", files);
     for file in files {
         log::debug!("collect_missing_entries_for_subtree file: {:?}", file);
@@ -600,6 +607,7 @@ pub async fn pull_entries(
         .filter(|e| e.num_bytes() <= AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
+    log::debug!("😂 smaller_entries: {:?}", smaller_entries);
 
     // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and download the chunks in parallel
     let larger_entries: Vec<Entry> = missing_entries
@@ -607,6 +615,7 @@ pub async fn pull_entries(
         .filter(|e| e.num_bytes() > AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
+    log::debug!("🐘 larger_entries: {:?}", larger_entries);
 
     // Either download to the working directory or the versions directory
     let (small_entry_paths, large_entry_paths) = if to_working_dir {
@@ -755,6 +764,9 @@ async fn pull_small_entries(
     if content_ids.is_empty() {
         return Ok(());
     }
+    log::debug!("⬇️ pull_small_entries starting...");
+    log::debug!("entries len: {}", entries.len());
+    log::debug!("entries: {:?}", entries);
 
     let total_size = repositories::entries::compute_generic_entries_size(&entries)?;
 
@@ -788,6 +800,7 @@ async fn pull_small_entries(
             )
         })
         .collect();
+    log::debug!("pull_small_entries chunks: {:#?}", chunks);
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     let queue = Arc::new(TaskQueue::new(chunks.len()));
@@ -876,7 +889,9 @@ fn working_dir_paths_from_small_entries(entries: &[Entry], dst: &Path) -> Vec<(S
 
     for entry in entries.iter() {
         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
+        log::debug!("version_path: {:?}", version_path);
         let version_path = util::fs::path_relative_to_dir(&version_path, dst).unwrap();
+        log::debug!("version_path relative: {:?}", version_path);
 
         content_ids.push((
             String::from(version_path.to_str().unwrap()).replace('\\', "/"),

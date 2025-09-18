@@ -639,6 +639,8 @@ pub async fn try_download_data_from_version_paths(
 
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.get(&url).body(body).send().await {
+        log::debug!("download_data_from_version_paths status: {}", res.status());
+        log::debug!("download_data_from_version_paths body: {:?}", res);
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
             log::error!("{}", err);
@@ -656,8 +658,12 @@ pub async fn try_download_data_from_version_paths(
         let mut idx: usize = 0;
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
+        let mut count = 0;
         while let Some(file) = entries.next().await {
+            count += 1;
+            log::debug!("download_data_from_version_paths file: {:?}", file);
             let entry_path = &content_ids[idx].1;
+            // log::debug!("download_data_from_version_paths entry_path: {:?}", entry_path);
             // let version = &content_ids[idx];
             // log::debug!(
             //     "download_data_from_version_paths Unpacking {:?} -> {:?}",
@@ -670,13 +676,27 @@ pub async fn try_download_data_from_version_paths(
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file {:?} -> {:?}", entry_path, err);
+                    let err = format!("Could not unwrap file: {:?}", err);
                     return Err(OxenError::basic_str(err));
                 }
             };
+            // let entry_path = file.path()?.to_path_buf();
+            // let full_path = dst.join(entry_path.clone());
+            log::debug!("download_data_from_version_paths file: {:?}", file);
+            log::debug!(
+                "download_data_from_version_paths entry_path : {:?} full_path: {:?}",
+                entry_path,
+                full_path
+            );
 
             if let Some(parent) = full_path.parent() {
+                log::debug!(
+                    "Creating parent dir {:?} during file: {:?}",
+                    parent,
+                    entry_path
+                );
                 util::fs::create_dir_all(parent)?;
+                log::debug!("Created parent dir {:?}", parent);
             }
 
             log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
@@ -695,7 +715,7 @@ pub async fn try_download_data_from_version_paths(
             idx += 1;
             log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
-
+        log::debug!("download_data_from_version_paths unpacked {} files", count);
         Ok(size)
     } else {
         let err =
@@ -898,7 +918,7 @@ mod tests {
             let revision = DEFAULT_BRANCH_NAME;
             api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
                 .await?;
-
+            println!("local_path: {:?}", local_path.join("annotations").join("README.md"));
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
             assert!(local_path

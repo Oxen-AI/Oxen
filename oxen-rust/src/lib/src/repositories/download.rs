@@ -213,9 +213,12 @@ mod tests {
             let output_dir = Path::new("output");
             repositories::download(&remote_repo, &dir, &output_dir, &branch.name).await?;
 
+            println!("num_files: {}", num_files);
             // Check that the files are there
             for i in 0..num_files {
+                println!("checking path: {:?}", output_dir.join("train").join(format!("file_{}.txt", i)));
                 let path = output_dir.join("train").join(format!("file_{}.txt", i));
+                println!("path exists: {}", path.exists());
                 assert!(path.exists());
             }
 

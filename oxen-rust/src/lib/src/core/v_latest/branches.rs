@@ -270,10 +270,12 @@ pub async fn checkout_subtrees(
                 }
             }
         } else {
-
             log::debug!("not in remote mode, restoring all files");
             log::debug!("results.files_to_restore: {:?}", results.files_to_restore);
-            log::debug!("results.files_to_restore.len(): {}", results.files_to_restore.len());
+            log::debug!(
+                "results.files_to_restore.len(): {}",
+                results.files_to_restore.len()
+            );
             for file_to_restore in results.files_to_restore {
                 log::debug!("restoring file: {:?}", file_to_restore);
                 log::debug!("file_to_restore.path: {:?}", file_to_restore.path);
@@ -285,7 +287,6 @@ pub async fn checkout_subtrees(
                 )
                 .await?;
                 log::debug!("restored file: {:?}", file_to_restore.file_node);
-            
             }
         }
     }
