@@ -121,7 +121,6 @@ async fn push_to_new_branch(
     Ok(())
 }
 
-
 async fn push_to_existing_branch(
     repo: &LocalRepository,
     commit: &Commit,
@@ -409,7 +408,6 @@ async fn push_commits(
 
     Ok(())
 }
-
 
 pub async fn push_entries(
     local_repo: &LocalRepository,

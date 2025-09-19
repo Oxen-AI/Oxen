@@ -1059,7 +1059,7 @@ impl CommitMerkleTree {
                             traversed_depth + 1
                         };
 
-                            // Update current_path so that the partial nodes will have the correct path
+                        // Update current_path so that the partial nodes will have the correct path
                         let new_path = if let EMerkleTreeNode::Directory(dir_node) = &child.node {
                             let name = PathBuf::from(dir_node.name());
                             &current_path.join(name)

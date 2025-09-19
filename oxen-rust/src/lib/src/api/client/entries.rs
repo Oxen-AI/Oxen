@@ -664,13 +664,13 @@ pub async fn try_download_data_from_version_paths(
             log::debug!("download_data_from_version_paths file: {:?}", file);
 
             let entry_path = &content_ids[idx].1;
-                
-                let full_path = dst.join(entry_path);
-                
-                let mut file = match file {
-                    Ok(file) => file,
-                    Err(err) => {
-                        let err = format!("Could not unwrap file: {:?}", err);
+
+            let full_path = dst.join(entry_path);
+
+            let mut file = match file {
+                Ok(file) => file,
+                Err(err) => {
+                    let err = format!("Could not unwrap file: {:?}", err);
                     return Err(OxenError::basic_str(err));
                 }
             };

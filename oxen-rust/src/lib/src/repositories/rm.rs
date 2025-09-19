@@ -236,7 +236,11 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_csv_file_with_name("emojis.csv");
             let directory_name = "phi-4";
-            println!("Uploading {} to workspace dir {}", file_to_post.to_string_lossy(), directory_name);
+            println!(
+                "Uploading {} to workspace dir {}",
+                file_to_post.to_string_lossy(),
+                directory_name
+            );
             let result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,

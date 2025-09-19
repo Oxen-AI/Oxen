@@ -145,8 +145,7 @@ impl PartialEq for CommitEntry {
     }
 }
 
-impl Eq for CommitEntry {
-}
+impl Eq for CommitEntry {}
 impl Hash for CommitEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.path.hash(state);
