@@ -639,6 +639,8 @@ pub async fn try_download_data_from_version_paths(
 
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.get(&url).body(body).send().await {
+        log::debug!("download_data_from_version_paths status: {}", res.status());
+        log::debug!("download_data_from_version_paths body: {:?}", res);
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
             log::error!("{}", err);
@@ -657,20 +659,16 @@ pub async fn try_download_data_from_version_paths(
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
         while let Some(file) = entries.next().await {
+            log::debug!("download_data_from_version_paths file: {:?}", file);
+
             let entry_path = &content_ids[idx].1;
-            // let version = &content_ids[idx];
-            // log::debug!(
-            //     "download_data_from_version_paths Unpacking {:?} -> {:?}",
-            //     version,
-            //     entry_path
-            // );
 
             let full_path = dst.join(entry_path);
 
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file {:?} -> {:?}", entry_path, err);
+                    let err = format!("Could not unwrap file: {:?}", err);
                     return Err(OxenError::basic_str(err));
                 }
             };
@@ -679,7 +677,6 @@ pub async fn try_download_data_from_version_paths(
                 util::fs::create_dir_all(parent)?;
             }
 
-            log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
             match file.unpack(&full_path).await {
                 Ok(_) => {
                     log::debug!("Successfully unpacked {:?} into dst {:?}", entry_path, dst);
@@ -693,9 +690,7 @@ pub async fn try_download_data_from_version_paths(
             let metadata = util::fs::metadata(&full_path)?;
             size += metadata.len();
             idx += 1;
-            log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
-
         Ok(size)
     } else {
         let err =
@@ -898,7 +893,6 @@ mod tests {
             let revision = DEFAULT_BRANCH_NAME;
             api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
                 .await?;
-
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
             assert!(local_path

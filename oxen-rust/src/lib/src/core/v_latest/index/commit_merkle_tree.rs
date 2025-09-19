@@ -117,8 +117,8 @@ impl CommitMerkleTree {
     pub fn get_unique_children_for_commit(
         repo: &LocalRepository,
         commit: &Commit,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
+        shared_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
+        unique_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let node_hash = MerkleHash::from_str(&commit.id)?;
         CommitMerkleTree::read_unique_children_for_commit(
@@ -237,8 +237,8 @@ impl CommitMerkleTree {
         commit: &Commit,
         path: impl AsRef<Path>,
         depth: i32,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
+        shared_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
+        unique_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let mut node_path = path.as_ref().to_path_buf();
         if node_path == PathBuf::from(".") {
@@ -250,7 +250,6 @@ impl CommitMerkleTree {
             commit,
             depth
         );
-
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
         let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
             /*log::debug!(
@@ -366,7 +365,6 @@ impl CommitMerkleTree {
         }
     }
 
-    /// Read the dir metadata from the path, without reading the children
     pub fn dir_without_children(
         repo: &LocalRepository,
         commit: &Commit,
@@ -522,8 +520,8 @@ impl CommitMerkleTree {
     fn read_unique_children_for_commit(
         repo: &LocalRepository,
         hash: &MerkleHash,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
+        shared_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
+        unique_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read node hash [{}]", hash);
         if !MerkleNodeDB::exists(repo, hash) {
@@ -592,8 +590,8 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         hash: &MerkleHash,
         depth: i32,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
+        shared_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
+        unique_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read depth {} node hash [{}]", depth, hash);
         if !MerkleNodeDB::exists(repo, hash) {
@@ -616,6 +614,7 @@ impl CommitMerkleTree {
             shared_hashes,
             unique_hashes,
         )?;
+
         // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
         Ok(Some(node))
     }
@@ -995,7 +994,7 @@ impl CommitMerkleTree {
                     }
                     node.children.push(child);
                 }
-                // FileChunks and Schemas are leaf nodes
+                // FileChunks and Files are leaf nodes
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
                     node.children.push(child);
                 }
@@ -1011,15 +1010,16 @@ impl CommitMerkleTree {
         current_path: &PathBuf,
         requested_depth: i32,
         traversed_depth: i32,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
+        shared_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
+        unique_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
         log::debug!(
-             "load_children_until_depth_unique_children requested_depth {} traversed_depth {} node {} ",
-             requested_depth,
-             traversed_depth,
+             "load_children_until_depth_unique_children -> path: {:?} | node: {} | req_depth: {} | trav_depth: {}",
+             current_path,
              node,
+             requested_depth,
+             traversed_depth
          );
 
         if dtype != MerkleTreeNodeType::Commit
@@ -1029,11 +1029,11 @@ impl CommitMerkleTree {
             return Ok(());
         }
 
-        if shared_hashes.contains(&node.hash) {
+        if shared_hashes.contains(&(node.hash, dtype)) {
             return Ok(());
         }
 
-        unique_hashes.insert(node.hash);
+        unique_hashes.insert((node.hash, dtype));
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
 
         for (_key, child) in children {
@@ -1080,13 +1080,12 @@ impl CommitMerkleTree {
                     }
                     node.children.push(child);
                 }
-                // FileChunks and Schemas are leaf nodes
+                // FileChunks and Files are leaf nodes
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
                     node.children.push(child);
                 }
             }
         }
-
         Ok(())
     }
 
@@ -1113,7 +1112,6 @@ impl CommitMerkleTree {
         }
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("load_children_from_node Got {} children", children.len());
 
         for (_key, child) in children {
             let mut child = child.to_owned();
@@ -1317,8 +1315,8 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
         current_path: &PathBuf,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
+        shared_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
+        unique_hashes: &mut HashSet<(MerkleHash, MerkleTreeNodeType)>,
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
 
@@ -1330,19 +1328,20 @@ impl CommitMerkleTree {
         }
 
         // Don't continue loading if encountering a shared hash (Right now, the common hashes are the 'base' hashes. These are all the hashes that have been seen previously)
-        if shared_hashes.contains(&node.hash) {
+        if shared_hashes.contains(&(node.hash, dtype)) {
             return Ok(());
         }
 
         // If found a unique hash, insert it into unique_hashes so we won't step on it in future runs
-        unique_hashes.insert(node.hash);
+        unique_hashes.insert((node.hash, dtype));
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
         // log::debug!("load_unique_children Got {} children", children.len());
         for (_key, child) in children {
             let mut child = child.to_owned();
             // log::debug!("load_unique_children child: {} -> {}", key, child);
-            match &child.node.node_type() {
+            let dtype = child.node.node_type();
+            match dtype {
                 // Directories, VNodes, and Files have children
                 MerkleTreeNodeType::Commit
                 | MerkleTreeNodeType::Dir
@@ -1367,7 +1366,8 @@ impl CommitMerkleTree {
                 }
                 // TODO: Error handling for unknown MerkleTreeNode type?
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    node.children.push(child);
+                    node.children.push(child.clone());
+                    unique_hashes.insert((child.hash, dtype));
                 }
             }
         }

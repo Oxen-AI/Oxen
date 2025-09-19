@@ -237,8 +237,8 @@ fn collect_missing_entries(
     depth: &Option<i32>,
     total_bytes: &mut u64,
 ) -> Result<HashSet<Entry>, OxenError> {
-    let mut missing_entries: HashSet<Entry> = HashSet::new();
-    let mut unique_hashes: HashSet<MerkleHash> = HashSet::new();
+    let mut missing_entries = HashSet::new();
+    let mut unique_hashes = HashSet::new();
 
     let mut shared_hashes =
         if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
@@ -328,6 +328,7 @@ fn collect_missing_entries_for_subtree(
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
     let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree, subtree_path)?;
+
     for file in files {
         *total_bytes += file.file_node.num_bytes();
         missing_entries.insert(Entry::CommitEntry(CommitEntry {
@@ -581,7 +582,6 @@ pub async fn pull_entries(
 
     let missing_entries = get_missing_entries(entries, dst);
     println!("Pulling {} missing entries", missing_entries.len());
-
     if missing_entries.is_empty() {
         return Ok(());
     }
@@ -868,7 +868,6 @@ fn get_missing_entries_for_pull(entries: &[Entry], dst: &Path) -> Vec<Entry> {
 /// Returns a mapping from content_id -> entry.path
 fn working_dir_paths_from_small_entries(entries: &[Entry], dst: &Path) -> Vec<(String, PathBuf)> {
     let mut content_ids: Vec<(String, PathBuf)> = vec![];
-
     for entry in entries.iter() {
         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
         let version_path = util::fs::path_relative_to_dir(&version_path, dst).unwrap();

@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 use super::{Pagination, StatusMessage};
 
 #[derive(Deserialize, Serialize, Debug)]
+pub struct ListMissingFilesRequest {
+    pub commit_entries: Option<std::collections::HashSet<CommitEntry>>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct ListCommitEntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

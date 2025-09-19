@@ -229,12 +229,18 @@ mod tests {
 
             // add data via a workspace
             let workspace_id = "my_workspace";
+            println!("Creating workspace: {}", workspace_id);
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_csv_file_with_name("emojis.csv");
             let directory_name = "phi-4";
+            println!(
+                "Uploading {} to workspace dir {}",
+                file_to_post.to_string_lossy(),
+                directory_name
+            );
             let result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
@@ -276,10 +282,6 @@ mod tests {
                 let root_entries =
                     api::client::dir::list(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(""), 1, 10)
                         .await?;
-
-                for entry in root_entries.entries.iter() {
-                    println!("entry: {:?}", entry);
-                }
 
                 assert_eq!(root_entries.entries.len(), 4);
 
