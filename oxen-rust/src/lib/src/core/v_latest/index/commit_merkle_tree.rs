@@ -1059,10 +1059,7 @@ impl CommitMerkleTree {
             node.hash
         );
 
-        let mut sorted_children: Vec<_> = children.into_iter().collect();
-        sorted_children.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-        for (key, child) in sorted_children {
+        for (key, child) in children {
             let mut child = child.to_owned();
             log::debug!("👀 Processing child: key: {:?} -> {}", key, child);
             match &child.node.node_type() {
@@ -1109,7 +1106,7 @@ impl CommitMerkleTree {
                         child.hash
                     );
                     node.children.push(child.clone());
-                    unique_hashes.insert((child.hash, child.node.node_type()));
+                    // unique_hashes.insert((child.hash, child.node.node_type()));
                 }
             }
         }

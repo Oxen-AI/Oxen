@@ -128,28 +128,35 @@ pub async fn download_entry(
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
+    // log::debug!("Downloading {} to {}", remote_path.display(), local_path.display());
     let entry = get_entry(remote_repo, remote_path, &revision).await?;
+    log::debug!("Downloaded entry: {:#?}", entry);
 
     let entry = match entry {
         Some(EMetadataEntry::MetadataEntry(entry)) => entry,
         Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
+            log::debug!("Workspace entries are not supported for download");
             return Err(OxenError::basic_str(
                 "Workspace entries are not supported for download",
             ))
         }
         None => {
+            log::debug!("Path does not exist");
             return Err(OxenError::path_does_not_exist(remote_path));
         }
     };
+    log::debug!("Downloaded entry: {:#?}", entry);
 
     let remote_file_name = remote_path.file_name();
     let mut local_path = local_path.as_ref().to_path_buf();
+    log::debug!("Local path: {:?}", local_path);
 
     // Following the similar logic as cp or scp
 
     // * if the dst parent is a file, we error because cannot copy to a file subdirectory
     if let Some(parent) = local_path.parent() {
         if parent.is_file() {
+            log::debug!("{:?} is not a directory", parent);
             return Err(OxenError::basic_str(format!(
                 "{:?} is not a directory",
                 parent
@@ -158,6 +165,7 @@ pub async fn download_entry(
 
         // * if the dst parent does not exist, we error because cannot copy a directory to a non-existent location
         if !parent.exists() && parent != Path::new("") {
+            log::debug!("{:?} does not exist", parent);
             return Err(OxenError::basic_str(format!("{:?} does not exist", parent)));
         }
     }
@@ -172,8 +180,10 @@ pub async fn download_entry(
             }
         }
     }
+    log::debug!("Local path after: {:?}", local_path);
 
     if entry.is_dir {
+        log::debug!("Downloading directory");
         repositories::download::download_dir(remote_repo, &entry, remote_path, &local_path).await
     } else {
         download_file(remote_repo, &entry, remote_path, local_path, revision).await
@@ -188,9 +198,12 @@ pub async fn download_entries_to_repo(
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let revision = revision.as_ref();
+    log::debug!("🔥 Downloading {} entries to {}", paths_to_download.len(), local_repo.path.display());
     for (local_path, remote_path) in paths_to_download.iter() {
+        log::debug!("🔥 Downloading {} to {}", remote_path.display(), local_path.display());
         // TODO: Refactor to get the entries for all paths in one API call
         let entry = get_entry(remote_repo, remote_path, &revision).await?;
+        // log::debug!("🔥 Got entry {}", entry);
 
         let entry = match entry {
             Some(EMetadataEntry::MetadataEntry(entry)) => entry,

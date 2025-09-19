@@ -1603,6 +1603,7 @@ mod tests {
         test::run_local_repo_training_data_committed_async(|repo| async move {
             // Get the initial commit from training data to use as baseline
             let starting_commit = repositories::commits::head_commit(&repo)?;
+            println!("Starting commit: {}", starting_commit.id);
 
             // Add some new files and make first new commit
             let new_file1 = repo.path.join("new_file1.txt");

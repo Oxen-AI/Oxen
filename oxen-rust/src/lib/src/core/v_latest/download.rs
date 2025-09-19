@@ -25,9 +25,11 @@ pub async fn download_dir(
     // Initialize temp repo to download node into
     // TODO: Where should this repo be?
     let tmp_repo = LocalRepository::new(local_path)?;
+    log::debug!("tmp repo: {}", tmp_repo.path.display());
 
     // Find and download dir node and its children from remote repo
     let commit_id = &entry.latest_commit.as_ref().unwrap().id;
+    log::debug!("commit id: {}", commit_id);
     let dir_node = api::client::tree::download_tree_from_path(
         &tmp_repo,
         remote_repo,
@@ -36,9 +38,11 @@ pub async fn download_dir(
         true,
     )
     .await?;
+    log::debug!("dir node: {:#?}", dir_node);
 
     // Track Progress
     let pull_progress = Arc::new(PullProgress::new());
+    // log::debug!("pull progress: {:#?}", pull_progress);
 
     // Recursively pull entries
     r_download_entries(
@@ -95,12 +99,15 @@ async fn r_download_entries(
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     for child in &node.children {
+        log::debug!("child: {:#?}", child);
         let mut new_directory = directory.to_path_buf();
+        log::debug!("new_directory: {:#?}", new_directory);
         if let EMerkleTreeNode::Directory(dir_node) = &child.node {
             new_directory.push(dir_node.name());
         }
 
         let has_children = child.has_children();
+        log::debug!("has children: {}", has_children);
         if has_children {
             Box::pin(r_download_entries(
                 remote_repo,
@@ -112,12 +119,16 @@ async fn r_download_entries(
             .await?;
         }
     }
+    log::debug!("r_download_entries downloaded {} entries", node.children.len());
 
     if let EMerkleTreeNode::VNode(_) = &node.node {
+        log::debug!("node: {:#?}", node);
         let mut entries: Vec<Entry> = vec![];
 
         for child in &node.children {
+            log::debug!("child: {:#?}", child);
             if let EMerkleTreeNode::File(file_node) = &child.node {
+                log::debug!("file node: {:#?}", file_node);
                 entries.push(Entry::CommitEntry(CommitEntry {
                     commit_id: file_node.last_commit_id().to_string(),
                     path: directory.join(file_node.name()),
@@ -128,6 +139,7 @@ async fn r_download_entries(
                 }));
             }
         }
+        log::debug!("entries: {:#?}", entries);
 
         log::debug!(
             "r_download_entries downloading {} entries to working dir",

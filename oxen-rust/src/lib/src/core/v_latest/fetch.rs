@@ -590,9 +590,11 @@ pub async fn pull_entries(
     if entries.is_empty() {
         return Ok(());
     }
+    log::debug!("Pulling {} entries", entries.len());
+    log::debug!("dst: {:#?}", dst);
 
     let missing_entries = get_missing_entries(entries, dst);
-    println!("Pulling {} missing entries", missing_entries.len());
+    log::debug!("Pulling {} missing entries", missing_entries.len());
 
     if missing_entries.is_empty() {
         return Ok(());
@@ -619,8 +621,11 @@ pub async fn pull_entries(
 
     // Either download to the working directory or the versions directory
     let (small_entry_paths, large_entry_paths) = if to_working_dir {
+        log::debug!("Downloading to working dir");
         let small_entry_paths = working_dir_paths_from_small_entries(&smaller_entries, dst);
+        log::debug!("small_entry_paths: {:#?}", small_entry_paths);
         let large_entry_paths = working_dir_paths_from_large_entries(&larger_entries, dst);
+        log::debug!("large_entry_paths: {:#?}", large_entry_paths);
         (small_entry_paths, large_entry_paths)
     } else {
         let small_entry_paths = version_dir_paths_from_small_entries(&smaller_entries, dst);
@@ -852,17 +857,22 @@ fn get_missing_entries(entries: &[Entry], dst: &Path) -> Vec<Entry> {
     let dst: &Path = dst;
 
     let version_path = util::fs::root_version_path(dst);
+    log::debug!("version_path: {:#?}", version_path);
 
     if !version_path.exists() {
+        log::debug!("version_path does not exist");
         get_missing_entries_for_download(entries, dst)
     } else {
+        log::debug!("version_path exists");
         get_missing_entries_for_pull(entries, dst)
     }
 }
 
 fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry> {
+    log::debug!("get_missing_entries_for_download");
     let mut missing_entries: Vec<Entry> = vec![];
     for entry in entries {
+        log::debug!("entry: {:#?}", entry);
         let working_path = dst.join(entry.path());
         if !working_path.exists() {
             missing_entries.push(entry.to_owned())
@@ -872,8 +882,10 @@ fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry>
 }
 
 fn get_missing_entries_for_pull(entries: &[Entry], dst: &Path) -> Vec<Entry> {
+    log::debug!("get_missing_entries_for_pull");
     let mut missing_entries: Vec<Entry> = vec![];
     for entry in entries {
+        log::debug!("entry: {:#?}", entry);
         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
         if !version_path.exists() {
             missing_entries.push(entry.to_owned())
@@ -886,8 +898,10 @@ fn get_missing_entries_for_pull(entries: &[Entry], dst: &Path) -> Vec<Entry> {
 /// Returns a mapping from content_id -> entry.path
 fn working_dir_paths_from_small_entries(entries: &[Entry], dst: &Path) -> Vec<(String, PathBuf)> {
     let mut content_ids: Vec<(String, PathBuf)> = vec![];
+    log::debug!("working_dir_paths_from_small_entries: {} entries", entries.len());
 
     for entry in entries.iter() {
+        log::debug!("entry: {:#?}", entry);
         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
         log::debug!("version_path: {:?}", version_path);
         let version_path = util::fs::path_relative_to_dir(&version_path, dst).unwrap();

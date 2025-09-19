@@ -19,6 +19,7 @@ pub async fn download(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    log::debug!("🔥 Downloading {} to {}", remote_path.as_ref().display(), local_path.as_ref().display());
     // Ping server telling it we are about to download
     api::client::repositories::pre_download(repo).await?;
     api::client::entries::download_entry(
