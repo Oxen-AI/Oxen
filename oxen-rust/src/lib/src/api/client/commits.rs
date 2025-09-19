@@ -170,13 +170,12 @@ pub async fn list_missing_files(
         }
         (None, Some(head_commit)) => {
             let head_commit_id = head_commit.id;
-            let uri = format!("/commits/missing_files?head={head_commit_id}");
-            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+            crate::api::endpoint::url_from_repo(
+                remote_repo,
+                &format!("/commits/missing_files?head={head_commit_id}"),
+            )?
         }
-        (None, None) => {
-            let uri = format!("/commits/missing_files");
-            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
-        }
+        (None, None) => crate::api::endpoint::url_from_repo(remote_repo, "/commits/missing_files")?,
         _ => {
             return Err(OxenError::basic_str(
                 "Can't list missing files without HEAD commit",

@@ -267,53 +267,45 @@ async fn get_commit_missing_hashes(
             log::error!("push_commits commit node not found for commit: {}", commit);
             continue;
         };
-        log::debug!("✅ unique_hashes_and_type: {:?}", unique_hashes_and_type);
+
         let (file_entries, _) = repositories::tree::list_files_and_dirs(&commit_node)?;
-        log::debug!("✅ file_entries: {:?}", file_entries);
         let entries = file_entries
             .into_iter()
             .map(|entry| CommitEntry::from_file_node(&entry.file_node))
             .collect::<Vec<CommitEntry>>();
-        log::debug!("✅ entries: {:?}", entries);
 
         let unique_files = unique_hashes_and_type
             .iter()
             .filter(|(_, t)| *t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
-            .map(|(h, _)| h.clone())
+            .map(|(h, _)| *h)
             .collect::<HashSet<MerkleHash>>();
-        log::debug!("✅unique_files: {:#?}", unique_files);
 
         let unique_dir_nodes = unique_hashes_and_type
             .iter()
             .filter(|(_, t)| {
                 !(*t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
             })
-            .map(|(h, _)| h.clone())
+            .map(|(h, _)| *h)
             .collect::<HashSet<MerkleHash>>();
-        log::debug!("✅unique_dir_nodes: {:#?}", unique_dir_nodes);
 
         let unique_file_entries = entries
             .into_iter()
             .filter(|e| {
                 let hash = MerkleHash::from_str(&e.hash).unwrap();
-                log::debug!("✅hash: {:#?}", hash);
-                let contains = unique_files.contains(&hash);
-                log::debug!("✅contains: {:#?}", contains);
-                contains
+                unique_files.contains(&hash)
             })
             .collect::<HashSet<CommitEntry>>();
-        log::debug!("✅unique_file_entries: {:#?}", unique_file_entries);
 
         shared_hashes.extend(
             &unique_dir_nodes
                 .iter()
-                .map(|h| (h.clone(), MerkleTreeNodeType::Dir))
+                .map(|h| (*h, MerkleTreeNodeType::Dir))
                 .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>(),
         );
         shared_hashes.extend(
             &unique_files
                 .iter()
-                .map(|h| (h.clone(), MerkleTreeNodeType::File))
+                .map(|h| (*h, MerkleTreeNodeType::File))
                 .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>(),
         );
 

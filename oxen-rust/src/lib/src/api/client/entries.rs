@@ -658,9 +658,7 @@ pub async fn try_download_data_from_version_paths(
         let mut idx: usize = 0;
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
-        let mut count = 0;
         while let Some(file) = entries.next().await {
-            count += 1;
             log::debug!("download_data_from_version_paths file: {:?}", file);
 
             let entry_path = &content_ids[idx].1;

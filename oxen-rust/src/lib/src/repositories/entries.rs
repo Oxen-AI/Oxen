@@ -331,11 +331,9 @@ pub fn list_missing_files_in_commit_range(
             }
             None => Ok(vec![]),
         },
-        _ => {
-            return Err(OxenError::basic_str(
-                "Can't list missing files without base commit",
-            ));
-        }
+        _ => Err(OxenError::basic_str(
+            "Can't list missing files without base commit",
+        )),
     }
 }
 

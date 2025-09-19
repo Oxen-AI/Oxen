@@ -71,7 +71,7 @@ pub async fn create_nodes(
         .join(NODES_DIR);
 
     for (i, node_hash) in nodes.iter().enumerate() {
-        let dir_prefix = node_db_prefix(&node_hash);
+        let dir_prefix = node_db_prefix(node_hash);
         let node_dir = node_path.join(&dir_prefix);
         // log::debug!(
         //     "create_nodes appending objects dir {:?} to tar at path {:?}",
