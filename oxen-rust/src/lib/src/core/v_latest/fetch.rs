@@ -581,6 +581,7 @@ pub async fn pull_entries(
     }
 
     let missing_entries = get_missing_entries(entries, dst);
+    println!("Pulling {} missing entries", missing_entries.len());
     if missing_entries.is_empty() {
         return Ok(());
     }
@@ -771,6 +772,7 @@ async fn pull_small_entries(
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
     type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
+    log::debug!("pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
     let chunks: Vec<PieceOfWork> = content_ids
         .chunks(chunk_size)
         .map(|chunk| {
