@@ -1,13 +1,11 @@
+use ignore::WalkBuilder;
 use log::{error, info, warn};
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
-
-use liboxen::core;
-use liboxen::model::LocalRepository;
 
 use crate::cache::StatusCache;
 use crate::error::WatcherError;
@@ -93,6 +91,7 @@ impl FileSystemWatcher {
 
         // Start the event processor
         let processor = EventProcessor::new(self.cache.clone(), self.repo_path.clone());
+        // TODO: start processor _after_ the initial scan
         let processor_handle = tokio::spawn(async move { processor.run(event_rx).await });
 
         // Start the IPC server
@@ -140,79 +139,105 @@ impl FileSystemWatcher {
     }
 }
 
-/// Perform initial scan of the repository
+/// Perform initial scan of the repository using parallel walk
 async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(), WatcherError> {
-    info!("Starting initial repository scan");
+    use crate::tree::FileMetadata;
+    use std::sync::Mutex;
+    
+    info!("Starting initial repository scan with parallel walk");
+    let start = Instant::now();
 
-    // Load the repository
-    let repo = LocalRepository::from_dir(&repo_path)?;
+    // Perform parallel walk to enumerate all files and get metadata
+    let walker = WalkBuilder::new(&repo_path)
+        .threads(num_cpus::get())
+        .hidden(false) // Include hidden files
+        .filter_entry(|entry| {
+            // Skip .oxen directory
+            entry
+                .file_name()
+                .to_str()
+                .map(|name| name != ".oxen")
+                .unwrap_or(true)
+        })
+        .build_parallel();
 
-    // Use liboxen status implementation to establish a baseline.
-    // Then the watcher tracks changes relative to this baseline.
-    match liboxen::repositories::status::status(&repo) {
-        Ok(status) => {
-            let mut file_statuses = Vec::new();
+    // Collect file paths and metadata in parallel
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Arc::new(Mutex::new(tx));
 
-            // Convert untracked files to "Created" events
-            for path in &status.untracked_files {
-                if let Ok(metadata) = std::fs::metadata(repo_path.join(path)) {
-                    file_statuses.push(crate::protocol::FileStatus {
-                        path: path.clone(),
-                        mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
-                        size: metadata.len(),
-                        hash: None,
-                        status: crate::protocol::FileStatusType::Created,
-                    });
+    walker.run(|| {
+        let tx = tx.clone();
+        Box::new(move |result| {
+            if let Ok(entry) = result {
+                // Get file type and metadata
+                if let Some(ft) = entry.file_type() {
+                    if ft.is_file() {
+                        // Get metadata for files
+                        if let Ok(metadata) = entry.metadata() {
+                            let file_metadata = FileMetadata {
+                                size: metadata.len(),
+                                mtime: metadata
+                                    .modified()
+                                    .unwrap_or_else(|_| SystemTime::now()),
+                                is_symlink: ft.is_symlink(),
+                            };
+                            
+                            if let Ok(tx) = tx.lock() {
+                                let _ = tx.send((entry.into_path(), Some(file_metadata)));
+                            }
+                        }
+                    } else if ft.is_dir() {
+                        // Directories don't have metadata in our tree
+                        if let Ok(tx) = tx.lock() {
+                            let _ = tx.send((entry.into_path(), None));
+                        }
+                    }
                 }
             }
+            ignore::WalkState::Continue
+        })
+    });
 
-            // Convert modified files to "Modified" events
-            for path in &status.modified_files {
-                if let Ok(metadata) = std::fs::metadata(repo_path.join(path)) {
-                    file_statuses.push(crate::protocol::FileStatus {
-                        path: path.clone(),
-                        mtime: metadata.modified().unwrap_or(std::time::SystemTime::now()),
-                        size: metadata.len(),
-                        hash: None,
-                        status: crate::protocol::FileStatusType::Modified,
-                    });
-                }
+    // Drop the original sender to signal completion
+    drop(tx);
+
+    // Collect all paths with metadata
+    let mut updates = Vec::new();
+    while let Ok((path, metadata)) = rx.recv() {
+        // Convert absolute path to relative
+        if let Ok(relative_path) = path.strip_prefix(&repo_path) {
+            // Skip the root directory itself
+            if relative_path == Path::new("") {
+                continue;
             }
-
-            // Convert removed files to "Removed" events
-            for path in &status.removed_files {
-                // For removed files, we can't get metadata since they don't exist
-                file_statuses.push(crate::protocol::FileStatus {
-                    path: path.clone(),
-                    mtime: std::time::SystemTime::now(),
-                    size: 0,
-                    hash: None,
-                    status: crate::protocol::FileStatusType::Removed,
-                });
-            }
-
-            // Batch update the cache with initial state
-            let total_files = status.untracked_files.len()
-                + status.modified_files.len()
-                + status.removed_files.len();
-            if !file_statuses.is_empty() {
-                cache.batch_update(file_statuses).await?;
-                info!("Populated cache with {} initial file states", total_files);
-            }
-
-            cache.mark_scan_complete().await?;
-            info!("Initial scan complete - established baseline, now tracking filesystem changes");
-        }
-        Err(e) => {
-            error!("Failed to get initial status: {}", e);
-            // Mark scan as complete anyway to avoid blocking
-            cache.mark_scan_complete().await?;
+            updates.push((relative_path.to_path_buf(), metadata));
         }
     }
 
-    // Remove cached ref DB connection so it doesn't block other connections
-    // TODO: update the ref_manager with the option to NOT cache the connection,
-    // similar to how we configure the merkle tree node cache
-    core::refs::remove_from_cache(repo.path)?;
+    let scan_duration = start.elapsed();
+    let file_count = updates.iter().filter(|(_, m)| m.is_some()).count();
+    let dir_count = updates.iter().filter(|(_, m)| m.is_none()).count();
+    
+    info!(
+        "Fast parallel scan found {} files and {} directories in {:.2}s",
+        file_count,
+        dir_count,
+        scan_duration.as_secs_f64()
+    );
+
+    // Batch update the cache with initial state
+    if !updates.is_empty() {
+        cache.batch_update_new(updates).await?;
+        info!("Populated cache with {} total entries", file_count + dir_count);
+    }
+
+    cache.mark_scan_complete().await?;
+    
+    let total_duration = start.elapsed();
+    info!(
+        "Initial scan complete in {:.2}s - now tracking filesystem changes",
+        total_duration.as_secs_f64()
+    );
+    
     Ok(())
 }

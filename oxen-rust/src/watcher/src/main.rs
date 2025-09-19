@@ -5,6 +5,7 @@ mod event_processor;
 mod ipc;
 mod monitor;
 mod protocol;
+mod tree;
 
 use clap::Parser;
 use log::info;
