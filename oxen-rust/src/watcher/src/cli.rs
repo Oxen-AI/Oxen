@@ -30,4 +30,22 @@ pub enum Commands {
         #[arg(short, long)]
         repo: PathBuf,
     },
+    /// Query and display the current filesystem tree from the watcher
+    Tree {
+        /// Path to the repository
+        #[arg(short, long)]
+        repo: PathBuf,
+        /// Optional path to query a subtree
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// Show file metadata (size, mtime)
+        #[arg(short = 'm', long)]
+        metadata: bool,
+        /// Maximum depth to display (0 = unlimited)
+        #[arg(short, long, default_value = "0")]
+        depth: usize,
+        /// Show statistics summary at the end
+        #[arg(short, long)]
+        stats: bool,
+    },
 }
