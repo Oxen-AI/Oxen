@@ -8,16 +8,16 @@ pub fn commits() -> Scope {
         //  This is commented out because the list_commit function reads from the head file, which should not be used server side
         // .route("", web::get().to(controllers::commits::index))
         .route("", web::post().to(controllers::commits::create))
-        .route(
-            "/missing_files",
-            web::get().to(controllers::commits::list_missing_files),
-        )
         .route("/root", web::get().to(controllers::commits::root_commit))
         .route("/all", web::get().to(controllers::commits::list_all))
         .route("/upload", web::post().to(controllers::commits::upload))
         .route(
             "/upload_chunk",
             web::post().to(controllers::commits::upload_chunk),
+        )
+        .route(
+            "/missing_files",
+            web::get().to(controllers::commits::list_missing_files),
         )
         .route(
             "/missing",

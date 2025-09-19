@@ -195,19 +195,16 @@ pub async fn list_missing_files(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    log::debug!("list_missing_files base: {:?}, head: {:?}", query.base, query.head);
 
     let base_commit = match &query.base {
         Some(base) => repositories::commits::get_by_id(&repo, base)?,
         None => None,
     };
-    log::debug!("list_missing_files base_commit: {:?}", base_commit);
 
     let head_commit = match &query.head {
         Some(head) => repositories::commits::get_by_id(&repo, head)?,
         None => None,
     };
-    log::debug!("list_missing_files head_commit: {:?}", head_commit);
 
     let missing_files = repositories::entries::list_missing_files_in_commit_range(
         &repo,

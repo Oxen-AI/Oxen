@@ -56,7 +56,6 @@ pub async fn download_data_from_version_paths(
 
     log::debug!("Got {} content ids", content_files.len());
     for content_file in content_files.iter() {
-        log::debug!("download_data_from_version_paths content_file: {}", content_file);
         if content_file.is_empty() {
             // last line might be empty on split \n
             continue;
@@ -80,7 +79,6 @@ pub async fn download_data_from_version_paths(
             &path_to_read,
             constants::VERSION_FILE_NAME.to_string(),
         );
-        log::debug!("download_data_from_version_paths path_to_read: {:?}", path_to_read);
 
         if path_to_read.exists() {
             tar.append_path_with_name(path_to_read, content_file)

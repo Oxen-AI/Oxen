@@ -250,10 +250,7 @@ impl CommitMerkleTree {
             commit,
             depth
         );
-        log::debug!("shared_hashes before: {:?}", shared_hashes);
-        log::debug!("unique_hashes before: {:?}", unique_hashes);
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        log::debug!("dir_hashes: {:?}", dir_hashes);
         let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
             /*log::debug!(
                 "dir_hashes {:?} does not contain path: {:?}",
@@ -280,14 +277,6 @@ impl CommitMerkleTree {
                 node_hash
             )));
         };
-        shared_hashes.iter().for_each(|(hash, dtype)| {
-            log::debug!("shared_hashes after: {:?}", (hash, dtype));
-        });
-        unique_hashes.iter().for_each(|(hash, dtype)| {
-            log::debug!("unique_hashes after: {:?}", (hash, dtype));
-        });
-        log::debug!("shared_hashes afterlen: {:?}", shared_hashes.len());
-        log::debug!("unique_hashes afterlen: {:?}", unique_hashes.len());
         Ok(Some(root))
     }
 
@@ -1027,7 +1016,7 @@ impl CommitMerkleTree {
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
         log::debug!(
-             "👉 START: load_children_until_depth_unique_children -> path: {:?} | node: {} | req_depth: {} | trav_depth: {}",
+             "load_children_until_depth_unique_children -> path: {:?} | node: {} | req_depth: {} | trav_depth: {}",
              current_path,
              node,
              requested_depth,
@@ -1038,30 +1027,18 @@ impl CommitMerkleTree {
             && dtype != MerkleTreeNodeType::Dir
             && dtype != MerkleTreeNodeType::VNode
         {
-            log::debug!("🛑 Not a container node, returning.");
             return Ok(());
         }
 
         if shared_hashes.contains(&(node.hash, dtype)) {
-            log::debug!(
-                "✅ Node hash {} already in shared_hashes, returning.",
-                node.hash
-            );
             return Ok(());
         }
 
-        log::debug!("✨ Adding node hash {} to unique_hashes", node.hash);
         unique_hashes.insert((node.hash, dtype));
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        log::debug!(
-            "👨‍👩‍👧‍👦 Found {} children for node {}",
-            children.len(),
-            node.hash
-        );
 
-        for (key, child) in children {
+        for (_key, child) in children {
             let mut child = child.to_owned();
-            log::debug!("👀 Processing child: key: {:?} -> {}", key, child);
             match &child.node.node_type() {
                 // Commits, Directories, and VNodes have children
                 MerkleTreeNodeType::Commit
@@ -1074,7 +1051,6 @@ impl CommitMerkleTree {
                         || (requested_depth == 0
                             && child.node.node_type() == MerkleTreeNodeType::VNode)
                     {
-                        log::debug!("🔄 Recursively loading children for child {}", child.hash);
                         // Depth that is passed in is the number of dirs to traverse
                         // VNodes should not increase the depth
                         let traversed_depth = if child.node.node_type() != MerkleTreeNodeType::Dir {
@@ -1083,38 +1059,34 @@ impl CommitMerkleTree {
                             traversed_depth + 1
                         };
 
+                            // Update current_path so that the partial nodes will have the correct path
+                        let new_path = if let EMerkleTreeNode::Directory(dir_node) = &child.node {
+                            let name = PathBuf::from(dir_node.name());
+                            &current_path.join(name)
+                        } else {
+                            current_path
+                        };
+
                         // Here we have to not panic on error, because if we clone a subtree we might not have all of the children nodes of a particular dir
                         // given that we are only loading the nodes that are needed.
                         CommitMerkleTree::load_children_until_depth_unique_children(
                             repo,
                             &mut child,
-                            current_path,
+                            new_path,
                             requested_depth,
                             traversed_depth,
                             shared_hashes,
                             unique_hashes,
                         )?;
-                    } else {
-                        log::debug!("🛑 Max depth reached for child {}", child.hash);
                     }
                     node.children.push(child);
                 }
                 // FileChunks and Files are leaf nodes
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    log::debug!(
-                        "📄 Leaf node found: {}. Adding to children and unique_hashes.",
-                        child.hash
-                    );
-                    node.children.push(child.clone());
-                    // unique_hashes.insert((child.hash, child.node.node_type()));
+                    node.children.push(child);
                 }
             }
         }
-
-        log::debug!(
-            "👈 END: load_children_until_depth_unique_children -> path: {:?}",
-            current_path
-        );
         Ok(())
     }
 
@@ -1141,7 +1113,6 @@ impl CommitMerkleTree {
         }
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("load_children_from_node Got {} children", children.len());
 
         for (_key, child) in children {
             let mut child = child.to_owned();

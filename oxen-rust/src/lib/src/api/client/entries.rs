@@ -128,35 +128,28 @@ pub async fn download_entry(
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
-    // log::debug!("Downloading {} to {}", remote_path.display(), local_path.display());
     let entry = get_entry(remote_repo, remote_path, &revision).await?;
-    log::debug!("Downloaded entry: {:#?}", entry);
 
     let entry = match entry {
         Some(EMetadataEntry::MetadataEntry(entry)) => entry,
         Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
-            log::debug!("Workspace entries are not supported for download");
             return Err(OxenError::basic_str(
                 "Workspace entries are not supported for download",
             ))
         }
         None => {
-            log::debug!("Path does not exist");
             return Err(OxenError::path_does_not_exist(remote_path));
         }
     };
-    log::debug!("Downloaded entry: {:#?}", entry);
 
     let remote_file_name = remote_path.file_name();
     let mut local_path = local_path.as_ref().to_path_buf();
-    log::debug!("Local path: {:?}", local_path);
 
     // Following the similar logic as cp or scp
 
     // * if the dst parent is a file, we error because cannot copy to a file subdirectory
     if let Some(parent) = local_path.parent() {
         if parent.is_file() {
-            log::debug!("{:?} is not a directory", parent);
             return Err(OxenError::basic_str(format!(
                 "{:?} is not a directory",
                 parent
@@ -165,7 +158,6 @@ pub async fn download_entry(
 
         // * if the dst parent does not exist, we error because cannot copy a directory to a non-existent location
         if !parent.exists() && parent != Path::new("") {
-            log::debug!("{:?} does not exist", parent);
             return Err(OxenError::basic_str(format!("{:?} does not exist", parent)));
         }
     }
@@ -180,10 +172,8 @@ pub async fn download_entry(
             }
         }
     }
-    log::debug!("Local path after: {:?}", local_path);
 
     if entry.is_dir {
-        log::debug!("Downloading directory");
         repositories::download::download_dir(remote_repo, &entry, remote_path, &local_path).await
     } else {
         download_file(remote_repo, &entry, remote_path, local_path, revision).await
@@ -198,12 +188,9 @@ pub async fn download_entries_to_repo(
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let revision = revision.as_ref();
-    log::debug!("🔥 Downloading {} entries to {}", paths_to_download.len(), local_repo.path.display());
     for (local_path, remote_path) in paths_to_download.iter() {
-        log::debug!("🔥 Downloading {} to {}", remote_path.display(), local_path.display());
         // TODO: Refactor to get the entries for all paths in one API call
         let entry = get_entry(remote_repo, remote_path, &revision).await?;
-        // log::debug!("🔥 Got entry {}", entry);
 
         let entry = match entry {
             Some(EMetadataEntry::MetadataEntry(entry)) => entry,
@@ -669,7 +656,6 @@ pub async fn try_download_data_from_version_paths(
 
         let mut size: u64 = 0;
         let mut idx: usize = 0;
-        let mut count: usize = 0;
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
         let mut count = 0;
@@ -678,14 +664,6 @@ pub async fn try_download_data_from_version_paths(
             log::debug!("download_data_from_version_paths file: {:?}", file);
 
             let entry_path = &content_ids[idx].1;
-            // log::debug!("download_data_from_version_paths entry_path: {:?}", entry_path);
-            // let version = &content_ids[idx];
-            // log::debug!(
-
-                //     "download_data_from_version_paths Unpacking {:?} -> {:?}",
-                //     version,
-                //     entry_path
-                // );
                 
                 let full_path = dst.join(entry_path);
                 
@@ -696,28 +674,11 @@ pub async fn try_download_data_from_version_paths(
                     return Err(OxenError::basic_str(err));
                 }
             };
-            log::debug!("download_data_from_version_paths file: {:?}", file.path()?.to_path_buf() );
-            log::debug!("download_data_from_version_paths idx: {}", idx);
-            log::debug!("download_data_from_version_paths content_id: {:?}", content_ids[idx]);
-            // let entry_path = file.path()?.to_path_buf();
-            // let full_path = dst.join(entry_path.clone());
-            log::debug!(
-                "download_data_from_version_paths entry_path : {:?} full_path: {:?}",
-                entry_path,
-                full_path
-            );
 
             if let Some(parent) = full_path.parent() {
-                log::debug!(
-                    "Creating parent dir {:?} during file: {:?}",
-                    parent,
-                    entry_path
-                );
                 util::fs::create_dir_all(parent)?;
-                log::debug!("Created parent dir {:?}", parent);
             }
 
-            log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
             match file.unpack(&full_path).await {
                 Ok(_) => {
                     log::debug!("Successfully unpacked {:?} into dst {:?}", entry_path, dst);
@@ -731,9 +692,7 @@ pub async fn try_download_data_from_version_paths(
             let metadata = util::fs::metadata(&full_path)?;
             size += metadata.len();
             idx += 1;
-            log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
-        log::debug!("download_data_from_version_paths unpacked {} files", count);
         Ok(size)
     } else {
         let err =
@@ -936,7 +895,6 @@ mod tests {
             let revision = DEFAULT_BRANCH_NAME;
             api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
                 .await?;
-            println!("local_path: {:?}", local_path.join("annotations").join("README.md"));
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
             assert!(local_path

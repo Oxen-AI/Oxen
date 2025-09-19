@@ -19,7 +19,6 @@ pub async fn download(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
-    log::debug!("🔥 Downloading {} to {}", remote_path.as_ref().display(), local_path.as_ref().display());
     // Ping server telling it we are about to download
     api::client::repositories::pre_download(repo).await?;
     api::client::entries::download_entry(
@@ -214,12 +213,9 @@ mod tests {
             let output_dir = Path::new("output");
             repositories::download(&remote_repo, &dir, &output_dir, &branch.name).await?;
 
-            println!("num_files: {}", num_files);
             // Check that the files are there
             for i in 0..num_files {
-                println!("checking path: {:?}", output_dir.join("train").join(format!("file_{}.txt", i)));
                 let path = output_dir.join("train").join(format!("file_{}.txt", i));
-                println!("path exists: {}", path.exists());
                 assert!(path.exists());
             }
 

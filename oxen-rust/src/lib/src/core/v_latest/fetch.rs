@@ -291,7 +291,6 @@ fn collect_missing_entries(
                 )?;
             }
         } else {
-            log::debug!("🎉 collect_missing_entries for commit: {}", commit);
             let Some(tree) = CommitMerkleTree::from_path_depth_unique_children(
                 repo,
                 commit,
@@ -317,11 +316,6 @@ fn collect_missing_entries(
                 &mut missing_entries,
                 total_bytes,
             )?;
-            log::debug!(
-                "😂 collect_missing_entries {:?} total_bytes: {}",
-                missing_entries,
-                total_bytes
-            );
         }
     }
     Ok(missing_entries)
@@ -334,13 +328,8 @@ fn collect_missing_entries_for_subtree(
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
     let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree, subtree_path)?;
-    log::debug!(
-        "collect_missing_entries_for_subtree fileslen: {:?}",
-        files.len()
-    );
-    log::debug!("collect_missing_entries_for_subtree files: {:?}", files);
+
     for file in files {
-        log::debug!("collect_missing_entries_for_subtree file: {:?}", file);
         *total_bytes += file.file_node.num_bytes();
         missing_entries.insert(Entry::CommitEntry(CommitEntry {
             commit_id: file.file_node.last_commit_id().to_string(),
@@ -590,12 +579,8 @@ pub async fn pull_entries(
     if entries.is_empty() {
         return Ok(());
     }
-    log::debug!("Pulling {} entries", entries.len());
-    log::debug!("dst: {:#?}", dst);
 
     let missing_entries = get_missing_entries(entries, dst);
-    log::debug!("Pulling {} missing entries", missing_entries.len());
-
     if missing_entries.is_empty() {
         return Ok(());
     }
@@ -609,7 +594,6 @@ pub async fn pull_entries(
         .filter(|e| e.num_bytes() <= AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
-    log::debug!("😂 smaller_entries: {:?}", smaller_entries);
 
     // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and download the chunks in parallel
     let larger_entries: Vec<Entry> = missing_entries
@@ -617,15 +601,11 @@ pub async fn pull_entries(
         .filter(|e| e.num_bytes() > AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
-    log::debug!("🐘 larger_entries: {:?}", larger_entries);
 
     // Either download to the working directory or the versions directory
     let (small_entry_paths, large_entry_paths) = if to_working_dir {
-        log::debug!("Downloading to working dir");
         let small_entry_paths = working_dir_paths_from_small_entries(&smaller_entries, dst);
-        log::debug!("small_entry_paths: {:#?}", small_entry_paths);
         let large_entry_paths = working_dir_paths_from_large_entries(&larger_entries, dst);
-        log::debug!("large_entry_paths: {:#?}", large_entry_paths);
         (small_entry_paths, large_entry_paths)
     } else {
         let small_entry_paths = version_dir_paths_from_small_entries(&smaller_entries, dst);
@@ -769,9 +749,6 @@ async fn pull_small_entries(
     if content_ids.is_empty() {
         return Ok(());
     }
-    log::debug!("⬇️ pull_small_entries starting...");
-    log::debug!("entries len: {}", entries.len());
-    log::debug!("entries: {:?}", entries);
 
     let total_size = repositories::entries::compute_generic_entries_size(&entries)?;
 
@@ -794,7 +771,6 @@ async fn pull_small_entries(
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
     type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
 
-    log::debug!("pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
     let chunks: Vec<PieceOfWork> = content_ids
         .chunks(chunk_size)
         .map(|chunk| {
@@ -805,7 +781,6 @@ async fn pull_small_entries(
             )
         })
         .collect();
-    log::debug!("pull_small_entries chunks: {:#?}", chunks);
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     let queue = Arc::new(TaskQueue::new(chunks.len()));
@@ -857,22 +832,17 @@ fn get_missing_entries(entries: &[Entry], dst: &Path) -> Vec<Entry> {
     let dst: &Path = dst;
 
     let version_path = util::fs::root_version_path(dst);
-    log::debug!("version_path: {:#?}", version_path);
 
     if !version_path.exists() {
-        log::debug!("version_path does not exist");
         get_missing_entries_for_download(entries, dst)
     } else {
-        log::debug!("version_path exists");
         get_missing_entries_for_pull(entries, dst)
     }
 }
 
 fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry> {
-    log::debug!("get_missing_entries_for_download");
     let mut missing_entries: Vec<Entry> = vec![];
     for entry in entries {
-        log::debug!("entry: {:#?}", entry);
         let working_path = dst.join(entry.path());
         if !working_path.exists() {
             missing_entries.push(entry.to_owned())
@@ -882,10 +852,8 @@ fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry>
 }
 
 fn get_missing_entries_for_pull(entries: &[Entry], dst: &Path) -> Vec<Entry> {
-    log::debug!("get_missing_entries_for_pull");
     let mut missing_entries: Vec<Entry> = vec![];
     for entry in entries {
-        log::debug!("entry: {:#?}", entry);
         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
         if !version_path.exists() {
             missing_entries.push(entry.to_owned())
@@ -898,14 +866,9 @@ fn get_missing_entries_for_pull(entries: &[Entry], dst: &Path) -> Vec<Entry> {
 /// Returns a mapping from content_id -> entry.path
 fn working_dir_paths_from_small_entries(entries: &[Entry], dst: &Path) -> Vec<(String, PathBuf)> {
     let mut content_ids: Vec<(String, PathBuf)> = vec![];
-    log::debug!("working_dir_paths_from_small_entries: {} entries", entries.len());
-
     for entry in entries.iter() {
-        log::debug!("entry: {:#?}", entry);
         let version_path = util::fs::version_path_from_dst_generic(dst, entry);
-        log::debug!("version_path: {:?}", version_path);
         let version_path = util::fs::path_relative_to_dir(&version_path, dst).unwrap();
-        log::debug!("version_path relative: {:?}", version_path);
 
         content_ids.push((
             String::from(version_path.to_str().unwrap()).replace('\\', "/"),

@@ -293,7 +293,6 @@ pub fn list_missing_files_in_commit_range(
     commit_entries: Option<std::collections::HashSet<CommitEntry>>,
 ) -> Result<Vec<CommitEntry>, OxenError> {
     let version_store = repo.version_store()?;
-    log::debug!("🔥 list_missing_files base_commit: {:?}, head_commit: {:?}", base_commit, head_commit);
     match (base_commit, head_commit) {
         (Some(base_commit), Some(head_commit)) => {
             let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
@@ -324,12 +323,10 @@ pub fn list_missing_files_in_commit_range(
         }
         (None, None) => match commit_entries {
             Some(commit_entries) => {
-                log::debug!("🔥 list_missing_files commit_entries: {:?}", commit_entries);
                 let missing_files = commit_entries
                     .into_par_iter()
                     .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
                     .collect();
-                log::debug!("🔥 list_missing_files missing_files: {:?}", missing_files);
                 Ok(missing_files)
             }
             None => Ok(vec![]),
