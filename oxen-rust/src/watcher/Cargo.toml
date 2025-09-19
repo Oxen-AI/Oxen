@@ -11,6 +11,10 @@ repository = "https://github.com/Oxen-AI/Oxen"
 name = "oxen-watcher"
 path = "src/main.rs"
 
+[[bin]]
+name = "watcher-benchmark"
+path = "benches/watcher_benchmarks.rs"
+
 [lib]
 name = "oxen_watcher"
 path = "src/lib.rs"
@@ -28,6 +32,8 @@ log = "0.4"
 env_logger = "0.11"
 chrono = "0.4"
 thiserror = "2.0"
+ignore = "0.4.20"
+num_cpus = "1.16.0"
 
 [dev-dependencies]
 tempfile = "3.8"

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::protocol::*;
+    use crate::tree::{FileMetadata, FileSystemTree, TreeNode};
     use std::path::PathBuf;
     use std::time::SystemTime;
 
@@ -23,29 +24,95 @@ mod tests {
     }
 
     #[test]
-    fn test_response_serialization() {
-        let response = WatcherResponse::Summary {
-            created: 3,
-            modified: 5,
-            removed: 2,
-            last_updated: SystemTime::now(),
+    fn test_new_get_tree_request() {
+        let request = WatcherRequest::GetTree {
+            path: Some(PathBuf::from("src")),
         };
         
+        let bytes = request.to_bytes().unwrap();
+        let deserialized = WatcherRequest::from_bytes(&bytes).unwrap();
+        
+        match deserialized {
+            WatcherRequest::GetTree { path } => {
+                assert!(path.is_some());
+                assert_eq!(path.unwrap(), PathBuf::from("src"));
+            }
+            _ => panic!("Wrong request type"),
+        }
+    }
+
+    #[test]
+    fn test_new_get_metadata_request() {
+        let request = WatcherRequest::GetMetadata {
+            paths: vec![PathBuf::from("file1.txt"), PathBuf::from("file2.txt")],
+        };
+        
+        let bytes = request.to_bytes().unwrap();
+        let deserialized = WatcherRequest::from_bytes(&bytes).unwrap();
+        
+        match deserialized {
+            WatcherRequest::GetMetadata { paths } => {
+                assert_eq!(paths.len(), 2);
+                assert_eq!(paths[0], PathBuf::from("file1.txt"));
+                assert_eq!(paths[1], PathBuf::from("file2.txt"));
+            }
+            _ => panic!("Wrong request type"),
+        }
+    }
+
+    #[test]
+    fn test_tree_response_serialization() {
+        let mut tree = FileSystemTree::new();
+        let metadata = FileMetadata {
+            size: 100,
+            mtime: SystemTime::now(),
+            is_symlink: false,
+        };
+        tree.upsert(&PathBuf::from("test.txt"), Some(metadata));
+        
+        let response = WatcherResponse::Tree(tree);
         let bytes = response.to_bytes().unwrap();
         let deserialized = WatcherResponse::from_bytes(&bytes).unwrap();
         
         match deserialized {
-            WatcherResponse::Summary { created, modified, removed, .. } => {
-                assert_eq!(created, 3);
-                assert_eq!(modified, 5);
-                assert_eq!(removed, 2);
+            WatcherResponse::Tree(tree) => {
+                assert!(tree.get_node(&PathBuf::from("test.txt")).is_some());
             }
             _ => panic!("Wrong response type"),
         }
     }
 
     #[test]
-    fn test_status_result_serialization() {
+    fn test_metadata_response_serialization() {
+        let metadata = FileMetadata {
+            size: 200,
+            mtime: SystemTime::now(),
+            is_symlink: true,
+        };
+        
+        let response = WatcherResponse::Metadata(vec![
+            (PathBuf::from("file1.txt"), Some(metadata.clone())),
+            (PathBuf::from("dir1"), None),
+        ]);
+        
+        let bytes = response.to_bytes().unwrap();
+        let deserialized = WatcherResponse::from_bytes(&bytes).unwrap();
+        
+        match deserialized {
+            WatcherResponse::Metadata(metadata_list) => {
+                assert_eq!(metadata_list.len(), 2);
+                assert_eq!(metadata_list[0].0, PathBuf::from("file1.txt"));
+                assert!(metadata_list[0].1.is_some());
+                assert_eq!(metadata_list[1].0, PathBuf::from("dir1"));
+                assert!(metadata_list[1].1.is_none());
+            }
+            _ => panic!("Wrong response type"),
+        }
+    }
+
+    // Test old protocol compatibility
+    #[test]
+    fn test_old_status_result_serialization() {
         let status_result = StatusResult {
             created: vec![FileStatus {
                 path: PathBuf::from("created.txt"),
@@ -85,13 +152,9 @@ mod tests {
     }
 
     #[test]
-    fn test_all_request_types() {
+    fn test_basic_request_types() {
         let requests = vec![
             WatcherRequest::GetStatus { paths: None },
-            WatcherRequest::GetSummary,
-            WatcherRequest::Refresh {
-                paths: vec![PathBuf::from("/tmp")],
-            },
             WatcherRequest::Shutdown,
             WatcherRequest::Ping,
         ];
@@ -104,7 +167,6 @@ mod tests {
             match (&request, &deserialized) {
                 (WatcherRequest::Ping, WatcherRequest::Ping) => {}
                 (WatcherRequest::Shutdown, WatcherRequest::Shutdown) => {}
-                (WatcherRequest::GetSummary, WatcherRequest::GetSummary) => {}
                 _ => {} // Other cases would need deeper comparison
             }
         }
