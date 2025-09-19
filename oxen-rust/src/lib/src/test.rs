@@ -113,6 +113,7 @@ pub async fn create_or_clear_remote_repo(
     let url = api::endpoint::url_from_host(&host, &remote_name);
 
     let _ = api::client::repositories::delete_from_url(url).await;
+    std::thread::sleep(std::time::Duration::from_millis(500));
     api::client::repositories::create_from_local(repo, repo_new).await
 }
 

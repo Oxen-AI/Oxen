@@ -3,6 +3,8 @@ use std::env;
 
 mod oxen;
 use crate::oxen::add;
+use crate::oxen::download;
+use crate::oxen::fetch;
 use crate::oxen::push;
 use crate::oxen::workspace_add;
 
@@ -25,6 +27,8 @@ fn main() {
             "workspace_add" => {
                 workspace_add::workspace_add_benchmark(&mut c, data_path, Some(iters))
             }
+            "fetch" => fetch::fetch_benchmark(&mut c, data_path, Some(iters)),
+            "download" => download::download_benchmark(&mut c, data_path, Some(iters)),
             _ => {
                 eprintln!("Benchmark not found: {}", name);
                 std::process::exit(1);

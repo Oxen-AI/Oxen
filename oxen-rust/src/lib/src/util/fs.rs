@@ -22,7 +22,6 @@ use crate::constants;
 use crate::constants::CACHE_DIR;
 use crate::constants::CHUNKS_DIR;
 use crate::constants::CONTENT_IS_VALID;
-use crate::constants::DATA_ARROW_FILE;
 use crate::constants::HISTORY_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::TREE_DIR;
@@ -33,7 +32,6 @@ use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
-use crate::model::Schema;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
@@ -41,7 +39,6 @@ use crate::view::health::DiskUsage;
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
 
-use crate::repositories;
 use crate::util;
 
 // Deprecated
@@ -87,28 +84,6 @@ pub fn commit_content_is_valid_path(repo: &LocalRepository, commit: &Commit) -> 
         .join(&commit.id)
         .join(CACHE_DIR)
         .join(CONTENT_IS_VALID)
-}
-
-pub fn version_path_for_commit_id(
-    repo: &LocalRepository,
-    commit_id: &str,
-    filepath: &Path,
-) -> Result<PathBuf, OxenError> {
-    match repositories::commits::get_by_id(repo, commit_id)? {
-        Some(commit) => match repositories::entries::get_commit_entry(repo, &commit, filepath)? {
-            Some(entry) => {
-                let path = version_path(repo, &entry);
-                let arrow_path = path.parent().unwrap().join(DATA_ARROW_FILE);
-                if arrow_path.exists() {
-                    Ok(arrow_path)
-                } else {
-                    Ok(path)
-                }
-            }
-            None => Err(OxenError::path_does_not_exist(filepath)),
-        },
-        None => Err(OxenError::revision_not_found(commit_id.into())),
-    }
 }
 
 pub fn handle_image_resize(
@@ -158,28 +133,6 @@ pub fn resized_path_for_version_store_file(
         extension
     ));
     Ok(resized_path)
-}
-
-pub fn version_file_size(repo: &LocalRepository, entry: &CommitEntry) -> Result<u64, OxenError> {
-    let version_path = version_path(repo, entry);
-    // if is_tabular(&version_path) {
-    //     let data_file = version_path.parent().unwrap().join(DATA_ARROW_FILE);
-    //     if !data_file.exists() {
-    //         // just for unit tests to pass for now, we only really call file size from the server
-    //         // on the client we don't have the data.arrow file and would have to compute size on the fly
-    //         // but a warning for now should be good
-    //         log::warn!("TODO: compute size of data file: {:?}", data_file);
-    //         return Ok(0);
-    //     }
-    //     let meta = util::fs::metadata(&data_file)?;
-    //     Ok(meta.len())
-    // } else {
-    if !version_path.exists() {
-        return Err(OxenError::path_does_not_exist(version_path));
-    }
-    let meta = util::fs::metadata(&version_path)?;
-    Ok(meta.len())
-    // }
 }
 
 pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
@@ -262,11 +215,6 @@ pub fn version_path_from_dst_generic(dst: impl AsRef<Path>, entry: &Entry) -> Pa
     }
 }
 
-pub fn df_version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
-    let version_dir = version_dir_from_hash(&repo.path, entry.hash.clone());
-    version_dir.join(DATA_ARROW_FILE)
-}
-
 pub fn version_path_from_hash_and_file_v0_10_0(
     dst: impl AsRef<Path>,
     hash: impl AsRef<str>,
@@ -309,11 +257,6 @@ pub fn version_path_from_hash_and_file(
             version_dir.join(VERSION_FILE_NAME)
         }
     }
-}
-
-pub fn version_path_from_schema(dst: impl AsRef<Path>, schema: &Schema) -> PathBuf {
-    // Save schemas as path with no extension
-    version_path_from_schema_hash(dst, schema.hash.clone())
 }
 
 pub fn version_path_from_schema_hash(dst: impl AsRef<Path>, hash: String) -> PathBuf {
