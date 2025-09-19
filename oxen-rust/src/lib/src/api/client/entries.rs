@@ -669,33 +669,38 @@ pub async fn try_download_data_from_version_paths(
 
         let mut size: u64 = 0;
         let mut idx: usize = 0;
+        let mut count: usize = 0;
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
         let mut count = 0;
         while let Some(file) = entries.next().await {
             count += 1;
             log::debug!("download_data_from_version_paths file: {:?}", file);
+
             let entry_path = &content_ids[idx].1;
             // log::debug!("download_data_from_version_paths entry_path: {:?}", entry_path);
             // let version = &content_ids[idx];
             // log::debug!(
-            //     "download_data_from_version_paths Unpacking {:?} -> {:?}",
-            //     version,
-            //     entry_path
-            // );
 
-            let full_path = dst.join(entry_path);
-
-            let mut file = match file {
-                Ok(file) => file,
-                Err(err) => {
-                    let err = format!("Could not unwrap file: {:?}", err);
+                //     "download_data_from_version_paths Unpacking {:?} -> {:?}",
+                //     version,
+                //     entry_path
+                // );
+                
+                let full_path = dst.join(entry_path);
+                
+                let mut file = match file {
+                    Ok(file) => file,
+                    Err(err) => {
+                        let err = format!("Could not unwrap file: {:?}", err);
                     return Err(OxenError::basic_str(err));
                 }
             };
+            log::debug!("download_data_from_version_paths file: {:?}", file.path()?.to_path_buf() );
+            log::debug!("download_data_from_version_paths idx: {}", idx);
+            log::debug!("download_data_from_version_paths content_id: {:?}", content_ids[idx]);
             // let entry_path = file.path()?.to_path_buf();
             // let full_path = dst.join(entry_path.clone());
-            log::debug!("download_data_from_version_paths file: {:?}", file);
             log::debug!(
                 "download_data_from_version_paths entry_path : {:?} full_path: {:?}",
                 entry_path,

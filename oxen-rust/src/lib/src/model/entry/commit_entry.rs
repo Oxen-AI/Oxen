@@ -141,11 +141,12 @@ impl ContentHashable for CommitEntry {
 // Hash on the path field so we can quickly look up
 impl PartialEq for CommitEntry {
     fn eq(&self, other: &CommitEntry) -> bool {
-        self.path == other.path
+        self.hash == other.hash && self.path == other.path
     }
 }
 
-impl Eq for CommitEntry {}
+impl Eq for CommitEntry {
+}
 impl Hash for CommitEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.path.hash(state);

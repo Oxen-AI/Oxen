@@ -325,7 +325,13 @@ async fn get_commit_missing_hashes(
 
         let unique_file_entries = entries
             .into_iter()
-            .filter(|e| unique_files.contains(&MerkleHash::from_str(&e.hash).unwrap()))
+            .filter(|e| {
+                let hash = MerkleHash::from_str(&e.hash).unwrap();
+                log::debug!("✅hash: {:#?}", hash);
+                let contains = unique_files.contains(&hash);
+                log::debug!("✅contains: {:#?}", contains);
+                contains
+            })
             .collect::<HashSet<CommitEntry>>();
         log::debug!("✅unique_file_entries: {:#?}", unique_file_entries);
 
