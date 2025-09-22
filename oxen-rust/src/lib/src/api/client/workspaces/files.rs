@@ -159,6 +159,39 @@ pub async fn add(
     Ok(())
 }
 
+pub async fn add_bytes(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    path: PathBuf,
+    buf: &[u8],
+) -> Result<(), OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let directory = directory.as_ref();
+
+    match upload_bytes_as_file(
+        remote_repo,
+        workspace_id,
+        directory,
+        &path,
+        buf,
+    )
+    .await
+    {
+        Ok(path) => {
+            println!(
+                "🐂 oxen added entry {path:?} to workspace {}",
+                workspace_id
+            );
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn upload_single_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -193,6 +226,20 @@ pub async fn upload_single_file(
         p_upload_single_file(remote_repo, workspace_id, directory, path).await
     }
 }
+
+pub async fn upload_bytes_as_file(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    buf: &[u8],
+) -> Result<PathBuf, OxenError> {
+
+    // TODO: Route to different logic for large and small buffers
+    p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
+    
+}
+
 
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
@@ -495,6 +542,54 @@ async fn p_upload_single_file(
     );
 
     let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let client = client::new_for_url(&url)?;
+    let response = client.post(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, response).await?;
+    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(val) => {
+            log::debug!("File path response: {:?}", val);
+            if let Some(path) = val.paths.first() {
+                Ok(path.clone())
+            } else {
+                Err(OxenError::basic_str("No file path returned from server"))
+            }
+        }
+        Err(err) => {
+            let err = format!("api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
+
+
+async fn p_upload_bytes_as_file(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    buf: &[u8],
+) -> Result<PathBuf, OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let directory = directory.as_ref();
+    let directory_name = directory.to_string_lossy();
+    let path = path.as_ref();
+    log::debug!("multipart_file_upload path: {:?}", path);
+    
+    let file_data: Vec<u8> = buf.to_vec();
+
+    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let file_name: String = path.file_name().unwrap().to_string_lossy().into();
+    log::info!(
+        "api::client::workspaces::files::add sending file_name: {:?}",
+        file_name
+    );
+
+    let file_part = reqwest::multipart::Part::bytes(file_data).file_name(file_name);
     let form = reqwest::multipart::Form::new().part("file", file_part);
     let client = client::new_for_url(&url)?;
     let response = client.post(&url).multipart(form).send().await?;
