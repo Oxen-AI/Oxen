@@ -171,8 +171,8 @@ class Workspace:
             dst: `str`
                 The path in the remote repo where the file will be added
         """
-    
-        self._workspace.add_bytes(src, dst)
+
+        self._workspace.add_bytes(src, buf, dst)
 
     def rm(self, path: str):
         """
