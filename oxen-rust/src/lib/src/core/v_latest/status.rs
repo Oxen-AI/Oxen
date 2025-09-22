@@ -25,8 +25,8 @@ use std::str;
 use std::time::Duration;
 
 use crate::core::v_latest::index::CommitMerkleTree;
-use crate::core::v_latest::watcher_client::{WatcherClient, WatcherStatus};
 use crate::model::merkle_tree::node::EMerkleTreeNode;
+use oxen_watcher::{WatcherClient, WatcherStatus};
 use crate::model::merkle_tree::node::MerkleTreeNode;
 
 pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
@@ -55,7 +55,7 @@ pub async fn status_with_cache(
         log::debug!("Attempting to use watcher cache for status");
 
         // Try to connect to watcher
-        if let Some(client) = WatcherClient::connect(repo).await {
+        if let Some(client) = WatcherClient::connect(&repo.path).await {
             log::info!("Connected to watcher, getting status");
 
             // Try to get status from watcher

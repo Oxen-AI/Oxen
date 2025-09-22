@@ -36,8 +36,8 @@ async fn test_watcher_lifecycle() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
 
-    // Initialize an oxen repository
-    liboxen::repositories::init::init(repo_path).unwrap();
+    // Create a fake .oxen directory to simulate repository
+    std::fs::create_dir_all(repo_path.join(".oxen")).unwrap();
 
     let watcher_path = get_watcher_path();
 
@@ -102,8 +102,8 @@ async fn test_watcher_file_detection() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
 
-    // Initialize an oxen repository
-    liboxen::repositories::init::init(repo_path).unwrap();
+    // Create a fake .oxen directory to simulate repository
+    std::fs::create_dir_all(repo_path.join(".oxen")).unwrap();
 
     let watcher_path = get_watcher_path();
 
@@ -125,19 +125,21 @@ async fn test_watcher_file_detection() {
     // Give watcher time to detect the change
     time::sleep(Duration::from_secs(1)).await;
 
-    // TODO: Once CLI integration is complete (try_watcher_status() in status.rs),
-    // we should test that `oxen status` actually detects the new file via the watcher.
-    // For now we just verify the watcher is running.
-
-    let status_output = Command::new(&watcher_path)
-        .arg("status")
-        .arg("--repo")
-        .arg(repo_path)
-        .output()
+    // Query the watcher via IPC to verify it detected the file
+    let socket_path = repo_path.join(".oxen/watcher.sock");
+    let request = WatcherRequest::GetTree { path: None };
+    let response = send_request(&socket_path, request)
         .await
-        .expect("Failed to check status");
+        .expect("Failed to send request");
 
-    assert!(status_output.status.success());
+    // Verify the response contains the file
+    if let WatcherResponse::Tree(tree) = response {
+        let node = tree.get_node(&PathBuf::from("test.txt"));
+        assert!(node.is_some(), "Test file should be in tree");
+        assert!(node.unwrap().is_file(), "Node should be a file");
+    } else {
+        panic!("Expected Tree response, got: {:?}", response);
+    }
 
     // Stop the watcher
     Command::new(&watcher_path)
@@ -157,8 +159,8 @@ async fn test_multiple_watcher_prevention() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
 
-    // Initialize an oxen repository
-    liboxen::repositories::init::init(repo_path).unwrap();
+    // Create a fake .oxen directory to simulate repository
+    std::fs::create_dir_all(repo_path.join(".oxen")).unwrap();
 
     let watcher_path = get_watcher_path();
 
@@ -203,8 +205,8 @@ async fn test_watcher_reports_relative_paths() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
 
-    // Initialize an oxen repository
-    liboxen::repositories::init::init(repo_path).unwrap();
+    // Create a fake .oxen directory to simulate repository
+    std::fs::create_dir_all(repo_path.join(".oxen")).unwrap();
 
     let watcher_path = get_watcher_path();
 
@@ -229,44 +231,114 @@ async fn test_watcher_reports_relative_paths() {
 
     // Query the watcher via IPC
     let socket_path = repo_path.join(".oxen/watcher.sock");
-    let request = WatcherRequest::GetStatus { paths: None };
+    let request = WatcherRequest::GetTree { path: None };
     let response = send_request(&socket_path, request)
         .await
         .expect("Failed to send request");
 
     // Verify the response contains relative paths
-    if let WatcherResponse::Status(status) = response {
-        // Check that all created file paths are relative
-        for file_status in &status.created {
-            assert!(
-                !file_status.path.is_absolute(),
-                "Path should be relative, got: {:?}",
-                file_status.path
-            );
-            assert!(
-                !file_status.path.starts_with("/"),
-                "Path should not start with /, got: {:?}",
-                file_status.path
-            );
-        }
+    if let WatcherResponse::Tree(tree) = response {
+        // Check that files are present with correct relative paths
+        let root_file = tree.get_node(&PathBuf::from("root_file.txt"));
+        assert!(root_file.is_some(), "Should contain root_file.txt");
+        assert!(root_file.unwrap().is_file());
 
-        // Verify specific files are present with correct relative paths
-        let paths: Vec<_> = status
-            .created
-            .iter()
-            .map(|f| f.path.to_string_lossy().to_string())
-            .collect();
+        let nested_file = tree.get_node(&PathBuf::from("subdir/nested_file.txt"));
         assert!(
-            paths.contains(&"root_file.txt".to_string()),
-            "Should contain root_file.txt"
-        );
-        assert!(
-            paths.contains(&"subdir/nested_file.txt".to_string()),
+            nested_file.is_some(),
             "Should contain subdir/nested_file.txt"
         );
+        assert!(nested_file.unwrap().is_file());
+
+        // Verify paths in tree are relative
+        for (path, _) in tree.iter_files() {
+            assert!(
+                !path.is_absolute(),
+                "Path should be relative, got: {:?}",
+                path
+            );
+            assert!(
+                !path.starts_with("/"),
+                "Path should not start with /, got: {:?}",
+                path
+            );
+        }
     } else {
-        panic!("Expected Status response, got: {:?}", response);
+        panic!("Expected Tree response, got: {:?}", response);
     }
+
+    // Stop the watcher
+    Command::new(&watcher_path)
+        .arg("stop")
+        .arg("--repo")
+        .arg(repo_path)
+        .output()
+        .await
+        .expect("Failed to stop watcher");
+
+    // Clean up
+    let _ = watcher_process.kill().await;
+}
+
+#[tokio::test]
+async fn test_watcher_tree_command() {
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Create a fake .oxen directory to simulate repository
+    std::fs::create_dir_all(repo_path.join(".oxen")).unwrap();
+
+    let watcher_path = get_watcher_path();
+
+    // Start the watcher
+    let mut watcher_process = Command::new(&watcher_path)
+        .arg("start")
+        .arg("--repo")
+        .arg(repo_path)
+        .spawn()
+        .expect("Failed to start watcher");
+
+    // Give it time to start and do initial scan
+    time::sleep(Duration::from_secs(2)).await;
+
+    // Create some test files
+    std::fs::write(repo_path.join("file1.txt"), "content1").unwrap();
+    std::fs::create_dir_all(repo_path.join("dir1")).unwrap();
+    std::fs::write(repo_path.join("dir1/file2.txt"), "content2").unwrap();
+
+    // Give watcher time to detect the changes
+    time::sleep(Duration::from_millis(500)).await;
+
+    // Query the tree using the tree subcommand
+    let tree_output = Command::new(&watcher_path)
+        .arg("tree")
+        .arg("--repo")
+        .arg(repo_path)
+        .output()
+        .await
+        .expect("Failed to run tree command");
+
+    assert!(tree_output.status.success());
+
+    let tree_str = String::from_utf8_lossy(&tree_output.stdout);
+    assert!(tree_str.contains("file1.txt"), "Should show file1.txt");
+    assert!(tree_str.contains("dir1"), "Should show dir1 directory");
+    assert!(tree_str.contains("file2.txt"), "Should show file2.txt");
+
+    // Test tree with metadata
+    let tree_meta_output = Command::new(&watcher_path)
+        .arg("tree")
+        .arg("--repo")
+        .arg(repo_path)
+        .arg("--metadata")
+        .output()
+        .await
+        .expect("Failed to run tree command with metadata");
+
+    assert!(tree_meta_output.status.success());
+    let meta_str = String::from_utf8_lossy(&tree_meta_output.stdout);
+    // "content1" is 8 bytes
+    assert!(meta_str.contains("(8 B,"), "Should show file sizes");
 
     // Stop the watcher
     Command::new(&watcher_path)

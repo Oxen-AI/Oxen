@@ -175,15 +175,16 @@ impl FileSystemTree {
         } else {
             false
         };
-        
+
         if removed {
             self.last_updated = SystemTime::now();
         }
-        
+
         removed
     }
 
     /// Iterate all files (depth-first)
+    #[allow(dead_code)]
     pub fn iter_files(&self) -> FileIterator {
         FileIterator::new(&self.root)
     }
@@ -195,6 +196,7 @@ impl FileSystemTree {
 }
 
 impl TreeNode {
+    #[allow(dead_code)]
     pub fn new_directory(name: impl Into<String>, path: PathBuf) -> Self {
         Self {
             name: name.into(),
@@ -204,6 +206,7 @@ impl TreeNode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_file(name: impl Into<String>, path: PathBuf, metadata: FileMetadata) -> Self {
         Self {
             name: name.into(),
@@ -213,14 +216,17 @@ impl TreeNode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_directory(&self) -> bool {
         matches!(self.node_type, NodeType::Directory)
     }
 
+    #[allow(dead_code)]
     pub fn is_file(&self) -> bool {
         matches!(self.node_type, NodeType::File(_))
     }
 
+    #[allow(dead_code)]
     pub fn metadata(&self) -> Option<&FileMetadata> {
         match &self.node_type {
             NodeType::File(m) => Some(m),
@@ -253,6 +259,7 @@ pub struct FileIterator<'a> {
 }
 
 impl<'a> FileIterator<'a> {
+    #[allow(dead_code)]
     fn new(root: &'a TreeNode) -> Self {
         let mut stack = Vec::new();
         // Add children in reverse order so we iterate in correct order
@@ -325,7 +332,10 @@ mod tests {
 
         // Check directory structure was created
         assert!(tree.get_node(Path::new("dir1")).unwrap().is_directory());
-        assert!(tree.get_node(Path::new("dir1/dir2")).unwrap().is_directory());
+        assert!(tree
+            .get_node(Path::new("dir1/dir2"))
+            .unwrap()
+            .is_directory());
 
         // Check file exists
         let file = tree.get_node(Path::new("dir1/dir2/file.txt")).unwrap();

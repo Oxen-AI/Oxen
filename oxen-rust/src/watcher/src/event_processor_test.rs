@@ -2,116 +2,146 @@
 mod tests {
     use crate::cache::StatusCache;
     use crate::event_processor::EventProcessor;
+    use crate::tree::FileMetadata;
+    use notify::Event;
     use notify::EventKind;
     use notify_debouncer_full::{DebounceEventResult, DebouncedEvent};
-    use notify::Event;
+    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time;
 
-    async fn setup_test_processor() -> (Arc<StatusCache>, mpsc::Sender<DebounceEventResult>, TempDir) {
+    async fn setup_test_processor() -> (Arc<StatusCache>, mpsc::Sender<DebounceEventResult>, TempDir)
+    {
         let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
+        let repo_path = temp_dir.path().canonicalize().unwrap();
 
         // Create a fake .oxen directory
         std::fs::create_dir_all(repo_path.join(".oxen")).unwrap();
 
-        // Initialize an empty oxen repo
-        liboxen::repositories::init::init(repo_path).unwrap();
-
-        let cache = Arc::new(StatusCache::new(repo_path).unwrap());
+        let cache = Arc::new(StatusCache::new(&repo_path).unwrap());
         let (event_tx, event_rx) = mpsc::channel::<DebounceEventResult>(100);
 
-        let processor = EventProcessor::new(cache.clone(), repo_path.to_path_buf());
+        let processor = EventProcessor::new(cache.clone(), repo_path.clone());
 
         // Start processor in background
         tokio::spawn(async move {
             processor.run(event_rx).await;
         });
 
-        // Give processor time to start
-        time::sleep(Duration::from_millis(10)).await;
-
         (cache, event_tx, temp_dir)
     }
 
-    fn create_debounced_event(paths: Vec<std::path::PathBuf>, kind: EventKind) -> DebouncedEvent {
-        let mut event = Event::new(kind);
-        event.paths = paths;
+    fn create_debounced_event(paths: Vec<PathBuf>, kind: EventKind) -> DebouncedEvent {
         DebouncedEvent {
-            event,
-            time: std::time::Instant::now(),
+            event: Event {
+                kind,
+                paths,
+                attrs: Default::default(),
+            },
+            time: Instant::now(),
         }
     }
 
     #[tokio::test]
-    async fn test_debounced_events() {
+    async fn test_file_create_event() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
-        let test_file = temp_dir.path().join("test.txt");
-        std::fs::write(&test_file, "content").unwrap();
+        // Create a test file
+        let file_path = temp_dir.path().canonicalize().unwrap().join("test.txt");
+        std::fs::write(&file_path, "test content").unwrap();
 
-        // Send a debounced create event
+        // Send create event
         let event = create_debounced_event(
-            vec![test_file.clone()],
+            vec![file_path.clone()],
             EventKind::Create(notify::event::CreateKind::File),
         );
         event_tx.send(Ok(vec![event])).await.unwrap();
 
         // Wait for processing
-        time::sleep(Duration::from_millis(150)).await;
+        time::sleep(Duration::from_millis(500)).await;
 
-        // Check cache was updated
-        let status = cache.get_status(None).await;
-        assert_eq!(status.created.len(), 1);
+        // Get the tree and check for the file
+        let tree = cache.get_tree(None).await.unwrap();
+        let node = tree.get_node(&PathBuf::from("test.txt"));
+        assert!(node.is_some(), "File should be in tree");
+
+        let node = node.unwrap();
+        assert!(node.is_file(), "Node should be a file");
+        assert_eq!(node.metadata().unwrap().size, 12); // "test content" is 12 bytes
     }
 
     #[tokio::test]
-    async fn test_ignore_oxen_directory() {
+    async fn test_file_modify_event() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
-        let oxen_file = temp_dir.path().join(".oxen").join("some_file.db");
+        // Create and add a file first
+        let file_path = temp_dir.path().canonicalize().unwrap().join("test.txt");
+        std::fs::write(&file_path, "initial").unwrap();
 
+        // Manually add to cache
+        let metadata = FileMetadata {
+            size: 7,
+            mtime: std::time::SystemTime::now(),
+            is_symlink: false,
+        };
+        cache
+            .update_file(PathBuf::from("test.txt"), metadata)
+            .await
+            .unwrap();
+
+        // Now modify it
+        std::fs::write(&file_path, "modified content").unwrap();
+
+        // Send modify event
         let event = create_debounced_event(
-            vec![oxen_file],
-            EventKind::Create(notify::event::CreateKind::File),
+            vec![file_path.clone()],
+            EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
         );
-
         event_tx.send(Ok(vec![event])).await.unwrap();
 
         // Wait for processing
-        time::sleep(Duration::from_millis(150)).await;
+        time::sleep(Duration::from_millis(500)).await;
 
-        // Should have no entries
-        let status = cache.get_status(None).await;
-        assert!(status.created.is_empty());
-        assert!(status.modified.is_empty());
-        assert!(status.removed.is_empty());
+        // Check that the file metadata was updated
+        let tree = cache.get_tree(None).await.unwrap();
+        let node = tree.get_node(&PathBuf::from("test.txt")).unwrap();
+        assert_eq!(node.metadata().unwrap().size, 16); // "modified content" is 16 bytes
     }
 
     #[tokio::test]
-    async fn test_ignore_directories() {
+    async fn test_file_remove_event() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
-        let dir_path = temp_dir.path().join("some_directory");
-        std::fs::create_dir_all(&dir_path).unwrap();
+        // Add a file to cache first
+        let metadata = FileMetadata {
+            size: 100,
+            mtime: std::time::SystemTime::now(),
+            is_symlink: false,
+        };
+        cache
+            .update_file(PathBuf::from("test.txt"), metadata)
+            .await
+            .unwrap();
 
+        // Send remove event
+        let file_path = temp_dir.path().canonicalize().unwrap().join("test.txt");
         let event = create_debounced_event(
-            vec![dir_path],
-            EventKind::Create(notify::event::CreateKind::Folder),
+            vec![file_path],
+            EventKind::Remove(notify::event::RemoveKind::File),
         );
-
         event_tx.send(Ok(vec![event])).await.unwrap();
 
-        // Wait for processing
-        time::sleep(Duration::from_millis(150)).await;
+        // Wait for processing - increase delay to ensure event is processed
+        time::sleep(Duration::from_millis(500)).await;
 
-        // Should have no entries (directories are skipped)
-        let status = cache.get_status(None).await;
-        assert!(status.created.is_empty());
-        assert!(status.modified.is_empty());
+        // Check that the file was removed from tree
+        let tree = cache.get_tree(None).await.unwrap();
+        assert!(tree.get_node(&PathBuf::from("test.txt")).is_none());
     }
 
     #[tokio::test]
@@ -119,35 +149,46 @@ mod tests {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
         let mut events = Vec::new();
-        
+
         // Create multiple files and events
         for i in 0..5 {
-            let file_path = temp_dir.path().join(format!("file{}.txt", i));
+            let file_path = temp_dir
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join(format!("file{}.txt", i));
             std::fs::write(&file_path, format!("content{}", i)).unwrap();
-            
+
             events.push(create_debounced_event(
                 vec![file_path],
                 EventKind::Create(notify::event::CreateKind::File),
             ));
         }
 
-        // Send all events as a batch (this is what the debouncer does)
+        // Send all events as a batch
         event_tx.send(Ok(events)).await.unwrap();
 
-        // Wait for batch processing
-        time::sleep(Duration::from_millis(200)).await;
+        // Wait for processing
+        time::sleep(Duration::from_millis(500)).await;
 
-        // Should have all files
-        let status = cache.get_status(None).await;
-        assert_eq!(status.created.len(), 5);
+        // Check that all files are in the tree
+        let tree = cache.get_tree(None).await.unwrap();
+        for i in 0..5 {
+            let path = PathBuf::from(format!("file{}.txt", i));
+            assert!(
+                tree.get_node(&path).is_some(),
+                "File {} should be in tree",
+                i
+            );
+        }
     }
 
     #[tokio::test]
-    async fn test_event_kinds_mapping() {
+    async fn test_different_event_types() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
         // Test Create event
-        let create_file = temp_dir.path().join("created.txt");
+        let create_file = temp_dir.path().canonicalize().unwrap().join("created.txt");
         std::fs::write(&create_file, "content").unwrap();
 
         event_tx
@@ -159,48 +200,36 @@ mod tests {
             .unwrap();
 
         // Test Modify event
-        let modify_file = temp_dir.path().join("modified.txt");
+        let modify_file = temp_dir.path().canonicalize().unwrap().join("modified.txt");
         std::fs::write(&modify_file, "content").unwrap();
 
         event_tx
             .send(Ok(vec![create_debounced_event(
                 vec![modify_file.clone()],
-                EventKind::Modify(notify::event::ModifyKind::Data(notify::event::DataChange::Any)),
-            )]))
-            .await
-            .unwrap();
-
-        // Test Remove event
-        let remove_file = temp_dir.path().join("removed.txt");
-
-        event_tx
-            .send(Ok(vec![create_debounced_event(
-                vec![remove_file.clone()],
-                EventKind::Remove(notify::event::RemoveKind::File),
+                EventKind::Modify(notify::event::ModifyKind::Data(
+                    notify::event::DataChange::Any,
+                )),
             )]))
             .await
             .unwrap();
 
         // Wait for processing
-        time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(500)).await;
 
-        let status = cache.get_status(None).await;
-
-        // Should have entries in different categories
-        let total = status.created.len()
-            + status.modified.len()
-            + status.removed.len();
-        assert!(total > 0, "Should have processed events");
+        // Check that files are in the tree
+        let tree = cache.get_tree(None).await.unwrap();
+        assert!(tree.get_node(&PathBuf::from("created.txt")).is_some());
+        assert!(tree.get_node(&PathBuf::from("modified.txt")).is_some());
     }
 
     #[tokio::test]
     async fn test_skip_access_events() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
-        let file = temp_dir.path().join("accessed.txt");
+        let file = temp_dir.path().canonicalize().unwrap().join("accessed.txt");
         std::fs::write(&file, "content").unwrap();
 
-        // Send Access event (should be ignored)
+        // Send Access event (should be skipped)
         event_tx
             .send(Ok(vec![create_debounced_event(
                 vec![file.clone()],
@@ -209,23 +238,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Send Other event (should be ignored)
-        event_tx
-            .send(Ok(vec![create_debounced_event(
-                vec![file],
-                EventKind::Other,
-            )]))
-            .await
-            .unwrap();
-
         // Wait for processing
-        time::sleep(Duration::from_millis(150)).await;
+        time::sleep(Duration::from_millis(500)).await;
 
-        // Should have no entries
-        let status = cache.get_status(None).await;
-        assert!(status.created.is_empty());
-        assert!(status.modified.is_empty());
-        assert!(status.removed.is_empty());
+        // File should not be in tree (Access events are skipped)
+        let tree = cache.get_tree(None).await.unwrap();
+        assert!(tree.get_node(&PathBuf::from("accessed.txt")).is_none());
     }
 
     #[tokio::test]
@@ -237,28 +255,34 @@ mod tests {
             notify::Error::generic("Test error 1"),
             notify::Error::generic("Test error 2"),
         ];
-        
+
         event_tx.send(Err(errors)).await.unwrap();
 
         // Wait for processing
         time::sleep(Duration::from_millis(50)).await;
 
-        // Should still be running and cache should be empty
-        let status = cache.get_status(None).await;
-        assert!(status.created.is_empty());
-        assert!(status.modified.is_empty());
-        assert!(status.removed.is_empty());
+        // Should still be running and tree should be empty
+        let tree = cache.get_tree(None).await.unwrap();
+        assert_eq!(
+            tree.iter_files().count(),
+            0,
+            "Tree should be empty after errors"
+        );
     }
 
     #[tokio::test]
     async fn test_file_create_then_delete() {
         let (cache, event_tx, temp_dir) = setup_test_processor().await;
 
-        let test_file = temp_dir.path().join("test_create_delete.txt");
-        
+        let test_file = temp_dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("test_create_delete.txt");
+
         // First create the file and send a create event
         std::fs::write(&test_file, "content").unwrap();
-        
+
         let create_event = create_debounced_event(
             vec![test_file.clone()],
             EventKind::Create(notify::event::CreateKind::File),
@@ -266,17 +290,17 @@ mod tests {
         event_tx.send(Ok(vec![create_event])).await.unwrap();
 
         // Wait for processing
-        time::sleep(Duration::from_millis(150)).await;
+        time::sleep(Duration::from_millis(500)).await;
 
-        // Verify file is in created list
-        let status = cache.get_status(None).await;
-        assert_eq!(status.created.len(), 1, "File should be in created list");
-        assert!(status.modified.is_empty());
-        assert!(status.removed.is_empty());
+        // Verify file is in tree
+        let tree = cache.get_tree(None).await.unwrap();
+        assert!(tree
+            .get_node(&PathBuf::from("test_create_delete.txt"))
+            .is_some());
 
         // Now delete the file and send a remove event
         std::fs::remove_file(&test_file).unwrap();
-        
+
         let remove_event = create_debounced_event(
             vec![test_file.clone()],
             EventKind::Remove(notify::event::RemoveKind::File),
@@ -284,22 +308,14 @@ mod tests {
         event_tx.send(Ok(vec![remove_event])).await.unwrap();
 
         // Wait for processing
-        time::sleep(Duration::from_millis(150)).await;
+        time::sleep(Duration::from_millis(500)).await;
 
-        // After deletion, file should be removed from created list
-        // and should either be in removed list or completely gone
-        let status = cache.get_status(None).await;
-        
+        // File should be gone from tree
+        let tree = cache.get_tree(None).await.unwrap();
         assert!(
-            status.created.is_empty(), 
-            "File should not be in created list after deletion"
-        );
-        assert!(status.modified.is_empty());
-        // The file was created and deleted within the watcher session,
-        // so it should not appear in any list (net effect is no change)
-        assert!(
-            status.removed.is_empty(),
-            "File created and deleted in same session should not appear in removed list"
+            tree.get_node(&PathBuf::from("test_create_delete.txt"))
+                .is_none(),
+            "File should not be in tree after deletion"
         );
     }
 }

@@ -143,7 +143,7 @@ impl FileSystemWatcher {
 async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(), WatcherError> {
     use crate::tree::FileMetadata;
     use std::sync::Mutex;
-    
+
     info!("Starting initial repository scan with parallel walk");
     let start = Instant::now();
 
@@ -176,12 +176,10 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
                         if let Ok(metadata) = entry.metadata() {
                             let file_metadata = FileMetadata {
                                 size: metadata.len(),
-                                mtime: metadata
-                                    .modified()
-                                    .unwrap_or_else(|_| SystemTime::now()),
+                                mtime: metadata.modified().unwrap_or_else(|_| SystemTime::now()),
                                 is_symlink: ft.is_symlink(),
                             };
-                            
+
                             if let Ok(tx) = tx.lock() {
                                 let _ = tx.send((entry.into_path(), Some(file_metadata)));
                             }
@@ -217,7 +215,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
     let scan_duration = start.elapsed();
     let file_count = updates.iter().filter(|(_, m)| m.is_some()).count();
     let dir_count = updates.iter().filter(|(_, m)| m.is_none()).count();
-    
+
     info!(
         "Fast parallel scan found {} files and {} directories in {:.2}s",
         file_count,
@@ -227,17 +225,20 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
 
     // Batch update the cache with initial state
     if !updates.is_empty() {
-        cache.batch_update_new(updates).await?;
-        info!("Populated cache with {} total entries", file_count + dir_count);
+        cache.batch_update(updates).await?;
+        info!(
+            "Populated cache with {} total entries",
+            file_count + dir_count
+        );
     }
 
     cache.mark_scan_complete().await?;
-    
+
     let total_duration = start.elapsed();
     info!(
         "Initial scan complete in {:.2}s - now tracking filesystem changes",
         total_duration.as_secs_f64()
     );
-    
+
     Ok(())
 }

@@ -1,7 +1,7 @@
 use crate::cache::StatusCache;
 use crate::error::WatcherError;
 use crate::protocol::{WatcherRequest, WatcherResponse};
-use log::{debug, error, info};
+use log::{error, info};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -93,70 +93,37 @@ async fn handle_client(
     let mut msg_buf = vec![0u8; len];
     stream.read_exact(&mut msg_buf).await?;
 
-    // Try to deserialize as new protocol first, fall back to old if needed
-    let response = if let Ok(request) = WatcherRequest::from_bytes(&msg_buf) {
-        info!("Received new protocol request: {:?}", request);
-        
-        match request {
-            WatcherRequest::GetTree { path } => {
-                let tree = cache.get_tree(path.as_deref()).await;
-                match tree {
-                    Some(t) => WatcherResponse::Tree(t),
-                    None => WatcherResponse::Error("Path not found".to_string()),
-                }
+    // Deserialize request
+    let request =
+        WatcherRequest::from_bytes(&msg_buf).map_err(|e| WatcherError::Deserialization(e))?;
+
+    info!("Received request: {:?}", request);
+
+    let response = match request {
+        WatcherRequest::GetTree { path } => {
+            let tree = cache.get_tree(path.as_deref()).await;
+            match tree {
+                Some(t) => WatcherResponse::Tree(t),
+                None => WatcherResponse::Error("Path not found".to_string()),
             }
-            
-            WatcherRequest::GetMetadata { paths } => {
-                let metadata = cache.get_metadata(&paths).await;
-                WatcherResponse::Metadata(metadata)
-            }
-            
-            WatcherRequest::GetStatus { paths } => {
-                // Old protocol compatibility
-                let status = cache.get_status(paths).await;
-                debug!("Status response:\n{}", status);
-                WatcherResponse::Status(status)
-            }
-            
-            WatcherRequest::Shutdown => {
-                info!("Shutdown requested via IPC");
-                // Send response before shutting down
-                let response = WatcherResponse::Ok;
-                send_response(&mut stream, &response).await?;
-                
-                // Exit the process
-                std::process::exit(0);
-            }
-            
-            WatcherRequest::Ping => WatcherResponse::Ok,
         }
-    } else if let Ok(old_request) = crate::protocol::OldWatcherRequest::from_bytes(&msg_buf) {
-        info!("Received old protocol request: {:?}", old_request);
-        
-        // Convert old request to new and process
-        let request: WatcherRequest = old_request.into();
-        
-        match request {
-            WatcherRequest::GetStatus { paths } => {
-                let status = cache.get_status(paths).await;
-                debug!("Status response:\n{}", status);
-                WatcherResponse::Status(status)
-            }
-            
-            WatcherRequest::Shutdown => {
-                info!("Shutdown requested via IPC");
-                let response = WatcherResponse::Ok;
-                send_response(&mut stream, &response).await?;
-                std::process::exit(0);
-            }
-            
-            WatcherRequest::Ping => WatcherResponse::Ok,
-            
-            _ => WatcherResponse::Error("Unsupported request".to_string()),
+
+        WatcherRequest::GetMetadata { paths } => {
+            let metadata = cache.get_metadata(&paths).await;
+            WatcherResponse::Metadata(metadata)
         }
-    } else {
-        error!("Failed to deserialize request");
-        WatcherResponse::Error("Invalid request format".to_string())
+
+        WatcherRequest::Shutdown => {
+            info!("Shutdown requested via IPC");
+            // Send response before shutting down
+            let response = WatcherResponse::Ok;
+            send_response(&mut stream, &response).await?;
+
+            // Exit the process
+            std::process::exit(0);
+        }
+
+        WatcherRequest::Ping => WatcherResponse::Ok,
     };
 
     // Send response

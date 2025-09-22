@@ -13,14 +13,13 @@ path = "src/main.rs"
 
 [[bin]]
 name = "watcher-benchmark"
-path = "benches/watcher_benchmarks.rs"
+path = "benchmarks/watcher_benchmarks.rs"
 
 [lib]
 name = "oxen_watcher"
 path = "src/lib.rs"
 
 [dependencies]
-liboxen = { path = "../lib" }
 notify = "8.2"
 notify-debouncer-full = "0.6"
 tokio = { version = "1", features = ["full"] }

@@ -6,6 +6,7 @@ mod ipc;
 mod monitor;
 mod protocol;
 mod tree;
+mod util;
 
 use clap::Parser;
 use log::info;
@@ -33,9 +34,13 @@ async fn main() -> Result<(), WatcherError> {
             info!("Checking watcher status for repository: {}", repo.display());
             check_status(repo).await
         }
-        cli::Commands::Tree { repo, path, metadata, depth, stats } => {
-            query_and_display_tree(repo, path, metadata, depth, stats).await
-        }
+        cli::Commands::Tree {
+            repo,
+            path,
+            metadata,
+            depth,
+            stats,
+        } => query_and_display_tree(repo, path, metadata, depth, stats).await,
     }
 }
 
@@ -92,18 +97,18 @@ async fn is_watcher_running(repo_path: &Path) -> Result<bool, WatcherError> {
 }
 
 async fn query_and_display_tree(
-    repo_path: PathBuf, 
+    repo_path: PathBuf,
     path: Option<PathBuf>,
     show_metadata: bool,
     max_depth: usize,
     show_stats: bool,
 ) -> Result<(), WatcherError> {
     let socket_path = repo_path.join(".oxen/watcher.sock");
-    
+
     // Send request to get tree
     let request = protocol::WatcherRequest::GetTree { path: path.clone() };
     let response = ipc::send_request(&socket_path, request).await?;
-    
+
     match response {
         protocol::WatcherResponse::Tree(tree) => {
             // Pretty print the tree
@@ -113,7 +118,7 @@ async fn query_and_display_tree(
                 println!("📁 Repository tree:");
             }
             println!();
-            
+
             // When querying a subtree, print its contents directly
             // When querying the full tree, skip the root node
             let is_subtree_query = path.is_some();
@@ -121,7 +126,7 @@ async fn query_and_display_tree(
                 // For subtree queries, print the children of the root directly
                 let child_count = tree.root.children.len();
                 let mut child_idx = 0;
-                
+
                 for (_name, child) in &tree.root.children {
                     child_idx += 1;
                     let is_last_child = child_idx == child_count;
@@ -132,14 +137,14 @@ async fn query_and_display_tree(
                 // For full tree queries, process normally (skip root)
                 print_tree_node(&tree.root, "", true, show_metadata, max_depth, 0);
             }
-            
+
             // Show statistics if requested
             if show_stats {
                 println!();
                 println!("─────────────────────────────────────────");
                 print_tree_stats(&tree);
             }
-            
+
             Ok(())
         }
         protocol::WatcherResponse::Error(msg) => {
@@ -148,7 +153,9 @@ async fn query_and_display_tree(
         }
         _ => {
             eprintln!("Unexpected response from watcher");
-            Err(WatcherError::Communication("Unexpected response type".to_string()))
+            Err(WatcherError::Communication(
+                "Unexpected response type".to_string(),
+            ))
         }
     }
 }
@@ -165,7 +172,7 @@ fn print_tree_node(
     if max_depth > 0 && current_depth > max_depth {
         return;
     }
-    
+
     // Skip printing the root node itself on first call
     if current_depth > 0 {
         // Print the tree branch characters
@@ -175,7 +182,7 @@ fn print_tree_node(
         } else {
             print!("├── ");
         }
-        
+
         // Print the node name with appropriate icon
         match node.node_type {
             tree::NodeType::Directory => {
@@ -187,7 +194,8 @@ fn print_tree_node(
             tree::NodeType::File(ref metadata) => {
                 print!("📄 {}", node.name);
                 if show_metadata {
-                    print!(" ({}, {})", 
+                    print!(
+                        " ({}, {})",
                         format_size(metadata.size),
                         format_time(&metadata.mtime)
                     );
@@ -196,21 +204,21 @@ fn print_tree_node(
         }
         println!();
     }
-    
+
     // Process children
     let child_count = node.children.len();
     let mut child_idx = 0;
-    
+
     for (_name, child) in &node.children {
         child_idx += 1;
         let is_last_child = child_idx == child_count;
-        
+
         let new_prefix = if current_depth == 0 {
             String::new()
         } else {
             format!("{}{}    ", prefix, if is_last { " " } else { "│" })
         };
-        
+
         print_tree_node(
             child,
             &new_prefix,
@@ -226,12 +234,12 @@ fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_idx = 0;
-    
+
     while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
         size /= 1024.0;
         unit_idx += 1;
     }
-    
+
     if unit_idx == 0 {
         format!("{} {}", size as u64, UNITS[unit_idx])
     } else {
@@ -241,7 +249,7 @@ fn format_size(bytes: u64) -> String {
 
 fn format_time(time: &std::time::SystemTime) -> String {
     use chrono::{DateTime, Local};
-    
+
     let datetime: DateTime<Local> = (*time).into();
     datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -250,18 +258,30 @@ fn print_tree_stats(tree: &tree::FileSystemTree) {
     let mut file_count = 0;
     let mut dir_count = 0;
     let mut total_size = 0u64;
-    
+
     count_nodes(&tree.root, &mut file_count, &mut dir_count, &mut total_size);
-    
+
     println!("📊 Statistics:");
     println!("  Files:       {}", file_count);
     println!("  Directories: {}", dir_count);
     println!("  Total size:  {}", format_size(total_size));
     println!("  Last update: {}", format_time(&tree.last_updated));
-    println!("  Scan complete: {}", if tree.scan_complete { "✅ Yes" } else { "⏳ No" });
+    println!(
+        "  Scan complete: {}",
+        if tree.scan_complete {
+            "✅ Yes"
+        } else {
+            "⏳ No"
+        }
+    );
 }
 
-fn count_nodes(node: &tree::TreeNode, file_count: &mut usize, dir_count: &mut usize, total_size: &mut u64) {
+fn count_nodes(
+    node: &tree::TreeNode,
+    file_count: &mut usize,
+    dir_count: &mut usize,
+    total_size: &mut u64,
+) {
     match &node.node_type {
         tree::NodeType::Directory => {
             *dir_count += 1;
