@@ -21,6 +21,7 @@ default = ["duckdb/bundled"]
 docs = ["duckdb"]
 
 [dependencies]
+oxen-watcher = { path = "../watcher" }
 actix-web = { version = "4", features = ["rustls"] }
 approx = "0.5.1"
 astral-tokio-tar = "0.5.2"
