@@ -4,7 +4,7 @@ use crate::model::{
     entry::metadata_entry::{MetadataEntry, WorkspaceMetadataEntry},
     metadata::MetadataDir,
     parsed_resource::ParsedResourceView,
-    Branch, Commit, CommitEntry, EntryDataType, ParsedResource, RemoteEntry,
+    Branch, Commit, CommitEntry, EntryDataType, MerkleHash, ParsedResource, RemoteEntry,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,14 +12,14 @@ use super::{Pagination, StatusMessage};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ListMissingFilesRequest {
-    pub commit_entries: Option<std::collections::HashSet<CommitEntry>>,
+    pub file_hashes: Option<std::collections::HashSet<MerkleHash>>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ListCommitEntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub entries: Vec<CommitEntry>,
+    pub file_hashes: Vec<MerkleHash>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

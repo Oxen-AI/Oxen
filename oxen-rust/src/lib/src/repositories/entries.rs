@@ -12,7 +12,7 @@ use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
 use crate::model::{
-    Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
+    Commit, CommitEntry, LocalRepository, MerkleHash, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
 use std::collections::HashMap;
@@ -290,8 +290,8 @@ pub fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
     base_commit: &Option<Commit>,
     head_commit: &Option<Commit>,
-    commit_entries: Option<std::collections::HashSet<CommitEntry>>,
-) -> Result<Vec<CommitEntry>, OxenError> {
+    file_hashes: Option<std::collections::HashSet<MerkleHash>>,
+) -> Result<Vec<MerkleHash>, OxenError> {
     let version_store = repo.version_store()?;
     match (base_commit, head_commit) {
         (Some(base_commit), Some(head_commit)) => {
@@ -306,26 +306,32 @@ pub fn list_missing_files_in_commit_range(
             all_entries.sort_by(|a, b| a.path.cmp(&b.path));
             all_entries.dedup_by(|a, b| a.path == b.path);
 
-            let missing_files: Vec<CommitEntry> = all_entries
+            let missing_files: Vec<MerkleHash> = all_entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(true))
+                .map(|entry| MerkleHash::from_str(&entry.hash).unwrap())
                 .collect();
 
             Ok(missing_files)
         }
         (None, Some(head_commit)) => {
             let entries = list_for_commit(repo, head_commit)?;
-            let missing_files: Vec<CommitEntry> = entries
+            let missing_files: Vec<MerkleHash> = entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
+                .map(|entry| MerkleHash::from_str(&entry.hash).unwrap())
                 .collect();
             Ok(missing_files)
         }
-        (None, None) => match commit_entries {
-            Some(commit_entries) => {
-                let missing_files = commit_entries
+        (None, None) => match file_hashes {
+            Some(file_hashes) => {
+                let missing_files = file_hashes
                     .into_par_iter()
-                    .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
+                    .filter(|entry| {
+                        !version_store
+                            .version_exists(&entry.to_string())
+                            .unwrap_or(false)
+                    })
                     .collect();
                 Ok(missing_files)
             }

@@ -1,6 +1,6 @@
 use crate::constants::VERSION_FILE_NAME;
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
-use crate::model::{Commit, ContentHashable, LocalRepository, RemoteEntry, Schema};
+use crate::model::{Commit, ContentHashable, LocalRepository, MerkleHash, RemoteEntry, Schema};
 use crate::util;
 
 use filetime::FileTime;
@@ -159,6 +159,17 @@ impl CommitEntry {
             commit_id: String::from(""),
             path: path.as_ref().to_path_buf(),
             hash: String::from(""),
+            num_bytes: 0,
+            last_modified_seconds: 0,
+            last_modified_nanoseconds: 0,
+        }
+    }
+
+    pub fn from_merkle_hash(hash: &MerkleHash) -> CommitEntry {
+        CommitEntry {
+            commit_id: String::from(""),
+            path: PathBuf::from(""), //Should we do this?
+            hash: hash.to_string(),
             num_bytes: 0,
             last_modified_seconds: 0,
             last_modified_nanoseconds: 0,

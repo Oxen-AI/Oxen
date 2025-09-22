@@ -1,7 +1,9 @@
+use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use crate::model::merkle_tree::node::file_node::FileNode;
+use crate::model::MerkleHash;
 
 #[derive(Debug, Clone)]
 pub struct FileNodeWithDir {
@@ -11,7 +13,7 @@ pub struct FileNodeWithDir {
 
 impl PartialEq for FileNodeWithDir {
     fn eq(&self, other: &Self) -> bool {
-        self.dir.join(self.file_node.name()) == other.dir.join(other.file_node.name())
+        self.file_node.hash() == other.file_node.hash()
     }
 }
 
@@ -19,6 +21,12 @@ impl Eq for FileNodeWithDir {}
 
 impl Hash for FileNodeWithDir {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.dir.join(self.file_node.name()).hash(state);
+        self.file_node.hash().hash(state);
+    }
+}
+
+impl Borrow<MerkleHash> for FileNodeWithDir {
+    fn borrow(&self) -> &MerkleHash {
+        &self.file_node.hash()
     }
 }

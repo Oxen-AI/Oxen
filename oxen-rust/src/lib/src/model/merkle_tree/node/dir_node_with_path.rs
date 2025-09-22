@@ -1,7 +1,9 @@
+use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use crate::model::merkle_tree::node::dir_node::DirNode;
+use crate::model::MerkleHash;
 
 #[derive(Debug, Clone)]
 pub struct DirNodeWithPath {
@@ -11,7 +13,7 @@ pub struct DirNodeWithPath {
 
 impl PartialEq for DirNodeWithPath {
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
+        self.dir_node.hash() == other.dir_node.hash()
     }
 }
 
@@ -19,6 +21,12 @@ impl Eq for DirNodeWithPath {}
 
 impl Hash for DirNodeWithPath {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.path.hash(state);
+        self.dir_node.hash().hash(state);
+    }
+}
+
+impl Borrow<MerkleHash> for DirNodeWithPath {
+    fn borrow(&self) -> &MerkleHash {
+        &self.dir_node.hash()
     }
 }
