@@ -115,7 +115,6 @@ async fn setup_repo_for_download_benchmark(
     repositories::commit(&repo, "Prepare test files for download benchmark")?;
     repositories::push(&repo).await?;
 
-    std::fs::remove_dir_all(&repo_dir)?;
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     Ok((repo, remote_repo, repo_dir))
@@ -184,14 +183,12 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
                             .await
                             .unwrap();
 
-                        std::fs::remove_dir_all(&iter_dir).unwrap();
                     },
                     criterion::BatchSize::PerIteration,
                 );
             },
         );
-
-        std::fs::remove_dir_all(&repo_dir).unwrap();
+        
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
         let _ = rt
