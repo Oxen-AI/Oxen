@@ -26,8 +26,8 @@ use std::time::Duration;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
-use oxen_watcher::{WatcherClient, WatcherStatus};
 use crate::model::merkle_tree::node::MerkleTreeNode;
+use oxen_watcher::{FileMetadata, FileSystemTree, NodeType, WatcherClient};
 
 pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
     status_from_dir(repo, &repo.path)
@@ -56,17 +56,17 @@ pub async fn status_with_cache(
 
         // Try to connect to watcher
         if let Some(client) = WatcherClient::connect(&repo.path).await {
-            log::info!("Connected to watcher, getting status");
+            log::info!("Connected to watcher, getting tree");
 
-            // Try to get status from watcher
-            match client.get_status().await {
-                Ok(watcher_status) => {
-                    log::debug!("Got status from watcher, merging with staged data");
-                    log::info!("Got status from watcher, merging with staged data");
-                    return merge_watcher_with_staged(repo, opts, watcher_status);
+            // Try to get filesystem tree from watcher
+            match client.get_tree(None).await {
+                Ok(fs_tree) => {
+                    log::debug!("Got tree from watcher, computing status");
+                    log::info!("Using tree-based status computation");
+                    return compute_status_from_tree(repo, opts, fs_tree);
                 }
                 Err(e) => {
-                    log::warn!("Failed to get status from watcher: {}", e);
+                    log::warn!("Failed to get tree from watcher: {}", e);
                     // Fall through to regular status
                 }
             }
@@ -79,127 +79,6 @@ pub async fn status_with_cache(
 
     // Fallback to regular status
     status_from_opts(repo, opts)
-}
-
-/// Merge watcher data with staged database and other sources
-fn merge_watcher_with_staged(
-    repo: &LocalRepository,
-    opts: &StagedDataOpts,
-    watcher: WatcherStatus,
-) -> Result<StagedData, OxenError> {
-    log::debug!("Merging watcher data with staged database");
-
-    let mut staged_data = StagedData::empty();
-
-    // Apply oxenignore filtering
-    let oxenignore = oxenignore::create(repo);
-
-    // Use watcher data for filesystem state
-    // Apply path filtering if paths were specified
-    if !opts.paths.is_empty() && opts.paths[0] != repo.path {
-        // Filter watcher results to only include specified paths
-        let requested_paths: HashSet<PathBuf> = opts
-            .paths
-            .iter()
-            .map(|p| util::fs::path_relative_to_dir(p, &repo.path))
-            .filter_map(Result::ok)
-            .collect();
-
-        staged_data.untracked_files = watcher
-            .created
-            .into_iter()
-            .filter(|p| requested_paths.iter().any(|req| p.starts_with(req)))
-            .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
-            .collect();
-
-        staged_data.modified_files = watcher
-            .modified
-            .into_iter()
-            .filter(|p| requested_paths.iter().any(|req| p.starts_with(req)))
-            .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
-            .collect();
-
-        staged_data.removed_files = watcher
-            .removed
-            .into_iter()
-            .filter(|p| requested_paths.iter().any(|req| p.starts_with(req)))
-            .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
-            .collect();
-    } else {
-        // Use all watcher data with oxenignore filtering
-        staged_data.untracked_files = watcher
-            .created
-            .into_iter()
-            .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
-            .collect();
-        staged_data.modified_files = watcher
-            .modified
-            .into_iter()
-            .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
-            .collect();
-        staged_data.removed_files = watcher
-            .removed
-            .into_iter()
-            .filter(|p| !oxenignore::is_ignored(p, &oxenignore, false))
-            .collect();
-    }
-
-    // Extract untracked directories from untracked files
-    let mut untracked_dirs: HashMap<PathBuf, usize> = HashMap::new();
-    for file in &staged_data.untracked_files {
-        if let Some(parent) = file.parent() {
-            if !parent.as_os_str().is_empty() {
-                *untracked_dirs.entry(parent.to_path_buf()).or_insert(0) += 1;
-            }
-        }
-    }
-    staged_data.untracked_dirs = untracked_dirs.into_iter().collect();
-
-    // Now read staged data from the database
-    let staged_db_maybe = open_staged_db(repo)?;
-
-    if let Some(staged_db) = staged_db_maybe {
-        log::debug!("Reading staged entries from database");
-
-        let read_progress = ProgressBar::new_spinner();
-        read_progress.set_style(ProgressStyle::default_spinner());
-        read_progress.enable_steady_tick(Duration::from_millis(100));
-
-        // Read staged entries based on paths
-        let mut dir_entries = HashMap::new();
-        if !opts.paths.is_empty() {
-            for path in &opts.paths {
-                let (sub_dir_entries, _) =
-                    read_staged_entries_below_path(repo, &staged_db, path, &read_progress)?;
-                dir_entries.extend(sub_dir_entries);
-            }
-        } else {
-            let (entries, _) = read_staged_entries(repo, &staged_db, &read_progress)?;
-            dir_entries = entries;
-        }
-
-        read_progress.finish_and_clear();
-
-        // Process staged entries and build staged data
-        status_from_dir_entries(&mut staged_data, dir_entries)?;
-
-        // Filter out staged files from untracked files
-        // Files that have been staged should not appear as untracked
-        let staged_paths: HashSet<&PathBuf> = staged_data.staged_files.keys().collect();
-        staged_data
-            .untracked_files
-            .retain(|path| !staged_paths.contains(&path));
-    }
-
-    // Find merge conflicts
-    let conflicts = repositories::merge::list_conflicts(repo)?;
-    for conflict in conflicts {
-        staged_data
-            .merge_conflicts
-            .push(conflict.to_entry_merge_conflict());
-    }
-
-    Ok(staged_data)
 }
 
 pub fn status_from_opts(
@@ -1244,351 +1123,607 @@ fn maybe_get_dir_children(
     }
 }
 
+/// Information about a tracked file from the committed version
+#[derive(Debug, Clone)]
+struct TrackedFileInfo {
+    hash: String,
+    size: u64,
+    mtime: i64,
+}
+
+/// Compute status using cached filesystem tree from watcher
+fn compute_status_from_tree(
+    repo: &LocalRepository,
+    opts: &StagedDataOpts,
+    fs_tree: FileSystemTree,
+) -> Result<StagedData, OxenError> {
+    let mut staged_data = StagedData::empty();
+
+    // 1. Get tracked files from HEAD commit
+    let head_commit = repositories::commits::head_commit_maybe(repo)?;
+    let tracked_files = get_tracked_files_map(repo, &head_commit)?;
+
+    // 2. Load oxenignore
+    let gitignore = oxenignore::create(repo);
+
+    // 3. Process filesystem tree to find untracked and modified files
+    let mut untracked_files = HashSet::new();
+    let mut untracked_dirs: HashMap<PathBuf, usize> = HashMap::new();
+
+    // Iterate through all files in the tree
+    for (path, metadata) in iter_tree_files(&fs_tree) {
+        // Apply path filtering if specified
+        if !opts.paths.is_empty() {
+            let matches = opts.paths.iter().any(|p| {
+                let rel_p =
+                    util::fs::path_relative_to_dir(p, &repo.path).unwrap_or_else(|_| p.clone());
+                path.starts_with(&rel_p) || rel_p.as_os_str().is_empty()
+            });
+            if !matches {
+                continue;
+            }
+        }
+
+        // Apply oxenignore
+        if oxenignore::is_ignored(&path, &gitignore, false) {
+            continue;
+        }
+
+        if let Some(tracked_entry) = tracked_files.get(&path) {
+            // File is tracked - check if modified
+            if needs_rehash(tracked_entry, metadata) {
+                // Hash the file to confirm modification
+                let full_path = repo.path.join(&path);
+                match util::hasher::hash_file_contents(&full_path) {
+                    Ok(hash) if hash != tracked_entry.hash => {
+                        staged_data.modified_files.insert(path.clone());
+                    }
+                    Err(e) => {
+                        log::debug!("Could not hash file {:?}: {}", path, e);
+                    }
+                    _ => {} // Hash matches, file not modified
+                }
+            }
+        } else {
+            // File is untracked
+            untracked_files.insert(path.clone());
+
+            // Track untracked directories
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    *untracked_dirs.entry(parent.to_path_buf()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // 4. Find removed files (in tracked but not in tree)
+    for (tracked_path, _) in &tracked_files {
+        if !tree_contains_path(&fs_tree, tracked_path) {
+            // Apply path filtering
+            if !opts.paths.is_empty() {
+                let matches = opts.paths.iter().any(|p| {
+                    let rel_p =
+                        util::fs::path_relative_to_dir(p, &repo.path).unwrap_or_else(|_| p.clone());
+                    tracked_path.starts_with(&rel_p) || rel_p.as_os_str().is_empty()
+                });
+                if !matches {
+                    continue;
+                }
+            }
+
+            // Apply oxenignore
+            if !oxenignore::is_ignored(tracked_path, &gitignore, false) {
+                staged_data.removed_files.insert(tracked_path.clone());
+            }
+        }
+    }
+
+    staged_data.untracked_files = untracked_files.into_iter().collect();
+    staged_data.untracked_dirs = untracked_dirs.into_iter().collect();
+
+    // 5. Merge with staged database
+    merge_staged_entries(repo, &mut staged_data, opts)?;
+
+    // 6. Find merge conflicts
+    let conflicts = repositories::merge::list_conflicts(repo)?;
+    for conflict in conflicts {
+        staged_data
+            .merge_conflicts
+            .push(conflict.to_entry_merge_conflict());
+    }
+
+    Ok(staged_data)
+}
+
+/// Get tracked files from the HEAD commit
+fn get_tracked_files_map(
+    repo: &LocalRepository,
+    commit: &Option<Commit>,
+) -> Result<HashMap<PathBuf, TrackedFileInfo>, OxenError> {
+    let Some(commit) = commit else {
+        return Ok(HashMap::new());
+    };
+
+    // Use merkle tree to get all tracked files
+    let tree = CommitMerkleTree::from_commit(repo, commit)?;
+    let mut tracked = HashMap::new();
+
+    // Process from the root node
+    collect_tracked_files(&tree.root, &PathBuf::new(), &mut tracked)?;
+
+    Ok(tracked)
+}
+
+/// Recursively collect tracked files from merkle tree
+fn collect_tracked_files(
+    node: &MerkleTreeNode,
+    current_path: &Path,
+    tracked: &mut HashMap<PathBuf, TrackedFileInfo>,
+) -> Result<(), OxenError> {
+    match &node.node {
+        EMerkleTreeNode::File(file_node) => {
+            let file_path = if current_path.as_os_str().is_empty() {
+                PathBuf::from(file_node.name())
+            } else {
+                current_path.join(file_node.name())
+            };
+            tracked.insert(
+                file_path,
+                TrackedFileInfo {
+                    hash: file_node.hash().to_string(),
+                    size: file_node.num_bytes(),
+                    mtime: file_node.last_modified_seconds(),
+                },
+            );
+        }
+        EMerkleTreeNode::Directory(dir_node) => {
+            let dir_path = if current_path.as_os_str().is_empty() && dir_node.name() == "." {
+                PathBuf::new()
+            } else if current_path.as_os_str().is_empty() {
+                PathBuf::from(dir_node.name())
+            } else {
+                current_path.join(dir_node.name())
+            };
+
+            // Directory nodes have VNode children which contain the actual files
+            for child in &node.children {
+                if let EMerkleTreeNode::VNode(_) = &child.node {
+                    // VNodes contain the actual file/directory entries
+                    for vnode_child in &child.children {
+                        collect_tracked_files(vnode_child, &dir_path, tracked)?;
+                    }
+                } else {
+                    // Handle direct children (shouldn't normally happen in directories)
+                    collect_tracked_files(child, &dir_path, tracked)?;
+                }
+            }
+        }
+        EMerkleTreeNode::VNode(_) => {
+            // VNodes are containers, process their children
+            for child in &node.children {
+                collect_tracked_files(child, current_path, tracked)?;
+            }
+        }
+        EMerkleTreeNode::Commit(_) => {
+            // Commit nodes are at the root, process their children (which should be the root directory)
+            for child in &node.children {
+                collect_tracked_files(child, current_path, tracked)?;
+            }
+        }
+        _ => {} // Skip other node types
+    }
+
+    Ok(())
+}
+
+/// Check if a file needs to be rehashed based on metadata
+fn needs_rehash(tracked: &TrackedFileInfo, metadata: &FileMetadata) -> bool {
+    // Check if file has potentially changed based on metadata
+    metadata.size != tracked.size
+        || metadata
+            .mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            > tracked.mtime
+}
+
+/// Iterate through all files in the tree
+fn iter_tree_files(tree: &FileSystemTree) -> Vec<(PathBuf, &FileMetadata)> {
+    let mut files = Vec::new();
+    collect_files_from_node(&tree.root, &PathBuf::new(), &mut files);
+    files
+}
+
+/// Recursively collect files from a tree node
+fn collect_files_from_node<'a>(
+    node: &'a oxen_watcher::tree::TreeNode,
+    current_path: &Path,
+    files: &mut Vec<(PathBuf, &'a FileMetadata)>,
+) {
+    let node_path = if current_path.as_os_str().is_empty() && node.name == "." {
+        PathBuf::new()
+    } else if current_path.as_os_str().is_empty() {
+        PathBuf::from(&node.name)
+    } else {
+        current_path.join(&node.name)
+    };
+
+    match &node.node_type {
+        NodeType::File(metadata) => {
+            // Don't include the root "." path for files
+            if !node_path.as_os_str().is_empty() || node.name != "." {
+                files.push((node_path, metadata));
+            }
+        }
+        NodeType::Directory => {
+            // Recursively collect from children
+            for child in node.children.values() {
+                collect_files_from_node(child, &node_path, files);
+            }
+        }
+    }
+}
+
+/// Check if the tree contains a specific path
+fn tree_contains_path(tree: &FileSystemTree, path: &Path) -> bool {
+    tree.get_node(path).is_some()
+}
+
+/// Merge staged entries from the database
+fn merge_staged_entries(
+    repo: &LocalRepository,
+    staged_data: &mut StagedData,
+    opts: &StagedDataOpts,
+) -> Result<(), OxenError> {
+    // Read staged database entries
+    let Some(staged_db) = open_staged_db(repo)? else {
+        return Ok(());
+    };
+
+    let read_progress = ProgressBar::hidden();
+    let mut dir_entries = HashMap::new();
+
+    if !opts.paths.is_empty() {
+        for path in &opts.paths {
+            let (entries, _) =
+                read_staged_entries_below_path(repo, &staged_db, path, &read_progress)?;
+            dir_entries.extend(entries);
+        }
+    } else {
+        let (entries, _) = read_staged_entries(repo, &staged_db, &read_progress)?;
+        dir_entries = entries;
+    }
+
+    // Process staged entries
+    status_from_dir_entries(staged_data, dir_entries)?;
+
+    // Remove staged files from untracked list
+    let staged_paths: HashSet<&PathBuf> = staged_data.staged_files.keys().collect();
+    staged_data
+        .untracked_files
+        .retain(|p| !staged_paths.contains(&p));
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test;
-    use std::collections::HashSet;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::time::SystemTime;
+    use oxen_watcher::tree::TreeNode;
 
-    #[tokio::test]
-    async fn test_merge_watcher_with_staged_empty_watcher() -> Result<(), OxenError> {
+    #[test]
+    fn test_compute_status_from_tree_empty_repo() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            // Create empty watcher status
-            let watcher_status = WatcherStatus {
-                created: HashSet::new(),
-                modified: HashSet::new(),
-                removed: HashSet::new(),
-                scan_complete: true,
+            // Create an empty filesystem tree
+            let fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
                 last_updated: SystemTime::now(),
+                scan_complete: true,
             };
 
             let opts = StagedDataOpts::default();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify result has empty collections
-            assert_eq!(result.untracked_files.len(), 0);
-            assert_eq!(result.modified_files.len(), 0);
-            assert_eq!(result.removed_files.len(), 0);
-            assert_eq!(result.untracked_dirs.len(), 0);
+            // Empty repo with empty tree should have no changes
+            assert!(result.untracked_files.is_empty());
+            assert!(result.modified_files.is_empty());
+            assert!(result.removed_files.is_empty());
 
             Ok(())
         })
     }
 
-    #[tokio::test]
-    async fn test_merge_watcher_with_untracked_files() -> Result<(), OxenError> {
+    #[test]
+    fn test_compute_status_from_tree_untracked_files() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            // Create watcher status with untracked files
-            let mut untracked = HashSet::new();
-            untracked.insert(PathBuf::from("file1.txt"));
-            untracked.insert(PathBuf::from("dir/file2.txt"));
-            untracked.insert(PathBuf::from("dir/subdir/file3.txt"));
-
-            let watcher_status = WatcherStatus {
-                created: untracked.clone(),
-                modified: HashSet::new(),
-                removed: HashSet::new(),
-                scan_complete: true,
+            // Create a tree with some untracked files
+            let mut fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
                 last_updated: SystemTime::now(),
+                scan_complete: true,
             };
 
+            // Add untracked file1.txt
+            fs_tree.root.children.insert(
+                "file1.txt".to_string(),
+                TreeNode {
+                    name: "file1.txt".to_string(),
+                    path: PathBuf::from("file1.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: 100,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
+            // Add untracked file2.txt
+            fs_tree.root.children.insert(
+                "file2.txt".to_string(),
+                TreeNode {
+                    name: "file2.txt".to_string(),
+                    path: PathBuf::from("file2.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: 200,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
             let opts = StagedDataOpts::default();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify untracked files are present
-            assert_eq!(result.untracked_files.len(), 3);
+            // Should have 2 untracked files
+            assert_eq!(result.untracked_files.len(), 2);
             assert!(result.untracked_files.contains(&PathBuf::from("file1.txt")));
-            assert!(result
-                .untracked_files
-                .contains(&PathBuf::from("dir/file2.txt")));
-            assert!(result
-                .untracked_files
-                .contains(&PathBuf::from("dir/subdir/file3.txt")));
-
-            // Verify untracked directories are extracted
-            assert_eq!(result.untracked_dirs.len(), 2);
-            let dir_map: HashMap<PathBuf, usize> = result.untracked_dirs.into_iter().collect();
-            assert_eq!(dir_map.get(&PathBuf::from("dir")), Some(&1));
-            assert_eq!(dir_map.get(&PathBuf::from("dir/subdir")), Some(&1));
+            assert!(result.untracked_files.contains(&PathBuf::from("file2.txt")));
+            assert!(result.modified_files.is_empty());
+            assert!(result.removed_files.is_empty());
 
             Ok(())
         })
     }
 
     #[tokio::test]
-    async fn test_merge_watcher_with_modified_and_removed() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            // Create watcher status with modified and removed files
-            let mut modified = HashSet::new();
-            modified.insert(PathBuf::from("modified1.txt"));
-            modified.insert(PathBuf::from("modified2.txt"));
+    async fn test_compute_status_from_tree_modified_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create and commit a file
+            let file_path = repo.path.join("test.txt");
+            test::write_txt_file_to_path(&file_path, "original content")?;
+            repositories::add(&repo, &file_path).await?;
+            repositories::commit(&repo, "Initial commit")?;
 
-            let mut removed = HashSet::new();
-            removed.insert(PathBuf::from("removed1.txt"));
-            removed.insert(PathBuf::from("dir/removed2.txt"));
+            // Modify the file with different content
+            test::write_txt_file_to_path(&file_path, "this is modified content now")?;
 
-            let watcher_status = WatcherStatus {
-                created: HashSet::new(),
-                modified,
-                removed,
-                scan_complete: true,
+            // Create a tree with the modified file
+            let mut fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
                 last_updated: SystemTime::now(),
+                scan_complete: true,
+            };
+
+            // Add the modified file to the tree with updated size and newer mtime
+            fs_tree.root.children.insert(
+                "test.txt".to_string(),
+                TreeNode {
+                    name: "test.txt".to_string(),
+                    path: PathBuf::from("test.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: "this is modified content now".len() as u64,
+                        mtime: SystemTime::now() + std::time::Duration::from_secs(1),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
+            let opts = StagedDataOpts::default();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+
+            // Should have 1 modified file
+            assert!(result.untracked_files.is_empty());
+            assert_eq!(result.modified_files.len(), 1);
+            assert!(result.modified_files.contains(&PathBuf::from("test.txt")));
+            assert!(result.removed_files.is_empty());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_compute_status_from_tree_removed_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create and commit a file
+            let file_path = repo.path.join("test.txt");
+            test::write_txt_file_to_path(&file_path, "content")?;
+            repositories::add(&repo, &file_path).await?;
+            repositories::commit(&repo, "Initial commit")?;
+
+            // Create a tree without the file (simulating deletion)
+            let fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
+                last_updated: SystemTime::now(),
+                scan_complete: true,
             };
 
             let opts = StagedDataOpts::default();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify modified files
-            assert_eq!(result.modified_files.len(), 2);
-            assert!(result
-                .modified_files
-                .contains(&PathBuf::from("modified1.txt")));
-            assert!(result
-                .modified_files
-                .contains(&PathBuf::from("modified2.txt")));
-
-            // Verify removed files
-            assert_eq!(result.removed_files.len(), 2);
-            assert!(result
-                .removed_files
-                .contains(&PathBuf::from("removed1.txt")));
-            assert!(result
-                .removed_files
-                .contains(&PathBuf::from("dir/removed2.txt")));
+            // Should have 1 removed file
+            assert!(result.untracked_files.is_empty());
+            assert!(result.modified_files.is_empty());
+            assert_eq!(result.removed_files.len(), 1);
+            assert!(result.removed_files.contains(&PathBuf::from("test.txt")));
 
             Ok(())
         })
+        .await
     }
 
-    #[tokio::test]
-    async fn test_merge_watcher_with_path_filtering() -> Result<(), OxenError> {
+    #[test]
+    fn test_compute_status_from_tree_with_path_filter() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            // Create watcher status with files in different directories
-            let mut untracked = HashSet::new();
-            untracked.insert(PathBuf::from("dir1/file1.txt"));
-            untracked.insert(PathBuf::from("dir2/file2.txt"));
-            untracked.insert(PathBuf::from("dir3/file3.txt"));
-
-            let mut modified = HashSet::new();
-            modified.insert(PathBuf::from("dir1/modified.txt"));
-            modified.insert(PathBuf::from("dir2/modified.txt"));
-
-            let watcher_status = WatcherStatus {
-                created: untracked,
-                modified,
-                removed: HashSet::new(),
-                scan_complete: true,
+            // Create a tree with files in different directories
+            let mut fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
                 last_updated: SystemTime::now(),
+                scan_complete: true,
             };
 
-            // Create opts with specific path filter
+            // Add dir1/file1.txt
+            let mut dir1 = TreeNode {
+                name: "dir1".to_string(),
+                path: PathBuf::from("dir1"),
+                node_type: NodeType::Directory,
+                children: BTreeMap::new(),
+            };
+            dir1.children.insert(
+                "file1.txt".to_string(),
+                TreeNode {
+                    name: "file1.txt".to_string(),
+                    path: PathBuf::from("dir1/file1.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: 100,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+            fs_tree.root.children.insert("dir1".to_string(), dir1);
+
+            // Add dir2/file2.txt
+            let mut dir2 = TreeNode {
+                name: "dir2".to_string(),
+                path: PathBuf::from("dir2"),
+                node_type: NodeType::Directory,
+                children: BTreeMap::new(),
+            };
+            dir2.children.insert(
+                "file2.txt".to_string(),
+                TreeNode {
+                    name: "file2.txt".to_string(),
+                    path: PathBuf::from("dir2/file2.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: 200,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+            fs_tree.root.children.insert("dir2".to_string(), dir2);
+
+            // Filter to only dir1
             let opts = StagedDataOpts {
                 paths: vec![repo.path.join("dir1")],
                 ..StagedDataOpts::default()
             };
+            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify only dir1 files are included
+            // Should only have file from dir1
             assert_eq!(result.untracked_files.len(), 1);
-            assert!(result
-                .untracked_files
-                .contains(&PathBuf::from("dir1/file1.txt")));
-
-            assert_eq!(result.modified_files.len(), 1);
-            assert!(result
-                .modified_files
-                .contains(&PathBuf::from("dir1/modified.txt")));
+            assert!(result.untracked_files.contains(&PathBuf::from("dir1/file1.txt")));
+            assert!(!result.untracked_files.contains(&PathBuf::from("dir2/file2.txt")));
 
             Ok(())
         })
     }
 
-    #[tokio::test]
-    async fn test_merge_watcher_with_oxenignore() -> Result<(), OxenError> {
+    #[test]
+    fn test_compute_status_from_tree_with_oxenignore() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
             // Create .oxenignore file
             let oxenignore_path = repo.path.join(".oxenignore");
             test::write_txt_file_to_path(&oxenignore_path, "*.log\ntemp/\n")?;
 
-            // Create watcher status with ignored and non-ignored files
-            let mut untracked = HashSet::new();
-            untracked.insert(PathBuf::from("file.txt"));
-            untracked.insert(PathBuf::from("debug.log")); // Should be ignored
-            untracked.insert(PathBuf::from("temp/file.txt")); // Should be ignored
-            untracked.insert(PathBuf::from("data/file.txt"));
-
-            let watcher_status = WatcherStatus {
-                created: untracked,
-                modified: HashSet::new(),
-                removed: HashSet::new(),
-                scan_complete: true,
+            // Create a tree with ignored and non-ignored files
+            let mut fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
                 last_updated: SystemTime::now(),
+                scan_complete: true,
             };
 
+            // Add regular file
+            fs_tree.root.children.insert(
+                "file.txt".to_string(),
+                TreeNode {
+                    name: "file.txt".to_string(),
+                    path: PathBuf::from("file.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: 100,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
+            // Add ignored log file
+            fs_tree.root.children.insert(
+                "debug.log".to_string(),
+                TreeNode {
+                    name: "debug.log".to_string(),
+                    path: PathBuf::from("debug.log"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: 200,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
             let opts = StagedDataOpts::default();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify ignored files are filtered out
-            assert_eq!(result.untracked_files.len(), 2);
+            // Should only have the non-ignored file
+            assert_eq!(result.untracked_files.len(), 1);
             assert!(result.untracked_files.contains(&PathBuf::from("file.txt")));
-            assert!(result
-                .untracked_files
-                .contains(&PathBuf::from("data/file.txt")));
             assert!(!result.untracked_files.contains(&PathBuf::from("debug.log")));
-            assert!(!result
-                .untracked_files
-                .contains(&PathBuf::from("temp/file.txt")));
 
             Ok(())
         })
-    }
-
-    #[tokio::test]
-    async fn test_merge_watcher_extracts_directories() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            // Create watcher status with files in nested directories
-            let mut untracked = HashSet::new();
-            untracked.insert(PathBuf::from("a/file1.txt"));
-            untracked.insert(PathBuf::from("a/file2.txt"));
-            untracked.insert(PathBuf::from("a/b/file3.txt"));
-            untracked.insert(PathBuf::from("a/b/file4.txt"));
-            untracked.insert(PathBuf::from("a/b/c/file5.txt"));
-            untracked.insert(PathBuf::from("d/file6.txt"));
-
-            let watcher_status = WatcherStatus {
-                created: untracked,
-                modified: HashSet::new(),
-                removed: HashSet::new(),
-                scan_complete: true,
-                last_updated: SystemTime::now(),
-            };
-
-            let opts = StagedDataOpts::default();
-
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify all files are present
-            assert_eq!(result.untracked_files.len(), 6);
-
-            // Verify directories are correctly extracted with counts
-            let dir_map: HashMap<PathBuf, usize> = result.untracked_dirs.into_iter().collect();
-            assert_eq!(dir_map.get(&PathBuf::from("a")), Some(&2)); // 2 files directly in 'a'
-            assert_eq!(dir_map.get(&PathBuf::from("a/b")), Some(&2)); // 2 files directly in 'a/b'
-            assert_eq!(dir_map.get(&PathBuf::from("a/b/c")), Some(&1)); // 1 file in 'a/b/c'
-            assert_eq!(dir_map.get(&PathBuf::from("d")), Some(&1)); // 1 file in 'd'
-
-            Ok(())
-        })
-    }
-
-    #[tokio::test]
-    async fn test_merge_watcher_all_file_types() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            // Create watcher status with all types of changes
-            let mut untracked = HashSet::new();
-            untracked.insert(PathBuf::from("new1.txt"));
-            untracked.insert(PathBuf::from("new2.txt"));
-
-            let mut modified = HashSet::new();
-            modified.insert(PathBuf::from("changed1.txt"));
-            modified.insert(PathBuf::from("changed2.txt"));
-
-            let mut removed = HashSet::new();
-            removed.insert(PathBuf::from("deleted1.txt"));
-            removed.insert(PathBuf::from("deleted2.txt"));
-
-            let watcher_status = WatcherStatus {
-                created: untracked.clone(),
-                modified: modified.clone(),
-                removed: removed.clone(),
-                scan_complete: true,
-                last_updated: SystemTime::now(),
-            };
-
-            let opts = StagedDataOpts::default();
-
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify all file types are present
-            // Convert Vec to HashSet for comparison
-            let result_untracked: HashSet<PathBuf> = result.untracked_files.into_iter().collect();
-            assert_eq!(result_untracked, untracked);
-            assert_eq!(result.modified_files, modified);
-            assert_eq!(result.removed_files, removed);
-
-            // Verify we have merge conflicts (should be empty for test repo)
-            assert_eq!(result.merge_conflicts.len(), 0);
-
-            Ok(())
-        })
-    }
-
-    #[tokio::test]
-    async fn test_merge_watcher_filters_staged_from_untracked() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // First, create some files and stage one of them
-            let file1_path = repo.path.join("file1.txt");
-            let file2_path = repo.path.join("file2.txt");
-            let file3_path = repo.path.join("file3.txt");
-
-            test::write_txt_file_to_path(&file1_path, "content1")?;
-            test::write_txt_file_to_path(&file2_path, "content2")?;
-            test::write_txt_file_to_path(&file3_path, "content3")?;
-
-            // Stage file1.txt
-            repositories::add(&repo, &file1_path).await?;
-
-            // Create watcher status that reports all three files as created/untracked
-            let mut untracked = HashSet::new();
-            untracked.insert(PathBuf::from("file1.txt")); // This one is staged
-            untracked.insert(PathBuf::from("file2.txt")); // This one is not staged
-            untracked.insert(PathBuf::from("file3.txt")); // This one is not staged
-
-            let watcher_status = WatcherStatus {
-                created: untracked,
-                modified: HashSet::new(),
-                removed: HashSet::new(),
-                scan_complete: true,
-                last_updated: SystemTime::now(),
-            };
-
-            let opts = StagedDataOpts::default();
-
-            // Run merge function
-            let result = merge_watcher_with_staged(&repo, &opts, watcher_status)?;
-
-            // Verify file1.txt is in staged_files but NOT in untracked_files
-            assert!(result
-                .staged_files
-                .contains_key(&PathBuf::from("file1.txt")));
-            assert!(!result.untracked_files.contains(&PathBuf::from("file1.txt")));
-
-            // Verify file2.txt and file3.txt are still in untracked_files
-            assert!(result.untracked_files.contains(&PathBuf::from("file2.txt")));
-            assert!(result.untracked_files.contains(&PathBuf::from("file3.txt")));
-
-            // Verify we have exactly 2 untracked files (file2 and file3)
-            assert_eq!(result.untracked_files.len(), 2);
-
-            // Verify we have exactly 1 staged file (file1)
-            assert_eq!(result.staged_files.len(), 1);
-
-            Ok(())
-        })
-        .await
     }
 }

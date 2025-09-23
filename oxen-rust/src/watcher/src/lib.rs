@@ -12,3 +12,4 @@ pub mod util;
 pub use client::{WatcherClient, WatcherStatus};
 pub use error::WatcherError;
 pub use protocol::{WatcherRequest, WatcherResponse};
+pub use tree::{FileMetadata, FileSystemTree, NodeType};
