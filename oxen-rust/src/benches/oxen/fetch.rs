@@ -188,7 +188,6 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
                         repositories::fetch_all(&local_repo, &fetch_opts)
                             .await
                             .unwrap();
-
                     },
                     criterion::BatchSize::PerIteration,
                 );

@@ -182,13 +182,12 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
                         repositories::download(remote_repo, Path::new("files"), &iter_dir, "main")
                             .await
                             .unwrap();
-
                     },
                     criterion::BatchSize::PerIteration,
                 );
             },
         );
-        
+
         std::thread::sleep(std::time::Duration::from_millis(1000));
 
         let _ = rt
