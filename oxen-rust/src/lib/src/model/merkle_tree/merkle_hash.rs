@@ -16,6 +16,11 @@ impl MerkleHash {
         Self(hash)
     }
 
+    pub fn from_str(s: &str) -> Result<Self, OxenError> {
+        let hash = u128::from_str_radix(s, 16)?;
+        Ok(Self(hash))
+    }
+
     pub fn to_le_bytes(&self) -> [u8; 16] {
         self.0.to_le_bytes()
     }

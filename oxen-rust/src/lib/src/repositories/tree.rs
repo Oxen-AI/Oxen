@@ -1081,7 +1081,11 @@ pub fn unpack_nodes(
             util::fs::create_dir_all(parent).expect("Could not create parent dir");
         }
         // log::debug!("create_node writing {:?}", dst_path);
-        file.unpack(&dst_path).unwrap();
+        if dst_path.exists() {
+            log::debug!("Node already exists at {:?}", dst_path);
+            continue;
+        }
+        file.unpack(&dst_path)?;
 
         // the hash is the last two path components combined
         if !dst_path.ends_with("node") && !dst_path.ends_with("children") {
