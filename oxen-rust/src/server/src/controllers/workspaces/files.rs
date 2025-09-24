@@ -12,7 +12,7 @@ use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::{
-    ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
@@ -26,6 +26,8 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
+use flate2::read::GzDecoder;
+use std::io::Read as StdRead;
 
 pub async fn get(
     req: HttpRequest,
@@ -104,6 +106,9 @@ pub async fn get(
         .streaming(stream))
 }
 
+// TODO: Merge this with 'add_files'
+// This function writes files to disc twice, once in the workspace and once in the versions folder
+// 'add_files' only write files to workspace
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -131,6 +136,51 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     }))
 }
 
+// 
+pub async fn add_files(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let workspace_id = path_param(&req, "workspace_id")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let directory = path_param(&req, "directory")?;
+
+    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+
+    let (upload_files, mut err_files) = save_multiparts(payload, &repo).await?;
+
+    log::debug!(
+        "Calling add version files from the core workspace logic with {} files:\n {:?}",
+        upload_files.len(),
+        upload_files
+    );
+
+    let ext_err_files = core::v_latest::workspaces::files::add_version_files(
+        &repo,
+        &workspace,
+        &upload_files,
+        &directory,
+    )?;
+
+    err_files.extend(ext_err_files);
+
+    if err_files.is_empty() {
+        Ok(HttpResponse::Ok().json(ErrorFilesResponse {
+            status: StatusMessage::resource_deleted(),
+            err_files: err_files,
+        }))
+    } else {
+        Ok(HttpResponse::PartialContent().json(ErrorFilesResponse {
+            status: StatusMessage::resource_not_found(),
+            err_files: err_files,
+        }))
+    }
+}
+
+
 pub async fn add_version_files(
     req: HttpRequest,
     payload: web::Json<Vec<FileWithHash>>,
@@ -151,9 +201,8 @@ pub async fn add_version_files(
 
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
     log::debug!(
-        "Calling add version files from the core workspace logic with {} files:\n {:?}",
+        "Calling add version files from the core workspace logic with {} files",
         files_with_hash.len(),
-        files_with_hash
     );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
@@ -362,6 +411,147 @@ pub async fn save_parts(
     Ok(files)
 }
 
+// This is directly copied from the versions controller
+// TODO: Factor out common logic into separate module
+pub async fn save_multiparts(
+    mut payload: Multipart,
+    repo: &LocalRepository,
+) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>), Error> {
+    // Receive a multipart request and save the files to the version store
+    let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
+        log::error!("Failed to get version store: {:?}", oxen_err);
+        actix_web::error::ErrorInternalServerError(oxen_err.to_string())
+    })?;
+    let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
+
+    let mut upload_files: Vec<FileWithHash> = vec![];
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    // let mut synced_nodes: Option<ReceivedMetadata> = None
+
+    while let Some(mut field) = payload.try_next().await? {
+        let Some(content_disposition) = field.content_disposition().cloned() else {
+            continue;
+        };
+
+        if let Some(name) = content_disposition.get_name() {
+            if name == "file[]" {
+                // The file hash is passed in as the filename. In version store, the file hash is the identifier.
+                let conjunct_filename = content_disposition.get_filename().map_or_else(
+                    || {
+                        Err(actix_web::error::ErrorBadRequest(
+                            "Missing hash in multipart request",
+                        ))
+                    },
+                    |fhash_os_str| Ok(fhash_os_str.to_string()),
+                )?;
+
+                let conjunct_parts: Vec<&str> = conjunct_filename.split('?').collect();
+                let upload_filename = PathBuf::from(conjunct_parts[0].to_string());
+                let upload_filehash = conjunct_parts[1].to_string();
+
+                let mut field_bytes = Vec::new();
+                while let Some(chunk) = field.try_next().await? {
+                    field_bytes.extend_from_slice(&chunk);
+                }
+
+                let is_gzipped = field
+                    .content_type()
+                    .map(|mime| {
+                        mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
+                    })
+                    .unwrap_or(false);
+
+                let upload_filehash_copy = upload_filehash.clone();
+
+                // decompress the data if it is gzipped
+                let data_to_store =
+                    match actix_web::web::block(move || -> Result<Vec<u8>, OxenError> {
+                        if is_gzipped {
+                            log::debug!(
+                                "Decompressing gzipped data for hash: {}",
+                                &upload_filehash_copy
+                            );
+                            let mut decoder = GzDecoder::new(&field_bytes[..]);
+                            let mut decompressed_bytes = Vec::new();
+                            decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
+                                OxenError::basic_str(format!(
+                                    "Failed to decompress gzipped data: {}",
+                                    e
+                                ))
+                            })?;
+                            Ok(decompressed_bytes)
+                        } else {
+                            log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
+                            Ok(field_bytes)
+                        }
+                    })
+                    .await
+                    {
+                        Ok(Ok(data)) => data,
+                        Ok(Err(e)) => {
+                            log::error!(
+                                "Failed to decompress data for hash {}: {}",
+                                &upload_filehash,
+                                e
+                            );
+                            record_error_file(
+                                &mut err_files,
+                                upload_filehash.clone(),
+                                None,
+                                format!("Failed to decompress data: {}", e),
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to execute blocking decompression task for hash {}: {}",
+                                &upload_filehash,
+                                e
+                            );
+                            record_error_file(
+                                &mut err_files,
+                                upload_filehash.clone(),
+                                None,
+                                format!("Failed to execute blocking decompression: {}", e),
+                            );
+                            continue;
+                        }
+                    };
+
+                match version_store
+                    .store_version(&upload_filehash, &data_to_store)
+                    .await
+                {
+                    Ok(_) => {
+                        upload_files.push(FileWithHash {
+                            hash: format!("{}", upload_filehash),
+                            path: upload_filename,
+                        });
+                        log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                        
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to store version for hash {}: {}",
+                            &upload_filehash,
+                            e
+                        );
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.clone(),
+                            None,
+                            format!("Failed to store version: {}", e),
+                        );
+                        continue;
+                    }
+                }
+            } 
+        }
+    }
+
+    Ok((upload_files, err_files))
+}
+
 fn remove_file_from_workspace(
     repo: &LocalRepository,
     workspace: &Workspace,
@@ -377,4 +567,19 @@ fn remove_file_from_workspace(
     } else {
         Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
     }
+}
+
+// Record the error file info for retry
+fn record_error_file(
+    err_files: &mut Vec<ErrorFileInfo>,
+    filehash: String,
+    filepath: Option<PathBuf>,
+    error: String,
+) {
+    let info = ErrorFileInfo {
+        hash: filehash,
+        path: filepath,
+        error,
+    };
+    err_files.push(info);
 }

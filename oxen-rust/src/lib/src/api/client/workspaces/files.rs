@@ -6,6 +6,7 @@ use crate::model::{LocalRepository, RemoteRepository};
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
+use crate::util::hasher;
 
 use bytesize::ByteSize;
 use futures_util::StreamExt;
@@ -19,6 +20,8 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::time::{sleep, Duration};
 use walkdir::WalkDir;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
@@ -570,27 +573,41 @@ async fn p_upload_bytes_as_file(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     path: impl AsRef<Path>,
-    buf: &[u8],
+    mut buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
     let path = path.as_ref();
     log::debug!("multipart_file_upload path: {:?}", path);
-    
-    let file_data: Vec<u8> = buf.to_vec();
-
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
     log::info!(
-        "api::client::workspaces::files::add sending file_name: {:?}",
+        "uploading bytes with file_name: {:?}",
         file_name
     );
 
-    let file_part = reqwest::multipart::Part::bytes(file_data).file_name(file_name);
+    let hash = hasher::hash_buffer(&buf);
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    std::io::copy(&mut buf, &mut encoder)?;
+    let compressed_bytes = match encoder.finish() {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            println!("Failed to finish gzip for file {}: {}", &hash, e);
+            // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
+            return Err(OxenError::basic_str(format!("Failed to finish gzip for file {}: {}", &hash, e)));
+        }
+    };
+
+    let conjunct_filename = format!("{file_name}?{hash}");
+    let file_part = reqwest::multipart::Part::bytes(compressed_bytes).file_name(conjunct_filename);
+
     let form = reqwest::multipart::Form::new().part("file", file_part);
+
+    let uri = format!("/workspaces/{workspace_id}/stage/{directory_name}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
     let client = client::new_for_url(&url)?;
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
