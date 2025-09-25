@@ -603,7 +603,7 @@ async fn p_upload_bytes_as_file(
     let conjunct_filename = format!("{file_name}?{hash}");
     let file_part = reqwest::multipart::Part::bytes(compressed_bytes).file_name(conjunct_filename);
 
-    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let form = reqwest::multipart::Form::new().part("file[]", file_part).mime_str("application/gzip")?;
 
     let uri = format!("/workspaces/{workspace_id}/stage/{directory_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

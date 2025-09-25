@@ -153,7 +153,7 @@ impl PyWorkspace {
                 &self.repo.repo,
                 &self.get_identifier(),
                 &dst,
-                &src,
+                src,
                 &buf
             )
             .await
