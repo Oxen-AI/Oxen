@@ -206,7 +206,11 @@ pub async fn list_missing_files(
             let url = url.clone();
             let task = tokio::spawn(async move {
                 let hashes: HashSet<MerkleHash> = chunk.into_iter().collect();
-                let res = client.post(&url).json(&MerkleHashes { hashes }).send().await;
+                let res = client
+                    .post(&url)
+                    .json(&MerkleHashes { hashes })
+                    .send()
+                    .await;
 
                 match res {
                     Ok(res) => {

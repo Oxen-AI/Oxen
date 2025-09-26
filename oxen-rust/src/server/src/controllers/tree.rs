@@ -110,52 +110,52 @@ pub async fn list_missing_file_hashes_from_commits(
     }))
 }
 
-pub async fn list_missing_file_hashes_from_nodes(
-    req: HttpRequest,
-    query: web::Query<TreeDepthQuery>,
-    mut body: web::Payload,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+// pub async fn list_missing_file_hashes_from_nodes(
+//     req: HttpRequest,
+//     query: web::Query<TreeDepthQuery>,
+//     mut body: web::Payload,
+// ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+//     let app_data = app_data(&req)?;
+//     let namespace = path_param(&req, "namespace")?;
+//     let repo_name = path_param(&req, "repo_name")?;
+//     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
-    let mut bytes = web::BytesMut::new();
-    while let Some(item) = body.next().await {
-        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
-    }
+//     let mut bytes = web::BytesMut::new();
+//     while let Some(item) = body.next().await {
+//         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+//     }
 
-    let request: NodeHashes = serde_json::from_slice(&bytes)?;
-    log::debug!(
-        "list_missing_file_hashes_from_nodes checking {} commit ids with {} dirs/vnodes already found",
-        request.commit_hashes.len(),
-        request.dir_hashes.len(),
-    );
+//     let request: NodeHashes = serde_json::from_slice(&bytes)?;
+//     log::debug!(
+//         "list_missing_file_hashes_from_nodes checking {} commit ids with {} dirs/vnodes already found",
+//         request.commit_hashes.len(),
+//         request.dir_hashes.len(),
+//     );
 
-    let commit_hashes = request.commit_hashes;
-    let mut shared_hashes = request
-        .dir_hashes
-        .into_iter()
-        .map(|h| (h, MerkleTreeNodeType::Dir))
-        .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>();
+//     let commit_hashes = request.commit_hashes;
+//     let mut shared_hashes = request
+//         .dir_hashes
+//         .into_iter()
+//         .map(|h| (h, MerkleTreeNodeType::Dir))
+//         .collect::<HashSet<(MerkleHash, MerkleTreeNodeType)>>();
 
-    let subtree_paths = get_subtree_paths(&query.subtrees)?;
-    let hashes = repositories::tree::list_missing_file_hashes_from_nodes(
-        &repository,
-        &commit_hashes,
-        &mut shared_hashes,
-        &subtree_paths,
-        &query.depth,
-    )?;
-    log::debug!(
-        "list_missing_file_hashes_from_nodes found {} missing node ids",
-        hashes.len()
-    );
-    Ok(HttpResponse::Ok().json(MerkleHashesResponse {
-        status: StatusMessage::resource_found(),
-        hashes,
-    }))
-}
+//     let subtree_paths = get_subtree_paths(&query.subtrees)?;
+//     let hashes = repositories::tree::list_missing_file_hashes_from_nodes(
+//         &repository,
+//         &commit_hashes,
+//         &mut shared_hashes,
+//         &subtree_paths,
+//         &query.depth,
+//     )?;
+//     log::debug!(
+//         "list_missing_file_hashes_from_nodes found {} missing node ids",
+//         hashes.len()
+//     );
+//     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
+//         status: StatusMessage::resource_found(),
+//         hashes,
+//     }))
+// }
 
 pub async fn list_missing_file_hashes(
     req: HttpRequest,

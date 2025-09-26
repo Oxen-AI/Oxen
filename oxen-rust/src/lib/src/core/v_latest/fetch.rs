@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -238,11 +238,10 @@ fn collect_missing_entries(
     total_bytes: &mut u64,
 ) -> Result<HashSet<Entry>, OxenError> {
     let mut missing_entries = HashSet::new();
-    let mut unique_hashes = HashSet::new();
 
     let mut shared_hashes =
         if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
-            let mut starting_node_hashes = HashSet::new();
+            let mut starting_node_hashes = HashMap::new();
             repositories::tree::populate_starting_hashes(
                 repo,
                 &head_commit,
@@ -252,7 +251,7 @@ fn collect_missing_entries(
             )?;
             starting_node_hashes
         } else {
-            HashSet::new()
+            HashMap::new()
         };
 
     for commit in commits {
@@ -263,6 +262,7 @@ fn collect_missing_entries(
                 depth
             );
             for subtree_path in subtree_paths {
+                let mut unique_hashes = HashMap::new();
                 // TARGET 3: HUGE
                 let Some(tree) = CommitMerkleTree::from_path_depth_unique_children(
                     repo,
@@ -280,8 +280,7 @@ fn collect_missing_entries(
                     continue;
                 };
 
-                shared_hashes.extend(&unique_hashes);
-                unique_hashes.clear();
+                shared_hashes.extend(unique_hashes);
 
                 collect_missing_entries_for_subtree(
                     &tree,
@@ -291,6 +290,7 @@ fn collect_missing_entries(
                 )?;
             }
         } else {
+            let mut unique_hashes = HashMap::new();
             let Some(tree) = CommitMerkleTree::from_path_depth_unique_children(
                 repo,
                 commit,
@@ -307,8 +307,7 @@ fn collect_missing_entries(
                 continue;
             };
 
-            shared_hashes.extend(&unique_hashes);
-            unique_hashes.clear();
+            shared_hashes.extend(unique_hashes);
 
             collect_missing_entries_for_subtree(
                 &tree,
