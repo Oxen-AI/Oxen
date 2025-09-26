@@ -136,7 +136,6 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     }))
 }
 
-// 
 pub async fn add_files(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -411,8 +410,6 @@ pub async fn save_parts(
     Ok(files)
 }
 
-// This is directly copied from the versions controller
-// TODO: Factor out common logic into separate module
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,

@@ -293,7 +293,6 @@ pub async fn save_multiparts(
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
-    let json_mime: mime::Mime = "application/json".parse().unwrap();
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     // let mut synced_nodes: Option<ReceivedMetadata> = None
@@ -406,40 +405,7 @@ pub async fn save_multiparts(
                         continue;
                     }
                 }
-            } else if name == "synced_nodes"
-                && field.content_type().is_some_and(|mime| {
-                    mime.type_() == json_mime.type_() && mime.subtype() == json_mime.subtype()
-                })
-            {
-                let mut field_bytes = Vec::new();
-                while let Some(chunk) = field.try_next().await? {
-                    field_bytes.extend_from_slice(&chunk);
-                }
-
-                let json_string = String::from_utf8(field_bytes.to_vec()).map_err(|e| {
-                    actix_web::error::ErrorBadRequest(format!("Invalid UTF-8 in JSON part: {}", e))
-                })?;
-
-                log::debug!("Received synced_nodes JSON: {}", json_string);
-
-                match serde_json::from_str::<Vec<MerkleHash>>(&json_string) {
-                    Ok(synced_nodes) => {
-                        log::debug!("Successfully parsed synced_nodes: {:?}", synced_nodes);
-
-                        for node_hash in synced_nodes {
-                            // TODO: log::error! with the error if this fails
-                            let _ = node_sync_status::mark_node_as_synced(repo, &node_hash);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to parse synced_nodes JSON: {}", e);
-                        return Err(actix_web::error::ErrorBadRequest(format!(
-                            "Invalid JSON for synced_nodes: {}",
-                            e
-                        )));
-                    }
-                }
-            }
+            } 
         }
     }
 
