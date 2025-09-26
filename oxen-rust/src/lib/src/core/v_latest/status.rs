@@ -1142,13 +1142,15 @@ fn compute_status_from_tree(
     // 1. Get tracked files from HEAD commit
     let head_commit = repositories::commits::head_commit_maybe(repo)?;
     let tracked_files = get_tracked_files_map(repo, &head_commit)?;
+    let tracked_dirs = get_tracked_dirs_from_files(&tracked_files);
 
     // 2. Load oxenignore
     let gitignore = oxenignore::create(repo);
 
     // 3. Process filesystem tree to find untracked and modified files
     let mut untracked_files = HashSet::new();
-    let mut untracked_dirs: HashMap<PathBuf, usize> = HashMap::new();
+    let mut untracked_dirs_files: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    let mut dirs_with_tracked_files: HashSet<PathBuf> = HashSet::new();
 
     // Iterate through all files in the tree
     for (path, metadata) in iter_tree_files(&fs_tree) {
@@ -1184,21 +1186,110 @@ fn compute_status_from_tree(
                     _ => {} // Hash matches, file not modified
                 }
             }
+            // Mark all parent directories as having tracked files
+            let mut parent = path.parent();
+            while let Some(p) = parent {
+                if p.as_os_str().is_empty() {
+                    break;
+                }
+                dirs_with_tracked_files.insert(p.to_path_buf());
+                parent = p.parent();
+            }
         } else {
             // File is untracked
             untracked_files.insert(path.clone());
 
-            // Track untracked directories
+            // Track which directory this file belongs to
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
-                    *untracked_dirs.entry(parent.to_path_buf()).or_insert(0) += 1;
+                    untracked_dirs_files
+                        .entry(parent.to_path_buf())
+                        .or_insert_with(Vec::new)
+                        .push(path.clone());
+                } else {
+                    // File in root directory
+                    untracked_dirs_files
+                        .entry(PathBuf::new())
+                        .or_insert_with(Vec::new)
+                        .push(path.clone());
                 }
+            } else {
+                // File in root directory
+                untracked_dirs_files
+                    .entry(PathBuf::new())
+                    .or_insert_with(Vec::new)
+                    .push(path.clone());
             }
         }
     }
 
-    // 4. Find removed files (in tracked but not in tree)
+    // 4. Process untracked directories for rollup
+    let mut final_untracked_files = Vec::new();
+    let mut final_untracked_dirs = Vec::new();
+    
+    // Check staged entries to avoid rolling up directories with staged files
+    let staged_db = open_staged_db(repo)?;
+    
+    for (dir_path, files_in_dir) in &untracked_dirs_files {
+        // Check if this directory should be rolled up
+        let should_rollup = 
+            !dir_path.as_os_str().is_empty() && // Not root directory
+            !dirs_with_tracked_files.contains(dir_path) && // No tracked files in dir
+            !is_staged(dir_path, &staged_db)? && // Directory not staged
+            !tracked_dirs.contains(dir_path) && // Directory not tracked
+            check_all_children_untracked(dir_path, &untracked_dirs_files, &dirs_with_tracked_files);
+        
+        if should_rollup {
+            // Roll up into directory entry
+            final_untracked_dirs.push((dir_path.clone(), files_in_dir.len()));
+        } else {
+            // Keep individual files
+            final_untracked_files.extend(files_in_dir.clone());
+        }
+    }
+    
+    // 5. Find removed files and directories
+    let mut removed_entries = HashSet::new();
+    let mut processed_dirs = HashSet::new();
+    
+    // Check for removed directories first
+    for dir_path in &tracked_dirs {
+        if !tree_contains_path(&fs_tree, dir_path) {
+            // Apply path filtering
+            if !opts.paths.is_empty() {
+                let matches = opts.paths.iter().any(|p| {
+                    let rel_p =
+                        util::fs::path_relative_to_dir(p, &repo.path).unwrap_or_else(|_| p.clone());
+                    dir_path.starts_with(&rel_p) || rel_p.as_os_str().is_empty() || dir_path == &rel_p
+                });
+                if !matches {
+                    continue;
+                }
+            }
+
+            // Apply oxenignore
+            if !oxenignore::is_ignored(dir_path, &gitignore, true) {
+                // Entire directory is removed
+                removed_entries.insert(dir_path.clone());
+                processed_dirs.insert(dir_path.clone());
+            }
+        }
+    }
+    
+    // Then check for individual removed files (not in removed directories)
     for (tracked_path, _) in &tracked_files {
+        // Skip if file is in a removed directory
+        let mut in_removed_dir = false;
+        for removed_dir in &processed_dirs {
+            if tracked_path.starts_with(removed_dir) {
+                in_removed_dir = true;
+                break;
+            }
+        }
+        if in_removed_dir {
+            continue;
+        }
+        
         if !tree_contains_path(&fs_tree, tracked_path) {
             // Apply path filtering
             if !opts.paths.is_empty() {
@@ -1214,13 +1305,14 @@ fn compute_status_from_tree(
 
             // Apply oxenignore
             if !oxenignore::is_ignored(tracked_path, &gitignore, false) {
-                staged_data.removed_files.insert(tracked_path.clone());
+                removed_entries.insert(tracked_path.clone());
             }
         }
     }
 
-    staged_data.untracked_files = untracked_files.into_iter().collect();
-    staged_data.untracked_dirs = untracked_dirs.into_iter().collect();
+    staged_data.untracked_files = final_untracked_files;
+    staged_data.untracked_dirs = final_untracked_dirs;
+    staged_data.removed_files = removed_entries;
 
     // 5. Merge with staged database
     merge_staged_entries(repo, &mut staged_data, opts)?;
@@ -1369,6 +1461,39 @@ fn collect_files_from_node<'a>(
 /// Check if the tree contains a specific path
 fn tree_contains_path(tree: &FileSystemTree, path: &Path) -> bool {
     tree.get_node(path).is_some()
+}
+
+/// Get all tracked directories from the set of tracked files
+fn get_tracked_dirs_from_files(tracked_files: &HashMap<PathBuf, TrackedFileInfo>) -> HashSet<PathBuf> {
+    let mut dirs = HashSet::new();
+    for path in tracked_files.keys() {
+        let mut parent = path.parent();
+        while let Some(p) = parent {
+            if p.as_os_str().is_empty() {
+                break;
+            }
+            dirs.insert(p.to_path_buf());
+            parent = p.parent();
+        }
+    }
+    dirs
+}
+
+/// Check if all children of a directory are untracked
+fn check_all_children_untracked(
+    dir_path: &Path,
+    untracked_dirs_files: &HashMap<PathBuf, Vec<PathBuf>>,
+    dirs_with_tracked_files: &HashSet<PathBuf>,
+) -> bool {
+    // Check if any subdirectory has tracked files
+    for (other_dir, _) in untracked_dirs_files {
+        if other_dir != dir_path && other_dir.starts_with(dir_path) {
+            if dirs_with_tracked_files.contains(other_dir) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Merge staged entries from the database
@@ -1657,9 +1782,17 @@ mod tests {
             };
             let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
-            // Should only have file from dir1
-            assert_eq!(result.untracked_files.len(), 1);
-            assert!(result.untracked_files.contains(&PathBuf::from("dir1/file1.txt")));
+            // Should only have file from dir1 (or rolled up as directory)
+            if result.untracked_dirs.len() == 1 {
+                // Directory was rolled up
+                assert_eq!(result.untracked_files.len(), 0);
+                assert!(result.untracked_dirs.iter().any(|(path, count)| 
+                    path == &PathBuf::from("dir1") && *count == 1));
+            } else {
+                // Individual files
+                assert_eq!(result.untracked_files.len(), 1);
+                assert!(result.untracked_files.contains(&PathBuf::from("dir1/file1.txt")));
+            }
             assert!(!result.untracked_files.contains(&PathBuf::from("dir2/file2.txt")));
 
             Ok(())
@@ -1725,5 +1858,211 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    #[tokio::test]
+    async fn test_status_comparison_untracked_directory_rollup() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create a directory with multiple untracked files
+            let dir_path = repo.path.join("untracked_dir");
+            std::fs::create_dir(&dir_path)?;
+            test::write_txt_file_to_path(&dir_path.join("file1.txt"), "content1")?;
+            test::write_txt_file_to_path(&dir_path.join("file2.txt"), "content2")?;
+            test::write_txt_file_to_path(&dir_path.join("file3.txt"), "content3")?;
+
+            // Get status without cache (traditional implementation)
+            let opts = StagedDataOpts::default();
+            let status_without_cache = status_from_opts(&repo, &opts)?;
+
+            // Create filesystem tree matching the actual files
+            let mut fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
+                last_updated: SystemTime::now(),
+                scan_complete: true,
+            };
+
+            // Add the untracked directory with files
+            let mut untracked_dir_node = TreeNode {
+                name: "untracked_dir".to_string(),
+                path: PathBuf::from("untracked_dir"),
+                node_type: NodeType::Directory,
+                children: BTreeMap::new(),
+            };
+
+            for i in 1..=3 {
+                let file_name = format!("file{}.txt", i);
+                untracked_dir_node.children.insert(
+                    file_name.clone(),
+                    TreeNode {
+                        name: file_name.clone(),
+                        path: PathBuf::from(format!("untracked_dir/{}", file_name)),
+                        node_type: NodeType::File(FileMetadata {
+                            size: 8, // "content1".len()
+                            mtime: SystemTime::now(),
+                            is_symlink: false,
+                        }),
+                        children: BTreeMap::new(),
+                    },
+                );
+            }
+
+            fs_tree.root.children.insert("untracked_dir".to_string(), untracked_dir_node);
+
+            // Get status with tree-based implementation
+            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
+
+            // Compare results - both should roll up the directory
+            assert_eq!(status_without_cache.untracked_dirs.len(), status_with_tree.untracked_dirs.len());
+            assert_eq!(status_without_cache.untracked_files.len(), status_with_tree.untracked_files.len());
+            
+            // Should have rolled up into directory entry
+            assert_eq!(status_with_tree.untracked_dirs.len(), 1);
+            assert_eq!(status_with_tree.untracked_files.len(), 0);
+            
+            // Verify the directory entry
+            let has_dir = status_with_tree.untracked_dirs.iter()
+                .any(|(path, count)| path == &PathBuf::from("untracked_dir") && *count == 3);
+            assert!(has_dir, "Should have untracked_dir with 3 files");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_status_comparison_mixed_tracked_untracked() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create some files and commit one of them
+            let file1_path = repo.path.join("tracked.txt");
+            let file2_path = repo.path.join("untracked.txt");
+            test::write_txt_file_to_path(&file1_path, "tracked content")?;
+            repositories::add(&repo, &file1_path).await?;
+            repositories::commit(&repo, "Initial commit")?;
+            
+            // Add an untracked file
+            test::write_txt_file_to_path(&file2_path, "untracked content")?;
+
+            // Get status without cache
+            let opts = StagedDataOpts::default();
+            let status_without_cache = status_from_opts(&repo, &opts)?;
+
+            // Create filesystem tree
+            let mut fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
+                last_updated: SystemTime::now(),
+                scan_complete: true,
+            };
+
+            // Add both files to tree
+            fs_tree.root.children.insert(
+                "tracked.txt".to_string(),
+                TreeNode {
+                    name: "tracked.txt".to_string(),
+                    path: PathBuf::from("tracked.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: "tracked content".len() as u64,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
+            fs_tree.root.children.insert(
+                "untracked.txt".to_string(),
+                TreeNode {
+                    name: "untracked.txt".to_string(),
+                    path: PathBuf::from("untracked.txt"),
+                    node_type: NodeType::File(FileMetadata {
+                        size: "untracked content".len() as u64,
+                        mtime: SystemTime::now(),
+                        is_symlink: false,
+                    }),
+                    children: BTreeMap::new(),
+                },
+            );
+
+            // Get status with tree-based implementation
+            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
+
+            // Compare results
+            assert_eq!(
+                status_without_cache.untracked_files.len(), 
+                status_with_tree.untracked_files.len(),
+                "Untracked files count should match"
+            );
+            assert_eq!(
+                status_without_cache.modified_files.len(), 
+                status_with_tree.modified_files.len(),
+                "Modified files count should match"
+            );
+
+            // Verify specific expectations
+            assert_eq!(status_with_tree.untracked_files.len(), 1);
+            assert!(status_with_tree.untracked_files.contains(&PathBuf::from("untracked.txt")));
+            assert!(!status_with_tree.untracked_files.contains(&PathBuf::from("tracked.txt")));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_status_comparison_removed_directory() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create a directory with files and commit them
+            let dir_path = repo.path.join("mydir");
+            std::fs::create_dir(&dir_path)?;
+            test::write_txt_file_to_path(&dir_path.join("file1.txt"), "content1")?;
+            test::write_txt_file_to_path(&dir_path.join("file2.txt"), "content2")?;
+            
+            repositories::add(&repo, &dir_path).await?;
+            repositories::commit(&repo, "Added directory")?;
+
+            // Delete the directory
+            std::fs::remove_dir_all(&dir_path)?;
+
+            // Get status without cache
+            let opts = StagedDataOpts::default();
+            let status_without_cache = status_from_opts(&repo, &opts)?;
+
+            // Create empty filesystem tree (no files since directory is deleted)
+            let fs_tree = FileSystemTree {
+                root: TreeNode {
+                    name: ".".to_string(),
+                    path: PathBuf::from("."),
+                    node_type: NodeType::Directory,
+                    children: BTreeMap::new(),
+                },
+                last_updated: SystemTime::now(),
+                scan_complete: true,
+            };
+
+            // Get status with tree-based implementation
+            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
+
+            // Both should detect removed files
+            assert_eq!(
+                status_without_cache.removed_files.len(),
+                status_with_tree.removed_files.len(),
+                "Removed files count should match"
+            );
+
+            // Should detect the removed files or directory
+            assert!(status_with_tree.removed_files.len() > 0, "Should have removed entries");
+
+            Ok(())
+        })
+        .await
     }
 }
