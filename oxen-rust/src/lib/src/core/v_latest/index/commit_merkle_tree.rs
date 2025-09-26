@@ -999,7 +999,6 @@ impl CommitMerkleTree {
 
         hashes.insert(node.hash);
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("load_children_until_depth_children_and_hashes Got {} children", children.len());
 
         for (_key, child) in children {
             let mut child = child.to_owned();

@@ -148,7 +148,6 @@ pub async fn list_missing_hashes(
         .await?;
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
-    log::debug!("list_missing_hashes response: {response:?}");
     match response {
         Ok(response) => {
             let hashes = response.hashes;
