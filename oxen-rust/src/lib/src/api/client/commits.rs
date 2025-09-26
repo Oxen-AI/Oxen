@@ -3,9 +3,8 @@ use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
 
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::entry::unsynced_commit_entry::UnsyncedCommitEntries;
-use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{Branch, Commit, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::PaginateOpts;
 use crate::util::hasher::hash_buffer;
 use crate::util::progress_bar::{oxify_bar, ProgressBarType};
@@ -13,8 +12,6 @@ use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
-use crate::view::entries::ListCommitEntryResponse;
-use crate::view::entries::ListMissingFilesRequest;
 use crate::view::{
     CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
     StatusMessage,
@@ -155,7 +152,7 @@ pub async fn list_missing_hashes(
     match response {
         Ok(response) => {
             let hashes = response.hashes;
-            Ok(commits.iter().filter(|c| hashes.contains(&c.hash().unwrap())).map(|c| c.clone()).collect())
+            Ok(commits.iter().filter(|c| hashes.contains(&c.hash().unwrap())).cloned().collect())
         },
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
@@ -1130,7 +1127,6 @@ async fn upload_data_chunk_to_server(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
 
     use crate::api;
     use crate::command;
@@ -1138,11 +1134,8 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
 
-    use crate::model::MerkleHash;
     use crate::repositories;
     use crate::test;
-
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_list_remote_commits_all() -> Result<(), OxenError> {

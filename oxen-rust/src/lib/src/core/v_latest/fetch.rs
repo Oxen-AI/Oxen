@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::constants::{AVG_CHUNK_SIZE, OXEN_HIDDEN_DIR};
@@ -11,7 +10,7 @@ use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNodeWithDir, MerkleTreeNode};
 use crate::model::{Branch, Commit, CommitEntry};
-use crate::model::{LocalRepository, MerkleHash, RemoteBranch, RemoteRepository};
+use crate::model::{LocalRepository, RemoteBranch, RemoteRepository};
 use crate::repositories;
 use crate::util::concurrency;
 use crate::{api, util};
@@ -97,7 +96,7 @@ pub async fn fetch_remote_branch(
     let commits = if fetch_opts.all {
         repositories::commits::list_unsynced_from(repo, &remote_branch.commit_id)?
     } else {
-        let hash = MerkleHash::from_str(&remote_branch.commit_id)?;
+        let hash = remote_branch.commit_id.parse()?;
         let commit_node = repositories::tree::get_node_by_id(repo, &hash)?
             .ok_or(OxenError::basic_str("Commit node not found"))?;
 
@@ -136,7 +135,7 @@ pub async fn fetch_remote_branch(
 
     // Mark the commits as synced
     for commit in commits {
-        core::commit_sync_status::mark_commit_as_synced(repo, &MerkleHash::from_str(&commit.id)?)?;
+        core::commit_sync_status::mark_commit_as_synced(repo, &commit.id.parse()?)?;
     }
 
     // Write the new branch commit id to the local repo
@@ -170,7 +169,7 @@ async fn sync_from_head(
     log::debug!("sync_from_head branch: {}", branch);
 
     // If HEAD commit IS on the remote server, that means we are behind the remote branch
-    if api::client::tree::has_node(remote_repo, MerkleHash::from_str(&head_commit.id)?).await? {
+    if api::client::tree::has_node(remote_repo, head_commit.id.parse()?).await? {
         log::debug!("sync_from_head has head commit: {}", head_commit);
         pull_progress.set_message(format!(
             "Downloading commits from {} to {}",
@@ -351,7 +350,7 @@ pub async fn fetch_tree_and_hashes_for_commit_id(
     api::client::commits::download_dir_hashes_db_to_path(remote_repo, commit_id, &repo_hidden_dir)
         .await?;
 
-    let hash = MerkleHash::from_str(commit_id)?;
+    let hash = commit_id.parse()?;
     api::client::tree::download_tree_from(repo, remote_repo, &hash).await?;
 
     api::client::commits::download_dir_hashes_from_commit(remote_repo, commit_id, &repo_hidden_dir)
@@ -391,7 +390,7 @@ pub async fn fetch_full_tree_and_hashes(
     if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
         // Remote is not guaranteed to have our head commit
         // If it doesn't, we will download all commit dir hashes from the remote branch commit
-        if api::client::tree::has_node(remote_repo, MerkleHash::from_str(&head_commit.id)?).await? {
+        if api::client::tree::has_node(remote_repo, head_commit.id.parse()?).await? {
             // Download the dir_hashes between the head commit and the remote branch commit
             let base_commit_id = head_commit.id;
             let head_commit_id = &remote_branch.commit_id;
@@ -540,7 +539,7 @@ async fn r_download_entries(
         // Mark the commit as synced
         let commit_id = commit_node.hash().to_string();
         let commit = repositories::commits::get_by_id(repo, &commit_id)?.unwrap();
-        core::commit_sync_status::mark_commit_as_synced(repo, &MerkleHash::from_str(&commit.id)?)?;
+        core::commit_sync_status::mark_commit_as_synced(repo, &commit.id.parse()?)?;
     }
 
     Ok(())

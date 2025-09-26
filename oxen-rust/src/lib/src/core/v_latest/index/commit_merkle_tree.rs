@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
 
-use polars::chunked_array::collect;
 use rocksdb::{DBWithThreadMode, IteratorMode, MultiThreaded};
 
 use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR};
@@ -18,8 +17,6 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode};
 
 use crate::util::{self, hasher};
-
-use std::str::FromStr;
 
 pub struct CommitMerkleTree {
     pub root: MerkleTreeNode,
@@ -53,7 +50,7 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         CommitMerkleTree::read_node(repo, &node_hash, true)
     }
 
@@ -63,7 +60,7 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         // Read the root node at depth 1 to get the directory node as well
         CommitMerkleTree::read_depth(repo, &node_hash, 1)
     }
@@ -77,7 +74,7 @@ impl CommitMerkleTree {
         commit: &Commit,
         hashes: &mut HashSet<MerkleHash>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         CommitMerkleTree::read_node_with_hashes(repo, &node_hash, hashes)
     }
 
@@ -96,7 +93,7 @@ impl CommitMerkleTree {
         shared_hashes: &mut HashSet<MerkleHash>,
         partial_nodes: &mut HashMap<PathBuf, PartialNode>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         CommitMerkleTree::read_unique_nodes(
             repo,
             &node_hash,
@@ -111,7 +108,7 @@ impl CommitMerkleTree {
         commit: &Commit,
         paths: &mut HashMap<PathBuf, MerkleHash>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         CommitMerkleTree::read_present_nodes(repo, &node_hash, paths)
     }
 
@@ -122,7 +119,7 @@ impl CommitMerkleTree {
         shared_hashes: &mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>,
         unique_hashes: &mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
 
         let mut all_hashes = HashMap::new();
 
@@ -161,19 +158,18 @@ impl CommitMerkleTree {
             {
                 continue;
             } else {
-                unique_hashes.insert((hash.clone(), node_type.clone()), path.clone());
+                unique_hashes.insert((*hash, *node_type), path.clone());
             }
         }
 
         node
     }
 
-
     pub fn from_commit(repo: &LocalRepository, commit: &Commit) -> Result<Self, OxenError> {
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         let root =
             CommitMerkleTree::read_node(repo, &node_hash, true)?.ok_or(OxenError::basic_str(
                 format!("Merkle tree hash not found for commit: '{}'", commit.id),
@@ -675,7 +671,7 @@ impl CommitMerkleTree {
                 Ok((key, value)) => {
                     let key = str::from_utf8(&key)?;
                     let value = str::from_utf8(&value)?;
-                    let hash = MerkleHash::from_str(value)?;
+                    let hash = value.parse()?;
                     dir_hashes.insert(PathBuf::from(key), hash);
                 }
                 _ => {

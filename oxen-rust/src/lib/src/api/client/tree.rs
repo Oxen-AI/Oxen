@@ -19,7 +19,6 @@ use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
 use crate::opts::fetch_opts::FetchOpts;
 use crate::view::tree::merkle_hashes::MerkleHashes;
-use crate::view::tree::merkle_hashes::NodeHashes;
 use crate::view::tree::MerkleHashResponse;
 use crate::view::{MerkleHashesResponse, StatusMessage};
 use crate::{api, util};
@@ -514,7 +513,6 @@ pub async fn mark_nodes_as_synced(
 mod tests {
     use crate::api;
     use crate::error::OxenError;
-    use crate::model::MerkleHash;
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
@@ -522,13 +520,12 @@ mod tests {
 
     use std::collections::HashSet;
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_has_node() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let commit_hash = commit.id.parse()?;
             let has_node = api::client::tree::has_node(&remote_repo, commit_hash).await?;
             assert!(has_node);
 
@@ -691,7 +688,7 @@ mod tests {
     async fn test_list_missing_node_hashes() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let commit_hash = commit.id.parse()?;
             let _missing_node_hashes = api::client::tree::list_missing_node_hashes(
                 &remote_repo,
                 HashSet::from([commit_hash]),
@@ -705,7 +702,7 @@ mod tests {
             let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let commit_hash = commit.id.parse()?;
 
             let missing_node_hashes = api::client::tree::list_missing_node_hashes(
                 &remote_repo,

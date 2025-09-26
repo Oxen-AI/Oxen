@@ -22,7 +22,6 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::OpenOptions;
@@ -125,7 +124,7 @@ async fn create_multipart_large_file_upload(
         return Err(OxenError::path_does_not_exist(file_path));
     };
     let file_size = metadata.len();
-    let hash = MerkleHash::from_str(&util::hasher::hash_file_contents(file_path)?)?;
+    let hash = util::hasher::hash_file_contents(file_path)?.parse::<MerkleHash>()?;
 
     let uri = format!("/versions/{hash}/create");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

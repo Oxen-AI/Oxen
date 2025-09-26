@@ -1,6 +1,5 @@
 use futures::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,14 +14,12 @@ use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::{DirNodeWithPath, FileNodeWithDir};
 use crate::model::{
     Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
 };
 use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
-use derive_more::FromStr;
 
 pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
     let Some(current_branch) = repositories::branches::current_branch(repo)? else {
@@ -256,7 +253,7 @@ async fn get_commit_missing_hashes(
     for commit in commits.iter().rev() {
         let mut unique_hashes_and_type = HashMap::new();
         log::debug!("push_commits adding candidate nodes for commit: {}", commit);
-        let Some(commit_node) = CommitMerkleTree::get_unique_children_for_commit(
+        let Some(_) = CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
             &repo.subtree_paths().unwrap_or(vec![PathBuf::from("")]), //Should we default to root?
@@ -292,7 +289,7 @@ async fn get_commit_missing_hashes(
                 );
                 !(*t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
             })
-            .map(|((h, _), _)| h.clone())
+            .map(|((h, _), _)| *h)
             .collect::<HashSet<MerkleHash>>();
 
         shared_hashes.extend(unique_hashes_and_type);
@@ -365,8 +362,8 @@ async fn push_commits(
                     log::debug!("missing files {}", commit_info.unique_file_hashes.len());
 
                     push_entries(
-                        &repo,
-                        &remote_repo,
+                        repo,
+                        remote_repo,
                         &commit_info.unique_file_hashes,
                         &commit,
                         &progress,
@@ -376,19 +373,19 @@ async fn push_commits(
                     let mut nodes = commit_info.unique_dir_nodes;
                     nodes.insert(commit_hash);
 
-                    api::client::tree::create_nodes(&repo, &remote_repo, nodes, &progress).await?;
+                    api::client::tree::create_nodes(repo, remote_repo, nodes, &progress).await?;
                     log::debug!("created nodes");
 
                     api::client::commits::post_commits_dir_hashes_to_server(
-                        &repo,
-                        &remote_repo,
+                        repo,
+                        remote_repo,
                         &vec![commit],
                     )
                     .await?;
 
                     // TODO: we might not need this syncing mechanism
                     api::client::commits::mark_commits_as_synced(
-                        &remote_repo,
+                        remote_repo,
                         HashSet::from([commit_hash]),
                     )
                     .await?;

@@ -1,9 +1,7 @@
-use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use crate::model::merkle_tree::node::file_node::FileNode;
-use crate::model::MerkleHash;
 
 #[derive(Debug, Clone)]
 pub struct FileNodeWithDir {

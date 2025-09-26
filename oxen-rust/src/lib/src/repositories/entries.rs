@@ -309,7 +309,7 @@ pub fn list_missing_files_in_commit_range(
             let missing_files: Vec<MerkleHash> = all_entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(true))
-                .map(|entry| MerkleHash::from_str(&entry.hash).unwrap())
+                .map(|entry| entry.hash.parse().unwrap())
                 .collect();
 
             Ok(missing_files)
@@ -319,7 +319,7 @@ pub fn list_missing_files_in_commit_range(
             let missing_files: Vec<MerkleHash> = entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
-                .map(|entry| MerkleHash::from_str(&entry.hash).unwrap())
+                .map(|entry| entry.hash.parse().unwrap())
                 .collect();
             Ok(missing_files)
         }

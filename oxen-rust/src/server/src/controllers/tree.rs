@@ -5,19 +5,14 @@ use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
-use liboxen::model::MerkleTreeNodeType;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
-use liboxen::view::tree::merkle_hashes::NodeHashes;
 use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
 
-use std::collections::HashSet;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use liboxen::model::MerkleHash;
 use liboxen::repositories;
 use liboxen::view::tree::nodes::{
     CommitNodeResponse, DirNodeResponse, FileNodeResponse, VNodeResponse,
@@ -35,10 +30,10 @@ pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse,
     let repo_name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = MerkleHash::from_str(&hash_str)?;
+    let hash = &hash_str.parse()?;
 
     let node =
-        repositories::tree::get_node_by_id(&repository, &hash)?.ok_or(OxenHttpError::NotFound)?;
+        repositories::tree::get_node_by_id(&repository, hash)?.ok_or(OxenHttpError::NotFound)?;
 
     node_to_json(node)
 }
@@ -165,7 +160,7 @@ pub async fn list_missing_file_hashes(
     let repo_name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = MerkleHash::from_str(&hash_str)?;
+    let hash = hash_str.parse()?;
 
     let hashes = repositories::tree::list_missing_file_hashes(&repository, &hash)?;
     log::debug!(
@@ -356,7 +351,7 @@ pub async fn download_node(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = MerkleHash::from_str(&hash_str)?;
+    let hash = hash_str.parse()?;
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let buffer = repositories::tree::compress_node(&repository, &hash)?;
