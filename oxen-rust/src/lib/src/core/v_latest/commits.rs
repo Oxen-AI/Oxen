@@ -121,8 +121,7 @@ pub fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
     if let Some(branch) = branches.first() {
         if let Some(commit) = get_by_id(repo, &branch.commit_id)? {
             let mut seen = HashSet::new();
-            let root_commit =
-                root_commit_recursive(repo, commit.id.parse()?, &mut seen)?;
+            let root_commit = root_commit_recursive(repo, commit.id.parse()?, &mut seen)?;
             return Ok(Some(root_commit));
         }
     }

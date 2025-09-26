@@ -445,7 +445,7 @@ pub fn from_commit_or_subtree(
         repo.subtree_paths()
     );
 
-    let node_hash =     &commit.id.parse()?;
+    let node_hash = &commit.id.parse()?;
     // If we have a subtree path, we need to load the tree from that path
     let root = match (repo.subtree_paths(), repo.depth()) {
         (Some(subtree_paths), Some(depth)) => {

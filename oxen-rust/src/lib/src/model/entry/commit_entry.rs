@@ -1,11 +1,9 @@
 use crate::constants::VERSION_FILE_NAME;
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
-use crate::model::{Commit, ContentHashable, LocalRepository, MerkleHash, RemoteEntry, Schema};
-use crate::util;
+use crate::model::{Commit, ContentHashable, MerkleHash, RemoteEntry, Schema};
 
 use filetime::FileTime;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
@@ -204,13 +202,6 @@ impl CommitEntry {
             last_modified_seconds: dir_node.last_modified_seconds(),
             last_modified_nanoseconds: dir_node.last_modified_nanoseconds(),
         }
-    }
-
-    pub fn version_file(&self) -> PathBuf {
-        let current_dir = env::current_dir().unwrap();
-        let repo_dir = util::fs::get_repo_root(&current_dir).expect("Oxen repo not found.");
-        let repo = LocalRepository::from_dir(&repo_dir).unwrap();
-        util::fs::version_path(&repo, self)
     }
 
     // <= 0.8.4:

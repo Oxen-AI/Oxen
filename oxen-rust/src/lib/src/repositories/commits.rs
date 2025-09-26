@@ -630,7 +630,8 @@ mod tests {
             util::fs::write_to_path(&text_path, "Hello World")?;
 
             // Get the hash of the file at this timestamp
-            let hash_when_add = util::hasher::hash_file_contents(&text_path)?.parse::<MerkleHash>()?;
+            let hash_when_add =
+                util::hasher::hash_file_contents(&text_path)?.parse::<MerkleHash>()?;
             repositories::add(&repo, &text_path).await?;
 
             let status = repositories::status(&repo)?;

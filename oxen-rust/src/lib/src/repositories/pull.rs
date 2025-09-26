@@ -1482,10 +1482,8 @@ mod tests {
                 let mut synced_commits = 0;
                 log::debug!("total n remote commits {}", remote_commits.len());
                 for commit in remote_commits {
-                    if core::commit_sync_status::commit_is_synced(
-                        &user_a_repo,
-                        &commit.id.parse()?,
-                    ) {
+                    if core::commit_sync_status::commit_is_synced(&user_a_repo, &commit.id.parse()?)
+                    {
                         synced_commits += 1;
                     }
                 }

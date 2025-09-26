@@ -108,6 +108,7 @@ pub async fn download_chunk(
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+    let path = resource.path.clone();
 
     log::debug!(
         "{} resource {}/{}",
@@ -120,14 +121,13 @@ pub async fn download_chunk(
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
     let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
 
-    let file_node = repositories::entries::get_file(&repo, &commit, &resource.path)?
-        .ok_or(OxenHttpError::NotFound)?;
-    let mut f = version_store.open_version(&file_node.hash().to_string())?;
-    f.seek(std::io::SeekFrom::Start(chunk_start)).unwrap();
-    let mut buffer = vec![0u8; chunk_size as usize];
-    f.read_exact(&mut buffer).unwrap();
+    let file_node = repositories::entries::get_file(&repo, &commit, &path)?
+        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+    let chunk = version_store
+        .get_version_chunk(&file_node.hash().to_string(), chunk_start, chunk_size)
+        .await?;
 
-    Ok(HttpResponse::Ok().body(buffer))
+    Ok(HttpResponse::Ok().body(chunk))
 }
 
 pub async fn list_tabular(

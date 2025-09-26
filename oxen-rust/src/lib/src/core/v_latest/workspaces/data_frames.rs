@@ -96,11 +96,7 @@ pub fn get_queryable_data_frame_workspace(
             "File format not supported, must be tabular.",
         ));
     }
-    get_queryable_data_frame_workspace_from_file_node(
-        repo,
-        &commit.id.parse()?,
-        path,
-    )
+    get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
 pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {

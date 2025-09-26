@@ -306,10 +306,7 @@ fn rewrite_nodes(
 mod tests {
     use super::*;
 
-    use crate::{
-        model::{merkle_tree::node::EMerkleTreeNode},
-        test,
-    };
+    use crate::{model::merkle_tree::node::EMerkleTreeNode, test};
     use std::path::PathBuf;
 
     #[tokio::test]
