@@ -11,6 +11,7 @@ use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
@@ -24,7 +25,7 @@ fn write_file_for_push_benchmark(
     file_path: &Path,
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
-    if rand::thread_rng().gen_range(0.05..1.0) < large_file_chance {
+    if rand::thread_rng().gen_range(0.0..1.0) < large_file_chance {
         let large_content_size = 1024 * 1024 + 1;
         let mut large_content = vec![0u8; large_content_size];
         rand::thread_rng().fill_bytes(&mut large_content);
@@ -49,9 +50,12 @@ async fn setup_repo_for_push_benchmark(
         "setup_repo_for_push_benchmark got repo_size {}, num_files_to_push {}, and dir_size {}",
         repo_size, num_files_to_push_in_benchmark, dir_size,
     );
+
+    // Generate Uuid to ensure the data is pushed to a new remote
+    let remote_id = Uuid::new_v4().to_string();
     let repo_dir = base_dir.join(format!(
-        "repo_{}_{}",
-        num_files_to_push_in_benchmark, dir_size
+        "repo_{}_{}_{}",
+        num_files_to_push_in_benchmark, dir_size, remote_id
     ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
@@ -104,18 +108,6 @@ async fn setup_repo_for_push_benchmark(
         }
 
         for i in 0..repo_size {
-            let dir_idx = rng.gen_range(0..dirs.len());
-            let dir = &dirs[dir_idx];
-            util::fs::create_dir_all(dir)?;
-            let file_path = dir.join(format!("file_{}.txt", i));
-            write_file_for_push_benchmark(&file_path, large_file_percentage)?;
-        }
-
-        repositories::add(&repo, black_box(&files_dir)).await?;
-        repositories::commit(&repo, "Init")?;
-        repositories::push(&repo).await?;
-
-        for i in repo_size..(repo_size + num_files_to_push_in_benchmark) {
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;

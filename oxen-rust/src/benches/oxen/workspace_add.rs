@@ -26,7 +26,7 @@ fn write_file_for_workspace_add_benchmark(
     file_path: &Path,
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
-    if rand::thread_rng().gen_range(0.05..1.0) < large_file_chance {
+    if rand::thread_rng().gen_range(0.0..1.0) < large_file_chance {
         let large_content_size = 1024 * 1024 + 1;
         let mut large_content = vec![0u8; large_content_size];
         rand::thread_rng().fill_bytes(&mut large_content);
@@ -43,7 +43,7 @@ fn write_file_for_workspace_add_benchmark(
 async fn setup_repo_for_workspace_add_benchmark(
     base_dir: &Path,
     repo_size: usize,
-    num_files_to_push_in_benchmark: usize,
+    num_files_to_add_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
 ) -> Result<
@@ -51,19 +51,22 @@ async fn setup_repo_for_workspace_add_benchmark(
         LocalRepository,
         RemoteRepository,
         WorkspaceResponseWithStatus,
-        PathBuf,
+        Vec<PathBuf>,
     ),
     OxenError,
 > {
-    println!("setup_repo_for_workspace_add_benchmark got repo_size {}, num_files_to_push {}, and dir_size {}",
+    println!("setup_repo_for_workspace_add_benchmark got repo_size {}, num_files_to_add {}, and dir_size {}",
         repo_size,
-        num_files_to_push_in_benchmark,
+        num_files_to_add_in_benchmark,
         dir_size,
     );
+    // Generate Uuid to ensure the data is pushed to a new remote
+    let remote_id = Uuid::new_v4().to_string();
     let repo_dir = base_dir.join(format!(
-        "repo_{}_{}",
-        num_files_to_push_in_benchmark, dir_size
+        "repo_{}_{}_{}",
+        num_files_to_add_in_benchmark, dir_size, remote_id
     ));
+
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
@@ -125,19 +128,22 @@ async fn setup_repo_for_workspace_add_benchmark(
     repositories::commit(&repo, "Init")?;
     repositories::push(&repo).await?;
 
-    let files_dir = if let Some(data_path) = data_path {
-        PathBuf::from(data_path)
+    let files: Vec<PathBuf> = if let Some(data_path) = data_path {
+        vec![PathBuf::from(data_path)]
     } else {
-        for i in repo_size..(repo_size + num_files_to_push_in_benchmark) {
+        let mut files = vec![];
+        for i in repo_size..(repo_size + num_files_to_add_in_benchmark) {
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
 
             let file_path = dir.join(format!("file_{}.txt", i));
             write_file_for_workspace_add_benchmark(&file_path, large_file_percentage)?;
+
+            files.push(file_path);
         }
 
-        files_dir
+        files
     };
 
     let branch_name = DEFAULT_BRANCH_NAME;
@@ -157,7 +163,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     )
     .await?;
 
-    Ok((repo, remote_repo, workspace, files_dir))
+    Ok((repo, remote_repo, workspace, files))
 }
 
 pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
@@ -180,7 +186,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
     ];
     for &(repo_size, dir_size) in params.iter() {
         let num_files_to_add = repo_size / 1000;
-        let (_, remote_repo, workspace, files_path) = rt
+        let (_, remote_repo, workspace, files) = rt
             .block_on(setup_repo_for_workspace_add_benchmark(
                 &base_dir,
                 repo_size,
@@ -202,7 +208,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                         &remote_repo,
                         &workspace.id,
                         "",
-                        vec![files_path.clone()],
+                        files.clone(),
                         &None,
                     )
                     .await
