@@ -25,6 +25,24 @@ pub fn num_threads_for_items(num_items: usize) -> usize {
     }
 }
 
+pub fn default_num_threads() -> usize {
+    let num_workers = if let Ok(num_threads) = std::env::var("OXEN_NUM_THREADS") {
+        // If the environment variable is set, use that
+        if let Ok(num_threads) = num_threads.parse::<usize>() {
+            num_threads
+        } else {
+            // If parsing failed, fall back to default logic
+            get_default_num_workers()
+        }
+    } else {
+        // Environment variable not set, use default logic
+        get_default_num_workers()
+    };
+
+    // Finally look at how many items we have, and if we have less items than workers, use that instead
+    num_workers
+}
+
 fn get_default_num_workers() -> usize {
     // Check how many CPUs we have
     let num_cpus = num_cpus::get();
