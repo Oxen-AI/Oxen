@@ -1,7 +1,7 @@
 use crate::cache::StatusCache;
 use crate::error::WatcherError;
 use crate::protocol::{WatcherRequest, WatcherResponse};
-use log::{error, info};
+use log::{debug, error, info};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,9 +47,14 @@ impl IpcServer {
                             // Handle client in a separate task
                             let cache = self.cache.clone();
                             tokio::spawn(async move {
+                                let start = Instant::now();
+                                debug!("Received client connection");
                                 if let Err(e) = handle_client(stream, cache).await {
                                     error!("Error handling client: {}", e);
                                 }
+                                let elapsed = start.elapsed();
+                                info!("Client request handled in {:.1} ms", elapsed.as_millis());
+
                             });
                         }
                         Err(e) => {
@@ -128,7 +133,6 @@ async fn handle_client(
 
     // Send response
     send_response(&mut stream, &response).await?;
-    info!("Sent response");
 
     Ok(())
 }
