@@ -371,6 +371,17 @@ pub async fn from_directory(
     // Write the DataFrame as a parquet file
     let output_path = workspace.dir().join(output_path);
 
+    // Check if output_path has a ".parquet" extension, if not, add it
+    let output_path = if output_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map_or(false, |ext| ext.eq_ignore_ascii_case("parquet"))
+    {
+        output_path
+    } else {
+        output_path.with_extension("parquet")
+    };
+
     // Create parent directories if they don't exist
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent)?;
