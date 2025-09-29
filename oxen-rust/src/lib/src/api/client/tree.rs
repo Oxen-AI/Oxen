@@ -452,7 +452,6 @@ pub async fn list_missing_file_hashes_from_commits(
     }
 }
 
-
 pub async fn mark_nodes_as_synced(
     remote_repo: &RemoteRepository,
     commit_hashes: HashSet<MerkleHash>,

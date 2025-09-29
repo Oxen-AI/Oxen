@@ -347,54 +347,65 @@ async fn push_commits(
     log::debug!("got commits with info {:?}", commits_with_info);
     let num_commits = commits_with_info.len();
     log::debug!("got commit info {}", num_commits);
+    let errors = Arc::new(Mutex::new(Vec::new()));
 
     stream::iter(commits_with_info)
-        .map(Ok)
-        .try_for_each_concurrent(
+        .for_each_concurrent(
             concurrency::num_threads_for_items(num_commits),
             |(commit, commit_info)| {
+                let id = commit.id.clone();
                 log::debug!("Pushing commit {:?}", commit);
                 let progress = progress.clone();
+                let errors = errors.clone();
                 async move {
-                    let commit_hash = commit.hash()?;
-                    log::debug!("Pushing commit {}", commit_hash);
+                    let result = async {
+                        let commit_hash = commit.hash()?;
+                        log::debug!("Pushing commit {}", commit_hash);
 
-                    log::debug!("missing files {}", commit_info.unique_file_hashes.len());
+                        log::debug!("missing files {}", commit_info.unique_file_hashes.len());
 
-                    push_entries(
-                        repo,
-                        remote_repo,
-                        &commit_info.unique_file_hashes,
-                        &commit,
-                        &progress,
-                    )
-                    .await?;
-                    log::debug!("pushed entries missing files");
-                    let mut nodes = commit_info.unique_dir_nodes;
-                    nodes.insert(commit_hash);
+                        push_entries(
+                            repo,
+                            remote_repo,
+                            &commit_info.unique_file_hashes,
+                            &commit,
+                            &progress,
+                        )
+                        .await?;
+                        log::debug!("pushed entries missing files");
+                        let mut nodes = commit_info.unique_dir_nodes;
+                        nodes.insert(commit_hash);
 
-                    api::client::tree::create_nodes(repo, remote_repo, nodes, &progress).await?;
-                    log::debug!("created nodes");
+                        api::client::tree::create_nodes(repo, remote_repo, nodes, &progress)
+                            .await?;
+                        log::debug!("created nodes");
 
-                    api::client::commits::post_commits_dir_hashes_to_server(
-                        repo,
-                        remote_repo,
-                        &vec![commit],
-                    )
-                    .await?;
+                        api::client::commits::post_commits_dir_hashes_to_server(
+                            repo,
+                            remote_repo,
+                            &vec![commit],
+                        )
+                        .await?;
 
-                    // TODO: we might not need this syncing mechanism
-                    api::client::commits::mark_commits_as_synced(
-                        remote_repo,
-                        HashSet::from([commit_hash]),
-                    )
-                    .await?;
-                    log::debug!("marked commits as synced {}", commit_hash);
-                    Ok::<(), OxenError>(())
+                        // TODO: we might not need this syncing mechanism
+                        api::client::commits::mark_commits_as_synced(
+                            remote_repo,
+                            HashSet::from([commit_hash]),
+                        )
+                        .await?;
+                        log::debug!("marked commits as synced {}", commit_hash);
+                        Ok::<(), OxenError>(())
+                    }
+                    .await;
+
+                    if let Err(err) = result {
+                        let err_str = format!("Error pushing commit {:?}: {}", id, err);
+                        errors.lock().await.push(OxenError::basic_str(err_str));
+                    }
                 }
             },
         )
-        .await?;
+        .await;
 
     Ok(())
 }
