@@ -23,6 +23,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str;
 use std::time::Duration;
+use std::time::Instant;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
@@ -53,16 +54,18 @@ pub async fn status_with_cache(
     // If cache is enabled, try to use the watcher
     if use_cache {
         log::debug!("Attempting to use watcher cache for status");
+        let start = Instant::now();
 
         // Try to connect to watcher
         if let Some(client) = WatcherClient::connect(&repo.path).await {
-            log::info!("Connected to watcher, getting tree");
+            let connect_time = start.elapsed();
+            log::info!("Connected to watcher in {}", connect_time.as_millis());
 
             // Try to get filesystem tree from watcher
             match client.get_tree(None).await {
                 Ok(fs_tree) => {
-                    log::debug!("Got tree from watcher, computing status");
-                    log::info!("Using tree-based status computation");
+                    let tree_time = start.elapsed();
+                    log::info!("Got tree from watcher in {} ms", tree_time.as_millis());
                     return compute_status_from_tree(repo, opts, fs_tree);
                 }
                 Err(e) => {
@@ -1226,19 +1229,18 @@ fn compute_status_from_tree(
     // 4. Process untracked directories for rollup
     let mut final_untracked_files = Vec::new();
     let mut final_untracked_dirs = Vec::new();
-    
+
     // Check staged entries to avoid rolling up directories with staged files
     let staged_db = open_staged_db(repo)?;
-    
+
     for (dir_path, files_in_dir) in &untracked_dirs_files {
         // Check if this directory should be rolled up
-        let should_rollup = 
-            !dir_path.as_os_str().is_empty() && // Not root directory
+        let should_rollup = !dir_path.as_os_str().is_empty() && // Not root directory
             !dirs_with_tracked_files.contains(dir_path) && // No tracked files in dir
             !is_staged(dir_path, &staged_db)? && // Directory not staged
             !tracked_dirs.contains(dir_path) && // Directory not tracked
             check_all_children_untracked(dir_path, &untracked_dirs_files, &dirs_with_tracked_files);
-        
+
         if should_rollup {
             // Roll up into directory entry
             final_untracked_dirs.push((dir_path.clone(), files_in_dir.len()));
@@ -1247,11 +1249,11 @@ fn compute_status_from_tree(
             final_untracked_files.extend(files_in_dir.clone());
         }
     }
-    
+
     // 5. Find removed files and directories
     let mut removed_entries = HashSet::new();
     let mut processed_dirs = HashSet::new();
-    
+
     // Check for removed directories first
     for dir_path in &tracked_dirs {
         if !tree_contains_path(&fs_tree, dir_path) {
@@ -1260,7 +1262,9 @@ fn compute_status_from_tree(
                 let matches = opts.paths.iter().any(|p| {
                     let rel_p =
                         util::fs::path_relative_to_dir(p, &repo.path).unwrap_or_else(|_| p.clone());
-                    dir_path.starts_with(&rel_p) || rel_p.as_os_str().is_empty() || dir_path == &rel_p
+                    dir_path.starts_with(&rel_p)
+                        || rel_p.as_os_str().is_empty()
+                        || dir_path == &rel_p
                 });
                 if !matches {
                     continue;
@@ -1275,7 +1279,7 @@ fn compute_status_from_tree(
             }
         }
     }
-    
+
     // Then check for individual removed files (not in removed directories)
     for (tracked_path, _) in &tracked_files {
         // Skip if file is in a removed directory
@@ -1289,7 +1293,7 @@ fn compute_status_from_tree(
         if in_removed_dir {
             continue;
         }
-        
+
         if !tree_contains_path(&fs_tree, tracked_path) {
             // Apply path filtering
             if !opts.paths.is_empty() {
@@ -1464,7 +1468,9 @@ fn tree_contains_path(tree: &FileSystemTree, path: &Path) -> bool {
 }
 
 /// Get all tracked directories from the set of tracked files
-fn get_tracked_dirs_from_files(tracked_files: &HashMap<PathBuf, TrackedFileInfo>) -> HashSet<PathBuf> {
+fn get_tracked_dirs_from_files(
+    tracked_files: &HashMap<PathBuf, TrackedFileInfo>,
+) -> HashSet<PathBuf> {
     let mut dirs = HashSet::new();
     for path in tracked_files.keys() {
         let mut parent = path.parent();
@@ -1537,10 +1543,10 @@ fn merge_staged_entries(
 mod tests {
     use super::*;
     use crate::test;
+    use oxen_watcher::tree::TreeNode;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::time::SystemTime;
-    use oxen_watcher::tree::TreeNode;
 
     #[test]
     fn test_compute_status_from_tree_empty_repo() -> Result<(), OxenError> {
@@ -1786,14 +1792,20 @@ mod tests {
             if result.untracked_dirs.len() == 1 {
                 // Directory was rolled up
                 assert_eq!(result.untracked_files.len(), 0);
-                assert!(result.untracked_dirs.iter().any(|(path, count)| 
-                    path == &PathBuf::from("dir1") && *count == 1));
+                assert!(result
+                    .untracked_dirs
+                    .iter()
+                    .any(|(path, count)| path == &PathBuf::from("dir1") && *count == 1));
             } else {
                 // Individual files
                 assert_eq!(result.untracked_files.len(), 1);
-                assert!(result.untracked_files.contains(&PathBuf::from("dir1/file1.txt")));
+                assert!(result
+                    .untracked_files
+                    .contains(&PathBuf::from("dir1/file1.txt")));
             }
-            assert!(!result.untracked_files.contains(&PathBuf::from("dir2/file2.txt")));
+            assert!(!result
+                .untracked_files
+                .contains(&PathBuf::from("dir2/file2.txt")));
 
             Ok(())
         })
@@ -1911,21 +1923,32 @@ mod tests {
                 );
             }
 
-            fs_tree.root.children.insert("untracked_dir".to_string(), untracked_dir_node);
+            fs_tree
+                .root
+                .children
+                .insert("untracked_dir".to_string(), untracked_dir_node);
 
             // Get status with tree-based implementation
             let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
 
             // Compare results - both should roll up the directory
-            assert_eq!(status_without_cache.untracked_dirs.len(), status_with_tree.untracked_dirs.len());
-            assert_eq!(status_without_cache.untracked_files.len(), status_with_tree.untracked_files.len());
-            
+            assert_eq!(
+                status_without_cache.untracked_dirs.len(),
+                status_with_tree.untracked_dirs.len()
+            );
+            assert_eq!(
+                status_without_cache.untracked_files.len(),
+                status_with_tree.untracked_files.len()
+            );
+
             // Should have rolled up into directory entry
             assert_eq!(status_with_tree.untracked_dirs.len(), 1);
             assert_eq!(status_with_tree.untracked_files.len(), 0);
-            
+
             // Verify the directory entry
-            let has_dir = status_with_tree.untracked_dirs.iter()
+            let has_dir = status_with_tree
+                .untracked_dirs
+                .iter()
                 .any(|(path, count)| path == &PathBuf::from("untracked_dir") && *count == 3);
             assert!(has_dir, "Should have untracked_dir with 3 files");
 
@@ -1943,7 +1966,7 @@ mod tests {
             test::write_txt_file_to_path(&file1_path, "tracked content")?;
             repositories::add(&repo, &file1_path).await?;
             repositories::commit(&repo, "Initial commit")?;
-            
+
             // Add an untracked file
             test::write_txt_file_to_path(&file2_path, "untracked content")?;
 
@@ -1997,20 +2020,24 @@ mod tests {
 
             // Compare results
             assert_eq!(
-                status_without_cache.untracked_files.len(), 
+                status_without_cache.untracked_files.len(),
                 status_with_tree.untracked_files.len(),
                 "Untracked files count should match"
             );
             assert_eq!(
-                status_without_cache.modified_files.len(), 
+                status_without_cache.modified_files.len(),
                 status_with_tree.modified_files.len(),
                 "Modified files count should match"
             );
 
             // Verify specific expectations
             assert_eq!(status_with_tree.untracked_files.len(), 1);
-            assert!(status_with_tree.untracked_files.contains(&PathBuf::from("untracked.txt")));
-            assert!(!status_with_tree.untracked_files.contains(&PathBuf::from("tracked.txt")));
+            assert!(status_with_tree
+                .untracked_files
+                .contains(&PathBuf::from("untracked.txt")));
+            assert!(!status_with_tree
+                .untracked_files
+                .contains(&PathBuf::from("tracked.txt")));
 
             Ok(())
         })
@@ -2025,7 +2052,7 @@ mod tests {
             std::fs::create_dir(&dir_path)?;
             test::write_txt_file_to_path(&dir_path.join("file1.txt"), "content1")?;
             test::write_txt_file_to_path(&dir_path.join("file2.txt"), "content2")?;
-            
+
             repositories::add(&repo, &dir_path).await?;
             repositories::commit(&repo, "Added directory")?;
 
@@ -2059,7 +2086,10 @@ mod tests {
             );
 
             // Should detect the removed files or directory
-            assert!(status_with_tree.removed_files.len() > 0, "Should have removed entries");
+            assert!(
+                status_with_tree.removed_files.len() > 0,
+                "Should have removed entries"
+            );
 
             Ok(())
         })

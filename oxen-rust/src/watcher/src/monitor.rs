@@ -217,7 +217,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
     let dir_count = updates.iter().filter(|(_, m)| m.is_none()).count();
 
     info!(
-        "Fast parallel scan found {} files and {} directories in {:.2}s",
+        "Initial scan found {} files and {} directories in {:.2}s",
         file_count,
         dir_count,
         scan_duration.as_secs_f64()
@@ -236,7 +236,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
 
     let total_duration = start.elapsed();
     info!(
-        "Initial scan complete in {:.2}s - now tracking filesystem changes",
+        "Initial scan complete in {:.2}s",
         total_duration.as_secs_f64()
     );
 
