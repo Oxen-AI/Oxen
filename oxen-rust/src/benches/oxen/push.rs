@@ -1,9 +1,9 @@
 use criterion::{black_box, BenchmarkId, Criterion};
-use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
+use liboxen::constants::{DEFAULT_REMOTE_NAME, DEFAULT_NAMESPACE};
 use liboxen::error::OxenError;
-use liboxen::model::LocalRepository;
+use liboxen::model::{LocalRepository, RepoNew};
 use liboxen::repositories;
-use liboxen::test::{create_or_clear_remote_repo, create_remote_repo, test_host};
+use liboxen::test::test_host;
 use liboxen::util;
 use liboxen::{api, command};
 use rand::distributions::Alphanumeric;
@@ -24,7 +24,7 @@ fn write_file_for_push_benchmark(
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
     if rand::thread_rng().gen_range(0.05..1.0) < large_file_chance {
-        let large_content_size = 1024 * 1024 + 1;
+        let large_content_size = 1024 * 1024 * 500 + 500;
         let mut large_content = vec![0u8; large_content_size];
         rand::thread_rng().fill_bytes(&mut large_content);
         fs::write(file_path, &large_content)?;
@@ -56,9 +56,7 @@ async fn setup_repo_for_push_benchmark(
         util::fs::remove_dir_all(&repo_dir)?;
     }
 
-    let mut repo = repositories::init(&repo_dir)?;
-    let remote_repo = create_or_clear_remote_repo(&repo).await?;
-    command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
+    let repo = repositories::init(&repo_dir)?;
 
     let mut rng = rand::thread_rng();
     let files_dir = if let Some(data_path) = data_path {
@@ -81,8 +79,8 @@ async fn setup_repo_for_push_benchmark(
         let large_file_percentage: f64;
         let min_repo_size_for_scaling = 1000.0;
         let max_repo_size_for_scaling = 100000.0;
-        let max_large_file_ratio = 0.5;
-        let min_large_file_ratio = 0.01;
+        let max_large_file_ratio = 1.0;
+        let min_large_file_ratio = 1.0;
 
         if (repo_size as f64) <= min_repo_size_for_scaling {
             large_file_percentage = max_large_file_ratio;
@@ -145,15 +143,13 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
     let mut group = c.benchmark_group("push");
     group.sample_size(iters.unwrap_or(10));
     let params = [
-        (1000, 20),
-        (10000, 20),
-        (100000, 20),
-        (100000, 100),
-        (100000, 1000),
-        (1000000, 1000),
+        (5, 1),
+        (10, 1),
+        (10, 10),
+        (50, 10),
     ];
     for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_push = repo_size / 1000;
+        let num_files_to_push = repo_size;
         let mut repo = rt
             .block_on(setup_repo_for_push_benchmark(
                 &base_dir,
@@ -164,36 +160,46 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
             ))
             .unwrap();
 
-        // cleanup the remote repo for push
-        let remote_name = format!("/{}/{}", DEFAULT_NAMESPACE, repo.dirname());
-        let host = test_host();
-        let url = api::endpoint::url_from_host(&host, &remote_name);
-
-        let _ = rt
-            .block_on(api::client::repositories::delete_from_url(url))
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let remote_repo = rt.block_on(create_remote_repo(&repo)).unwrap();
-        let _ =
-            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-
         group.bench_with_input(
             BenchmarkId::new(
-                format!("{}k_files_in_{}dirs", num_files_to_push, dir_size),
+                format!("{}_files_in_{}dirs", num_files_to_push, dir_size),
                 format!("{:?}", (num_files_to_push, dir_size)),
             ),
             &(num_files_to_push, dir_size),
             |b, _| {
-                // TODO: Refactor to do the push to remotes that already have 'repo_size' files in them
-                //       Should be possible, but may be slow unless there's a good way to 'reverse' a push
-                b.to_async(&rt).iter(|| async {
-                    repositories::push(&repo).await.unwrap();
-                });
+                b.to_async(&rt).iter_batched(
+                    || {
+                        // Create a new remote for each iteration
+                        let iter_dirname = format!("push-run-{}", rand::thread_rng().gen::<u64>());
+
+                        let repo_new = RepoNew::from_namespace_name_host(
+                            DEFAULT_NAMESPACE,
+                            iter_dirname,
+                            test_host(),
+                        );
+                        
+                        let remote_repo = tokio::task::block_in_place(|| {
+                            rt.block_on(api::client::repositories::create_from_local(&repo, repo_new))
+                        }).unwrap();
+                        std::thread::sleep(std::time::Duration::from_millis(10000));
+                        let _ =
+                            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+
+                        (repo.clone(), remote_repo)
+                    },
+                    |(repo, remote_repo)| async move {
+                        repositories::push(&repo)
+                            .await
+                            .unwrap();
+                        // cleanup the remote repo for push
+                        api::client::repositories::delete(&remote_repo)
+                            .await
+                            .unwrap();
+                    },
+                    criterion::BatchSize::PerIteration,
+                );
             },
         );
-        let _ = rt
-            .block_on(api::client::repositories::delete(&remote_repo))
-            .unwrap();
     }
     group.finish();
 
