@@ -16,14 +16,14 @@ use liboxen::util;
 use liboxen::view::versions::{VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, StatusMessage};
 use mime;
+use parking_lot::Mutex;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
-use tokio_util::io::ReaderStream;
 use tokio::task::JoinSet;
-use parking_lot::Mutex;
+use tokio_util::io::ReaderStream;
 
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
@@ -144,12 +144,10 @@ pub async fn save_multiparts(
     let mut save_tasks = JoinSet::new();
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
 
-    let mut count = 0;
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
-        count = count + 1;
 
         if let Some(name) = content_disposition.get_name() {
             if name == "file[]" || name == "file" {
@@ -180,7 +178,6 @@ pub async fn save_multiparts(
                 let version_store_copy = version_store.clone();
                 let err_files_clone = Arc::clone(&err_files);
                 let task = async move {
-
                     // Decompress the data if it's gzipped
                     let data_to_store =
                         match actix_web::web::block(move || -> Result<Vec<u8>, OxenError> {
@@ -200,7 +197,10 @@ pub async fn save_multiparts(
                                 })?;
                                 Ok(decompressed_bytes)
                             } else {
-                                log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
+                                log::debug!(
+                                    "Data for hash {} is not gzipped.",
+                                    &upload_filehash_copy
+                                );
                                 Ok(field_bytes)
                             }
                         })
@@ -221,7 +221,7 @@ pub async fn save_multiparts(
                                         None,
                                         format!("Failed to store version: {}", e),
                                     );
-                                }  
+                                }
                                 return;
                             }
                             Err(e) => {
@@ -239,7 +239,7 @@ pub async fn save_multiparts(
                                         format!("Failed to store version: {}", e),
                                     );
                                 }
-                                return;  
+                                return;
                             }
                         };
 
@@ -248,7 +248,10 @@ pub async fn save_multiparts(
                         .await
                     {
                         Ok(_) => {
-                            log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                            log::info!(
+                                "Successfully stored version for hash: {}",
+                                &upload_filehash
+                            );
                         }
                         Err(e) => {
                             log::error!(
@@ -264,24 +267,21 @@ pub async fn save_multiparts(
                                     None,
                                     format!("Failed to store version: {}", e),
                                 );
-                            }   
-                            return;
+                            }
                         }
                     }
                 };
 
                 save_tasks.spawn(task);
-
-            } 
+            }
         }
     }
 
     while let Some(res) = save_tasks.join_next().await {
         match res {
             Ok(_) => {
-    
                 log::debug!("All file processing tasks completed.")
-            },
+            }
             Err(e) => {
                 log::error!("A task panicked or was cancelled: {:?}", e);
             }

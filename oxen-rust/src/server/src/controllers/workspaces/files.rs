@@ -143,12 +143,11 @@ pub async fn add_version_files(
     let directory = path_param(&req, "directory")?;
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
+    println!("Begin batch");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
     log::debug!(
         "Calling add version files from the core workspace logic with {} files:\n {:?}",
@@ -161,6 +160,8 @@ pub async fn add_version_files(
         &files_with_hash,
         &directory,
     )?;
+
+    println!("complete batch. err files are {err_files:?}");
 
     // Return the error files for retry
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {

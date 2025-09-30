@@ -12,6 +12,7 @@ use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob::glob;
 use glob_match::glob_match;
+use parking_lot::Mutex;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
@@ -19,10 +20,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;
-use tokio::time::{sleep, Duration};
 use tokio::sync::mpsc;
+use tokio::time::{sleep, Duration};
 use walkdir::WalkDir;
-use parking_lot::Mutex;
 
 use crate::util::hasher;
 use flate2::write::GzEncoder;
@@ -207,10 +207,7 @@ pub async fn upload_file_as_bytes(
     path: impl AsRef<Path>,
     buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
-
-
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
-    
 }
 
 async fn upload_multiple_files(
@@ -317,7 +314,7 @@ async fn parallel_batched_small_file_upload(
 
     let workspace_id = workspace_id.as_ref().to_string();
     let directory = directory.as_ref().to_str().unwrap().to_string();
-    
+
     let worker_count = concurrency::default_num_threads();
     let (tx, mut rx) = mpsc::channel(worker_count);
 
@@ -328,9 +325,8 @@ async fn parallel_batched_small_file_upload(
     let local_repo_clone = local_repo.clone();
     let producer_lock = Arc::clone(&err_files);
     let producer_handle = tokio::spawn(async move {
-        
         let head_commit_maybe = if let Some(ref local_repo_clone) = local_repo_clone {
-            repositories::commits::head_commit_maybe(&local_repo_clone).expect("")
+            repositories::commits::head_commit_maybe(local_repo_clone).expect("")
         } else {
             None
         };
@@ -347,10 +343,11 @@ async fn parallel_batched_small_file_upload(
             let repo_path_clone = repo_path.clone();
             let head_commit_maybe_clone = head_commit_maybe.clone();
             let local_repo_clone = local_repo_clone.clone();
-            let producer_lock = Arc::clone(&producer_lock); 
+            let producer_lock = Arc::clone(&producer_lock);
             let handle = tokio::task::spawn_blocking(move || {
                 // println!("path: {path:?}");
-                let relative_path = util::fs::path_relative_to_dir(&path, &repo_path_clone).expect("");
+                let relative_path =
+                    util::fs::path_relative_to_dir(&path, &repo_path_clone).expect("");
 
                 // In remote-mode repos, skip adding files already present in tree
                 if let Some(ref head_commit) = head_commit_maybe_clone {
@@ -366,15 +363,16 @@ async fn parallel_batched_small_file_upload(
                     }
                 }
 
-                // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name  
+                // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name
                 let staging_path = if head_commit_maybe_clone.is_some() {
                     relative_path
                 } else {
                     PathBuf::from(relative_path.file_name().unwrap())
                 };
-    
-                let file = std::fs::read(&path)
-                    .map_err(|e| OxenError::basic_str(format!("Failed to read file '{:?}': {e}", path)))?;
+
+                let file = std::fs::read(&path).map_err(|e| {
+                    OxenError::basic_str(format!("Failed to read file '{:?}': {e}", path))
+                })?;
 
                 let hash = hasher::hash_buffer(&file);
                 // let file_name = PathBuf::from(path.file_name().unwrap());
@@ -382,7 +380,7 @@ async fn parallel_batched_small_file_upload(
                 let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
                 std::io::copy(&mut file.as_slice(), &mut encoder).expect("");
 
-                { 
+                {
                     let compressed_bytes = match encoder.finish() {
                         Ok(bytes) => bytes,
                         Err(e) => {
@@ -391,9 +389,12 @@ async fn parallel_batched_small_file_upload(
                             producer_err_files.push(ErrorFileInfo {
                                 hash: hash.clone(),
                                 path: Some(path.clone()),
-                                error: format!("Failed to finish gzip for hash {:?}: {:?}", &path, e),
+                                error: format!(
+                                    "Failed to finish gzip for hash {:?}: {:?}",
+                                    &path, e
+                                ),
                             });
-                            
+
                             return Ok(());
                         }
                     };
@@ -402,28 +403,26 @@ async fn parallel_batched_small_file_upload(
                         .file_name(hash.clone())
                         .mime_str("application/gzip")?;
 
-
                     match tx_clone.blocking_send((file_part, hash, staging_path, size)) {
-                        Ok(_) => {},
+                        Ok(_) => {}
                         Err(e) => {
                             println!("Error with blocking send: {e:?}");
                             panic!();
                         }
                     }
                 }
-                
+
                 Ok::<(), OxenError>(())
             });
-            
+
             handles.push(handle);
-            
         }
-        
+
         futures::future::join_all(handles).await;
         Ok::<(), OxenError>(())
     });
-
-    let client = Arc::new(api::client::builder_for_remote_repo(&remote_repo)?.build()?);
+    let consumer_lock = Arc::clone(&err_files);
+    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
     let remote_repo_clone = remote_repo.clone();
     let consumer_handle = tokio::spawn(async move {
         let mut upload_handles = Vec::new();
@@ -454,7 +453,7 @@ async fn parallel_batched_small_file_upload(
 
                 let client_clone = client.clone();
                 let remote_repo_clone = remote_repo_clone.clone();
-                let consumer_lock_clone = Arc::clone(&err_files);
+                let consumer_lock_clone = Arc::clone(&consumer_lock);
                 let workspace_id_clone = workspace_id.clone();
                 let directory_str = directory_clone.clone();
                 let files_to_stage = files_to_stage.clone();
@@ -468,16 +467,19 @@ async fn parallel_batched_small_file_upload(
                     let result: ErrorFilesResponse = serde_json::from_str(&body)?;
                     // let mut response_err_files: Vec<ErrorFileInfo> = vec![];
                     if !result.err_files.is_empty() {
-                        
+                        println!("Err files not empty: {:?}", result.err_files);
                         let mut consumer_err_files = consumer_lock_clone.lock();
                         for file_with_hash in result.err_files {
                             let error = format!("{:?}", result.status);
                             consumer_err_files.push(ErrorFileInfo {
                                 hash: file_with_hash.hash,
                                 path: file_with_hash.path.clone(),
-                                error: format!("response got err file {:?} with code {:?}", file_with_hash.path, error),
+                                error: format!(
+                                    "response got err file {:?} with code {:?}",
+                                    file_with_hash.path, error
+                                ),
                             });
-                        }   
+                        }
                     } else {
                         println!("STAGE!");
                         match add_version_files_to_workspace_with_retry(
@@ -486,16 +488,15 @@ async fn parallel_batched_small_file_upload(
                             &workspace_id_clone,
                             Arc::new(files_to_stage),
                             &directory_str,
-
                         )
                         .await
                         {
-                            Ok(err_files) => {
-                                log::debug!("Successfully added version files to workspace with errs {err_files:?}");
+                            Ok(error_files) => {
+                                println!("Successfully STAGED version files to workspace with errs {error_files:?}");
                                 // TODO: return err files info to the user
                             }
                             Err(err) => {
-                                log::debug!("Failed to add version files to workspace: {}", err)
+                                println!("Failed to STAGE version files to workspace: {}", err)
                             }
                         }
                     }
@@ -509,7 +510,7 @@ async fn parallel_batched_small_file_upload(
                 current_batch_parts = Vec::new();
             }
         }
-        
+
         if !current_batch_parts.is_empty() {
             println!("NOT EMPTY");
             let mut form = reqwest::multipart::Form::new();
@@ -523,7 +524,7 @@ async fn parallel_batched_small_file_upload(
             let consumer_lock_clone = Arc::clone(&err_files);
             let workspace_id_clone = workspace_id.clone();
             let directory_str = directory_clone.clone();
-               
+
             let handle = tokio::spawn(async move {
                 let uri = ("/versions").to_string();
                 let url = api::endpoint::url_from_repo(&remote_repo_clone, &uri)?;
@@ -531,18 +532,20 @@ async fn parallel_batched_small_file_upload(
                 let response = client_clone.post(&url).multipart(form).send().await?;
                 let body = client::parse_json_body(&url, response).await?;
                 let result: ErrorFilesResponse = serde_json::from_str(&body)?;
-            
+
                 if !result.err_files.is_empty() {
-                        
                     let mut consumer_err_files = consumer_lock_clone.lock();
                     for file_with_hash in result.err_files {
                         let error = format!("{:?}", result.status);
                         consumer_err_files.push(ErrorFileInfo {
                             hash: file_with_hash.hash,
                             path: file_with_hash.path.clone(),
-                            error: format!("response got err file {:?} with code {:?}", file_with_hash.path, error),
+                            error: format!(
+                                "response got err file {:?} with code {:?}",
+                                file_with_hash.path, error
+                            ),
                         });
-                    }   
+                    }
                 } else {
                     println!("STAGE!");
                     match add_version_files_to_workspace_with_retry(
@@ -551,7 +554,6 @@ async fn parallel_batched_small_file_upload(
                         &workspace_id_clone,
                         Arc::new(files_to_stage),
                         &directory_str,
-
                     )
                     .await
                     {
@@ -564,7 +566,7 @@ async fn parallel_batched_small_file_upload(
                         }
                     }
                 }
-            
+
                 Ok::<(), OxenError>(())
             });
             upload_handles.push(handle);
@@ -577,23 +579,25 @@ async fn parallel_batched_small_file_upload(
     // Wait for both the producer and consumer tasks to complete.
     let result = tokio::join!(producer_handle, consumer_handle);
     match result {
-
         (Ok(producer_res), Ok(_consumer_res)) => {
-
             if let Err(e) = producer_res {
                 log::error!("Producer task failed: {:?}", e);
-                return Err(OxenError::basic_str(format!("Producer task failed: {e}")));   
+                return Err(OxenError::basic_str(format!("Producer task failed: {e}")));
             }
-        },
-    
+        }
+
         (Err(e), _) => {
             log::error!("Producer task panicked or was cancelled: {:?}", e);
-            return Err(OxenError::basic_str(format!("Producer task panicked or was cancelled: {e}")));
-        },
-    
+            return Err(OxenError::basic_str(format!(
+                "Producer task panicked or was cancelled: {e}"
+            )));
+        }
+
         (_, Err(e)) => {
             log::error!("Consumer task panicked or was cancelled: {:?}", e);
-            return Err(OxenError::basic_str(format!("Consumer task panicked or was cancelled: {e}")));
+            return Err(OxenError::basic_str(format!(
+                "Consumer task panicked or was cancelled: {e}"
+            )));
         }
     }
 
@@ -666,11 +670,11 @@ pub async fn add_version_files_to_workspace(
         files_to_add.to_vec()
     };
 
-    println!("fiels to send: {files_to_send:?}");
+    // println!("fiels to send: {files_to_send:?}");
     let response = client.post(&url).json(&files_to_send).send().await?;
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
-    
+
     Ok(response.err_files)
 }
 
@@ -721,7 +725,6 @@ async fn p_upload_single_file(
     }
 }
 
-
 async fn p_upload_bytes_as_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -734,7 +737,7 @@ async fn p_upload_bytes_as_file(
     let directory_name = directory.to_string_lossy();
     let path = path.as_ref();
     log::debug!("multipart_file_upload path: {:?}", path);
-    
+
     let file_data: Vec<u8> = buf.to_vec();
 
     let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
