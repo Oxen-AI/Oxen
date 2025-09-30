@@ -15,8 +15,8 @@ use zip::ZipArchive;
 use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager,
+    add_file_node_to_staged_db, get_file_node, get_status_and_add_file, 
+     stage_file_with_hash, process_add_file_with_staged_db_manager,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
@@ -84,6 +84,36 @@ pub fn add_version_file(
             workspace_repo,
             version_path,
             dst_path,
+            staged_db_manager,
+            &seen_dirs,
+        )
+    })?;
+
+    Ok(dst_path.to_path_buf())
+}
+
+// Skips re-computing the hash in the add logic
+pub fn add_version_file_with_hash(
+    base_repo: &LocalRepository,
+    workspace: &Workspace,
+    version_path: impl AsRef<Path>,
+    dst_path: impl AsRef<Path>,
+    file_hash: &String,
+) -> Result<PathBuf, OxenError> {
+    // version_path is where the file is stored, dst_path is the relative path to the repo path
+    let version_path = version_path.as_ref();
+    let dst_path = dst_path.as_ref();
+
+    let workspace_repo = &workspace.workspace_repo;
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+
+    with_staged_db_manager(workspace_repo, |staged_db_manager| {
+        stage_file_with_hash(
+            base_repo,
+            workspace_repo,
+            version_path,
+            dst_path,
+            file_hash,
             staged_db_manager,
             &seen_dirs,
         )

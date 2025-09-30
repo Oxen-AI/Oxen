@@ -6,7 +6,6 @@ use crate::model::{LocalRepository, RemoteRepository};
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
-use crate::util::hasher;
 
 use bytesize::ByteSize;
 use futures_util::StreamExt;
@@ -535,7 +534,7 @@ async fn p_upload_single_file(
         return Err(OxenError::basic_str(err));
     };
 
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
+    let uri = format!("/workspaces/{workspace_id}/stage/{directory_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
@@ -549,8 +548,8 @@ async fn p_upload_single_file(
     let client = client::new_for_url(&url)?;
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
+    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match result {
         Ok(val) => {
             log::debug!("File path response: {:?}", val);
             if let Some(path) = val.paths.first() {
@@ -587,21 +586,16 @@ async fn p_upload_bytes_as_file(
         file_name
     );
 
-    let hash = hasher::hash_buffer(&buf);
-
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     std::io::copy(&mut buf, &mut encoder)?;
     let compressed_bytes = match encoder.finish() {
         Ok(bytes) => bytes,
         Err(e) => {
-            println!("Failed to finish gzip for file {}: {}", &hash, e);
-            // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
-            return Err(OxenError::basic_str(format!("Failed to finish gzip for file {}: {}", &hash, e)));
+            return Err(OxenError::basic_str(format!("Failed to finish gzip for file {}: {}", &file_name, e)));
         }
     };
 
-    let conjunct_filename = format!("{file_name}?{hash}");
-    let file_part = reqwest::multipart::Part::bytes(compressed_bytes).file_name(conjunct_filename).mime_str("application/gzip")?;
+    let file_part = reqwest::multipart::Part::bytes(compressed_bytes).file_name(file_name).mime_str("application/gzip")?;
 
     let form = reqwest::multipart::Form::new().part("file[]", file_part);
 
@@ -611,8 +605,8 @@ async fn p_upload_bytes_as_file(
     let client = client::new_for_url(&url)?;
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
+    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match result {
         Ok(val) => {
             log::debug!("File path response: {:?}", val);
             if let Some(path) = val.paths.first() {

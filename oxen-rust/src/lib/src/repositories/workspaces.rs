@@ -24,6 +24,7 @@ pub use upload::upload;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
@@ -407,6 +408,7 @@ fn init_workspace_repo(
 }
 
 pub fn populate_entries_with_workspace_data(
+    repo: &LocalRepository,
     directory: &Path,
     workspace: &Workspace,
     entries: &[MetadataEntry],
@@ -436,10 +438,13 @@ pub fn populate_entries_with_workspace_data(
             }
         }
     }
-    for (file_path, status) in additions_map.iter() {
+    for (file_path, (hash, status)) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
-            let file_path_from_workspace = workspace.dir().join(file_path);
-            let metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
+            log::debug!("\n\nHey\n\n");
+            let file_path = PathBuf::from(file_path);
+            let file_name = file_path.file_name().unwrap();
+            let version_path = util::fs::version_path_from_hash_and_filename(&repo, &hash, &file_name);
+            let metadata_from_path = repositories::metadata::from_path(&version_path)?;
             let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
             ws_entry.changes = Some(WorkspaceChanges {
                 status: status.clone(),
@@ -470,6 +475,7 @@ pub fn populate_entry_with_workspace_data(
 }
 
 pub fn get_added_entry(
+    repo: &LocalRepository,
     file_path: &Path,
     workspace: &Workspace,
     resource: &ParsedResource,
@@ -477,10 +483,16 @@ pub fn get_added_entry(
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, file_path)?;
     let (additions_map, _other_changes_map) = build_file_status_maps_for_file(&workspace_changes);
-    let status = additions_map.get(file_path.to_str().unwrap()).cloned();
-    let file_path_from_workspace = workspace.dir().join(file_path);
-    if status == Some(StagedEntryStatus::Added) {
-        let metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
+    if let Some((hash, status)) = additions_map.get(file_path.to_str().unwrap()).cloned() {
+        if status != StagedEntryStatus::Added {
+            return Err(OxenError::basic_str(
+                "Entry is not in the workspace's staged database",
+            ));
+        }
+
+        let file_name = file_path.file_name().unwrap().to_str().unwrap();
+        let version_path = util::fs::version_path_from_hash_and_filename(repo, &hash, &file_name);
+        let metadata_from_path = repositories::metadata::from_path(&version_path)?;
         let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
         ws_entry.changes = Some(WorkspaceChanges {
             status: StagedEntryStatus::Added,
@@ -504,19 +516,23 @@ pub fn get_added_entry(
 fn build_file_status_maps_for_directory(
     workspace_changes: &StagedData,
 ) -> (
-    HashMap<String, StagedEntryStatus>,
+    HashMap<String, (String, StagedEntryStatus)>,
     HashMap<String, StagedEntryStatus>,
 ) {
     let mut additions_map = HashMap::new();
     let mut other_changes_map = HashMap::new();
+    workspace_changes.print();
 
     for (file_path, entry) in workspace_changes.staged_files.iter() {
         let status = entry.status.clone();
         if status == StagedEntryStatus::Added {
+                  log::debug!("\n\nFile path ADD {file_path:?}");
             // For added files, we use the full path as the key. As the staged files are relative to the repository root
             let key = file_path.to_str().unwrap().to_string();
-            additions_map.insert(key, status);
+            let hash = entry.hash.clone();
+            additions_map.insert(key, (hash, status));
         } else {
+            log::debug!("\n\nFile path OTHER {file_path:?}");
             // For modified or removed files, we use the file name as the key, as the file path is relative to the directory passed in.
             let key = file_path.file_name().unwrap().to_string_lossy().to_string();
             other_changes_map.insert(key, status);
@@ -530,7 +546,7 @@ fn build_file_status_maps_for_directory(
 fn build_file_status_maps_for_file(
     workspace_changes: &StagedData,
 ) -> (
-    HashMap<String, StagedEntryStatus>,
+    HashMap<String, (String, StagedEntryStatus)>,
     HashMap<String, StagedEntryStatus>,
 ) {
     let mut additions_map = HashMap::new();
@@ -538,7 +554,8 @@ fn build_file_status_maps_for_file(
     for (file_path, entry) in workspace_changes.staged_files.iter() {
         let status = entry.status.clone();
         if status == StagedEntryStatus::Added {
-            additions_map.insert(file_path.to_str().unwrap().to_string(), status);
+            let hash = entry.hash.clone();
+            additions_map.insert(file_path.to_str().unwrap().to_string(), (hash, status));
         } else {
             other_changes_map.insert(file_path.to_str().unwrap().to_string(), status);
         }
