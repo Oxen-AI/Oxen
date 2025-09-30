@@ -11,6 +11,7 @@ use liboxen::model::LocalRepository;
 use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
+use liboxen::util::hasher;
 use liboxen::view::{
     ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
 };
@@ -149,34 +150,34 @@ pub async fn add_files(req: HttpRequest, payload: Multipart) -> Result<HttpRespo
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let (upload_files, mut err_files) = save_multiparts(payload, &repo).await?;
-
+    // TODO: Singular save file method
+    let (upload_files, err_files) = save_multiparts(payload, &repo).await?;
+    log::debug!("Err file: {err_files:?}");
     log::debug!(
         "Calling add version files from the core workspace logic with {} files:\n {:?}",
         upload_files.len(),
         upload_files
     );
+    let upload_file = &upload_files[0];
+    let file_name = upload_file.path.file_name().unwrap();
+    log::debug!("file name: {file_name:?}\n");
+    let dst_path = PathBuf::from(&directory).join(&file_name);
+    let version_path = util::fs::version_path_from_hash_and_filename(&repo, &upload_file.hash, &file_name);
 
-    let ext_err_files = core::v_latest::workspaces::files::add_version_files(
+    let ret_file = core::v_latest::workspaces::files::add_version_file_with_hash(
         &repo,
         &workspace,
-        &upload_files,
-        &directory,
+        &version_path,
+        &dst_path,
+        &upload_file.hash,
     )?;
 
-    err_files.extend(ext_err_files);
+    log::debug!("add_file ✅ success! staged file {:?}", upload_file);
 
-    if err_files.is_empty() {
-        Ok(HttpResponse::Ok().json(ErrorFilesResponse {
-            status: StatusMessage::resource_deleted(),
-            err_files: err_files,
-        }))
-    } else {
-        Ok(HttpResponse::PartialContent().json(ErrorFilesResponse {
-            status: StatusMessage::resource_not_found(),
-            err_files: err_files,
-        }))
-    }
+    Ok(HttpResponse::Ok().json(FilePathsResponse {
+        status: StatusMessage::resource_created(),
+        paths: vec![ret_file],
+    }))
 }
 
 
@@ -410,6 +411,7 @@ pub async fn save_parts(
     Ok(files)
 }
 
+// WIP -- currently, this computes the hash as well as uploading the file
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
@@ -431,9 +433,9 @@ pub async fn save_multiparts(
         };
 
         if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" {
+            if name == "file[]" || name == "file" {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-                let conjunct_filename = content_disposition.get_filename().map_or_else(
+                let upload_filename = content_disposition.get_filename().map_or_else(
                     || {
                         Err(actix_web::error::ErrorBadRequest(
                             "Missing hash in multipart request",
@@ -441,10 +443,6 @@ pub async fn save_multiparts(
                     },
                     |fhash_os_str| Ok(fhash_os_str.to_string()),
                 )?;
-
-                let conjunct_parts: Vec<&str> = conjunct_filename.split('?').collect();
-                let upload_filename = PathBuf::from(conjunct_parts[0].to_string());
-                let upload_filehash = conjunct_parts[1].to_string();
 
                 let mut field_bytes = Vec::new();
                 while let Some(chunk) = field.try_next().await? {
@@ -457,57 +455,62 @@ pub async fn save_multiparts(
                         mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
                     })
                     .unwrap_or(false);
+                
+                let upload_filename_copy = upload_filename.clone();
 
-                let upload_filehash_copy = upload_filehash.clone();
-
-                // decompress the data if it is gzipped
-                let data_to_store =
-                    match actix_web::web::block(move || -> Result<Vec<u8>, OxenError> {
+                let (upload_filehash, data_to_store) =
+                    match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
                         if is_gzipped {
-                            log::debug!(
-                                "Decompressing gzipped data for hash: {}",
-                                &upload_filehash_copy
-                            );
+                            log::debug!("Decompressing gzipped data for file: {upload_filename_copy:?}");
+
+                            // Decompress the data if it is gzipped
                             let mut decoder = GzDecoder::new(&field_bytes[..]);
-                            let mut decompressed_bytes = Vec::new();
+                            let mut decompressed_bytes: Vec<u8> = Vec::new();
                             decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
                                 OxenError::basic_str(format!(
                                     "Failed to decompress gzipped data: {}",
                                     e
                                 ))
                             })?;
-                            Ok(decompressed_bytes)
+
+                            // Hash file contents
+                            let hash = hasher::hash_buffer(&decompressed_bytes);
+
+                            Ok((hash, decompressed_bytes))
                         } else {
-                            log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
-                            Ok(field_bytes)
+                            log::debug!("Data for file {upload_filename_copy:?} is not gzipped.");
+
+                            // Only hash file contents
+                            let hash = hasher::hash_buffer(&field_bytes);
+                            Ok((hash, field_bytes))
                         }
                     })
                     .await
                     {
-                        Ok(Ok(data)) => data,
+                        Ok(Ok((hash, data))) => (hash, data),
                         Ok(Err(e)) => {
                             log::error!(
-                                "Failed to decompress data for hash {}: {}",
-                                &upload_filehash,
+                                "Failed to decompress data for file {}: {:?}",
+                                &upload_filename,
                                 e
                             );
                             record_error_file(
                                 &mut err_files,
-                                upload_filehash.clone(),
+                                upload_filename.clone(),
                                 None,
-                                format!("Failed to decompress data: {}", e),
+                                format!("Failed to decompress data: {:?}", e),
                             );
                             continue;
                         }
                         Err(e) => {
                             log::error!(
-                                "Failed to execute blocking decompression task for hash {}: {}",
-                                &upload_filehash,
+                                "Failed to execute blocking decompression task for file {}: {}",
+                                &upload_filename,
                                 e
                             );
                             record_error_file(
                                 &mut err_files,
-                                upload_filehash.clone(),
+                                upload_filename.clone(),
                                 None,
                                 format!("Failed to execute blocking decompression: {}", e),
                             );
@@ -522,7 +525,7 @@ pub async fn save_multiparts(
                     Ok(_) => {
                         upload_files.push(FileWithHash {
                             hash: format!("{}", upload_filehash),
-                            path: upload_filename,
+                            path: upload_filename.into(),
                         });
                         log::info!("Successfully stored version for hash: {}", &upload_filehash);
                         

@@ -31,6 +31,7 @@ use crate::{repositories, util};
 use ignore::gitignore::Gitignore;
 use pathdiff::diff_paths;
 use std::ops::AddAssign;
+use derive_more::FromStr;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::{
@@ -686,6 +687,7 @@ pub fn determine_file_status(
         data_path,
         file_path
     );
+
     let maybe_file_node = get_file_node(maybe_dir_node, file_path)?;
     let mut previous_oxen_metadata: Option<GenericMetadata> = None;
     // This is ugly - but makes sure we don't have to rehash the file if it hasn't changed
@@ -996,6 +998,74 @@ pub fn get_status_and_add_file(
         return Ok(());
     }
     let file_node = generate_file_node(repo, data_path, dst_path, &file_status)?;
+
+    // Only add the file to the staged db if it has changed
+    if let Some(file_node) = file_node {
+        let status = file_status.status.clone();
+        add_file_node_and_parent_dir(
+            &file_node,
+            status,
+            &relative_path,
+            staged_db_manager,
+            seen_dirs,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn stage_file_with_hash(
+    base_repo: &LocalRepository,
+    workspace_repo: &LocalRepository,
+    data_path: &Path,
+    dst_path: &Path,
+    hash: &String,
+    staged_db_manager: &StagedDBManager,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<(), OxenError> {
+    let relative_path = util::fs::path_relative_to_dir(dst_path, &workspace_repo.path)?;
+    if let Some(parent) = dst_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let metadata = util::fs::metadata(data_path)?;
+    let mtime = FileTime::from_last_modification_time(&metadata);
+    
+    let maybe_file_node = if let Some(head_commit) = repositories::commits::head_commit_maybe(&base_repo)? {
+        repositories::tree::get_file_by_path(&base_repo, &head_commit, &relative_path)?
+    } else {
+        None
+    };
+
+    let file_status = if let Some(file_node) = maybe_file_node {
+        let previous_metadata = file_node.metadata();
+        let status = if util::fs::is_modified_from_node(data_path, &file_node)? {
+            StagedEntryStatus::Modified
+        } else {
+            StagedEntryStatus::Unmodified
+        };
+
+        FileStatus {
+            data_path: data_path.to_path_buf(),
+            status,
+            hash: MerkleHash::from_str(hash)?,
+            num_bytes: metadata.len(),
+            mtime,
+            previous_metadata,
+            previous_file_node: Some(file_node),
+        }
+    } else {
+        FileStatus {
+            data_path: data_path.to_path_buf(),
+            status: StagedEntryStatus::Added,
+            hash: MerkleHash::from_str(hash)?,
+            num_bytes: metadata.len(),
+            mtime,
+            previous_metadata: None,
+            previous_file_node: None,
+        }
+    };
+
+    let file_node = generate_file_node(workspace_repo, data_path, dst_path, &file_status)?;
 
     // Only add the file to the staged db if it has changed
     if let Some(file_node) = file_node {
