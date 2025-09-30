@@ -1,11 +1,12 @@
-use crate::error::WatcherError;
-use crate::protocol::{WatcherRequest, WatcherResponse};
-use crate::tree::FileSystemTree;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
+
+use crate::error::WatcherError;
+use crate::protocol::{WatcherRequest, WatcherResponse};
+use crate::tree::FileSystemTree;
 
 /// Client for communicating with the filesystem watcher daemon
 pub struct WatcherClient {

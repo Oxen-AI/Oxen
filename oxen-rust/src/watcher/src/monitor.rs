@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 
 use crate::cache::StatusCache;
+use crate::constants;
 use crate::error::WatcherError;
 use crate::event_processor::EventProcessor;
 use crate::ipc::IpcServer;
@@ -94,6 +95,8 @@ impl FileSystemWatcher {
         // TODO: start processor _after_ the initial scan
         let processor_handle = tokio::spawn(async move { processor.run(event_rx).await });
 
+        info!("Event processor started");
+
         // Start the IPC server
         let ipc_server = IpcServer::new(self.repo_path.clone(), self.cache.clone());
         let ipc_handle = tokio::spawn(async move {
@@ -151,6 +154,7 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
     let walker = WalkBuilder::new(&repo_path)
         .threads(num_cpus::get())
         .hidden(false) // Include hidden files
+        .add_custom_ignore_filename(constants::OXEN_IGNORE_FILE)
         .filter_entry(|entry| {
             // Skip .oxen directory
             entry
