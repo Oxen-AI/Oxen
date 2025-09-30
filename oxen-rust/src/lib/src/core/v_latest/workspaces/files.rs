@@ -239,6 +239,15 @@ pub async fn upload_zip(
         let files = decompress_zip(&temp_file.temp_file_path).await?;
 
         for file in files.iter() {
+            // Skip files in __MACOSX directories
+            if file
+                .components()
+                .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
+            {
+                log::debug!("Skipping __MACOSX file: {:?}", file);
+                continue;
+            }
+
             repositories::workspaces::files::add(workspace, file).await?;
         }
     }
