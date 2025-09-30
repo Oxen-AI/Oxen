@@ -1,25 +1,16 @@
-mod cache;
-mod cli;
-mod error;
-mod event_processor;
-mod ipc;
-mod monitor;
-mod protocol;
-mod tree;
-mod util;
-
 use clap::Parser;
 use log::info;
 use std::path::{Path, PathBuf};
 
-use crate::cli::Args;
-use crate::error::WatcherError;
+use oxen_watcher::protocol::{WatcherRequest, WatcherResponse};
+use oxen_watcher::{cli, ipc, tree};
+use oxen_watcher::{FileSystemWatcher, WatcherError};
 
 #[tokio::main]
 async fn main() -> Result<(), WatcherError> {
     env_logger::init();
 
-    let args = Args::parse();
+    let args = cli::Args::parse();
 
     match args.command {
         cli::Commands::Start { repo } => {
@@ -52,7 +43,7 @@ async fn start_watcher(repo_path: PathBuf) -> Result<(), WatcherError> {
     }
 
     // Initialize and run the watcher
-    let watcher = monitor::FileSystemWatcher::new(repo_path)?;
+    let watcher = FileSystemWatcher::new(repo_path)?;
     watcher.run().await
 }
 
@@ -60,7 +51,7 @@ async fn stop_watcher(repo_path: PathBuf) -> Result<(), WatcherError> {
     let socket_path = repo_path.join(".oxen/watcher.sock");
 
     // Send shutdown request
-    match ipc::send_request(&socket_path, protocol::WatcherRequest::Shutdown).await {
+    match ipc::send_request(&socket_path, WatcherRequest::Shutdown).await {
         Ok(_) => {
             info!("Watcher stopped successfully");
             Ok(())
@@ -90,8 +81,8 @@ async fn is_watcher_running(repo_path: &Path) -> Result<bool, WatcherError> {
     let socket_path = repo_path.join(".oxen/watcher.sock");
 
     // Try to ping the watcher
-    match ipc::send_request(&socket_path, protocol::WatcherRequest::Ping).await {
-        Ok(protocol::WatcherResponse::Ok) => Ok(true),
+    match ipc::send_request(&socket_path, WatcherRequest::Ping).await {
+        Ok(WatcherResponse::Ok) => Ok(true),
         _ => Ok(false),
     }
 }
@@ -106,11 +97,11 @@ async fn query_and_display_tree(
     let socket_path = repo_path.join(".oxen/watcher.sock");
 
     // Send request to get tree
-    let request = protocol::WatcherRequest::GetTree { path: path.clone() };
+    let request = WatcherRequest::GetTree { path: path.clone() };
     let response = ipc::send_request(&socket_path, request).await?;
 
     match response {
-        protocol::WatcherResponse::Tree(tree) => {
+        WatcherResponse::Tree(tree) => {
             // Pretty print the tree
             if let Some(subtree_path) = &path {
                 println!("📁 Tree at: {}", subtree_path.display());
@@ -147,7 +138,7 @@ async fn query_and_display_tree(
 
             Ok(())
         }
-        protocol::WatcherResponse::Error(msg) => {
+        WatcherResponse::Error(msg) => {
             eprintln!("Error querying tree: {}", msg);
             Err(WatcherError::Communication(msg))
         }

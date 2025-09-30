@@ -28,7 +28,8 @@ use std::time::Instant;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
-use oxen_watcher::{FileMetadata, FileSystemTree, NodeType, WatcherClient};
+use oxen_watcher::client::WatcherClient;
+use oxen_watcher::tree::{FileMetadata, FileSystemTree, NodeType};
 
 pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
     status_from_dir(repo, &repo.path)
