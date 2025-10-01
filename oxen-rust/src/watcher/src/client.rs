@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
@@ -52,6 +52,7 @@ impl WatcherClient {
 
     /// Get the current filesystem tree from the watcher
     pub async fn get_tree(&self, path: Option<PathBuf>) -> Result<FileSystemTree, WatcherError> {
+        let start = Instant::now();
         // Connect to the socket
         let mut stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
             WatcherError::Communication(format!("Failed to connect to watcher: {}", e))
@@ -98,8 +99,21 @@ impl WatcherClient {
             .await
             .map_err(|e| WatcherError::Communication(format!("Failed to read response: {}", e)))?;
 
+        let read_time = start.elapsed();
+        log::info!(
+            "Received response of {} bytes in {}ms",
+            response_len,
+            read_time.as_millis()
+        );
+
         // Deserialize response
         let response = WatcherResponse::from_bytes(&response_buf)?;
+
+        let deserialize_time = start.elapsed() - read_time;
+        log::info!(
+            "Deserialized response in {}ms",
+            deserialize_time.as_millis()
+        );
 
         // Gracefully shutdown the connection
         let _ = stream.shutdown().await;
