@@ -7,6 +7,7 @@ use framework::{FrameworkError, FrameworkResult};
 
 pub mod framework;
 pub mod migrate;
+pub mod lmdb;
 
 struct TestMetrics {
     pack_time: Duration,
@@ -27,6 +28,7 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Commands {
     Migrate,
+    Test,
 }
 
 fn main() -> FrameworkResult<()> {
@@ -35,6 +37,9 @@ fn main() -> FrameworkResult<()> {
     match args.command {
         Commands::Migrate => {
             migrate::migrate()
+        }
+        Commands::Test => {
+            migrate::test()
         }
     }
 }
