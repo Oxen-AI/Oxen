@@ -8,8 +8,6 @@ use crate::config::UserConfig;
 use crate::error::OxenError;
 use crate::view::workspaces::WorkspaceCommit;
 
-use std::str::FromStr;
-
 /// NewCommitBody is used to parse the json into a Commit from the API
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct NewCommitBody {
@@ -158,7 +156,7 @@ impl Commit {
     }
 
     pub fn hash(&self) -> Result<MerkleHash, OxenError> {
-        MerkleHash::from_str(&self.id)
+        self.id.parse()
     }
 
     pub fn to_uri_encoded(&self) -> String {

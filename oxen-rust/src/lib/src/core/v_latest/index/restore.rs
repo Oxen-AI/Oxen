@@ -15,6 +15,7 @@ use crate::storage::version_store::VersionStore;
 use crate::util;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct FileToRestore {
     pub file_node: FileNode,
     pub path: PathBuf,

@@ -202,7 +202,6 @@ mod tests {
     use crate::constants::DIFF_STATUS_COL;
     use crate::error::OxenError;
     use crate::model::diff::diff_entry_status::DiffEntryStatus;
-    use crate::model::MerkleHash;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -212,7 +211,6 @@ mod tests {
     use polars::lazy::frame::IntoLazy;
 
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_compare_commits() -> Result<(), OxenError> {
@@ -245,8 +243,8 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&commit_ids[3])?;
-            let head_commit_id = MerkleHash::from_str(&commit_ids[1])?;
+            let base_commit_id = commit_ids[3].parse()?;
+            let head_commit_id = commit_ids[1].parse()?;
             let commits =
                 api::client::compare::commits(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
@@ -281,8 +279,8 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&og_commit.id)?;
-            let head_commit_id = MerkleHash::from_str(&new_commit.id)?;
+            let base_commit_id = og_commit.id.parse()?;
+            let head_commit_id = new_commit.id.parse()?;
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
@@ -333,8 +331,8 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&og_commit.id)?;
-            let head_commit_id = MerkleHash::from_str(&new_commit.id)?;
+            let base_commit_id = og_commit.id.parse()?;
+            let head_commit_id = new_commit.id.parse()?;
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
@@ -426,8 +424,8 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&commit_ids[1])?;
-            let head_commit_id = MerkleHash::from_str(&commit_ids[3])?;
+            let base_commit_id = commit_ids[1].parse()?;
+            let head_commit_id = commit_ids[3].parse()?;
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;

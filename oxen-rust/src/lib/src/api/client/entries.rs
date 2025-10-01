@@ -881,7 +881,7 @@ pub async fn try_download_data_from_version_paths(
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file -> {:?}", err);
+                    let err = format!("Could not unwrap file: {:?}", err);
                     return Err(OxenError::basic_str(err));
                 }
             };
@@ -915,7 +915,6 @@ pub async fn try_download_data_from_version_paths(
                 util::fs::create_dir_all(parent)?;
             }
 
-            log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
             match file.unpack(&full_path).await {
                 Ok(_) => {
                     log::debug!("Successfully unpacked {:?} into dst {:?}", entry_path, dst);
@@ -930,7 +929,6 @@ pub async fn try_download_data_from_version_paths(
             size += metadata.len();
             log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
-
         Ok(size)
     } else {
         let err =
@@ -1133,7 +1131,6 @@ mod tests {
             let revision = DEFAULT_BRANCH_NAME;
             api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
                 .await?;
-
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
             assert!(local_path
