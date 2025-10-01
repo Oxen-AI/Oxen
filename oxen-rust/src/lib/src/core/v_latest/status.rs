@@ -59,8 +59,7 @@ pub async fn status_with_cache(
 
         // Try to connect to watcher
         if let Some(client) = WatcherClient::connect(&repo.path).await {
-            let connect_time = start.elapsed();
-            log::info!("Connected to watcher in {}", connect_time.as_millis());
+            log::info!("Connected to watcher");
 
             // Try to get filesystem tree from watcher
             match client.get_tree(None).await {
@@ -1141,9 +1140,11 @@ fn compute_status_from_tree(
     opts: &StagedDataOpts,
     fs_tree: FileSystemTree,
 ) -> Result<StagedData, OxenError> {
+    let start = Instant::now();
     let mut staged_data = StagedData::empty();
 
     // 1. Get tracked files from HEAD commit
+    log::debug!("Getting tracked files from HEAD commit");
     let head_commit = repositories::commits::head_commit_maybe(repo)?;
     let tracked_files = get_tracked_files_map(repo, &head_commit)?;
     let tracked_dirs = get_tracked_dirs_from_files(&tracked_files);
@@ -1157,6 +1158,7 @@ fn compute_status_from_tree(
     let mut dirs_with_tracked_files: HashSet<PathBuf> = HashSet::new();
 
     // Iterate through all files in the tree
+    log::debug!("Finding changes from cached tree");
     for (path, metadata) in iter_tree_files(&fs_tree) {
         // Apply path filtering if specified
         if !opts.paths.is_empty() {
@@ -1228,6 +1230,7 @@ fn compute_status_from_tree(
     }
 
     // 4. Process untracked directories for rollup
+    log::debug!("Processing untracked directories for rollup");
     let mut final_untracked_files = Vec::new();
     let mut final_untracked_dirs = Vec::new();
 
@@ -1252,6 +1255,7 @@ fn compute_status_from_tree(
     }
 
     // 5. Find removed files and directories
+    log::debug!("Finding removed files and directories");
     let mut removed_entries = HashSet::new();
     let mut processed_dirs = HashSet::new();
 
@@ -1320,9 +1324,11 @@ fn compute_status_from_tree(
     staged_data.removed_files = removed_entries;
 
     // 5. Merge with staged database
+    log::debug!("Merging with staged database");
     merge_staged_entries(repo, &mut staged_data, opts)?;
 
     // 6. Find merge conflicts
+    log::debug!("Finding merge conflicts");
     let conflicts = repositories::merge::list_conflicts(repo)?;
     for conflict in conflicts {
         staged_data
@@ -1330,6 +1336,11 @@ fn compute_status_from_tree(
             .push(conflict.to_entry_merge_conflict());
     }
 
+    let compute_status_time = start.elapsed();
+    log::info!(
+        "Computed status from cache in {} ms",
+        compute_status_time.as_millis()
+    );
     Ok(staged_data)
 }
 
