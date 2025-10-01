@@ -418,9 +418,18 @@ mod tests {
     #[tokio::test]
     async fn test_get_dir_with_workspace() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let file_path = PathBuf::from("annotations").join("train").join("file.txt").to_str().unwrap().to_string();
+            let file_path = PathBuf::from("annotations")
+                .join("train")
+                .join("file.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
             let workspace_id = "test_workspace_id";
-            let directory_name = PathBuf::from("annotations").join("train").to_str().unwrap().to_string();
+            let directory_name = PathBuf::from("annotations")
+                .join("train")
+                .to_str()
+                .unwrap()
+                .to_string();
 
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -450,7 +459,11 @@ mod tests {
                 &full_path,
             )
             .await;
-            let train_path = PathBuf::from("annotations").join("train").to_str().unwrap().to_string();
+            let train_path = PathBuf::from("annotations")
+                .join("train")
+                .to_str()
+                .unwrap()
+                .to_string();
             let response =
                 api::client::dir::get_dir(&remote_repo, workspace_id, train_path).await?;
 

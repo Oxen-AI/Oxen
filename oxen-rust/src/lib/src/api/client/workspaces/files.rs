@@ -8,6 +8,8 @@ use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWith
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures_util::StreamExt;
 use glob::glob;
 use glob_match::glob_match;
@@ -19,8 +21,6 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::time::{sleep, Duration};
 use walkdir::WalkDir;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
@@ -171,20 +171,9 @@ pub async fn add_bytes(
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
-    match upload_bytes_as_file(
-        remote_repo,
-        workspace_id,
-        directory,
-        &path,
-        buf,
-    )
-    .await
-    {
+    match upload_bytes_as_file(remote_repo, workspace_id, directory, &path, buf).await {
         Ok(path) => {
-            println!(
-                "🐂 oxen added entry {path:?} to workspace {}",
-                workspace_id
-            );
+            println!("🐂 oxen added entry {path:?} to workspace {}", workspace_id);
         }
         Err(e) => {
             return Err(e);
@@ -236,12 +225,9 @@ pub async fn upload_bytes_as_file(
     path: impl AsRef<Path>,
     buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
-
     // TODO: Route to different logic for large and small buffers
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
-    
 }
-
 
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
@@ -565,8 +551,6 @@ async fn p_upload_single_file(
     }
 }
 
-
-
 async fn p_upload_bytes_as_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -581,21 +565,23 @@ async fn p_upload_bytes_as_file(
     log::debug!("multipart_file_upload path: {:?}", path);
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!(
-        "uploading bytes with file_name: {:?}",
-        file_name
-    );
+    log::info!("uploading bytes with file_name: {:?}", file_name);
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     std::io::copy(&mut buf, &mut encoder)?;
     let compressed_bytes = match encoder.finish() {
         Ok(bytes) => bytes,
         Err(e) => {
-            return Err(OxenError::basic_str(format!("Failed to finish gzip for file {}: {}", &file_name, e)));
+            return Err(OxenError::basic_str(format!(
+                "Failed to finish gzip for file {}: {}",
+                &file_name, e
+            )));
         }
     };
 
-    let file_part = reqwest::multipart::Part::bytes(compressed_bytes).file_name(file_name).mime_str("application/gzip")?;
+    let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+        .file_name(file_name)
+        .mime_str("application/gzip")?;
 
     let form = reqwest::multipart::Form::new().part("file[]", file_part);
 

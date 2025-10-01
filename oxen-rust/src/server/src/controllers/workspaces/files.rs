@@ -13,22 +13,23 @@ use liboxen::repositories;
 use liboxen::util;
 use liboxen::util::hasher;
 use liboxen::view::{
-    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
+    StatusMessageDescription,
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
 
 use actix_multipart::Multipart;
 use actix_web::Error;
+use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
+use std::io::Read as StdRead;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
-use flate2::read::GzDecoder;
-use std::io::Read as StdRead;
 
 pub async fn get(
     req: HttpRequest,
@@ -137,7 +138,10 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     }))
 }
 
-pub async fn add_files(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
+pub async fn add_files(
+    req: HttpRequest,
+    payload: Multipart,
+) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -158,28 +162,37 @@ pub async fn add_files(req: HttpRequest, payload: Multipart) -> Result<HttpRespo
         upload_files.len(),
         upload_files
     );
-    let upload_file = &upload_files[0];
-    let file_name = upload_file.path.file_name().unwrap();
-    log::debug!("file name: {file_name:?}\n");
-    let dst_path = PathBuf::from(&directory).join(&file_name);
-    let version_path = util::fs::version_path_from_hash_and_filename(&repo, &upload_file.hash, &file_name);
+    let mut ret_files = vec![];
+    for upload_file in upload_files {
+        let file_name = upload_file.path.file_name().unwrap();
+        log::debug!("file name: {file_name:?}\n");
+        let dst_path = PathBuf::from(&directory).join(file_name);
+        let version_path =
+            util::fs::version_path_from_hash_and_filename(&repo, &upload_file.hash, file_name);
 
-    let ret_file = core::v_latest::workspaces::files::add_version_file_with_hash(
-        &repo,
-        &workspace,
-        &version_path,
-        &dst_path,
-        &upload_file.hash,
-    )?;
+        let ret_file = match core::v_latest::workspaces::files::add_version_file_with_hash(
+            &repo,
+            &workspace,
+            &version_path,
+            &dst_path,
+            &upload_file.hash,
+        ) {
+            Ok(ret_file) => ret_file,
+            Err(e) => {
+                log::error!("Error adding file {version_path:?}: {e:?}");
+                continue;
+            }
+        };
 
-    log::debug!("add_file ✅ success! staged file {:?}", upload_file);
+        ret_files.push(ret_file);
+        log::debug!("add_file ✅ success! staged file {:?}", upload_file);
+    }
 
     Ok(HttpResponse::Ok().json(FilePathsResponse {
         status: StatusMessage::resource_created(),
-        paths: vec![ret_file],
+        paths: ret_files,
     }))
 }
-
 
 pub async fn add_version_files(
     req: HttpRequest,
@@ -455,13 +468,15 @@ pub async fn save_multiparts(
                         mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
                     })
                     .unwrap_or(false);
-                
+
                 let upload_filename_copy = upload_filename.clone();
 
                 let (upload_filehash, data_to_store) =
                     match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
                         if is_gzipped {
-                            log::debug!("Decompressing gzipped data for file: {upload_filename_copy:?}");
+                            log::debug!(
+                                "Decompressing gzipped data for file: {upload_filename_copy:?}"
+                            );
 
                             // Decompress the data if it is gzipped
                             let mut decoder = GzDecoder::new(&field_bytes[..]);
@@ -524,11 +539,10 @@ pub async fn save_multiparts(
                 {
                     Ok(_) => {
                         upload_files.push(FileWithHash {
-                            hash: format!("{}", upload_filehash),
+                            hash: upload_filehash.to_string(),
                             path: upload_filename.into(),
                         });
                         log::info!("Successfully stored version for hash: {}", &upload_filehash);
-                        
                     }
                     Err(e) => {
                         log::error!(
@@ -545,7 +559,7 @@ pub async fn save_multiparts(
                         continue;
                     }
                 }
-            } 
+            }
         }
     }
 
