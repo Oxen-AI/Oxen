@@ -443,7 +443,7 @@ pub fn populate_entries_with_workspace_data(
             log::debug!("\n\nHey\n\n");
             let file_path = PathBuf::from(file_path);
             let file_name = file_path.file_name().unwrap();
-            let version_path = util::fs::version_path_from_hash_and_filename(&repo, &hash, &file_name);
+            let version_path = util::fs::version_path_from_hash_and_filename(repo, hash, file_name);
             let metadata_from_path = repositories::metadata::from_path(&version_path)?;
             let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
             ws_entry.changes = Some(WorkspaceChanges {
@@ -491,7 +491,7 @@ pub fn get_added_entry(
         }
 
         let file_name = file_path.file_name().unwrap().to_str().unwrap();
-        let version_path = util::fs::version_path_from_hash_and_filename(repo, &hash, &file_name);
+        let version_path = util::fs::version_path_from_hash_and_filename(repo, &hash, file_name);
         let metadata_from_path = repositories::metadata::from_path(&version_path)?;
         let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
         ws_entry.changes = Some(WorkspaceChanges {
@@ -526,7 +526,7 @@ fn build_file_status_maps_for_directory(
     for (file_path, entry) in workspace_changes.staged_files.iter() {
         let status = entry.status.clone();
         if status == StagedEntryStatus::Added {
-                  log::debug!("\n\nFile path ADD {file_path:?}");
+            log::debug!("\n\nFile path ADD {file_path:?}");
             // For added files, we use the full path as the key. As the staged files are relative to the repository root
             let key = file_path.to_str().unwrap().to_string();
             let hash = entry.hash.clone();

@@ -28,10 +28,10 @@ use crate::opts::RmOpts;
 use crate::storage::version_store::VersionStore;
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
+use derive_more::FromStr;
 use ignore::gitignore::Gitignore;
 use pathdiff::diff_paths;
 use std::ops::AddAssign;
-use derive_more::FromStr;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::{
@@ -1018,7 +1018,7 @@ pub fn stage_file_with_hash(
     workspace_repo: &LocalRepository,
     data_path: &Path,
     dst_path: &Path,
-    hash: &String,
+    hash: &str,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
@@ -1029,12 +1029,13 @@ pub fn stage_file_with_hash(
 
     let metadata = util::fs::metadata(data_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
-    
-    let maybe_file_node = if let Some(head_commit) = repositories::commits::head_commit_maybe(&base_repo)? {
-        repositories::tree::get_file_by_path(&base_repo, &head_commit, &relative_path)?
-    } else {
-        None
-    };
+
+    let maybe_file_node =
+        if let Some(head_commit) = repositories::commits::head_commit_maybe(base_repo)? {
+            repositories::tree::get_file_by_path(base_repo, &head_commit, &relative_path)?
+        } else {
+            None
+        };
 
     let file_status = if let Some(file_node) = maybe_file_node {
         let previous_metadata = file_node.metadata();
