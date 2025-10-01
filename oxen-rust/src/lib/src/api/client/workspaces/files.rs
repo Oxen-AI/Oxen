@@ -552,7 +552,7 @@ async fn parallel_batched_small_file_upload(
                         &remote_repo_clone,
                         client_clone,
                         &workspace_id_clone,
-                        Arc::new(files_to_stage),
+                        Arc::new(files_to_stage.clone()),
                         &directory_str,
                     )
                     .await
@@ -565,6 +565,8 @@ async fn parallel_batched_small_file_upload(
                             println!("Failed to add version files to workspace: {}", err);
                         }
                     }
+
+                    files_to_stage.clear();
                 }
 
                 Ok::<(), OxenError>(())
