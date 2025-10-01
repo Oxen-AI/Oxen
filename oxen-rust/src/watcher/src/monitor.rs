@@ -1,5 +1,6 @@
+use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use std::path::{Path, PathBuf};
@@ -85,6 +86,8 @@ impl FileSystemWatcher {
             },
         )?;
 
+        debug!("Created watcher: {:?}", debouncer);
+
         // Watch the repository directory
         debouncer.watch(&self.repo_path, RecursiveMode::Recursive)?;
 
@@ -150,19 +153,18 @@ async fn initial_scan(repo_path: PathBuf, cache: Arc<StatusCache>) -> Result<(),
     info!("Starting initial repository scan with parallel walk");
     let start = Instant::now();
 
+    // Build override to ignore .oxen directory
+    let mut override_builder = OverrideBuilder::new(&repo_path);
+    // safe to unwrap these because we're not using any user-provided globs
+    override_builder.add("!.oxen").unwrap();
+    let overrides = override_builder.build().unwrap();
+
     // Perform parallel walk to enumerate all files and get metadata
     let walker = WalkBuilder::new(&repo_path)
         .threads(num_cpus::get())
-        .hidden(false) // Include hidden files
+        .standard_filters(false) // Include hidden files, disable default ignore files, etc.
         .add_custom_ignore_filename(constants::OXEN_IGNORE_FILE)
-        .filter_entry(|entry| {
-            // Skip .oxen directory
-            entry
-                .file_name()
-                .to_str()
-                .map(|name| name != ".oxen")
-                .unwrap_or(true)
-        })
+        .overrides(overrides)
         .build_parallel();
 
     // Collect file paths and metadata in parallel
