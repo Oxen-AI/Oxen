@@ -440,7 +440,6 @@ pub fn populate_entries_with_workspace_data(
     }
     for (file_path, (hash, status)) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
-            log::debug!("\n\nHey\n\n");
             let file_path = PathBuf::from(file_path);
             let file_name = file_path.file_name().unwrap();
             let version_path = util::fs::version_path_from_hash_and_filename(repo, hash, file_name);
@@ -526,13 +525,11 @@ fn build_file_status_maps_for_directory(
     for (file_path, entry) in workspace_changes.staged_files.iter() {
         let status = entry.status.clone();
         if status == StagedEntryStatus::Added {
-            log::debug!("\n\nFile path ADD {file_path:?}");
             // For added files, we use the full path as the key. As the staged files are relative to the repository root
             let key = file_path.to_str().unwrap().to_string();
             let hash = entry.hash.clone();
             additions_map.insert(key, (hash, status));
         } else {
-            log::debug!("\n\nFile path OTHER {file_path:?}");
             // For modified or removed files, we use the file name as the key, as the file path is relative to the directory passed in.
             let key = file_path.file_name().unwrap().to_string_lossy().to_string();
             other_changes_map.insert(key, status);
