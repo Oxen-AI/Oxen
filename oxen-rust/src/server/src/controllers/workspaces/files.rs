@@ -108,37 +108,7 @@ pub async fn get(
         .streaming(stream))
 }
 
-// TODO: Merge this with 'add_files'
-// This function writes files to disc twice, once in the workspace and once in the versions folder
-// 'add_files' only write files to workspace
-pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let directory = PathBuf::from(path_param(&req, "path")?);
-
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
-        return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
-    };
-
-    let files = save_parts(&workspace, &directory, payload).await?;
-    let mut ret_files = vec![];
-
-    for file in files.iter() {
-        let path = repositories::workspaces::files::add(&workspace, file).await?;
-        log::debug!("add_file ✅ success! staged file {:?}", path);
-        ret_files.push(path);
-    }
-    Ok(HttpResponse::Ok().json(FilePathsResponse {
-        status: StatusMessage::resource_created(),
-        paths: ret_files,
-    }))
-}
-
-pub async fn add_files(
+pub async fn add(
     req: HttpRequest,
     payload: Multipart,
 ) -> Result<HttpResponse, OxenHttpError> {
@@ -147,31 +117,28 @@ pub async fn add_files(
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let directory = path_param(&req, "directory")?;
-
+    let directory = path_param(&req, "path")?;
+    
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    // TODO: Singular save file method
     let (upload_files, err_files) = save_multiparts(payload, &repo).await?;
-    log::debug!("Err file: {err_files:?}");
+    log::debug!("Save multiparts found {} err_files", err_files.len());
     log::debug!(
-        "Calling add version files from the core workspace logic with {} files:\n {:?}",
+        "Calling add version files from the core workspace logic with {} files",
         upload_files.len(),
-        upload_files
     );
+
     let mut ret_files = vec![];
     for upload_file in upload_files {
         let file_name = upload_file.path.file_name().unwrap();
-        log::debug!("file name: {file_name:?}\n");
         let dst_path = PathBuf::from(&directory).join(file_name);
         let version_path =
             util::fs::version_path_from_hash_and_filename(&repo, &upload_file.hash, file_name);
 
         let ret_file = match core::v_latest::workspaces::files::add_version_file_with_hash(
-            &repo,
             &workspace,
             &version_path,
             &dst_path,
@@ -185,7 +152,7 @@ pub async fn add_files(
         };
 
         ret_files.push(ret_file);
-        log::debug!("add_file ✅ success! staged file {:?}", upload_file);
+        println!("add_file ✅ success! staged file {:?}", upload_file);
     }
 
     Ok(HttpResponse::Ok().json(FilePathsResponse {
