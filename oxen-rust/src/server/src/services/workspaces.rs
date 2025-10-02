@@ -32,10 +32,6 @@ pub fn workspace() -> Scope {
                     web::delete().to(controllers::workspaces::files::delete),
                 )
                 .route(
-                    "/stage/{directory:.*}",
-                    web::post().to(controllers::workspaces::files::add_files),
-                )
-                .route(
                     "/versions/{directory:.*}",
                     web::post().to(controllers::workspaces::files::add_version_files),
                 )

@@ -520,7 +520,7 @@ async fn p_upload_single_file(
         return Err(OxenError::basic_str(err));
     };
 
-    let uri = format!("/workspaces/{workspace_id}/stage/{directory_name}");
+    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
@@ -585,7 +585,7 @@ async fn p_upload_bytes_as_file(
 
     let form = reqwest::multipart::Form::new().part("file[]", file_part);
 
-    let uri = format!("/workspaces/{workspace_id}/stage/{directory_name}");
+    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;

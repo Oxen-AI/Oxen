@@ -21,6 +21,7 @@ use crate::core;
 use crate::core::db;
 use crate::core::oxenignore;
 use crate::core::staged::staged_db_manager::{with_staged_db_manager, StagedDBManager};
+use crate::model::workspace::Workspace;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
@@ -896,7 +897,7 @@ pub fn process_add_file_with_staged_db_manager(
 
     // Don't have to add the file to the staged db if it hasn't changed
     if status == StagedEntryStatus::Unmodified {
-        log::debug!("file has not changed - skipping add");
+        println!("file has not changed - skipping add");
         return Ok(());
     }
 
@@ -1013,36 +1014,37 @@ pub fn get_status_and_add_file(
     Ok(())
 }
 
+
 pub fn stage_file_with_hash(
-    base_repo: &LocalRepository,
-    workspace_repo: &LocalRepository,
+    workspace: &Workspace,
     data_path: &Path,
     dst_path: &Path,
     hash: &str,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-    let relative_path = util::fs::path_relative_to_dir(dst_path, &workspace_repo.path)?;
+
+    let workspace_repo = &workspace.workspace_repo;
+    let base_repo = &workspace.base_repo;
+    let head_commit = &workspace.commit;
+
+    let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
     if let Some(parent) = dst_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     let metadata = util::fs::metadata(data_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
-
-    let maybe_file_node =
-        if let Some(head_commit) = repositories::commits::head_commit_maybe(base_repo)? {
-            repositories::tree::get_file_by_path(base_repo, &head_commit, &relative_path)?
-        } else {
-            None
-        };
+    let maybe_file_node = repositories::tree::get_file_by_path(base_repo, &head_commit, &relative_path)?;
 
     let file_status = if let Some(file_node) = maybe_file_node {
         let previous_metadata = file_node.metadata();
         let status = if util::fs::is_modified_from_node(data_path, &file_node)? {
             StagedEntryStatus::Modified
         } else {
-            StagedEntryStatus::Unmodified
+            // Don't add the file if it hasn't changed
+            log::info!("file {data_path:?} has not changed - skipping add");
+            return Ok(());
         };
 
         FileStatus {
@@ -1067,8 +1069,6 @@ pub fn stage_file_with_hash(
     };
 
     let file_node = generate_file_node(workspace_repo, data_path, dst_path, &file_status)?;
-
-    // Only add the file to the staged db if it has changed
     if let Some(file_node) = file_node {
         let status = file_status.status.clone();
         add_file_node_and_parent_dir(
@@ -1081,6 +1081,7 @@ pub fn stage_file_with_hash(
     }
     Ok(())
 }
+
 
 /// Stage file node and parent dirs with staged db manager
 pub fn add_file_node_and_parent_dir(
