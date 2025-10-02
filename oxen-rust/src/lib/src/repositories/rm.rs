@@ -9,77 +9,16 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::RmOpts;
-use crate::repositories::merkle_tree::node::EMerkleTreeNode;
-use crate::{core, repositories};
+use crate::{core, util};
 use std::path::{Path, PathBuf};
-
-use glob::Pattern;
-use glob_match::glob_match;
-
-use crate::util;
 
 /// Removes the path from the index
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
 
-    let repo_path = repo.path.clone();
-    let root_path = PathBuf::from("");
     let path: &Path = opts.path.as_ref();
-    let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
-    let full_path = repo_path.join(&relative_path);
+    let paths = util::fs::parse_glob_path(path, repo, &opts.staged)?;
 
-    let mut paths: HashSet<PathBuf> = HashSet::new();
-
-    if util::fs::is_glob_path(&full_path) {
-        let Some(ref head_commit) = repositories::commits::head_commit_maybe(repo)? else {
-            return Err(OxenError::basic_str(
-                "Error: Cannot use `oxen restore` in empty repository",
-            ));
-        };
-
-        // If --staged, only operate on staged files
-        if opts.staged {
-            let path_str = path.to_str().unwrap();
-            let pattern = Pattern::new(path_str)?;
-            let staged_data = repositories::status::status(repo)?;
-            for entry in staged_data.staged_files {
-                let entry_path_str = entry.0.to_str().unwrap();
-                if pattern.matches(entry_path_str) {
-                    paths.insert(entry.0.to_owned());
-                }
-            }
-        } else {
-            let glob_pattern = full_path.file_name().unwrap().to_string_lossy().to_string();
-            let parent_path = relative_path.parent().unwrap_or(&root_path);
-
-            // Otherwise, traverse the tree for files to restore
-            if let Some(dir_node) =
-                repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
-            {
-                let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
-                for child in dir_children {
-                    if let EMerkleTreeNode::File(file_node) = &child.node {
-                        let child_str = file_node.name();
-                        let child_path = parent_path.join(child_str);
-                        if glob_match(&glob_pattern, child_str) {
-                            paths.insert(child_path);
-                        }
-                    } else if let EMerkleTreeNode::Directory(dir_node) = &child.node {
-                        let child_str = dir_node.name();
-                        let child_path = parent_path.join(child_str);
-                        if glob_match(&glob_pattern, child_str) {
-                            // TODO: Method to detect if dirs are modified from the tree
-                            paths.insert(child_path);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        paths.insert(relative_path);
-    }
-
-    log::debug!("paths: {paths:?}");
     p_rm(&paths, repo, opts)?;
 
     Ok(())
