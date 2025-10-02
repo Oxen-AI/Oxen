@@ -108,17 +108,14 @@ pub async fn get(
         .streaming(stream))
 }
 
-pub async fn add(
-    req: HttpRequest,
-    payload: Multipart,
-) -> Result<HttpResponse, OxenHttpError> {
+pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let directory = path_param(&req, "path")?;
-    
+
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));

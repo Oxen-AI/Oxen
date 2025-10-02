@@ -21,9 +21,9 @@ use crate::core;
 use crate::core::db;
 use crate::core::oxenignore;
 use crate::core::staged::staged_db_manager::{with_staged_db_manager, StagedDBManager};
-use crate::model::workspace::Workspace;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
+use crate::model::workspace::Workspace;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::opts::RmOpts;
 use crate::storage::version_store::VersionStore;
@@ -1014,7 +1014,6 @@ pub fn get_status_and_add_file(
     Ok(())
 }
 
-
 pub fn stage_file_with_hash(
     workspace: &Workspace,
     data_path: &Path,
@@ -1023,7 +1022,6 @@ pub fn stage_file_with_hash(
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
     let head_commit = &workspace.commit;
@@ -1035,7 +1033,8 @@ pub fn stage_file_with_hash(
 
     let metadata = util::fs::metadata(data_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
-    let maybe_file_node = repositories::tree::get_file_by_path(base_repo, &head_commit, &relative_path)?;
+    let maybe_file_node =
+        repositories::tree::get_file_by_path(base_repo, head_commit, &relative_path)?;
 
     let file_status = if let Some(file_node) = maybe_file_node {
         let previous_metadata = file_node.metadata();
@@ -1081,7 +1080,6 @@ pub fn stage_file_with_hash(
     }
     Ok(())
 }
-
 
 /// Stage file node and parent dirs with staged db manager
 pub fn add_file_node_and_parent_dir(
