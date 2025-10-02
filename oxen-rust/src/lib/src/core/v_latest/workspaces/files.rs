@@ -11,13 +11,12 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use zip::ZipArchive;
-use filetime::FileTime;
 
 use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager, stage_file_with_hash, FileStatus,
+    process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
@@ -26,14 +25,12 @@ use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::user::User;
-use crate::model::MerkleHash;
 use crate::model::workspace::Workspace;
 use crate::model::{Branch, Commit, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
 use crate::view::{ErrorFileInfo, FileWithHash};
-use derive_more::FromStr;
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
 const MAX_CONTENT_LENGTH: u64 = 1024 * 1024 * 1024; // 1GB limit
@@ -100,15 +97,12 @@ pub fn add_version_file_with_hash(
     workspace: &Workspace,
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
-    file_hash: &String,
+    file_hash: &str,
 ) -> Result<PathBuf, OxenError> {
-    // version_path is where the file is stored, dst_path is the relative path to the repo 
+    // version_path is where the file is stored, dst_path is the relative path to the repo
     let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
-
-    let base_repo = &workspace.base_repo;
     let workspace_repo = &workspace.workspace_repo;
-    let workspace_commit = &workspace.commit;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
