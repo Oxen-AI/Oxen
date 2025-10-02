@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::opts::RmOpts;
+use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::{core, repositories};
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,7 @@ use crate::util;
 /// Removes the path from the index
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
-    
+
     let repo_path = repo.path.clone();
     let root_path = PathBuf::from("");
     let path: &Path = opts.path.as_ref();
@@ -78,8 +78,6 @@ pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     } else {
         paths.insert(relative_path);
     }
-    
-
 
     log::debug!("paths: {paths:?}");
     p_rm(&paths, repo, opts)?;
