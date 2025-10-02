@@ -53,34 +53,44 @@ pub async fn status_with_cache(
     use_cache: bool,
 ) -> Result<StagedData, OxenError> {
     // If cache is enabled, try to use the watcher
-    if use_cache {
-        log::debug!("Attempting to use watcher cache for status");
-        let start = Instant::now();
+    if !use_cache {
+        println!("Cache disabled, using direct scan");
+        return status_from_opts(repo, opts);
+    }
 
-        // Try to connect to watcher
-        if let Some(client) = WatcherClient::connect(&repo.path).await {
-            log::info!("Connected to watcher");
+    println!("Using cache for status computation");
+    let start = Instant::now();
 
-            // Try to get filesystem tree from watcher
-            match client.get_tree(None).await {
-                Ok(fs_tree) => {
-                    let tree_time = start.elapsed();
-                    log::info!("Got tree from watcher in {} ms", tree_time.as_millis());
-                    return compute_status_from_tree(repo, opts, fs_tree);
-                }
-                Err(e) => {
-                    log::warn!("Failed to get tree from watcher: {}", e);
-                    // Fall through to regular status
-                }
+    let progress = util::progress_bar::spinner_with_msg("🐂 Connecting to filesystem watcher...");
+
+    // Try to connect to watcher
+    if let Some(client) = WatcherClient::connect(&repo.path).await {
+        log::info!("Connected to watcher");
+        progress.set_message("🐂 Loading filesystem tree from cache...");
+
+        // Try to get filesystem tree from watcher
+        match client.get_tree(None).await {
+            Ok(fs_tree) => {
+                let tree_time = start.elapsed();
+                log::info!("Got tree from watcher in {} ms", tree_time.as_millis());
+                progress.set_message("🐂 Computing status from cached tree...");
+                let result = compute_status_from_tree(repo, opts, fs_tree, &progress);
+                progress.finish_and_clear();
+                return result;
             }
-        } else {
-            log::warn!("Could not connect to watcher");
+            Err(e) => {
+                log::warn!("Failed to get tree from watcher: {}", e);
+                progress.finish_and_clear();
+                // Fall through to regular status
+            }
         }
     } else {
-        log::debug!("Cache disabled, using direct scan");
+        log::warn!("Could not connect to watcher");
+        progress.finish_and_clear();
     }
 
     // Fallback to regular status
+    println!("Error getting cached status, falling back to direct scan");
     status_from_opts(repo, opts)
 }
 
@@ -1139,11 +1149,13 @@ fn compute_status_from_tree(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
     fs_tree: FileSystemTree,
+    progress: &ProgressBar,
 ) -> Result<StagedData, OxenError> {
     let start = Instant::now();
     let mut staged_data = StagedData::empty();
 
     // 1. Get tracked files from HEAD commit
+    progress.set_message("🐂 Loading tracked files from HEAD commit...");
     log::debug!("Getting tracked files from HEAD commit");
     let head_commit = repositories::commits::head_commit_maybe(repo)?;
     let tracked_files = get_tracked_files_map(repo, &head_commit)?;
@@ -1153,13 +1165,22 @@ fn compute_status_from_tree(
     let gitignore = oxenignore::create(repo);
 
     // 3. Process filesystem tree to find untracked and modified files
+    progress.set_message("🐂 Scanning files for changes...");
     let mut untracked_files = HashSet::new();
     let mut untracked_dirs_files: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     let mut dirs_with_tracked_files: HashSet<PathBuf> = HashSet::new();
 
     // Iterate through all files in the tree
     log::debug!("Finding changes from cached tree");
-    for (path, metadata) in iter_tree_files(&fs_tree) {
+    let tree_files = iter_tree_files(&fs_tree);
+    let total_files = tree_files.len();
+    for (i, (path, metadata)) in tree_files.into_iter().enumerate() {
+        if i % 100 == 0 {
+            progress.set_message(format!(
+                "🐂 Checking files for changes ({}/{})...",
+                i, total_files
+            ));
+        }
         // Apply path filtering if specified
         if !opts.paths.is_empty() {
             let matches = opts.paths.iter().any(|p| {
@@ -1230,6 +1251,7 @@ fn compute_status_from_tree(
     }
 
     // 4. Process untracked directories for rollup
+    progress.set_message("🐂 Processing untracked directories...");
     log::debug!("Processing untracked directories for rollup");
     let mut final_untracked_files = Vec::new();
     let mut final_untracked_dirs = Vec::new();
@@ -1255,6 +1277,7 @@ fn compute_status_from_tree(
     }
 
     // 5. Find removed files and directories
+    progress.set_message("🐂 Checking for removed files and directories...");
     log::debug!("Finding removed files and directories");
     let mut removed_entries = HashSet::new();
     let mut processed_dirs = HashSet::new();
@@ -1324,10 +1347,12 @@ fn compute_status_from_tree(
     staged_data.removed_files = removed_entries;
 
     // 5. Merge with staged database
+    progress.set_message("🐂 Loading staged files...");
     log::debug!("Merging with staged database");
     merge_staged_entries(repo, &mut staged_data, opts)?;
 
     // 6. Find merge conflicts
+    progress.set_message("🐂 Checking for merge conflicts...");
     log::debug!("Finding merge conflicts");
     let conflicts = repositories::merge::list_conflicts(repo)?;
     for conflict in conflicts {
@@ -1576,7 +1601,8 @@ mod tests {
             };
 
             let opts = StagedDataOpts::default();
-            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Empty repo with empty tree should have no changes
             assert!(result.untracked_files.is_empty());
@@ -1633,7 +1659,8 @@ mod tests {
             );
 
             let opts = StagedDataOpts::default();
-            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Should have 2 untracked files
             assert_eq!(result.untracked_files.len(), 2);
@@ -1686,7 +1713,8 @@ mod tests {
             );
 
             let opts = StagedDataOpts::default();
-            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Should have 1 modified file
             assert!(result.untracked_files.is_empty());
@@ -1721,7 +1749,8 @@ mod tests {
             };
 
             let opts = StagedDataOpts::default();
-            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Should have 1 removed file
             assert!(result.untracked_files.is_empty());
@@ -1798,7 +1827,8 @@ mod tests {
                 paths: vec![repo.path.join("dir1")],
                 ..StagedDataOpts::default()
             };
-            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Should only have file from dir1 (or rolled up as directory)
             if result.untracked_dirs.len() == 1 {
@@ -1873,7 +1903,8 @@ mod tests {
             );
 
             let opts = StagedDataOpts::default();
-            let result = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let result = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Should only have the non-ignored file
             assert_eq!(result.untracked_files.len(), 1);
@@ -1941,7 +1972,8 @@ mod tests {
                 .insert("untracked_dir".to_string(), untracked_dir_node);
 
             // Get status with tree-based implementation
-            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Compare results - both should roll up the directory
             assert_eq!(
@@ -2028,7 +2060,8 @@ mod tests {
             );
 
             // Get status with tree-based implementation
-            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Compare results
             assert_eq!(
@@ -2088,7 +2121,8 @@ mod tests {
             };
 
             // Get status with tree-based implementation
-            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree)?;
+            let progress = ProgressBar::hidden();
+            let status_with_tree = compute_status_from_tree(&repo, &opts, fs_tree, &progress)?;
 
             // Both should detect removed files
             assert_eq!(
