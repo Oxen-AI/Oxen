@@ -801,9 +801,26 @@ mod tests {
 
             let file_path_col = p_df.column("file_path").unwrap();
             let file_paths: Vec<&str> = file_path_col.str().unwrap().into_no_null_iter().collect();
-            assert!(file_paths.contains(&"test_files/file1.txt"));
-            assert!(file_paths.contains(&"test_files/subdir/file3.txt"));
-            assert!(file_paths.contains(&"test_files/file2.txt"));
+            let file_1_str = PathBuf::from("test_files")
+                .join("file1.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let file_2_str = PathBuf::from("test_files")
+                .join("file2.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let file_3_str = PathBuf::from("test_files")
+                .join("subdir")
+                .join("file3.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            assert!(file_paths.contains(&file_1_str.as_str()));
+            assert!(file_paths.contains(&file_2_str.as_str()));
+            assert!(file_paths.contains(&file_3_str.as_str()));
 
             // Verify response
             assert!(response.status.status_message == "resource_created");
