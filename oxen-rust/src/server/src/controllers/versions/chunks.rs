@@ -4,7 +4,6 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
-use actix_web::web::BytesMut;
 use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::stream::StreamExt as _;
 use liboxen::constants::AVG_CHUNK_SIZE;
@@ -13,6 +12,7 @@ use liboxen::repositories;
 use liboxen::view::versions::CompleteVersionUploadRequest;
 use liboxen::view::StatusMessage;
 use serde::Deserialize;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Deserialize, Debug)]
 pub struct ChunkQuery {
@@ -42,15 +42,24 @@ pub async fn upload(
     );
 
     let version_store = repo.version_store()?;
-    // Stream payload in smaller chunks
-    let mut buffered = BytesMut::new();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
-        buffered.extend_from_slice(&chunk);
-    }
-    version_store
-        .store_version_chunk(&version_id, offset, &buffered)
+
+    let mut writer = version_store
+        .get_version_chunk_writer(&version_id, offset)
         .await?;
+
+    // Write chunks in stream
+    while let Some(chunk_result) = body.next().await {
+        let chunk = chunk_result.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
+        writer
+            .write_all(&chunk)
+            .await
+            .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
+    }
+
+    writer
+        .flush()
+        .await
+        .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }
@@ -123,7 +132,6 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         return Ok(HttpResponse::Ok().json(StatusMessage::resource_found()));
     }
-
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 

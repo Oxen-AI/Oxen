@@ -1,5 +1,5 @@
 use criterion::{black_box, BenchmarkId, Criterion};
-use liboxen::constants::{DEFAULT_REMOTE_NAME, DEFAULT_NAMESPACE};
+use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RepoNew};
 use liboxen::repositories;
@@ -24,7 +24,9 @@ fn write_file_for_push_benchmark(
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
     if rand::thread_rng().gen_range(0.05..1.0) < large_file_chance {
-        let large_content_size = 1024 * 1024 * 500 + 500;
+        // to test large file chunk upload (File size > 10MB)
+        // let large_content_size = 1024 * 1024 * 200 + 500;
+        let large_content_size = 1024 * 1024 + 1;
         let mut large_content = vec![0u8; large_content_size];
         rand::thread_rng().fill_bytes(&mut large_content);
         fs::write(file_path, &large_content)?;
@@ -79,8 +81,8 @@ async fn setup_repo_for_push_benchmark(
         let large_file_percentage: f64;
         let min_repo_size_for_scaling = 1000.0;
         let max_repo_size_for_scaling = 100000.0;
-        let max_large_file_ratio = 1.0;
-        let min_large_file_ratio = 1.0;
+        let max_large_file_ratio = 0.5;
+        let min_large_file_ratio = 0.01;
 
         if (repo_size as f64) <= min_repo_size_for_scaling {
             large_file_percentage = max_large_file_ratio;
@@ -143,13 +145,19 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
     let mut group = c.benchmark_group("push");
     group.sample_size(iters.unwrap_or(10));
     let params = [
-        (5, 1),
-        (10, 1),
-        (10, 10),
-        (50, 10),
+        // large file upload
+        // (5, 1),
+        // (10, 1),
+        // (10, 10),
+        (1000, 20),
+        (10000, 20),
+        (100000, 20),
+        (100000, 100),
+        (100000, 1000),
+        (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_push = repo_size;
+        let num_files_to_push = repo_size / 1000;
         let mut repo = rt
             .block_on(setup_repo_for_push_benchmark(
                 &base_dir,
@@ -177,20 +185,24 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                             iter_dirname,
                             test_host(),
                         );
-                        
+
                         let remote_repo = tokio::task::block_in_place(|| {
-                            rt.block_on(api::client::repositories::create_from_local(&repo, repo_new))
-                        }).unwrap();
+                            rt.block_on(api::client::repositories::create_from_local(
+                                &repo, repo_new,
+                            ))
+                        })
+                        .unwrap();
                         std::thread::sleep(std::time::Duration::from_millis(10000));
-                        let _ =
-                            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+                        let _ = command::config::set_remote(
+                            &mut repo,
+                            DEFAULT_REMOTE_NAME,
+                            &remote_repo.remote.url,
+                        );
 
                         (repo.clone(), remote_repo)
                     },
                     |(repo, remote_repo)| async move {
-                        repositories::push(&repo)
-                            .await
-                            .unwrap();
+                        repositories::push(&repo).await.unwrap();
                         // cleanup the remote repo for push
                         api::client::repositories::delete(&remote_repo)
                             .await
