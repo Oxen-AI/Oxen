@@ -51,7 +51,7 @@ pub fn create_repo(
 ) -> Result<PyRemoteRepo, PyOxenError> {
     // Check that name is valid ex: :namespace/:repo_name
     if !name.contains("/") {
-        return Err(OxenError::basic_str(format!("Invalid repository name: {}", name)).into());
+        return Err(OxenError::basic_str(format!("Invalid repository name: {name}")).into());
     }
 
     let namespace = name.split("/").collect::<Vec<&str>>()[0].to_string();
