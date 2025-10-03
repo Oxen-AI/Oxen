@@ -180,6 +180,8 @@ pub async fn upload_single_file(
             path,
             Some(directory),
             Some(workspace_id.as_ref().to_string()),
+            None,
+            None,
         )
         .await
         {
@@ -250,6 +252,8 @@ async fn upload_multiple_files(
             &path,
             Some(directory),
             Some(workspace_id.to_string()),
+            None,
+            None,
         )
         .await
         {

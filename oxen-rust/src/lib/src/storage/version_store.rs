@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncSeek};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 use tokio_stream::Stream;
 
 use crate::constants;
@@ -32,6 +32,12 @@ pub trait AsyncReadSeek: AsyncRead + AsyncSeek + Send + Sync + Unpin {}
 
 /// Implement AsyncReadSeek for any type that implements both AsyncRead and AsyncSeek
 impl<T: AsyncRead + AsyncSeek + Send + Sync + Unpin> AsyncReadSeek for T {}
+
+/// Trait for async write operations
+pub trait AsyncWriteSeek: AsyncWrite + AsyncSeek + Send + Sync + Unpin {}
+
+/// Implement AsyncWriteSeek for any type that implements both AsyncWrite and AsyncSeek
+impl<T: AsyncWrite + AsyncSeek + Send + Sync + Unpin> AsyncWriteSeek for T {}
 
 /// Trait for sync read and seek operations
 pub trait ReadSeek: Read + Seek + Send + Sync {}
@@ -82,6 +88,17 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         offset: u64,
         data: &[u8],
     ) -> Result<(), OxenError>;
+
+    /// Get a writer for a chunk of a version file
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `offset` - The starting byte position of the chunk
+    async fn get_version_chunk_writer(
+        &self,
+        hash: &str,
+        offset: u64,
+    ) -> Result<Box<dyn AsyncWrite + Send + Unpin>, OxenError>;
 
     /// Retrieve a chunk of a version file
     ///
