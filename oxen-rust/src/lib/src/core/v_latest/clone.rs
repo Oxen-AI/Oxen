@@ -17,7 +17,7 @@ pub async fn clone_repo(
     // if directory already exists -> return Err
     let repo_path = &opts.dst;
     if repo_path.exists() {
-        let err = format!("Directory already exists: {}", remote_repo.name);
+        let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
         return Err(OxenError::basic_str(err));
     }
 
@@ -63,7 +63,7 @@ pub async fn clone_repo_remote_mode(
     // if directory already exists -> return Err
     let repo_path = &opts.dst;
     if repo_path.exists() {
-        let err = format!("Directory already exists: {}", remote_repo.name);
+        let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
         return Err(OxenError::basic_str(err));
     }
 
