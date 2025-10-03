@@ -362,7 +362,9 @@ async fn upload_chunks(
             Ok(Ok((chunk_number, headers, size))) => {
                 log::debug!("Uploaded part {chunk_number} with size {size}");
                 results[chunk_number as usize] = headers;
-                progress.map(|p| p.add_bytes(size));
+                if let Some(p) = progress {
+                    p.add_bytes(size);
+                }
             }
             Ok(Err(py_err)) => {
                 return Err(py_err);
@@ -374,7 +376,9 @@ async fn upload_chunks(
             }
         }
     }
-    progress.map(|p| p.add_files(1));
+    if let Some(p) = progress {
+        p.add_files(1);
+    }
     Ok(results)
 }
 

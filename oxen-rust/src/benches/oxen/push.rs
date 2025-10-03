@@ -186,12 +186,11 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                             test_host(),
                         );
 
-                        let remote_repo = tokio::task::block_in_place(|| {
-                            rt.block_on(api::client::repositories::create_from_local(
+                        let remote_repo = rt
+                            .block_on(api::client::repositories::create_from_local(
                                 &repo, repo_new,
                             ))
-                        })
-                        .unwrap();
+                            .unwrap();
                         std::thread::sleep(std::time::Duration::from_millis(10000));
                         let _ = command::config::set_remote(
                             &mut repo,

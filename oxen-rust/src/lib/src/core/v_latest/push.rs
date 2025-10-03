@@ -1,13 +1,10 @@
-use futures::prelude::*;
 use std::collections::HashSet;
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
@@ -455,14 +452,8 @@ pub async fn push_entries(
         .map(|e| e.to_owned())
         .collect();
 
-    let large_entries_sync = chunk_and_send_large_entries(
-        local_repo,
-        remote_repo,
-        larger_entries,
-        commit,
-        AVG_CHUNK_SIZE,
-        progress,
-    );
+    let large_entries_sync =
+        chunk_and_send_large_entries(local_repo, remote_repo, larger_entries, progress);
     let small_entries_sync = bundle_and_send_small_entries(
         local_repo,
         remote_repo,
@@ -493,8 +484,6 @@ async fn chunk_and_send_large_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entries: Vec<Entry>,
-    commit: &Commit,
-    chunk_size: u64,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
