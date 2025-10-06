@@ -149,7 +149,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         };
 
         ret_files.push(ret_file);
-        println!("add_file ✅ success! staged file {:?}", upload_file);
+        log::info!("Successfully staged file {:?}", upload_file);
     }
 
     Ok(HttpResponse::Ok().json(FilePathsResponse {
