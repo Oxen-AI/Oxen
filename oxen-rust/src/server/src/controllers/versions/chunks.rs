@@ -132,6 +132,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         return Ok(HttpResponse::Ok().json(StatusMessage::resource_found()));
     }
+
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 

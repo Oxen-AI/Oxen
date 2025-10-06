@@ -191,7 +191,7 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                                 &repo, repo_new,
                             ))
                             .unwrap();
-                        std::thread::sleep(std::time::Duration::from_millis(10000));
+                        std::thread::sleep(std::time::Duration::from_millis(500));
                         let _ = command::config::set_remote(
                             &mut repo,
                             DEFAULT_REMOTE_NAME,
