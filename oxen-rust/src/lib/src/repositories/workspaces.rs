@@ -24,7 +24,6 @@ pub use upload::upload;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
@@ -416,6 +415,7 @@ pub fn populate_entries_with_workspace_data(
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
     let mut dir_entries: Vec<EMetadataEntry> = Vec::new();
+    let version_store = repo.version_store()?;
 
     let mut entries: Vec<WorkspaceMetadataEntry> = entries
         .iter()
@@ -438,11 +438,9 @@ pub fn populate_entries_with_workspace_data(
             }
         }
     }
-    for (file_path, (hash, status)) in additions_map.iter() {
+    for (_file_path, (hash, status)) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
-            let file_path = PathBuf::from(file_path);
-            let file_name = file_path.file_name().unwrap();
-            let version_path = util::fs::version_path_from_hash_and_filename(repo, hash, file_name);
+            let version_path = version_store.get_version_path(&hash.clone())?;
             let metadata_from_path = repositories::metadata::from_path(&version_path)?;
             let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
             ws_entry.changes = Some(WorkspaceChanges {

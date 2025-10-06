@@ -24,8 +24,7 @@ use actix_web::Error;
 use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
 use std::io::Read as StdRead;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
@@ -121,7 +120,9 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let (upload_files, err_files) = save_multiparts(payload, &repo).await?;
+    let version_store = repo.version_store()?;
+
+    let (upload_files, err_files) = save_parts(payload, &repo).await?;
     log::debug!("Save multiparts found {} err_files", err_files.len());
     log::debug!(
         "Calling add version files from the core workspace logic with {} files",
@@ -132,8 +133,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     for upload_file in upload_files {
         let file_name = upload_file.path.file_name().unwrap();
         let dst_path = PathBuf::from(&directory).join(file_name);
-        let version_path =
-            util::fs::version_path_from_hash_and_filename(&repo, &upload_file.hash, file_name);
+        let version_path = version_store.get_version_path(&upload_file.hash)?;
 
         let ret_file = match core::v_latest::workspaces::files::add_version_file_with_hash(
             &workspace,
@@ -319,77 +319,10 @@ pub async fn validate(_req: HttpRequest, _body: String) -> Result<HttpResponse, 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }
 
+// Read the payload files into memory, compute the hash, and save to version store
+// Unlike controllers::versions::save_multiparts, the hash must be computed here,
+// As this function expects the filename to be the file path, not the hash
 pub async fn save_parts(
-    workspace: &Workspace,
-    directory: &Path,
-    mut payload: Multipart,
-) -> Result<Vec<PathBuf>, Error> {
-    let mut files: Vec<PathBuf> = vec![];
-
-    // iterate over multipart stream
-    while let Some(mut field) = payload.try_next().await? {
-        // A multipart/form-data stream has to contain `content_disposition`
-        let Some(content_disposition) = field.content_disposition() else {
-            continue;
-        };
-
-        log::debug!(
-            "workspace::files::save_parts content_disposition.get_name() {:?}",
-            content_disposition.get_name()
-        );
-
-        // Filter to process only fields with the name "file[]" or "file"
-        // (the old client is sending "file" instead of "file[]", but "file[]" makes sense for more than 1 file)
-        if let Some(name) = content_disposition.get_name() {
-            if "file[]" == name || "file" == name {
-                let upload_filename = content_disposition.get_filename().map_or_else(
-                    || uuid::Uuid::new_v4().to_string(),
-                    sanitize_filename::sanitize,
-                );
-
-                log::debug!(
-                    "workspace::files::save_parts Got uploaded file name: {upload_filename:?}"
-                );
-
-                let workspace_dir = workspace.dir();
-
-                log::debug!("workspace::files::save_parts Got workspace dir: {workspace_dir:?}");
-
-                let full_dir = workspace_dir.join(directory);
-
-                log::debug!("workspace::files::save_parts Got full dir: {full_dir:?}");
-
-                if !full_dir.exists() {
-                    std::fs::create_dir_all(&full_dir)?;
-                }
-
-                // Need copy to pass to thread and return the name
-                let filepath = full_dir.join(&upload_filename);
-                let filepath_cpy = filepath.clone();
-                log::debug!(
-                    "workspace::files::save_parts writing file to {:?}",
-                    filepath
-                );
-
-                // File::create is blocking operation, use threadpool
-                let mut f = web::block(|| std::fs::File::create(filepath)).await??;
-
-                // Field in turn is stream of *Bytes* object
-                while let Some(chunk) = field.try_next().await? {
-                    // filesystem operations are blocking, we have to use threadpool
-                    f = web::block(move || f.write_all(&chunk).map(|_| f)).await??;
-                }
-
-                files.push(filepath_cpy);
-            }
-        }
-    }
-
-    Ok(files)
-}
-
-// WIP -- currently, this computes the hash as well as uploading the file
-pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>), Error> {
@@ -402,7 +335,6 @@ pub async fn save_multiparts(
 
     let mut upload_files: Vec<FileWithHash> = vec![];
     let mut err_files: Vec<ErrorFileInfo> = vec![];
-    // let mut synced_nodes: Option<ReceivedMetadata> = None
 
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
@@ -411,7 +343,7 @@ pub async fn save_multiparts(
 
         if let Some(name) = content_disposition.get_name() {
             if name == "file[]" || name == "file" {
-                // The file hash is passed in as the filename. In version store, the file hash is the identifier.
+                // The file path is passed in as the filename
                 let upload_filename = content_disposition.get_filename().map_or_else(
                     || {
                         Err(actix_web::error::ErrorBadRequest(

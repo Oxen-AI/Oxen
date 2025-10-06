@@ -281,6 +281,7 @@ pub async fn batch_upload(
     }))
 }
 
+// Read the payload files into memory and save to version store
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
@@ -293,7 +294,6 @@ pub async fn save_multiparts(
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
-    // let mut synced_nodes: Option<ReceivedMetadata> = None
 
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {

@@ -897,7 +897,7 @@ pub fn process_add_file_with_staged_db_manager(
 
     // Don't have to add the file to the staged db if it hasn't changed
     if status == StagedEntryStatus::Unmodified {
-        println!("file has not changed - skipping add");
+        log::debug!("file has not changed - skipping add");
         return Ok(());
     }
 
