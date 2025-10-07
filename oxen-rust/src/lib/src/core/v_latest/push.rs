@@ -292,14 +292,14 @@ async fn get_commit_missing_hashes(
             .collect::<HashSet<MerkleHash>>();
 
         shared_hashes.extend(unique_hashes_and_type);
-        dir_nodes.insert(commit.hash().unwrap());
+        dir_nodes.insert(commit.hash()?);
         log::debug!("push_commits dir nodes: {:?}", dir_nodes);
 
         let push_commit_info = PushCommitInfo {
             unique_dir_nodes: dir_nodes,
             unique_file_hashes: files,
         };
-        result.insert(commit.hash().unwrap(), push_commit_info);
+        result.insert(commit.hash()?, push_commit_info);
     }
 
     Ok(result)

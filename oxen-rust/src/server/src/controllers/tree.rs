@@ -30,10 +30,9 @@ pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse,
     let repo_name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = &hash_str.parse()?;
 
-    let node =
-        repositories::tree::get_node_by_id(&repository, hash)?.ok_or(OxenHttpError::NotFound)?;
+    let node = repositories::tree::get_node_by_id(&repository, &hash_str.parse()?)?
+        .ok_or(OxenHttpError::NotFound)?;
 
     node_to_json(node)
 }
