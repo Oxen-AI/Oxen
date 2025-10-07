@@ -4,7 +4,7 @@ use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
 use crate::model::entry::unsynced_commit_entry::UnsyncedCommitEntries;
-use crate::model::{Branch, Commit, LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::PaginateOpts;
 use crate::util::hasher::hash_buffer;
 use crate::util::progress_bar::{oxify_bar, ProgressBarType};
@@ -12,6 +12,7 @@ use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
+use crate::view::entries::ListCommitEntryResponse;
 use crate::view::{
     CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
     StatusMessage,
@@ -162,100 +163,29 @@ pub async fn list_missing_hashes(
 pub async fn list_missing_files(
     remote_repo: &RemoteRepository,
     base_commit: Option<Commit>,
-    head_commit: Option<Commit>,
-    file_hashes: Option<HashSet<MerkleHash>>,
-) -> Result<Vec<MerkleHash>, OxenError> {
-    let url = match (base_commit.clone(), head_commit.clone()) {
-        (Some(base_commit), Some(head_commit)) => {
+    head_commit_id: &str,
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let url = match base_commit {
+        Some(base_commit) => {
             let base_commit_id = base_commit.id;
-            let head_commit_id = head_commit.id;
             let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
-            api::endpoint::url_from_repo(remote_repo, &uri)?
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
-        _ => {
-            let uri = "/commits/missing_files".to_string();
-            api::endpoint::url_from_repo(remote_repo, &uri)?
+        None => {
+            let uri = format!("/commits/missing_files?head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
     };
 
     let client = client::new_for_url(&url)?;
-
-    if let Some(file_hashes) = file_hashes {
-        if file_hashes.is_empty() {
-            return Ok(vec![]);
-        }
-
-        const CHUNK_SIZE: usize = 1000;
-        let mut all_missing_files = Vec::new();
-
-        let chunks: Vec<Vec<MerkleHash>> = file_hashes
-            .into_iter()
-            .collect::<Vec<MerkleHash>>()
-            .chunks(CHUNK_SIZE)
-            .map(|s| s.to_vec())
-            .collect();
-
-        let mut tasks = Vec::new();
-
-        for chunk in chunks {
-            let client = client.clone();
-            let url = url.clone();
-            let task = tokio::spawn(async move {
-                let hashes: HashSet<MerkleHash> = chunk.into_iter().collect();
-                let res = client
-                    .post(&url)
-                    .json(&MerkleHashes { hashes })
-                    .send()
-                    .await;
-
-                match res {
-                    Ok(res) => {
-                        let body = client::parse_json_body(&url, res).await?;
-                        let response: Result<MerkleHashesResponse, serde_json::Error> =
-                            serde_json::from_str(&body);
-                        match response {
-                            Ok(response) => {
-                                Ok(response.hashes.into_iter().collect::<Vec<MerkleHash>>())
-                            }
-                            Err(err) => Err(OxenError::basic_str(format!(
-                                "api::client::tree::list_missing_files() Could not deserialize response [{err}]\n{body}"
-                            ))),
-                        }
-                    }
-                    Err(err) => Err(OxenError::basic_str(format!(
-                        "api::client::tree::list_missing_files() Request failed {err}"
-                    ))),
-                }
-            });
-            tasks.push(task);
-        }
-
-        for task in tasks {
-            match task.await {
-                Ok(Ok(missing_files)) => {
-                    all_missing_files.extend(missing_files);
-                }
-                Ok(Err(err)) => return Err(err),
-                Err(err) => {
-                    return Err(OxenError::basic_str(format!(
-                        "api::client::tree::list_missing_files() Task failed {err}"
-                    )))
-                }
-            }
-        }
-
-        Ok(all_missing_files)
-    } else {
-        // TODO: Figure out how to paginate this
-        let res = client.post(&url).json(&file_hashes).send().await?;
-        let body = client::parse_json_body(&url, res).await?;
-        let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
-        match response {
-            Ok(response) => Ok(response.hashes.into_iter().collect()),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "api::client::tree::list_missing_files() Could not deserialize response [{err}]\n{body}"
-            ))),
-        }
+    let res = client.get(&url).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<ListCommitEntryResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(response) => Ok(response.entries),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "api::client::commits::list_missing_files() Could not deserialize response [{err}]\n{body}"
+        ))),
     }
 }
 

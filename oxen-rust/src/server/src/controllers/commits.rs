@@ -183,44 +183,36 @@ pub async fn list_missing(
 #[derive(Deserialize)]
 pub struct ListMissingFilesQuery {
     pub base: Option<String>,
-    pub head: Option<String>,
+    pub head: String,
 }
 
 pub async fn list_missing_files(
     req: HttpRequest,
     query: web::Query<ListMissingFilesQuery>,
-    body: web::Json<ListMissingFilesRequest>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    log::debug!("list_missing_files repo: {:?}", repo);
 
     let base_commit = match &query.base {
         Some(base) => repositories::commits::get_by_id(&repo, base)?,
         None => None,
     };
-    log::debug!("list_missing_files base_commit: {:?}", base_commit);
 
-    let head_commit = match &query.head {
-        Some(head) => repositories::commits::get_by_id(&repo, head)?,
-        None => None,
-    };
-    log::debug!("list_missing_files head_commit: {:?}", head_commit);
+    let head_commit = repositories::commits::get_by_id(&repo, &query.head)?
+        .ok_or(OxenError::revision_not_found(query.head.clone().into()))?;
 
     let missing_files = repositories::entries::list_missing_files_in_commit_range(
         &repo,
         &base_commit,
         &head_commit,
-        body.into_inner().file_hashes,
     )?;
-    log::debug!("list_missing_files missing_files: {:?}", missing_files);
+
     let response = ListCommitEntryResponse {
         status: StatusMessage::resource_found(),
-        file_hashes: missing_files,
+        entries: missing_files,
     };
-    log::debug!("list_missing_files response: {:?}", response);
     Ok(HttpResponse::Ok().json(response))
 }
 

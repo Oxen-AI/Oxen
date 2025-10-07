@@ -19,7 +19,7 @@ pub struct ListMissingFilesRequest {
 pub struct ListCommitEntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub file_hashes: Vec<MerkleHash>,
+    pub entries: Vec<CommitEntry>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

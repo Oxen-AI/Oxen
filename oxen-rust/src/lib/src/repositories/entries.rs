@@ -289,12 +289,12 @@ pub fn group_schemas_to_parent_dirs(
 pub fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
     base_commit: &Option<Commit>,
-    head_commit: &Option<Commit>,
-    file_hashes: Option<std::collections::HashSet<MerkleHash>>,
-) -> Result<Vec<MerkleHash>, OxenError> {
+    head_commit: &Commit,
+) -> Result<Vec<CommitEntry>, OxenError> {
     let version_store = repo.version_store()?;
-    match (base_commit, head_commit) {
-        (Some(base_commit), Some(head_commit)) => {
+
+    match base_commit {
+        Some(base_commit) => {
             let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
 
             let mut all_entries: Vec<CommitEntry> = Vec::new();
@@ -306,40 +306,23 @@ pub fn list_missing_files_in_commit_range(
             all_entries.sort_by(|a, b| a.path.cmp(&b.path));
             all_entries.dedup_by(|a, b| a.path == b.path);
 
-            let missing_files: Vec<MerkleHash> = all_entries
+            let missing_files: Vec<CommitEntry> = all_entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(true))
-                .map(|entry| entry.hash.parse().unwrap())
                 .collect();
 
             Ok(missing_files)
         }
-        (None, Some(head_commit)) => {
+        None => {
+            // we only receive a head commit, so we need to find all the commits between the head and the first commit
+
             let entries = list_for_commit(repo, head_commit)?;
-            let missing_files: Vec<MerkleHash> = entries
+            let missing_files: Vec<CommitEntry> = entries
                 .into_par_iter()
                 .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
-                .map(|entry| entry.hash.parse().unwrap())
                 .collect();
             Ok(missing_files)
         }
-        (None, None) => match file_hashes {
-            Some(file_hashes) => {
-                let missing_files = file_hashes
-                    .into_par_iter()
-                    .filter(|entry| {
-                        !version_store
-                            .version_exists(&entry.to_string())
-                            .unwrap_or(false)
-                    })
-                    .collect();
-                Ok(missing_files)
-            }
-            None => Ok(vec![]),
-        },
-        _ => Err(OxenError::basic_str(
-            "Can't list missing files without base commit",
-        )),
     }
 }
 

@@ -209,12 +209,11 @@ async fn list_and_push_missing_files(
     let missing_files = api::client::commits::list_missing_files(
         remote_repo,
         base_commit,
-        Some(head_commit.clone()),
-        None,
+        &head_commit.id,
     )
     .await?
-    .into_iter()
-    .map(|e| Entry::CommitEntry(CommitEntry::from_merkle_hash(&e)))
+    .iter()
+    .map(|e| Entry::CommitEntry(e.clone()))
     .collect::<Vec<Entry>>();
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
@@ -234,12 +233,13 @@ async fn get_commit_missing_hashes(
     commits: &[Commit],
 ) -> Result<HashMap<MerkleHash, PushCommitInfo>, OxenError> {
     let mut starting_node_hashes = HashMap::new();
+    let mut shared_hashes = HashMap::new();
     if let Some(ref commit) = latest_remote_commit {
-        repositories::tree::populate_starting_hashes(
+        CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
-            &None,
-            &None,
+            &repo.subtree_paths().unwrap_or(vec![PathBuf::from("")]), //Should we default to root?
+            &mut shared_hashes,
             &mut starting_node_hashes,
         )?;
     }
@@ -274,20 +274,22 @@ async fn get_commit_missing_hashes(
         let files = unique_hashes_and_type
             .iter()
             .filter(|((_, t), _)| {
-                *t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk
+                let t = t.node.node_type();
+                t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk
             })
-            .map(|((h, _), _)| Entry::CommitEntry(CommitEntry::from_merkle_hash(h)))
+            .map(|((_, node), _)| Entry::CommitEntry(CommitEntry::from_node(&node.node)))
             .collect::<Vec<Entry>>();
 
         let mut dir_nodes = unique_hashes_and_type
             .iter()
             .filter(|((h, t), _)| {
+                let t = t.node.node_type();
                 log::debug!("push_commits dir node: {} | type: {:?}", h, t);
                 log::debug!(
                     "push_commits dir node bool: {:?}",
-                    !(*t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
+                    !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
                 );
-                !(*t == MerkleTreeNodeType::File || *t == MerkleTreeNodeType::FileChunk)
+                !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
             })
             .map(|((h, _), _)| *h)
             .collect::<HashSet<MerkleHash>>();
