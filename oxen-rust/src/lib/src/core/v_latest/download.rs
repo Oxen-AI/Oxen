@@ -50,6 +50,8 @@ pub async fn download_dir(
     )
     .await?;
 
+    pull_progress.finish();
+
     Ok(())
 }
 
@@ -83,6 +85,8 @@ pub async fn download_dir_entries(
         &pull_progress,
     )
     .await?;
+
+    pull_progress.finish();
 
     Ok(())
 }
