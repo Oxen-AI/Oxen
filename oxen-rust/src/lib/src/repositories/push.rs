@@ -1724,7 +1724,7 @@ A: Checkout Oxen.ai
             // Set up remote and push
             println!("Setting up remote repository...");
             let remote_repo = test::create_remote_repo(&local_repo).await?;
-            
+
             let mut local_repo_mut = local_repo.clone();
             command::config::set_remote(
                 &mut local_repo_mut,

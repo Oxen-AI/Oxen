@@ -206,15 +206,12 @@ async fn list_and_push_missing_files(
     base_commit: Option<Commit>,
     head_commit: &Commit,
 ) -> Result<(), OxenError> {
-    let missing_files = api::client::commits::list_missing_files(
-        remote_repo,
-        base_commit,
-        &head_commit.id,
-    )
-    .await?
-    .iter()
-    .map(|e| Entry::CommitEntry(e.clone()))
-    .collect::<Vec<Entry>>();
+    let missing_files =
+        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id)
+            .await?
+            .iter()
+            .map(|e| Entry::CommitEntry(e.clone()))
+            .collect::<Vec<Entry>>();
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
 

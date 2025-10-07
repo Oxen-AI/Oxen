@@ -1311,7 +1311,6 @@ impl CommitMerkleTree {
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
         // log::debug!("load_unique_children Got {} children", children.len());
         for (_key, child) in children {
-            let mut child = child.to_owned();
             // log::debug!("load_unique_children child: {} -> {}", key, child);
             match &child.node.node_type() {
                 // Commits, Directories, and VNodes have children
@@ -1328,7 +1327,12 @@ impl CommitMerkleTree {
                     };
 
                     // log::debug!("load_unique_children  opened node_db: {:?}", child.hash);
-                    CommitMerkleTree::load_present_children(repo, &mut child, new_path, paths)?;
+                    CommitMerkleTree::load_present_children(
+                        repo,
+                        &mut child.to_owned(),
+                        new_path,
+                        paths,
+                    )?;
                     node.children.push(child);
                 }
                 // FileChunks and Files are leaf nodes
