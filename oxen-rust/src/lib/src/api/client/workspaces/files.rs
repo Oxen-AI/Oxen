@@ -456,7 +456,7 @@ async fn parallel_batched_small_file_upload(
                 let consumer_lock_clone = Arc::clone(&consumer_lock);
                 let workspace_id_clone = workspace_id.clone();
                 let directory_str = directory_clone.clone();
-                let files_to_stage = files_to_stage.clone();
+                let files_to_stage_clone = files_to_stage.clone();
 
                 let upload_handle = tokio::spawn(async move {
                     println!("Send!");
@@ -479,6 +479,7 @@ async fn parallel_batched_small_file_upload(
                                     file_with_hash.path, error
                                 ),
                             });
+
                         }
                     } else {
                         println!("STAGE!");
@@ -486,7 +487,7 @@ async fn parallel_batched_small_file_upload(
                             &remote_repo_clone,
                             client_clone,
                             &workspace_id_clone,
-                            Arc::new(files_to_stage),
+                            Arc::new(files_to_stage_clone),
                             &directory_str,
                         )
                         .await
@@ -503,11 +504,13 @@ async fn parallel_batched_small_file_upload(
                     println!("RETURN");
                     Ok::<(), OxenError>(())
                 });
+                
                 upload_handles.push(upload_handle);
 
                 // Reset for the next batch.
                 current_batch_size = 0;
                 current_batch_parts = Vec::new();
+                files_to_stage = Vec::new();
             }
         }
 
@@ -672,6 +675,7 @@ pub async fn add_version_files_to_workspace(
         files_to_add.to_vec()
     };
 
+    println!("Files to send: {:?}", files_to_send.len());
     // println!("fiels to send: {files_to_send:?}");
     let response = client.post(&url).json(&files_to_send).send().await?;
     let body = client::parse_json_body(&url, response).await?;

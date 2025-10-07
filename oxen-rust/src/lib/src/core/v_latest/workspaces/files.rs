@@ -120,6 +120,7 @@ pub fn add_version_files(
                     // let parent_dirs = item.parents;
                 }
                 Err(e) => {
+                    println!("Error: {e:?}");
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
@@ -129,6 +130,7 @@ pub fn add_version_files(
                 }
             }
         }
+        println!("Err files: {:?}", err_files.len());
         Ok(err_files)
     })
 }

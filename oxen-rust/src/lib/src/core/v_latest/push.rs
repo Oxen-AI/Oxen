@@ -4,6 +4,7 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;
+ use tokio::time::Instant;
 
 use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
@@ -341,8 +342,10 @@ async fn push_commits(
     ));
     log::debug!("pushing {} entries", missing_files.len());
     let commit = &history.last().unwrap();
+    let now = Instant::now();
     push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
-
+    let elapse = now.elapsed().as_secs();
+    println!("elapse: {elapse:?}");
     // Mark commits as synced on the server
     api::client::commits::mark_commits_as_synced(remote_repo, missing_commit_hashes).await?;
 
