@@ -13,7 +13,6 @@ use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::branch::BranchName;
 use liboxen::view::entries::ListCommitEntryResponse;
-use liboxen::view::entries::ListMissingFilesRequest;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::{

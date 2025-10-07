@@ -12,7 +12,7 @@ use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
 use crate::model::{
-    Commit, CommitEntry, LocalRepository, MerkleHash, MetadataEntry, ParsedResource, Workspace,
+    Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
 use std::collections::HashMap;
