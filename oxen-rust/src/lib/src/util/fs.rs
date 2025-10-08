@@ -27,8 +27,11 @@ use crate::constants::TREE_DIR;
 use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+<<<<<<< HEAD
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
+=======
+>>>>>>> 8f18d4ac8 (version store refactor and clean up unused function)
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
@@ -156,10 +159,6 @@ pub fn version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
     }
 }
 
-pub fn root_version_path(path: impl AsRef<Path>) -> PathBuf {
-    util::fs::oxen_hidden_dir(path).join(constants::VERSIONS_DIR)
-}
-
 pub fn version_path_from_hash_and_filename(
     repo: &LocalRepository,
     hash: impl AsRef<str>,
@@ -192,28 +191,6 @@ pub fn version_path_from_hash(repo: &LocalRepository, hash: impl AsRef<str>) -> 
             version_path_from_hash_and_file_v0_10_0(&repo.path, hash, PathBuf::new())
         }
         _ => version_path_from_hash_and_file(&repo.path, hash, PathBuf::new()),
-    }
-}
-
-pub fn version_path_for_entry(repo: &LocalRepository, entry: &Entry) -> PathBuf {
-    match entry {
-        Entry::CommitEntry(commit_entry) => version_path(repo, commit_entry),
-        Entry::SchemaEntry(schema_entry) => {
-            version_path_from_schema_hash(repo.path.clone(), schema_entry.hash.clone())
-        }
-    }
-}
-
-pub fn version_path_from_dst(dst: impl AsRef<Path>, entry: &CommitEntry) -> PathBuf {
-    version_path_from_hash_and_file(dst, entry.hash.clone(), entry.filename())
-}
-
-pub fn version_path_from_dst_generic(dst: impl AsRef<Path>, entry: &Entry) -> PathBuf {
-    match entry {
-        Entry::CommitEntry(commit_entry) => version_path_from_dst(dst, commit_entry),
-        Entry::SchemaEntry(schema_entry) => {
-            version_path_from_schema_hash(dst, schema_entry.hash.clone())
-        }
     }
 }
 
