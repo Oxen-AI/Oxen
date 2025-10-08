@@ -87,7 +87,7 @@ pub fn count<T: ThreadMode>(
     let mut count = 0;
     for item in iter {
         if let Some(progress) = progress.as_ref() {
-            progress.set_message(format!("🐂 found {:?} staged files", count));
+            progress.set_message(format!("🐂 found {count:?} staged files"));
         }
         match item {
             Ok((_, _)) => {
@@ -123,7 +123,7 @@ pub fn list_paths<T: ThreadMode>(
                         paths.push(base_dir.join(new_path));
                     }
                     _ => {
-                        log::error!("list_added_paths() Could not decode key {:?}", key)
+                        log::error!("list_added_paths() Could not decode key {key:?}")
                     }
                 }
             }
@@ -165,12 +165,11 @@ where
                     }
                     (Ok(key), _) => {
                         log::error!(
-                            "list_added_path_entries() Could not values for key {}.",
-                            key
+                            "list_added_path_entries() Could not values for key {key}."
                         )
                     }
                     (_, Ok(val)) => {
-                        log::error!("list_added_path_entries() Could not key for value {}.", val)
+                        log::error!("list_added_path_entries() Could not key for value {val}.")
                     }
                     _ => {
                         log::error!("list_added_path_entries() Could not decoded keys and values.")

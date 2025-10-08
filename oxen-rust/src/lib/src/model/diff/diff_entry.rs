@@ -43,7 +43,7 @@ impl DiffEntry {
         // TODO: size is an old check, because we didn't have hashes on dirs before
         match (&self.head_entry, &self.base_entry) {
             (Some(head), Some(base)) => {
-                log::debug!("got metadata entries for diff {:?} and {:?}", head, base);
+                log::debug!("got metadata entries for diff {head:?} and {base:?}");
                 head.hash != base.hash || head.size != base.size
             }
             _ => {
@@ -67,11 +67,11 @@ impl DiffEntry {
         let mut base_entry = DiffEntry::metadata_from_dir(repo, base_dir, base_commit);
         let mut head_entry = DiffEntry::metadata_from_dir(repo, head_dir, head_commit);
 
-        log::debug!("from_dir base_entry: {:?}", base_entry);
-        log::debug!("from_dir head_entry: {:?}", head_entry);
+        log::debug!("from_dir base_entry: {base_entry:?}");
+        log::debug!("from_dir head_entry: {head_entry:?}");
 
-        log::debug!("from_dir base_dir: {:?}", base_dir);
-        log::debug!("from_dir head_dir: {:?}", head_dir);
+        log::debug!("from_dir base_dir: {base_dir:?}");
+        log::debug!("from_dir head_dir: {head_dir:?}");
         // Need to check whether we have the head or base entry to check data about the file
         let (current_dir, current_entry) = if let Some(dir) = head_dir {
             (dir, head_entry.to_owned().unwrap())
@@ -171,9 +171,7 @@ impl DiffEntry {
         df_opts: Option<DFOpts>, // only for tabular
     ) -> Result<DiffEntry, OxenError> {
         log::debug!(
-            "from_file_nodes: base_entry: {:?}, head_entry: {:?}",
-            base_entry,
-            head_entry
+            "from_file_nodes: base_entry: {base_entry:?}, head_entry: {head_entry:?}"
         );
         let file_path = file_path.as_ref().to_path_buf();
         // Need to check whether we have the head or base entry to check data about the file

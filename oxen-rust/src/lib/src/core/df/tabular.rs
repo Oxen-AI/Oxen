@@ -76,7 +76,7 @@ fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
     LazyJsonLineReader::new(path)
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
         .finish()
-        .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path)))
+        .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
 }
 
 fn scan_df_json(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
@@ -154,7 +154,7 @@ pub fn scan_df_jsonl(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFr
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
         .with_n_rows(Some(total_rows))
         .finish()
-        .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path)))
+        .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
 }
 
 pub fn scan_df_parquet(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFrame, OxenError> {
@@ -249,8 +249,8 @@ pub async fn add_row(df: LazyFrame, data: String) -> Result<LazyFrame, OxenError
     };
 
     let new_row = row_from_str_and_schema(data, df.schema())?;
-    log::debug!("add_row og df: {:?}", df);
-    log::debug!("add_row new_row: {:?}", new_row);
+    log::debug!("add_row og df: {df:?}");
+    log::debug!("add_row new_row: {new_row:?}");
     let df = df
         .vstack(&new_row)
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?
@@ -348,7 +348,7 @@ fn val_from_str_and_dtype<'a>(s: &'a str, dtype: &polars::prelude::DataType) -> 
         }
         polars::prelude::DataType::String => AnyValue::String(s),
         polars::prelude::DataType::Null => AnyValue::Null,
-        _ => panic!("Currently do not support data type {}", dtype),
+        _ => panic!("Currently do not support data type {dtype}"),
     }
 }
 
@@ -375,7 +375,7 @@ fn lit_from_any(value: &AnyValue) -> Expr {
         AnyValue::Int32(val) => lit(*val),
         AnyValue::String(val) => lit(*val),
         AnyValue::StringOwned(val) => lit(val.to_string()),
-        val => panic!("Unknown data type for [{}] to create literal", val),
+        val => panic!("Unknown data type for [{val}] to create literal"),
     }
 }
 
@@ -393,7 +393,7 @@ fn filter_from_val(df: &mut LazyFrame, filter: &DFFilterVal) -> Expr {
 }
 
 fn filter_df(mut df: LazyFrame, filter: &DFFilterExp) -> Result<LazyFrame, OxenError> {
-    log::debug!("Got filter: {:?}", filter);
+    log::debug!("Got filter: {filter:?}");
     if filter.vals.is_empty() {
         return Ok(df);
     }
@@ -413,7 +413,7 @@ fn filter_df(mut df: LazyFrame, filter: &DFFilterExp) -> Result<LazyFrame, OxenE
 }
 
 fn unique_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError> {
-    log::debug!("Got unique: {:?}", columns);
+    log::debug!("Got unique: {columns:?}");
     Ok(df.unique(Some(columns), UniqueKeepStrategy::First))
 }
 
@@ -429,9 +429,9 @@ pub async fn transform_new(df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, Ox
 }
 
 pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame, OxenError> {
-    log::debug!("transform_lazy Got transform ops {:?}", opts);
+    log::debug!("transform_lazy Got transform ops {opts:?}");
     if let Some(vstack) = opts.clone().vstack {
-        log::debug!("transform_lazy Got files to stack {:?}", vstack);
+        log::debug!("transform_lazy Got files to stack {vstack:?}");
         for path in vstack.iter() {
             let empty_opts = DFOpts::empty();
             let extension = path.extension().and_then(OsStr::to_str).ok_or_else(|| {
@@ -520,7 +520,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
 
     if let Some(columns) = opts.columns_names() {
         if !columns.is_empty() {
-            log::debug!("transform_lazy selecting columns: {:?}", columns);
+            log::debug!("transform_lazy selecting columns: {columns:?}");
             let cols = columns.iter().map(col).collect::<Vec<Expr>>();
             df = df.select(&cols);
         }
@@ -535,8 +535,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
             if old_name.is_empty() || new_name.is_empty() {
                 log::error!("Invalid rename_col format: old name and new name cannot be empty");
                 return Err(OxenError::basic_str(format!(
-                    "Invalid rename_col format `{}`",
-                    names
+                    "Invalid rename_col format `{names}`"
                 )));
             }
 
@@ -544,19 +543,17 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
                 .collect()
                 .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
             if mut_df.schema().index_of(old_name).is_none() {
-                log::error!("Column to rename '{}' not found in DataFrame", old_name);
+                log::error!("Column to rename '{old_name}' not found in DataFrame");
                 return Err(OxenError::basic_str(format!(
-                    "Column '{}' not found",
-                    old_name
+                    "Column '{old_name}' not found"
                 )));
             }
             rename_col(&mut mut_df, old_name, new_name)?;
             df = mut_df.lazy();
         } else {
-            log::error!("Invalid rename_col format: {}", names);
+            log::error!("Invalid rename_col format: {names}");
             return Err(OxenError::basic_str(format!(
-                "Invalid rename_col format '{}', expected 'old_name:new_name'",
-                names
+                "Invalid rename_col format '{names}', expected 'old_name:new_name'"
             )));
         }
     }
@@ -632,8 +629,8 @@ fn tail(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
 
 pub fn slice_df(df: DataFrame, start: usize, end: usize) -> Result<DataFrame, OxenError> {
     let mut opts = DFOpts::empty();
-    opts.slice = Some(format!("{}..{}", start, end));
-    log::debug!("slice_df with opts: {:?}", opts);
+    opts.slice = Some(format!("{start}..{end}"));
+    log::debug!("slice_df with opts: {opts:?}");
     let df = df.lazy();
     let df = slice(df, &opts);
     df.collect()
@@ -656,7 +653,7 @@ pub fn paginate_df(df: DataFrame, page_opts: &PaginateOpts) -> Result<DataFrame,
 fn slice(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
     log::debug!("SLICE {:?}", opts.slice);
     if let Some((start, end)) = opts.slice_indices() {
-        log::debug!("SLICE with indices {:?}..{:?}", start, end);
+        log::debug!("SLICE with indices {start:?}..{end:?}");
         if start >= end {
             panic!("Slice error: Start must be greater than end.");
         }
@@ -674,7 +671,7 @@ fn rename_col(
 ) -> Result<(), OxenError> {
     let old_name = old_name.as_ref();
     let new_name = new_name.as_ref();
-    log::debug!("Renaming column {:?} to {:?}", old_name, new_name);
+    log::debug!("Renaming column {old_name:?} to {new_name:?}");
     df.rename(old_name, PlSmallStr::from_str(new_name))
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     Ok(())
@@ -776,7 +773,7 @@ fn any_val_to_json(value: AnyValue) -> Value {
                 Value::Array(array)
             }
             dtype => {
-                panic!("Unsupported list dtype: {:?}", dtype)
+                panic!("Unsupported list dtype: {dtype:?}")
             }
         },
         AnyValue::StructOwned(s) => {
@@ -797,7 +794,7 @@ fn any_val_to_json(value: AnyValue) -> Value {
             Value::Object(map)
         }
 
-        other => panic!("Unsupported dtype in JSON conversion: {:?}", other),
+        other => panic!("Unsupported dtype in JSON conversion: {other:?}"),
     }
 }
 
@@ -848,7 +845,7 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
                     json_value
                 }
                 dtype => {
-                    panic!("Unsupported dtype: {:?}", dtype)
+                    panic!("Unsupported dtype: {dtype:?}")
                 }
             };
             Box::new(json_array.to_string())
@@ -857,7 +854,7 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
             let json_value = any_val_to_json(AnyValue::StructOwned(s));
             Box::new(json_value.to_string())
         }
-        other => panic!("Unsupported dtype: {:?}", other),
+        other => panic!("Unsupported dtype: {other:?}"),
     }
 }
 
@@ -913,7 +910,7 @@ pub fn df_hash_rows(df: DataFrame) -> Result<DataFrame, OxenError> {
         ])
         .collect()
         .unwrap();
-    log::debug!("Hashed rows: {}", df);
+    log::debug!("Hashed rows: {df}");
     Ok(df)
 }
 
@@ -925,9 +922,9 @@ pub fn df_hash_rows_on_cols(
 ) -> Result<DataFrame, OxenError> {
     let num_rows = df.height() as i64;
 
-    log::debug!("df_hash_rows_on_cols df is {:?}", df);
-    log::debug!("df_hash_rows_on_cols hash_fields is {:?}", hash_fields);
-    log::debug!("df_hash_rows_on_cols out_col_name is {:?}", out_col_name);
+    log::debug!("df_hash_rows_on_cols df is {df:?}");
+    log::debug!("df_hash_rows_on_cols hash_fields is {hash_fields:?}");
+    log::debug!("df_hash_rows_on_cols out_col_name is {out_col_name:?}");
 
     // Create a vector to store columns to be hashed
     let mut col_names = vec![];
@@ -985,7 +982,7 @@ pub fn df_hash_rows_on_cols(
         ])
         .collect()
         .unwrap();
-    log::debug!("Hashed rows: {}", df);
+    log::debug!("Hashed rows: {df}");
     Ok(df)
 }
 
@@ -1004,7 +1001,7 @@ fn sniff_db_csv_delimiter(path: impl AsRef<Path>, opts: &DFOpts) -> Result<u8, O
         }
         Err(err) => {
             let err = format!("Error sniffing csv {:?} -> {:?}", path.as_ref(), err);
-            log::warn!("{}", err);
+            log::warn!("{err}");
             Ok(b',')
         }
     }
@@ -1075,15 +1072,14 @@ async fn _read_lazy_df_with_extension(
             }
             _ => {
                 let err = format!(
-                    "Could not load data frame with path: {:?} and extension: {}",
-                    path, extension
+                    "Could not load data frame with path: {path:?} and extension: {extension}"
                 );
                 Err(OxenError::basic_str(err))
             }
         }
     })
     .await
-    .map_err(|e| OxenError::basic_str(format!("Task panicked: {}", e)))?
+    .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
 }
 
 pub async fn p_read_df_with_extension(
@@ -1101,7 +1097,7 @@ pub async fn p_read_df_with_extension(
 
     task::spawn_blocking(move || result_df_lazy.collect().map_err(OxenError::from))
         .await
-        .map_err(|e| OxenError::basic_str(format!("Collect task panicked: {}", e)))?
+        .map_err(|e| OxenError::basic_str(format!("Collect task panicked: {e}")))?
 }
 
 pub async fn maybe_read_df_with_extension(
@@ -1153,7 +1149,7 @@ pub fn scan_df(
     total_rows: usize,
 ) -> Result<LazyFrame, OxenError> {
     let input_path = path.as_ref();
-    log::debug!("Scanning df {:?}", input_path);
+    log::debug!("Scanning df {input_path:?}");
     let extension = input_path.extension().and_then(OsStr::to_str);
     scan_df_with_extension(input_path, extension, opts, total_rows)
 }
@@ -1176,9 +1172,7 @@ fn p_scan_df_with_extension(
 ) -> Result<LazyFrame, OxenError> {
     let input_path = path.as_ref();
     log::debug!(
-        "Scanning df {:?} with extension {:?}",
-        input_path,
-        extension
+        "Scanning df {input_path:?} with extension {extension:?}"
     );
     let err = format!("Unknown file type scan_df {input_path:?} {extension:?}");
     let quote_char = opts.quote_char.as_ref().map(|s| s.as_bytes()[0]);
@@ -1220,9 +1214,7 @@ fn p_get_size_with_extension(
 ) -> Result<DataFrameSize, OxenError> {
     let input_path = path.as_ref();
     log::debug!(
-        "Getting size of df {:?} with extension {:?}",
-        input_path,
-        extension
+        "Getting size of df {input_path:?} with extension {extension:?}"
     );
 
     // Don't need that many rows to get the width
@@ -1283,8 +1275,8 @@ fn p_get_size_with_extension(
 
 pub fn write_df_json<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
-    log::debug!("Writing file {:?}", output);
-    log::debug!("{:?}", df);
+    log::debug!("Writing file {output:?}");
+    log::debug!("{df:?}");
     let f = std::fs::File::create(output).unwrap();
     JsonWriter::new(f)
         .with_json_format(JsonFormat::Json)
@@ -1295,7 +1287,7 @@ pub fn write_df_json<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<()
 
 pub fn write_df_jsonl<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
-    log::debug!("Writing file {:?}", output);
+    log::debug!("Writing file {output:?}");
     let f = std::fs::File::create(output).unwrap();
     JsonWriter::new(f)
         .with_json_format(JsonFormat::JsonLines)
@@ -1310,7 +1302,7 @@ pub fn write_df_csv<P: AsRef<Path>>(
     delimiter: u8,
 ) -> Result<(), OxenError> {
     let output = output.as_ref();
-    log::debug!("Writing file {:?}", output);
+    log::debug!("Writing file {output:?}");
     let f = std::fs::File::create(output).unwrap();
     CsvWriter::new(f)
         .include_header(true)
@@ -1322,7 +1314,7 @@ pub fn write_df_csv<P: AsRef<Path>>(
 
 pub fn write_df_parquet<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
-    log::debug!("Writing file {:?}", output);
+    log::debug!("Writing file {output:?}");
     match std::fs::File::create(output) {
         Ok(f) => {
             ParquetWriter::new(f)
@@ -1331,7 +1323,7 @@ pub fn write_df_parquet<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result
             Ok(())
         }
         Err(err) => {
-            let error_str = format!("Could not create file {:?}", err);
+            let error_str = format!("Could not create file {err:?}");
             Err(OxenError::basic_str(error_str))
         }
     }
@@ -1339,7 +1331,7 @@ pub fn write_df_parquet<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result
 
 pub fn write_df_arrow<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
-    log::debug!("Writing file {:?}", output);
+    log::debug!("Writing file {output:?}");
     let f = std::fs::File::create(output).unwrap();
     IpcWriter::new(f)
         .finish(df)
@@ -1391,7 +1383,7 @@ pub async fn copy_df_add_row_num(
 }
 
 pub async fn show_path(input: impl AsRef<Path>, opts: DFOpts) -> Result<DataFrame, OxenError> {
-    log::debug!("Got opts {:?}", opts);
+    log::debug!("Got opts {opts:?}");
     let df = read_df(input, opts.clone()).await?;
     log::debug!("Transform finished");
     if opts.column_at().is_some() {
@@ -1412,7 +1404,7 @@ pub async fn show_path(input: impl AsRef<Path>, opts: DFOpts) -> Result<DataFram
         match minus::page_all(output) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Error while paging: {}", e);
+                eprintln!("Error while paging: {e}");
             }
         }
     } else {
@@ -1511,8 +1503,7 @@ pub async fn show_node(
                 Ok(df)
             }
             err => Err(OxenError::basic_str(format!(
-                "Could not read chunked parquet: {:?}",
-                err
+                "Could not read chunked parquet: {err:?}"
             ))),
         }?
     } else if file_node.name().ends_with("arrow") {
@@ -1526,8 +1517,7 @@ pub async fn show_node(
                 Ok(df)
             }
             err => Err(OxenError::basic_str(format!(
-                "Could not read chunked arrow: {:?}",
-                err
+                "Could not read chunked arrow: {err:?}"
             ))),
         }?
     } else {
@@ -1540,8 +1530,7 @@ pub async fn show_node(
                 Ok(df)
             }
             err => Err(OxenError::basic_str(format!(
-                "Could not read chunked json: {:?}",
-                err
+                "Could not read chunked json: {err:?}"
             ))),
         }?
     };

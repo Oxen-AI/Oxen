@@ -120,7 +120,7 @@ pub async fn clone_repo_remote_mode(
         other => {
             println!(
                 "{}",
-                format!("Unexpected workspace status: {}", other).red()
+                format!("Unexpected workspace status: {other}").red()
             );
         }
     }

@@ -24,12 +24,12 @@ pub async fn get(
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("got body: {}", body);
+    log::debug!("got body: {body}");
     let response: Result<JsonDataFrameViewResponse, serde_json::Error> =
         serde_json::from_str(&body);
     match response {
         Ok(val) => {
-            log::debug!("got JsonDataFrameViewResponse: {:?}", val);
+            log::debug!("got JsonDataFrameViewResponse: {val:?}");
             Ok(val)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -55,7 +55,7 @@ pub async fn index(
 
     match response {
         Ok(val) => {
-            log::debug!("got StatusMessage: {:?}", val);
+            log::debug!("got StatusMessage: {val:?}");
             Ok(val)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -85,12 +85,12 @@ pub async fn from_directory(
         .await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("got body: {}", body);
+    log::debug!("got body: {body}");
 
     let response: Result<CommitResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => {
-            log::debug!("got CommitResponse: {:?}", val);
+            log::debug!("got CommitResponse: {val:?}");
             Ok(val)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -574,7 +574,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
-            println!("{:?}", p_df);
+            println!("{p_df:?}");
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);
@@ -642,7 +642,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
-            println!("{:?}", p_df);
+            println!("{p_df:?}");
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);
@@ -704,7 +704,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
-            println!("{:?}", p_df);
+            println!("{p_df:?}");
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);

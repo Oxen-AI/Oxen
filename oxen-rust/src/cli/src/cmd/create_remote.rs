@@ -112,7 +112,7 @@ Welcome to Oxen.ai 🐂 🌾
 Clone the repository to your local machine:
 
 ```bash
-oxen clone https://{}/{}/{}
+oxen clone https://{host}/{namespace}/{name}
 ```
 
 ## Adding Data
@@ -142,13 +142,12 @@ oxen push origin main
 For the complete developer documentation, visit https://docs.oxen.ai/
 
 Happy Mooooooving of data 🐂
-",
-                host, namespace, name
+"
             );
 
             let files: Vec<FileNew> = vec![FileNew {
                 path: PathBuf::from("README.md"),
-                contents: FileContents::Text(format!("# {}\n{}", name, readme_body)),
+                contents: FileContents::Text(format!("# {name}\n{readme_body}")),
                 user,
             }];
             let mut repo = RepoNew::from_files(namespace, name, files);

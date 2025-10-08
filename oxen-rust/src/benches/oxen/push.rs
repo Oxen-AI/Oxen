@@ -45,12 +45,10 @@ async fn setup_repo_for_push_benchmark(
     data_path: Option<String>,
 ) -> Result<LocalRepository, OxenError> {
     println!(
-        "setup_repo_for_push_benchmark got repo_size {}, num_files_to_push {}, and dir_size {}",
-        repo_size, num_files_to_push_in_benchmark, dir_size,
+        "setup_repo_for_push_benchmark got repo_size {repo_size}, num_files_to_push {num_files_to_push_in_benchmark}, and dir_size {dir_size}",
     );
     let repo_dir = base_dir.join(format!(
-        "repo_{}_{}",
-        num_files_to_push_in_benchmark, dir_size
+        "repo_{num_files_to_push_in_benchmark}_{dir_size}"
     ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
@@ -121,7 +119,7 @@ async fn setup_repo_for_push_benchmark(
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
-            let file_path = dir.join(format!("file_{}.txt", i));
+            let file_path = dir.join(format!("file_{i}.txt"));
             write_file_for_push_benchmark(&file_path, large_file_percentage)?;
         }
 
@@ -179,7 +177,7 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
 
         group.bench_with_input(
             BenchmarkId::new(
-                format!("{}k_files_in_{}dirs", num_files_to_push, dir_size),
+                format!("{num_files_to_push}k_files_in_{dir_size}dirs"),
                 format!("{:?}", (num_files_to_push, dir_size)),
             ),
             &(num_files_to_push, dir_size),

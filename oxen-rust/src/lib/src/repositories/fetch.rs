@@ -39,8 +39,8 @@ pub async fn fetch_all(
         }
     }
 
-    log::debug!("Branches to create: {:?}", branches_to_create);
-    log::debug!("Branches to fetch: {:?}", branches_to_fetch);
+    log::debug!("Branches to create: {branches_to_create:?}");
+    log::debug!("Branches to fetch: {branches_to_fetch:?}");
 
     let branches_to_process = branches_to_fetch
         .into_iter()
@@ -144,10 +144,10 @@ mod tests {
             let branches = ["test_moo", "test_moo_2"];
             for branch in branches.iter() {
                 repositories::branches::create_checkout(&repo, branch)?;
-                let filepath = repo.path.join(format!("file_{}.txt", branch));
-                test::write_txt_file_to_path(&filepath, format!("a file on {}", branch))?;
+                let filepath = repo.path.join(format!("file_{branch}.txt"));
+                test::write_txt_file_to_path(&filepath, format!("a file on {branch}"))?;
                 repositories::add(&repo, &filepath).await?;
-                repositories::commit(&repo, &format!("Adding file on {}", branch))?;
+                repositories::commit(&repo, &format!("Adding file on {branch}"))?;
                 repositories::push(&repo).await?;
             }
 

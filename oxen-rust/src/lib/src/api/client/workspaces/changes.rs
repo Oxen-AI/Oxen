@@ -26,7 +26,7 @@ pub async fn list(
     match client.get(&url).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("status got body: {}", body);
+            log::debug!("status got body: {body}");
             let response: Result<RemoteStagedStatusResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
@@ -52,12 +52,12 @@ pub async fn rm(
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/changes/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_file {}", url);
+    log::debug!("rm_file {url}");
     let client = client::new_for_url(&url)?;
     match client.delete(&url).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("rm_file got body: {}", body);
+            log::debug!("rm_file got body: {body}");
             Ok(())
         }
         Err(err) => {

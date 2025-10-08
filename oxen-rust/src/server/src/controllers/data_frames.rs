@@ -41,9 +41,7 @@ pub async fn get(
 
     if let Some((start, end)) = opts.slice_indices() {
         log::debug!(
-            "controllers::data_frames Got slice params {}..{}",
-            start,
-            end
+            "controllers::data_frames Got slice params {start}..{end}"
         );
     } else {
         let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -54,7 +52,7 @@ pub async fn get(
 
         let start = if page == 0 { 0 } else { page_size * (page - 1) };
         let end = page_size * page;
-        opts.slice = Some(format!("{}..{}", start, end));
+        opts.slice = Some(format!("{start}..{end}"));
     }
 
     let resource_version = ResourceVersion {
@@ -155,7 +153,7 @@ pub async fn from_directory(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {}\n{}", err, body);
+            log::error!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };

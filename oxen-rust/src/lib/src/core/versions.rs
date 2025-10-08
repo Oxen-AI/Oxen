@@ -54,7 +54,7 @@ impl MinOxenVersion {
 
     pub fn to_oxen_version(&self) -> OxenVersion {
         let v = self.as_str();
-        OxenVersion::from_str(v).unwrap_or_else(|_| panic!("Invalid version string: {}", v))
+        OxenVersion::from_str(v).unwrap_or_else(|_| panic!("Invalid version string: {v}"))
     }
 }
 

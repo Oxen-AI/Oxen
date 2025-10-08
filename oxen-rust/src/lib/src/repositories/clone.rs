@@ -389,7 +389,7 @@ mod tests {
                 // We remove the test/ directory in one of the commits, so make sure we can go
                 // back in the history to that commit
                 let test_dir_path = cloned_repo.path.join("test");
-                println!("test_clone_dash_all test_dir_path: {:?}", test_dir_path);
+                println!("test_clone_dash_all test_dir_path: {test_dir_path:?}");
                 let commit = repositories::commits::first_by_message(&cloned_repo, "Adding test/")?;
                 assert!(commit.is_some());
                 assert!(!test_dir_path.exists());
@@ -403,7 +403,7 @@ mod tests {
                 let test_dir_files = util::fs::list_files_in_dir(&test_dir_path);
                 println!("test_dir_files: {:?}", test_dir_files.len());
                 for file in test_dir_files.iter() {
-                    println!("file: {:?}", file);
+                    println!("file: {file:?}");
                 }
                 assert_eq!(test_dir_files.len(), 2);
 

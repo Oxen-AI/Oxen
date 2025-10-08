@@ -309,7 +309,7 @@ async fn push_commits(
 
     let mut candidate_nodes: HashSet<MerkleTreeNode> = HashSet::new();
     for commit in &missing_commits {
-        log::debug!("push_commits adding candidate nodes for commit: {}", commit);
+        log::debug!("push_commits adding candidate nodes for commit: {commit}");
         let Some(commit_node) = CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
@@ -317,7 +317,7 @@ async fn push_commits(
             &mut unique_hashes,
         )?
         else {
-            log::error!("push_commits commit node not found for commit: {}", commit);
+            log::error!("push_commits commit node not found for commit: {commit}");
             continue;
         };
 
@@ -707,12 +707,7 @@ async fn upload_large_file_chunks(
             sub_buffers.push(buffer);
         }
         log::debug!(
-            "upload_large_file_chunks Done, have read subchunk {}/{} subchunk {}/{} of size {}",
-            processed_chunk_idx,
-            total_chunks,
-            i,
-            num_sub_chunks,
-            sub_chunk_size
+            "upload_large_file_chunks Done, have read subchunk {processed_chunk_idx}/{total_chunks} subchunk {i}/{num_sub_chunks} of size {sub_chunk_size}"
         );
 
         // Then send sub_buffers over network in parallel
@@ -753,10 +748,7 @@ async fn upload_large_file_chunks(
                 ) = item;
                 let size = buffer.len() as u64;
                 log::debug!(
-                    "upload_large_file_chunks Streaming entry buffer {}/{} of size {}",
-                    chunk_num,
-                    total_chunks,
-                    size
+                    "upload_large_file_chunks Streaming entry buffer {chunk_num}/{total_chunks} of size {size}"
                 );
 
                 let params = ChunkParams {
@@ -779,9 +771,7 @@ async fn upload_large_file_chunks(
                 {
                     Ok(_) => {
                         log::debug!(
-                            "upload_large_file_chunks Successfully uploaded subchunk overall chunk {}/{}",
-                            chunk_num,
-                            total_chunks
+                            "upload_large_file_chunks Successfully uploaded subchunk overall chunk {chunk_num}/{total_chunks}"
                         );
                         Ok(chunk_size)
                     }
@@ -899,7 +889,7 @@ async fn bundle_and_send_small_entries(
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
-                        log::error!("Failed to compute entries size: {}", e);
+                        log::error!("Failed to compute entries size: {e}");
                         should_stop.store(true, Ordering::Relaxed);
                         *first_error.lock().await = Some(e.to_string());
                         finished_queue.pop().await;

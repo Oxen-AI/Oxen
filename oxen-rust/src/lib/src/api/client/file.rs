@@ -66,7 +66,7 @@ pub async fn get_file(
     let mut buffer = BytesMut::new();
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result
-            .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {}", e)))?;
+            .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
         buffer.extend_from_slice(&chunk);
     }
 
@@ -119,7 +119,7 @@ pub async fn upload_zip(
 
     // Parse the response
     let response: crate::view::CommitResponse = serde_json::from_str(&body)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
 
     Ok(response.commit)
 }

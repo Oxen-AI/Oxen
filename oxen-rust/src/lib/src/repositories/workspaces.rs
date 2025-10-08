@@ -61,13 +61,13 @@ pub fn get_by_dir(
     let config_path = Workspace::config_path_from_dir(workspace_dir);
 
     if !config_path.exists() {
-        log::debug!("workspace::get workspace not found: {:?}", workspace_dir);
+        log::debug!("workspace::get workspace not found: {workspace_dir:?}");
         return Ok(None);
     }
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let config: WorkspaceConfig = toml::from_str(&config_contents)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
 
     let Some(commit) = repositories::commits::get_by_id(repo, &config.workspace_commit_id)? else {
         return Err(OxenError::basic_str(format!(
@@ -122,16 +122,14 @@ pub fn create_with_name(
     let workspace_dir = Workspace::workspace_dir(base_repo, &workspace_id_hash);
     let oxen_dir = workspace_dir.join(OXEN_HIDDEN_DIR);
 
-    log::debug!("index::workspaces::create called! {:?}", oxen_dir);
+    log::debug!("index::workspaces::create called! {oxen_dir:?}");
 
     if oxen_dir.exists() {
         log::debug!(
-            "index::workspaces::create already have oxen repo directory {:?}",
-            oxen_dir
+            "index::workspaces::create already have oxen repo directory {oxen_dir:?}"
         );
         return Err(OxenError::basic_str(format!(
-            "Workspace {} already exists",
-            workspace_id
+            "Workspace {workspace_id} already exists"
         )));
     }
     let workspaces = list(base_repo)?;
@@ -162,8 +160,7 @@ pub fn create_with_name(
         Ok(s) => s,
         Err(e) => {
             return Err(OxenError::basic_str(format!(
-                "Failed to serialize workspace config to TOML: {}",
-                e
+                "Failed to serialize workspace config to TOML: {e}"
             )));
         }
     };
@@ -171,8 +168,7 @@ pub fn create_with_name(
     // Write the TOML string to WORKSPACE_CONFIG
     let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
     log::debug!(
-        "index::workspaces::create writing workspace config to: {:?}",
-        workspace_config_path
+        "index::workspaces::create writing workspace config to: {workspace_config_path:?}"
     );
     util::fs::write_to_path(&workspace_config_path, toml_string)?;
 
@@ -209,7 +205,7 @@ impl std::ops::Deref for TemporaryWorkspace {
 impl Drop for TemporaryWorkspace {
     fn drop(&mut self) {
         if let Err(e) = delete(&self.workspace) {
-            log::error!("Failed to delete temporary workspace: {}", e);
+            log::error!("Failed to delete temporary workspace: {e}");
         }
     }
 }
@@ -220,7 +216,7 @@ pub fn create_temporary(
     commit: &Commit,
 ) -> Result<TemporaryWorkspace, OxenError> {
     let workspace_id = Uuid::new_v4().to_string();
-    let workspace_name = format!("temporary-{}", workspace_id);
+    let workspace_name = format!("temporary-{workspace_id}");
     let workspace = create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true)?;
     Ok(TemporaryWorkspace { workspace })
 }
@@ -241,8 +237,7 @@ fn check_existing_workspace_name(
 ) -> Result<(), OxenError> {
     if workspace.name == Some(workspace_name.to_string()) || *workspace_name == workspace.id {
         return Err(OxenError::basic_str(format!(
-            "A workspace with the name {} already exists",
-            workspace_name
+            "A workspace with the name {workspace_name} already exists"
         )));
     }
     Ok(())
@@ -250,14 +245,14 @@ fn check_existing_workspace_name(
 
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
     let workspaces_dir = Workspace::workspaces_dir(repo);
-    log::debug!("workspace::list got workspaces_dir: {:?}", workspaces_dir);
+    log::debug!("workspace::list got workspaces_dir: {workspaces_dir:?}");
     if !workspaces_dir.exists() {
         // Return early if the workspaces directory does not exist
         return Ok(vec![]);
     }
 
     let workspaces_hashes = util::fs::list_dirs_in_dir(&workspaces_dir)
-        .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {e}")))?;
 
     log::debug!("workspace::list got {} workspaces", workspaces_hashes.len());
 
@@ -267,11 +262,11 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
         match get_by_dir(repo, &workspace_hash) {
             Ok(Some(workspace)) => workspaces.push(workspace),
             Ok(None) => {
-                log::debug!("Workspace not found: {:?}", workspace_hash);
+                log::debug!("Workspace not found: {workspace_hash:?}");
                 continue;
             }
             Err(e) => {
-                log::error!("Failed to list workspace: {}", e);
+                log::error!("Failed to list workspace: {e}");
                 continue;
             }
         }
@@ -303,8 +298,7 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     }
 
     log::debug!(
-        "workspace::delete cleaning up workspace dir: {:?}",
-        workspace_dir
+        "workspace::delete cleaning up workspace dir: {workspace_dir:?}"
     );
 
     // Clean up caches before deleting the workspace
@@ -312,10 +306,9 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
     match util::fs::remove_dir_all(&workspace_dir) {
         Ok(_) => log::debug!(
-            "workspace::delete removed workspace dir: {:?}",
-            workspace_dir
+            "workspace::delete removed workspace dir: {workspace_dir:?}"
         ),
-        Err(e) => log::error!("workspace::delete error removing workspace dir: {:?}", e),
+        Err(e) => log::error!("workspace::delete error removing workspace dir: {e:?}"),
     }
 
     Ok(())
@@ -335,18 +328,16 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     let config_path = workspace.config_path();
 
     if !config_path.exists() {
-        log::error!("Workspace config not found: {:?}", config_path);
+        log::error!("Workspace config not found: {config_path:?}");
         return Err(OxenError::workspace_not_found(workspace.id.clone().into()));
     }
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
         log::error!(
-            "Failed to parse workspace config: {:?}, err: {}",
-            config_path,
-            e
+            "Failed to parse workspace config: {config_path:?}, err: {e}"
         );
-        OxenError::basic_str(format!("Failed to parse workspace config: {}", e))
+        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
     })?;
 
     log::debug!(
@@ -359,13 +350,10 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
 
     let toml_string = toml::to_string(&config).map_err(|e| {
         log::error!(
-            "Failed to serialize workspace config to TOML: {:?}, err: {}",
-            config_path,
-            e
+            "Failed to serialize workspace config to TOML: {config_path:?}, err: {e}"
         );
         OxenError::basic_str(format!(
-            "Failed to serialize workspace config to TOML: {}",
-            e
+            "Failed to serialize workspace config to TOML: {e}"
         ))
     })?;
 
@@ -873,7 +861,7 @@ mod tests {
                 let repo = repo.clone();
                 let handle = tokio::spawn(async move {
                     // Create a unique branch for this task
-                    let branch_name = format!("branch-{}", i);
+                    let branch_name = format!("branch-{i}");
                     api::client::branches::create_from_branch(
                         &remote_repo,
                         &branch_name,
@@ -885,13 +873,13 @@ mod tests {
                     let workspace = api::client::workspaces::create(
                         &remote_repo,
                         &branch_name,
-                        &format!("workspace-{}", i),
+                        &format!("workspace-{i}"),
                     )
                     .await?;
 
                     // Add a unique file
-                    let file_path = repo.path.join(format!("file-{}.txt", i));
-                    util::fs::write_to_path(&file_path, format!("content {}", i))?;
+                    let file_path = repo.path.join(format!("file-{i}.txt"));
+                    util::fs::write_to_path(&file_path, format!("content {i}"))?;
                     api::client::workspaces::files::upload_single_file(
                         &remote_repo,
                         &workspace.id,
@@ -902,7 +890,7 @@ mod tests {
 
                     // Commit changes back to the task's branch
                     let commit_body = NewCommitBody {
-                        message: format!("Commit from task {}", i),
+                        message: format!("Commit from task {i}"),
                         author: "Test Author".to_string(),
                         email: "test@oxen.ai".to_string(),
                     };
@@ -924,7 +912,7 @@ mod tests {
             for handle in handles {
                 handle
                     .await
-                    .map_err(|e| OxenError::basic_str(format!("Task error: {}", e)))??;
+                    .map_err(|e| OxenError::basic_str(format!("Task error: {e}")))??;
             }
 
             Ok(remote_repo)

@@ -62,9 +62,7 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
         .ok_or(OxenError::revision_not_found(revision.to_owned().into()))?;
 
     log::debug!(
-        "schemas::list_or_get revision {} commit {}",
-        revision,
-        commit
+        "schemas::list_or_get revision {revision} commit {commit}"
     );
 
     let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;

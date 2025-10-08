@@ -87,7 +87,7 @@ pub async fn get(
     if (img_resize.width.is_some() || img_resize.height.is_some())
         && mime_type.starts_with("image/")
     {
-        log::debug!("img_resize {:?}", img_resize);
+        log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
@@ -96,7 +96,7 @@ pub async fn get(
             &version_path,
             img_resize,
         )?;
-        log::debug!("In the resize cache! {:?}", resized_path);
+        log::debug!("In the resize cache! {resized_path:?}");
 
         // Generate stream for the resized image
         let file = File::open(&resized_path).await?;
@@ -198,7 +198,7 @@ pub async fn put(
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
 
-    log::debug!("file::put workspace commit ✅ success! commit {:?}", commit);
+    log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
@@ -335,10 +335,7 @@ pub async fn import(
     let message = req.headers().get("oxen-commit-message");
 
     log::debug!(
-        "file::import commit info author:{:?}, email:{:?}, message:{:?}",
-        author,
-        email,
-        message
+        "file::import commit info author:{author:?}, email:{email:?}, message:{message:?}"
     );
 
     // Make sure the resource path is not already a file
@@ -415,7 +412,7 @@ pub async fn import(
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
-    log::debug!("workspace::commit ✅ success! commit {:?}", commit);
+    log::debug!("workspace::commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
@@ -583,7 +580,7 @@ async fn parse_multipart_fields_for_upload_zip(
                 if let Some(parent) = workspace_path.parent() {
                     tokio::fs::create_dir_all(parent).await.map_err(|e| {
                         OxenHttpError::BadRequest(
-                            format!("Failed to create directories: {}", e).into(),
+                            format!("Failed to create directories: {e}").into(),
                         )
                     })?;
                 }
@@ -592,7 +589,7 @@ async fn parse_multipart_fields_for_upload_zip(
                 let mut file = tokio::fs::File::create(&workspace_path)
                     .await
                     .map_err(|e| {
-                        OxenHttpError::BadRequest(format!("Failed to create file: {}", e).into())
+                        OxenHttpError::BadRequest(format!("Failed to create file: {e}").into())
                     })?;
 
                 while let Some(chunk) = field
@@ -604,7 +601,7 @@ async fn parse_multipart_fields_for_upload_zip(
                         .await
                         .map_err(|e| {
                             OxenHttpError::BadRequest(
-                                format!("Failed to write to file: {}", e).into(),
+                                format!("Failed to write to file: {e}").into(),
                             )
                         })?;
                 }
@@ -613,7 +610,7 @@ async fn parse_multipart_fields_for_upload_zip(
                 tokio::io::AsyncWriteExt::flush(&mut file)
                     .await
                     .map_err(|e| {
-                        OxenHttpError::BadRequest(format!("Failed to flush file: {}", e).into())
+                        OxenHttpError::BadRequest(format!("Failed to flush file: {e}").into())
                     })?;
 
                 fields_data.push((filename, workspace_path));

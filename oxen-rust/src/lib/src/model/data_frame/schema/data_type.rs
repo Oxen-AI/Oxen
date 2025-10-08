@@ -87,7 +87,7 @@ impl DataType {
                         return DataType::Embedding(size.as_str().parse::<usize>().unwrap());
                     }
                 }
-                log::error!("TODO: from_string unknown type {}", type_name);
+                log::error!("TODO: from_string unknown type {type_name}");
                 DataType::Unknown
             }
         }
@@ -131,11 +131,11 @@ impl DataType {
                 DataType::Binary => "list[binary]".to_string(),
                 _ => "list[?]".to_string(),
             },
-            DataType::Embedding(size) => format!("embedding[{}]", size).to_string(),
+            DataType::Embedding(size) => format!("embedding[{size}]").to_string(),
             DataType::Null => "null".to_string(),
             DataType::Unknown => {
                 // DO NOT USE {} HERE, IT WILL CAUSE A STACK OVERFLOW
-                log::error!("TODO: as_str unknown DataType::Unknown type {:?}", self);
+                log::error!("TODO: as_str unknown DataType::Unknown type {self:?}");
                 "?".to_string()
             }
         }
@@ -197,7 +197,7 @@ impl DataType {
             polars::prelude::DataType::Time => DataType::Time,
             polars::prelude::DataType::Duration(_) => DataType::Duration,
             polars::prelude::DataType::List(inner) => {
-                log::debug!("Converting List type with inner: {:?}", inner);
+                log::debug!("Converting List type with inner: {inner:?}");
                 DataType::List(Box::new(Self::from_polars(inner)))
             }
             polars::prelude::DataType::Unknown(_) => DataType::Unknown,
@@ -226,7 +226,7 @@ impl DataType {
             DataType::Datetime => "DATETIME".to_string(), // combination of time and date
             DataType::Duration => "INTERVAL".to_string(),
             DataType::Struct(_) => "JSON".to_string(),
-            DataType::Embedding(size) => format!("FLOAT[{}]", size).to_string(),
+            DataType::Embedding(size) => format!("FLOAT[{size}]").to_string(),
             DataType::List(dtype) => match dtype.as_ref() {
                 DataType::Boolean => "BOOL[]".to_string(),
                 DataType::UInt8 => "UTINYINT[]".to_string(),
@@ -245,13 +245,13 @@ impl DataType {
                 DataType::Time => "TIME[]".to_string(),
                 DataType::Datetime => "DATETIME[]".to_string(),
                 _ => {
-                    log::error!("TODO: to_sql unknown SQL DataType::List type {}", dtype);
+                    log::error!("TODO: to_sql unknown SQL DataType::List type {dtype}");
                     "UNKNOWN[]".to_string()
                 }
             }, // https://duckdb.org/docs/sql/data_types/list
             DataType::Null => "NULL".to_string(), // null value
             DataType::Unknown => {
-                log::error!("TODO: to_sql unknown SQL DataType::Unknown type {}", self);
+                log::error!("TODO: to_sql unknown SQL DataType::Unknown type {self}");
                 "UNKNOWN".to_string()
             }
         }

@@ -268,18 +268,16 @@ pub fn read_lock_file(repo: &LocalRepository, name: &str) -> Result<String, Oxen
 pub fn latest_synced_commit(repo: &LocalRepository, name: &str) -> Result<Commit, OxenError> {
     // If branch is locked, we want to get the commit from the lockfile
     if is_locked(repo, name)? {
-        log::debug!("Latest synced commit is locked for branch {}", name);
+        log::debug!("Latest synced commit is locked for branch {name}");
         let commit_id = read_lock_file(repo, name)?;
         log::debug!(
-            "Latest synced commit read from lock file for branch {} is {}",
-            name,
-            commit_id
+            "Latest synced commit read from lock file for branch {name} is {commit_id}"
         );
         let commit = repositories::commits::get_by_id(repo, &commit_id)?
             .ok_or(OxenError::commit_id_does_not_exist(&commit_id))?;
         return Ok(commit);
     }
-    log::debug!("Latest synced commit is not locked for branch {}", name);
+    log::debug!("Latest synced commit is not locked for branch {name}");
     // If branch is not locked, we want to get the latest commit from the branch
     let branch = repositories::branches::get_by_name(repo, name)?
         .ok_or(OxenError::local_branch_not_found(name))?;
@@ -321,7 +319,7 @@ pub async fn checkout_branch_from_commit(
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
     let name = name.as_ref();
-    log::debug!("checkout_branch {}", name);
+    log::debug!("checkout_branch {name}");
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::branches::checkout(repo, name, from_commit).await,
@@ -505,9 +503,9 @@ mod tests {
             assert_eq!(file_versions[0].0.id, commit_3.id);
             assert_eq!(file_versions[1].0.id, commit_1.id);
 
-            println!("commit_1: {}", commit_1);
-            println!("commit_2: {}", commit_2);
-            println!("commit_3: {}", commit_3);
+            println!("commit_1: {commit_1}");
+            println!("commit_2: {commit_2}");
+            println!("commit_3: {commit_3}");
             for v in &file_2_versions {
                 println!("file_2_versions: {:?} -> {:?}", v.0, v.1);
             }

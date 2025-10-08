@@ -21,7 +21,7 @@ pub async fn download_dir(
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
     let local_path = local_path.as_ref();
-    log::debug!("downloading dir {:?}", remote_path);
+    log::debug!("downloading dir {remote_path:?}");
     // Initialize temp repo to download node into
     // TODO: Where should this repo be?
     let tmp_repo = LocalRepository::new(local_path)?;
@@ -62,7 +62,7 @@ pub async fn download_dir_entries(
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
     let local_path = local_path.as_ref();
-    log::debug!("downloading dir {:?}", remote_path);
+    log::debug!("downloading dir {remote_path:?}");
 
     // Get tree from local repos
     let commit = &entry.latest_commit.as_ref().unwrap();

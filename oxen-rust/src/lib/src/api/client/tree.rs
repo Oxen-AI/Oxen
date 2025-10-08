@@ -31,7 +31,7 @@ pub async fn has_node(
 ) -> Result<bool, OxenError> {
     let uri = format!("/tree/nodes/hash/{node_id}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("api::client::tree::has_node {}", url);
+    log::debug!("api::client::tree::has_node {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -40,7 +40,7 @@ pub async fn has_node(
     }
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("api::client::tree::get_by_id Got response {}", body);
+    log::debug!("api::client::tree::get_by_id Got response {body}");
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_) => Ok(true),
@@ -89,9 +89,9 @@ pub async fn create_nodes(
         log::debug!("create_nodes appending dir to tar");
         tar.append_dir_all(dir_prefix, node_dir)?;
         children_count += node.children.len();
-        log::debug!("create_nodes appended dir to tar {}", children_count);
+        log::debug!("create_nodes appended dir to tar {children_count}");
     }
-    log::debug!("create_nodes packed {} nodes", children_count);
+    log::debug!("create_nodes packed {children_count} nodes");
 
     tar.finish()?;
     log::debug!("create_nodes finished tar");
@@ -112,7 +112,7 @@ pub async fn create_nodes(
     );
     let res = client.post(&url).body(buffer.to_owned()).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("upload node complete {}", body);
+    log::debug!("upload node complete {body}");
 
     Ok(())
 }
@@ -127,16 +127,16 @@ pub async fn download_node(
     let uri = format!("/tree/nodes/hash/{node_hash_str}/download");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading node {} from {}", node_hash_str, url);
+    log::debug!("downloading node {node_hash_str} from {url}");
 
     node_download_request(local_repo, &url).await?;
 
-    log::debug!("unpacked node {}", node_hash_str);
+    log::debug!("unpacked node {node_hash_str}");
 
     // We just downloaded, so unwrap is safe
     let node = CommitMerkleTree::read_node(local_repo, node_id, false)?.unwrap();
 
-    log::debug!("read node {}", node);
+    log::debug!("read node {node}");
 
     Ok(node)
 }
@@ -152,19 +152,17 @@ pub async fn download_node_with_children(
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     log::debug!(
-        "downloading node with children {} from {}",
-        node_hash_str,
-        url
+        "downloading node with children {node_hash_str} from {url}"
     );
 
     node_download_request(local_repo, &url).await?;
 
-    log::debug!("unpacked node {}", node_hash_str);
+    log::debug!("unpacked node {node_hash_str}");
 
     // We just downloaded, so unwrap is safe
     let node = CommitMerkleTree::read_node(local_repo, node_id, true)?.unwrap();
 
-    log::debug!("read node {}", node);
+    log::debug!("read node {node}");
 
     Ok(node)
 }
@@ -177,7 +175,7 @@ pub async fn download_tree(
     let uri = "/tree/download".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading tree from {}", url);
+    log::debug!("downloading tree from {url}");
 
     node_download_request(local_repo, &url).await?;
 
@@ -196,16 +194,16 @@ pub async fn download_tree_from(
     let uri = format!("/tree/download/{hash_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading tree from {} {}", hash_str, url);
+    log::debug!("downloading tree from {hash_str} {url}");
 
     node_download_request(local_repo, &url).await?;
 
-    log::debug!("unpacked tree from {}", hash_str);
+    log::debug!("unpacked tree from {hash_str}");
 
     // We just downloaded, so unwrap is safe
     let node = CommitMerkleTree::read_node(local_repo, hash, true)?.unwrap();
 
-    log::debug!("read tree root from {}", node);
+    log::debug!("read tree root from {node}");
 
     Ok(node)
 }
@@ -247,7 +245,7 @@ pub async fn download_tree_from_path(
     );
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading trees {} from {}", commit_id, url);
+    log::debug!("downloading trees {commit_id} from {url}");
 
     node_download_request(local_repo, &url).await?;
 
@@ -277,11 +275,11 @@ pub async fn download_trees_from(
     let uri = append_fetch_opts_to_uri(format!("/tree/download/{commit_id}"), fetch_opts);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading trees {} from {}", commit_id, url);
+    log::debug!("downloading trees {commit_id} from {url}");
 
     node_download_request(local_repo, &url).await?;
 
-    log::debug!("unpacked trees {}", commit_id);
+    log::debug!("unpacked trees {commit_id}");
 
     Ok(())
 }
@@ -312,7 +310,7 @@ fn append_subtree_paths_and_depth_to_uri(
 
     // Add depth parameter if it exists
     if let Some(depth_value) = depth {
-        query_params.push(format!("depth={}", depth_value));
+        query_params.push(format!("depth={depth_value}"));
     }
 
     // Add is_download parameter
@@ -329,7 +327,7 @@ fn append_subtree_paths_and_depth_to_uri(
             .join(",");
         // URI encode the subtree paths
         let encoded_subtree_str = urlencoding::encode(&subtree_str);
-        query_params.push(format!("subtrees={}", encoded_subtree_str));
+        query_params.push(format!("subtrees={encoded_subtree_str}"));
     }
 
     // Construct the final URI
@@ -353,11 +351,11 @@ pub async fn download_trees_between(
     let uri = append_fetch_opts_to_uri(format!("/tree/download/{base_head}"), fetch_opts);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("downloading trees {} from {}", base_head, url);
+    log::debug!("downloading trees {base_head} from {url}");
 
     node_download_request(local_repo, &url).await?;
 
-    log::debug!("unpacked trees {}", base_head);
+    log::debug!("unpacked trees {base_head}");
 
     Ok(())
 }
@@ -371,13 +369,13 @@ async fn node_download_request(
     let client = client::builder_for_url(url)?
         .timeout(time::Duration::from_secs(12000))
         .build()?;
-    log::debug!("node_download_request about to send request {}", url);
+    log::debug!("node_download_request about to send request {url}");
     let res = client.get(url).send().await?;
     let res = client::handle_non_json_response(url, res).await?;
 
     let reader = res
         .bytes_stream()
-        .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+        .map_err(futures::io::Error::other)
         .into_async_read();
     let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
     let archive = Archive::new(decoder);
@@ -386,8 +384,7 @@ async fn node_download_request(
     // So this will unpack it in OXEN_HIDDEN_DIR/TREE_DIR/NODES_DIR
     let full_unpacked_path = local_repo.path.join(OXEN_HIDDEN_DIR);
     log::debug!(
-        "node_download_request unpacking to {:?}",
-        full_unpacked_path
+        "node_download_request unpacking to {full_unpacked_path:?}"
     );
 
     // create the temp path if it doesn't exist
@@ -649,7 +646,7 @@ mod tests {
                 })
                 .count();
 
-            log::debug!("dir_count: {}", dir_count);
+            log::debug!("dir_count: {dir_count}");
             assert!(dir_count > 33);
 
             let download_repo_path_2 = local_repo.path.join("download_repo_test_2");

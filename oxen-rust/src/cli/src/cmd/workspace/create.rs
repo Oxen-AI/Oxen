@@ -72,7 +72,7 @@ impl RunCmd for WorkspaceCreateCmd {
             other => {
                 println!(
                     "{}",
-                    format!("Unexpected workspace status: {}", other).red()
+                    format!("Unexpected workspace status: {other}").red()
                 );
             }
         }

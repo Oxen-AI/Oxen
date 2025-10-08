@@ -92,14 +92,14 @@ where
             // Cache miss: create directory and open DB
             if !staged_db_dir.exists() {
                 std::fs::create_dir_all(&staged_db_dir).map_err(|e| {
-                    log::error!("Failed to create staged db directory: {}", e);
-                    OxenError::basic_str(format!("Failed to create staged db directory: {}", e))
+                    log::error!("Failed to create staged db directory: {e}");
+                    OxenError::basic_str(format!("Failed to create staged db directory: {e}"))
                 })?;
             }
             let opts = db::key_val::opts::default();
             let db = DB::open(&opts, dunce::simplified(&staged_db_dir)).map_err(|e| {
-                log::error!("Failed to open staged db: {}", e);
-                OxenError::basic_str(format!("Failed to open staged db: {}", e))
+                log::error!("Failed to open staged db: {e}");
+                OxenError::basic_str(format!("Failed to open staged db: {e}"))
             })?;
             // Wrap the DB in an RwLock and store it in the cache
             let db_lock = Arc::new(RwLock::new(db));
@@ -221,7 +221,7 @@ impl StagedDBManager {
         dir_entry
             .serialize(&mut Serializer::new(&mut buf))
             .map_err(|e| {
-                OxenError::basic_str(format!("Failed to serialize directory entry: {}", e))
+                OxenError::basic_str(format!("Failed to serialize directory entry: {e}"))
             })?;
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
@@ -244,10 +244,9 @@ impl StagedDBManager {
         match rmp_serde::from_slice(&data) {
             Ok(val) => Ok(Some(val)),
             Err(e) => {
-                log::error!("Failed to deserialize data for key {}: {}", key, e);
+                log::error!("Failed to deserialize data for key {key}: {e}");
                 Err(OxenError::basic_str(format!(
-                    "Failed to deserialize staged data: {}",
-                    e
+                    "Failed to deserialize staged data: {e}"
                 )))
             }
         }
@@ -289,16 +288,14 @@ impl StagedDBManager {
 
                     if let EMerkleTreeNode::Directory(_) = &entry.node.node {
                         // add the dir as a key in dir_entries
-                        log::debug!("read_staged_entries adding dir {:?}", path);
+                        log::debug!("read_staged_entries adding dir {path:?}");
                         dir_entries.entry(path.to_path_buf()).or_default();
                     }
 
                     // add the file or dir as an entry under its parent dir
                     if let Some(parent) = path.parent() {
                         log::debug!(
-                            "read_staged_entries adding file {:?} to parent {:?}",
-                            path,
-                            parent
+                            "read_staged_entries adding file {path:?} to parent {parent:?}"
                         );
                         dir_entries
                             .entry(parent.to_path_buf())
@@ -307,10 +304,10 @@ impl StagedDBManager {
                     }
 
                     total_entries += 1;
-                    read_progress.set_message(format!("Found {} entries", total_entries));
+                    read_progress.set_message(format!("Found {total_entries} entries"));
                 }
                 Err(err) => {
-                    log::error!("Could not get staged entry: {}", err);
+                    log::error!("Could not get staged entry: {err}");
                 }
             }
         }
@@ -321,9 +318,9 @@ impl StagedDBManager {
         );
         if log::max_level() == log::Level::Debug {
             for (dir, entries) in dir_entries.iter() {
-                log::debug!("commit dir_entries dir {:?}", dir);
+                log::debug!("commit dir_entries dir {dir:?}");
                 for entry in entries.iter() {
-                    log::debug!("\tcommit dir_entries entry {}", entry);
+                    log::debug!("\tcommit dir_entries entry {entry}");
                 }
             }
         }
@@ -345,20 +342,18 @@ impl StagedDBManager {
             match item {
                 Ok((key, _)) => match str::from_utf8(&key) {
                     Ok(key) => {
-                        log::debug!("considering key: {:?}", key);
+                        log::debug!("considering key: {key:?}");
                         for path in paths {
                             let path = util::fs::path_relative_to_dir(path, &repo.path)?;
                             let db_path = PathBuf::from(key);
                             log::debug!(
-                                "considering rm db_path: {:?} for path: {:?}",
-                                db_path,
-                                path
+                                "considering rm db_path: {db_path:?} for path: {path:?}"
                             );
                             if db_path.starts_with(&path) && path != PathBuf::from("") {
                                 let mut parent = db_path.parent().unwrap_or(Path::new(""));
                                 self.delete_entry_with_lock(&db_path, Some(&db_w))?;
                                 while parent != Path::new("") {
-                                    log::debug!("maybe cleaning up empty dir: {:?}", parent);
+                                    log::debug!("maybe cleaning up empty dir: {parent:?}");
                                     self.cleanup_empty_dirs_with_lock(parent, &db_w)?;
                                     parent = parent.parent().unwrap_or(Path::new(""));
                                     if parent == Path::new("") {
@@ -370,8 +365,7 @@ impl StagedDBManager {
                     }
                     Err(e) => {
                         return Err(OxenError::basic_str(format!(
-                            "Could not read utf8 val: {}",
-                            e
+                            "Could not read utf8 val: {e}"
                         )));
                     }
                 },
@@ -397,7 +391,7 @@ impl StagedDBManager {
             match item {
                 Ok((key, _)) => match str::from_utf8(&key) {
                     Ok(key) => {
-                        log::debug!("considering key: {:?}", key);
+                        log::debug!("considering key: {key:?}");
                         let db_path = PathBuf::from(key);
                         if db_path.starts_with(path) && path != db_path {
                             total += 1;
@@ -405,8 +399,7 @@ impl StagedDBManager {
                     }
                     Err(e) => {
                         return Err(OxenError::basic_str(format!(
-                            "Could not read utf8 val: {}",
-                            e
+                            "Could not read utf8 val: {e}"
                         )));
                     }
                 },
@@ -419,7 +412,7 @@ impl StagedDBManager {
         }
         log::debug!("total sub paths for dir {path:?}: {total}");
         if total == 0 {
-            log::debug!("removing empty dir: {:?}", path);
+            log::debug!("removing empty dir: {path:?}");
             db_w.delete(path.to_string_lossy().as_bytes())?;
         }
         Ok(())

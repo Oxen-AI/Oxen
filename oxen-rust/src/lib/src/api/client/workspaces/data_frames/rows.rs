@@ -17,8 +17,7 @@ pub async fn get(
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
     let uri =
@@ -50,8 +49,7 @@ pub async fn update(
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -86,8 +84,7 @@ pub async fn delete(
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -99,7 +96,7 @@ pub async fn delete(
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("rm_df_mod got body: {}", body);
+    log::debug!("rm_df_mod got body: {body}");
     let response: Result<JsonDataFrameRowResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.data_frame.view.to_df().await),
@@ -118,8 +115,7 @@ pub async fn add(
 ) -> Result<(DataFrame, Option<String>), OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -162,8 +158,7 @@ pub async fn restore_row(
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -205,8 +200,7 @@ pub async fn batch_update(
 ) -> Result<VecBatchUpdateResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -845,20 +839,19 @@ mod tests {
                 r#"{{
                 "data": [
                     {{
-                        "row_id": "{}",
+                        "row_id": "{oxen_id_1}",
                         "value": {{
                             "file": "cfxsx"
                         }}
                     }},
                     {{
-                        "row_id": "{}",
+                        "row_id": "{oxen_id_2}",
                         "value": {{
                             "file": "yfcsx"
                         }}
                     }}
                 ]
-            }}"#,
-                oxen_id_1, oxen_id_2
+            }}"#
             );
 
             // Perform batch update
@@ -906,8 +899,7 @@ mod tests {
 
                     assert!(
                         is_updated,
-                        "The row with ID {} was not updated to file {}",
-                        row_id, expected_file
+                        "The row with ID {row_id} was not updated to file {expected_file}"
                     );
                 }
             } else {
@@ -968,29 +960,28 @@ mod tests {
                 r#"{{
                     "data": [
                         {{
-                            "row_id": "{}",
+                            "row_id": "{oxen_id_1}",
                             "value": {{
                                 "file": "cfxsx",
                                 "embedding": [0.1, 0.2, 0.3]
                             }}
                         }},
                         {{
-                            "row_id": "{}",
+                            "row_id": "{oxen_id_2}",
                             "value": {{
                                 "file": "yfcsx",
                                 "embedding": [0.4, 0.5, 0.6]
                             }}
                         }},
                         {{
-                            "row_id": "{}",
+                            "row_id": "{oxen_id_3}",
                             "value": {{
                                 "file": "zxcvb",
                                 "embedding": [0.7, 0.8, 0.9]
                             }}
                         }}
                     ]
-                }}"#,
-                oxen_id_1, oxen_id_2, oxen_id_3
+                }}"#
             );
 
             // Perform batch update
@@ -1043,8 +1034,7 @@ mod tests {
 
                     assert!(
                         is_updated,
-                        "The row with ID {} was not updated to file {} with embedding {:?}",
-                        row_id, expected_file, expected_embedding
+                        "The row with ID {row_id} was not updated to file {expected_file} with embedding {expected_embedding:?}"
                     );
                 }
             } else {

@@ -64,7 +64,7 @@ impl RunCmd for NodeCmd {
                 repositories::commits::head_commit(&repository)?
             };
             let node = repositories::entries::get_file(&repository, &commit, file)?;
-            println!("{:?}", node);
+            println!("{node:?}");
             return Ok(());
         }
 
@@ -78,7 +78,7 @@ impl RunCmd for NodeCmd {
             if let Some(node) = node {
                 println!("{} children", node.children.len());
                 for child in node.children {
-                    println!("{:?}", child);
+                    println!("{child:?}");
                 }
             }
         }

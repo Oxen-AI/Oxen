@@ -115,19 +115,14 @@ pub fn list_commits_between_branches(
     head_branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
     log::debug!(
-        "list_commits_between_branches() base: {:?} head: {:?}",
-        base_branch,
-        head_branch
+        "list_commits_between_branches() base: {base_branch:?} head: {head_branch:?}"
     );
     let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
     let head_commit = get_commit_or_head(repo, Some(head_branch.commit_id.clone()))?;
 
     let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)?;
     log::debug!(
-        "list_commits_between_branches {:?} -> {:?} found lca {:?}",
-        base_commit,
-        head_commit,
-        lca
+        "list_commits_between_branches {base_commit:?} -> {head_commit:?} found lca {lca:?}"
     );
     list_between(repo, &lca, &head_commit)
 }
@@ -138,18 +133,13 @@ pub fn list_commits_between_commits(
     head_commit: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
     log::debug!(
-        "list_commits_between_commits()\nbase: {}\nhead: {}",
-        base_commit,
-        head_commit
+        "list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}"
     );
 
     let lca = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)?;
 
     log::debug!(
-        "For commits {:?} -> {:?} found lca {:?}",
-        base_commit,
-        head_commit,
-        lca
+        "For commits {base_commit:?} -> {head_commit:?} found lca {lca:?}"
     );
 
     log::debug!("Reading history from lca to head");
@@ -186,9 +176,7 @@ pub async fn merge_into_base(
     base_branch: &Branch,
 ) -> Result<Option<Commit>, OxenError> {
     log::debug!(
-        "merge_into_base merge {} into {}",
-        merge_branch,
-        base_branch
+        "merge_into_base merge {merge_branch} into {base_branch}"
     );
 
     if merge_branch.commit_id == base_branch.commit_id {
@@ -201,10 +189,7 @@ pub async fn merge_into_base(
 
     let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
     log::debug!(
-        "merge_into_base base: {:?} merge: {:?} lca: {:?}",
-        base_commit,
-        merge_commit,
-        lca
+        "merge_into_base base: {base_commit:?} merge: {merge_commit:?} lca: {lca:?}"
     );
 
     let commits = MergeCommits {
@@ -244,10 +229,7 @@ pub async fn merge_commit_into_base(
 ) -> Result<Option<Commit>, OxenError> {
     let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
     log::debug!(
-        "merge_commit_into_base has lca {:?} for merge commit {:?} and base {:?}",
-        lca,
-        merge_commit,
-        base_commit
+        "merge_commit_into_base has lca {lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
     );
     let commits = MergeCommits {
         lca,
@@ -267,10 +249,7 @@ pub async fn merge_commit_into_base_on_branch(
     let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
 
     log::debug!(
-        "merge_commit_into_branch has lca {:?} for merge commit {:?} and base {:?}",
-        lca,
-        merge_commit,
-        base_commit
+        "merge_commit_into_branch has lca {lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
     );
 
     let merge_commits = MergeCommits {
@@ -284,7 +263,7 @@ pub async fn merge_commit_into_base_on_branch(
 
 pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> {
     let db_path = db_path(repo);
-    log::debug!("Merger::new() DB {:?}", db_path);
+    log::debug!("Merger::new() DB {db_path:?}");
     let opts = db::key_val::opts::default();
     let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -293,7 +272,7 @@ pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> 
 
 pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
     let db_path = db_path(repo);
-    log::debug!("Merger::new() DB {:?}", db_path);
+    log::debug!("Merger::new() DB {db_path:?}");
     let opts = db::key_val::opts::default();
     let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -365,7 +344,7 @@ async fn merge_commits_on_branch(
         log::debug!("Got {} conflicts", conflicts.len());
 
         if conflicts.is_empty() {
-            log::debug!("creating merge commit on branch {:?}", branch);
+            log::debug!("creating merge commit on branch {branch:?}");
             let commit =
                 create_merge_commit_on_branch(repo, merge_commits, branch, shared_hashes).await?;
             Ok(Some(commit))
@@ -383,7 +362,7 @@ Found {} conflicts, please resolve them before merging.
                 conflicts.len()
             );
             let db_path = db_path(repo);
-            log::debug!("Merger::new() DB {:?}", db_path);
+            log::debug!("Merger::new() DB {db_path:?}");
             let opts = db::key_val::opts::default();
             let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -554,8 +533,7 @@ fn r_ff_merge_commit(
                     }
                 } else {
                     log::debug!(
-                        "Merge entry has not changed, but still !restore: {:?}",
-                        file_path
+                        "Merge entry has not changed, but still !restore: {file_path:?}"
                     );
                     if !should_restore {
                         results.cannot_overwrite_entries.push(file_path.clone());
@@ -592,7 +570,7 @@ fn r_ff_merge_commit(
             };
 
             for child in merge_children.iter() {
-                log::debug!("r_ff_merge_commit child_path {}", child);
+                log::debug!("r_ff_merge_commit child_path {child}");
                 r_ff_merge_commit(
                     repo,
                     child,
@@ -753,7 +731,7 @@ Found {} conflicts, please resolve them before merging.
             Ok(Some(commit))
         } else {
             let db_path = db_path(repo);
-            log::debug!("Merger::new() DB {:?}", db_path);
+            log::debug!("Merger::new() DB {db_path:?}");
             let opts = db::key_val::opts::default();
             let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -784,7 +762,7 @@ async fn create_merge_commit(
         merge_commits.merge.id, merge_commits.base.id
     );
 
-    log::debug!("create_merge_commit {}", commit_msg);
+    log::debug!("create_merge_commit {commit_msg}");
 
     let parent_ids: Vec<String> = vec![
         merge_commits.base.id.to_owned(),
@@ -813,7 +791,7 @@ async fn create_merge_commit_on_branch(
         merge_commits.merge.id, merge_commits.base.id, branch.name
     );
 
-    log::debug!("create_merge_commit_on_branch {}", commit_msg);
+    log::debug!("create_merge_commit_on_branch {commit_msg}");
 
     // Create a commit with both parents
     // let commit_writer = CommitWriter::new(repo)?;
@@ -859,7 +837,7 @@ pub fn lowest_common_ancestor_from_commits(
         if let Some(depth) = commit_depths_from_head.get(commit) {
             if depth < &min_depth {
                 min_depth = *depth;
-                log::debug!("setting new lca, {:?}", commit);
+                log::debug!("setting new lca, {commit:?}");
                 lca = commit.clone();
             }
         }

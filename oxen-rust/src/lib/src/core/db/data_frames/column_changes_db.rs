@@ -29,8 +29,7 @@ pub fn save_data_frame_column_changes(
     db.put(key, val_json.as_bytes())?;
 
     log::debug!(
-        "save_data_frame_column_changes() saved change: {:?}",
-        data_frame_column_change
+        "save_data_frame_column_changes() saved change: {data_frame_column_change:?}"
     );
 
     Ok(())
@@ -40,8 +39,7 @@ pub fn delete_data_frame_column_changes(db: &DB, column_name: &str) -> Result<()
     db.delete(column_name)?;
 
     log::debug!(
-        "delete_data_frame_column_changes() deleted change in: {:?}",
-        column_name
+        "delete_data_frame_column_changes() deleted change in: {column_name:?}"
     );
 
     Ok(())

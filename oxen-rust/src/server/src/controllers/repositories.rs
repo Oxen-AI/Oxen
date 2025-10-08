@@ -117,11 +117,11 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
                 }))
             }
             Ok(None) => {
-                log::debug!("404 Could not find repo: {}", name);
+                log::debug!("404 Could not find repo: {name}");
                 Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
             }
             Err(err) => {
-                log::debug!("Err finding repo: {} => {:?}", name, err);
+                log::debug!("Err finding repo: {name} => {err:?}");
                 Ok(
                     HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()),
@@ -166,13 +166,13 @@ pub async fn create(
             let mut body_bytes = Vec::new();
             while let Some(chunk) = payload.next().await {
                 let chunk = chunk.map_err(|e| {
-                    println!("Failed to read payload: {:?}", e);
+                    println!("Failed to read payload: {e:?}");
                     OxenHttpError::BadRequest("Failed to read payload".into())
                 })?;
                 body_bytes.extend_from_slice(&chunk);
             }
             let json_data: RepoNew = from_slice(&body_bytes).map_err(|e| {
-                println!("Failed to parse JSON: {:?}", e);
+                println!("Failed to parse JSON: {e:?}");
                 OxenHttpError::BadRequest("Invalid JSON".into())
             })?;
             return handle_json_creation(app_data, json_data).await;
@@ -223,18 +223,18 @@ async fn handle_json_creation(
             }
             Err(err) => {
                 println!("Err repositories::create: {err:?}");
-                log::error!("Err repositories::commits::latest_commit: {:?}", err);
+                log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
         Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
         Err(err) => {
             println!("Err repositories::create: {err:?}");
-            log::error!("Err repositories::create: {:?}", err);
+            log::error!("Err repositories::create: {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
@@ -362,17 +362,17 @@ async fn handle_multipart_creation(
                 }))
             }
             Err(err) => {
-                log::error!("Err repositories::commits::latest_commit: {:?}", err);
+                log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
         Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
         Err(err) => {
-            log::error!("Err repositories::create: {:?}", err);
+            log::error!("Err repositories::create: {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
@@ -389,8 +389,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 
     // Delete in a background thread because it could take awhile
     std::thread::spawn(move || match repositories::delete(&repository) {
-        Ok(_) => log::info!("Deleted repo: {}/{}", namespace, name),
-        Err(err) => log::error!("Err deleting repo: {}", err),
+        Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
+        Err(err) => log::error!("Err deleting repo: {err}"),
     });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
@@ -408,9 +408,7 @@ pub async fn transfer_namespace(
     let to_namespace = data.namespace;
 
     log::debug!(
-        "transfer_namespace from: {} to: {}",
-        from_namespace,
-        to_namespace
+        "transfer_namespace from: {from_namespace} to: {to_namespace}"
     );
 
     repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
@@ -496,7 +494,7 @@ mod tests {
         let namespace = "Test-Namespace";
         let name = "Testing-Name";
         test::create_local_repo(&sync_dir, namespace, name)?;
-        log::info!("test created local repo: {}", name);
+        log::info!("test created local repo: {name}");
 
         let uri = format!("/api/repos/{namespace}/{name}");
         let req = test::repo_request(&sync_dir, &uri, namespace, name);

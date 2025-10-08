@@ -15,7 +15,7 @@ pub fn list(path: &Path) -> Vec<String> {
             // if the directory has a .oxen dir, let's add it, otherwise ignore
             let path = entry.path();
 
-            log::debug!("repositories::namespaces::list checking path {:?}", path);
+            log::debug!("repositories::namespaces::list checking path {path:?}");
 
             if path.is_dir() && !util::fs::is_in_oxen_hidden_dir(&path) {
                 results.push(path.file_name().unwrap().to_str().unwrap().to_string())
@@ -28,7 +28,7 @@ pub fn list(path: &Path) -> Vec<String> {
 
 // return the named namespace object
 pub fn get(data_dir: &Path, name: &str) -> Result<Option<Namespace>, OxenError> {
-    log::debug!("repositories::namespaces::get {}", name);
+    log::debug!("repositories::namespaces::get {name}");
     let namespace_path = data_dir.join(name);
 
     if !namespace_path.is_dir() {
@@ -74,8 +74,7 @@ fn get_storage_for_repo(repo: &LocalRepository) -> Result<u64, OxenError> {
         },
         Err(e) => {
             log::error!(
-                "repositories::namespaces::get_storage_for_repo error getting size: {}",
-                e
+                "repositories::namespaces::get_storage_for_repo error getting size: {e}"
             );
             Err(e)
         }

@@ -46,16 +46,12 @@ async fn setup_repo_for_workspace_add_benchmark(
     dir_size: usize,
     data_path: Option<String>,
 ) -> Result<(LocalRepository, RemoteRepository, Vec<PathBuf>), OxenError> {
-    println!("setup_repo_for_workspace_add_benchmark got repo_size {}, num_files_to_add {}, and dir_size {}",
-        repo_size,
-        num_files_to_add_in_benchmark,
-        dir_size,
+    println!("setup_repo_for_workspace_add_benchmark got repo_size {repo_size}, num_files_to_add {num_files_to_add_in_benchmark}, and dir_size {dir_size}",
     );
     // Generate Uuid to ensure the data is pushed to a new remote
     let remote_id = Uuid::new_v4().to_string();
     let repo_dir = base_dir.join(format!(
-        "repo_{}_{}_{}",
-        num_files_to_add_in_benchmark, dir_size, remote_id
+        "repo_{num_files_to_add_in_benchmark}_{dir_size}_{remote_id}"
     ));
 
     if repo_dir.exists() {
@@ -111,7 +107,7 @@ async fn setup_repo_for_workspace_add_benchmark(
         let dir_idx = rng.gen_range(0..base_dirs.len());
         let dir = &base_dirs[dir_idx];
         util::fs::create_dir_all(dir)?;
-        let file_path = dir.join(format!("file_{}.txt", i));
+        let file_path = dir.join(format!("file_{i}.txt"));
         write_file_for_workspace_add_benchmark(&file_path, large_file_percentage)?;
     }
 
@@ -142,7 +138,7 @@ async fn setup_repo_for_workspace_add_benchmark(
             let dir = &files_dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
 
-            let file_path = dir.join(format!("file_{}.txt", i));
+            let file_path = dir.join(format!("file_{i}.txt"));
             write_file_for_workspace_add_benchmark(&file_path, large_file_percentage)?;
 
             files.push(file_path);
@@ -186,7 +182,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
 
         group.bench_with_input(
             BenchmarkId::new(
-                format!("{}k_files_in_{}dirs", num_files_to_add, dir_size),
+                format!("{num_files_to_add}k_files_in_{dir_size}dirs"),
                 format!("{:?}", (num_files_to_add, dir_size)),
             ),
             &(num_files_to_add, dir_size),
@@ -197,7 +193,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 let workspace_id = Uuid::new_v4().to_string();
 
                 // Use the branch name as the workspace name
-                let name = format!("{}: {workspace_id}", branch_name);
+                let name = format!("{branch_name}: {workspace_id}");
 
                 let workspace = rt
                     .block_on(api::client::workspaces::create_with_new_branch(

@@ -67,14 +67,12 @@ pub fn parse_resource_from_path(
                 }));
             }
             Ok(None) => {
-                log::debug!("Workspace not found: {}", first_str);
+                log::debug!("Workspace not found: {first_str}");
                 // Continue to branch resolution below if no workspace is found
             }
             Err(e) => {
                 log::debug!(
-                    "Workspace lookup failed for '{}' with error: {:?}",
-                    first_str,
-                    e
+                    "Workspace lookup failed for '{first_str}' with error: {e:?}"
                 );
                 // Continue to branch resolution below if no workspace is found
             }
@@ -98,8 +96,7 @@ pub fn parse_resource_from_path(
                 with_ref_manager(repo, |manager| manager.get_branch_by_name(&branch_name))?;
             if let Some(branch) = maybe_branch {
                 log::debug!(
-                    "parse_resource_from_path got branch [{}] with no file path",
-                    branch_name
+                    "parse_resource_from_path got branch [{branch_name}] with no file path"
                 );
                 let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?;
                 file_path = PathBuf::from("");
@@ -127,9 +124,7 @@ pub fn parse_resource_from_path(
             with_ref_manager(repo, |manager| manager.get_branch_by_name(&branch_name))?;
         if let Some(branch) = maybe_branch {
             log::debug!(
-                "parse_resource_from_path got branch [{}] and filepath [{:?}]",
-                branch_name,
-                file_path
+                "parse_resource_from_path got branch [{branch_name}] and filepath [{file_path:?}]"
             );
             let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?;
             return Ok(Some(ParsedResource {

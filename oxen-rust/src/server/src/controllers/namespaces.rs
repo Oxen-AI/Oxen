@@ -34,11 +34,11 @@ pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             })),
 
             Ok(None) => {
-                log::debug!("404 Could not find namespace: {}", namespace);
+                log::debug!("404 Could not find namespace: {namespace}");
                 Err(OxenHttpError::NotFound)
             }
             Err(err) => {
-                log::debug!("Err finding namespace: {} => {:?}", namespace, err);
+                log::debug!("Err finding namespace: {namespace} => {err:?}");
                 Err(OxenHttpError::InternalServerError)
             }
         }

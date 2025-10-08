@@ -59,8 +59,8 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
                 Err(OxenError::Basic(msg))
                     if msg.to_string().contains("Merkle tree hash not found") =>
                 {
-                    log::warn!("restore::restore: No file found at path {:?}", path);
-                    println!("No file found at the specified path: {:?}", path);
+                    log::warn!("restore::restore: No file found at path {path:?}");
+                    println!("No file found at the specified path: {path:?}");
                     Err(OxenError::basic_str("No file found at the specified path"))
                 }
                 Err(e) => Err(e),
@@ -98,8 +98,7 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                         if key_str.starts_with(&prefix) {
                             batch.delete(&key);
                             log::debug!(
-                                "restore::restore_staged: prepared to remove staged entry for path {:?}",
-                                key_str
+                                "restore::restore_staged: prepared to remove staged entry for path {key_str:?}"
                             );
                         } else {
                             break; // Stop when we've passed all entries with the given prefix
@@ -136,8 +135,7 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                 if !has_children {
                     parent_batch.delete(parent_str.as_bytes());
                     log::debug!(
-                        "restore::restore_staged: removed parent directory with no children: {:?}",
-                        parent_str
+                        "restore::restore_staged: removed parent directory with no children: {parent_str:?}"
                     );
                 } else {
                     break;
@@ -181,7 +179,7 @@ async fn restore_dir(
         file_nodes_with_paths.len()
     );
 
-    let msg = format!("Restoring Directory: {:?}", dir);
+    let msg = format!("Restoring Directory: {dir:?}");
     let bar =
         util::progress_bar::oxen_progress_bar_with_msg(file_nodes_with_paths.len() as u64, &msg);
 
@@ -202,9 +200,7 @@ async fn restore_dir(
             Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
             Err(e) => {
                 log::error!(
-                    "restore::restore_dir: error restoring file {:?}: {:?}",
-                    file_path,
-                    e
+                    "restore::restore_dir: error restoring file {file_path:?}: {e:?}"
                 );
             }
         }

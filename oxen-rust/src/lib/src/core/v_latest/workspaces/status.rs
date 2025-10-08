@@ -13,7 +13,7 @@ pub fn status(workspace: &Workspace, directory: impl AsRef<Path>) -> Result<Stag
     let workspace_repo = &workspace.workspace_repo;
     // let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&workspace_repo.path).join(STAGED_DIR);
-    log::debug!("status db_path: {:?}", db_path);
+    log::debug!("status db_path: {db_path:?}");
 
     // Check if the db path exists, because read only will not create it
     if !db_path.exists() {

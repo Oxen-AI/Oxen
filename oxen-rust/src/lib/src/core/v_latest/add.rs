@@ -100,7 +100,7 @@ pub async fn add<T: AsRef<Path>>(
 
         // TODO: At least on Windows, this is improperly case sensitive
         if util::fs::is_glob_path(path_str) {
-            log::debug!("glob path: {}", path_str);
+            log::debug!("glob path: {path_str}");
             // Match against any untracked entries in the current dir
             for entry in glob(path_str)? {
                 expanded_paths.insert(entry?);
@@ -110,7 +110,7 @@ pub async fn add<T: AsRef<Path>>(
             if let Some(commit) = repositories::commits::head_commit_maybe(repo)? {
                 let pattern_entries =
                     repositories::commits::search_entries(repo, &commit, path_str)?;
-                log::debug!("pattern entries: {:?}", pattern_entries);
+                log::debug!("pattern entries: {pattern_entries:?}");
                 expanded_paths.extend(pattern_entries);
             }
         } else {
@@ -145,7 +145,7 @@ pub async fn add_files(
     staged_db: Arc<DBWithThreadMode<MultiThreaded>>,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<CumulativeStats, OxenError> {
-    log::debug!("add files: {:?}", paths);
+    log::debug!("add files: {paths:?}");
     let cwd = std::env::current_dir()?;
 
     // Start a timer
@@ -213,7 +213,7 @@ pub async fn add_files(
                 }
             }
         } else if corrected_path.is_symlink() {
-            log::debug!("Skipping symlink: {:?}", corrected_path);
+            log::debug!("Skipping symlink: {corrected_path:?}");
             continue;
         } else {
             log::debug!("Found nonexistent path {path:?}. Staging for removal. Recursive flag set");
@@ -229,7 +229,7 @@ pub async fn add_files(
 
     // Stop the timer, and round the duration to the nearest second
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
-    log::debug!("---END--- oxen add: {:?} duration: {:?}", paths, duration);
+    log::debug!("---END--- oxen add: {paths:?} duration: {duration:?}");
 
     // oxen staged?
     println!(
@@ -518,7 +518,7 @@ pub async fn process_add_dir(
                                                     .fetch_add(1, Ordering::Relaxed);
                                             }
                                             Err(e) => {
-                                                log::error!("Error adding file: {:?}", e);
+                                                log::error!("Error adding file: {e:?}");
                                             }
                                         }
 
@@ -527,7 +527,7 @@ pub async fn process_add_dir(
 
                                     // Capture errors in process_file
                                     if let Err(e) = process_file().await {
-                                        log::error!("Error processing file: {}", e);
+                                        log::error!("Error processing file: {e}");
                                     }
                                 }
                             }
@@ -539,7 +539,7 @@ pub async fn process_add_dir(
 
                 // Capture errors in process_directory
                 if let Err(e) = process_directory().await {
-                    log::error!("Error processing directory: {}", e);
+                    log::error!("Error processing directory: {e}");
                 }
             }
         })
@@ -682,18 +682,14 @@ pub fn determine_file_status(
     let file_path = file_name.as_ref();
     let data_path = data_path.as_ref();
     log::debug!(
-        "determine_file_status data_path {:?} file_name {:?}",
-        data_path,
-        file_path
+        "determine_file_status data_path {data_path:?} file_name {file_path:?}"
     );
     let maybe_file_node = get_file_node(maybe_dir_node, file_path)?;
     let mut previous_oxen_metadata: Option<GenericMetadata> = None;
     // This is ugly - but makes sure we don't have to rehash the file if it hasn't changed
     let (status, hash, num_bytes, mtime) = if let Some(file_node) = &maybe_file_node {
         log::debug!(
-            "got existing file_node: {} data_path {:?}",
-            file_node,
-            data_path
+            "got existing file_node: {file_node} data_path {data_path:?}"
         );
 
         // first check if the file timestamp is different
@@ -701,12 +697,11 @@ pub fn determine_file_status(
         let mtime = FileTime::from_last_modification_time(&metadata);
         previous_oxen_metadata = file_node.metadata();
         if util::fs::is_modified_from_node(data_path, file_node)? {
-            log::debug!("has_different_modification_time true {}", file_node);
+            log::debug!("has_different_modification_time true {file_node}");
             let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
             if file_node.hash().to_u128() != hash {
                 log::debug!(
-                    "has_different_modification_time hash is different true {}",
-                    file_node
+                    "has_different_modification_time hash is different true {file_node}"
                 );
                 let num_bytes = metadata.len();
                 (
@@ -763,13 +758,13 @@ pub fn process_add_file(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     merge_conflicts: &HashSet<PathBuf>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    log::debug!("process_add_file {:?}", path);
+    log::debug!("process_add_file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
     let full_path = repo_path.join(&relative_path);
 
     if !full_path.is_file() {
         // If path is not canonical, we cannot recover the absolute repo path
-        log::debug!("file is not a file - skipping add on {:?}", full_path);
+        log::debug!("file is not a file - skipping add on {full_path:?}");
         return Ok(Some(StagedMerkleTreeNode {
             status: StagedEntryStatus::Added,
             node: MerkleTreeNode::default_dir(),
@@ -864,14 +859,14 @@ pub fn process_add_file_with_staged_db_manager(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     merge_conflicts: &HashSet<PathBuf>,
 ) -> Result<(), OxenError> {
-    log::debug!("process_add_file {:?}", path);
+    log::debug!("process_add_file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
     let full_path = repo_path.join(&relative_path);
 
     if !full_path.is_file() {
         // If it's not a file - no need to add it
         // We handle directories by traversing the parents of files below
-        log::debug!("file is not a file - skipping add on {:?}", full_path);
+        log::debug!("file is not a file - skipping add on {full_path:?}");
         return Ok(());
     }
 
@@ -1121,10 +1116,9 @@ pub fn maybe_construct_generic_metadata_for_tabular(
     previous_oxen_metadata: GenericMetadata,
 ) -> Option<GenericMetadata> {
     log::debug!(
-        "maybe_construct_generic_metadata_for_tabular {:?}",
-        df_metadata
+        "maybe_construct_generic_metadata_for_tabular {df_metadata:?}"
     );
-    log::debug!("previous_oxen_metadata {:?}", previous_oxen_metadata);
+    log::debug!("previous_oxen_metadata {previous_oxen_metadata:?}");
 
     if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {
         if let GenericMetadata::MetadataTabular(ref previous_oxen_metadata) = previous_oxen_metadata
@@ -1169,7 +1163,7 @@ pub fn p_add_file_node_to_staged_db(
         status,
         node: MerkleTreeNode::from_file(file_node.clone()),
     };
-    log::debug!("writing file: {}", staged_file_node);
+    log::debug!("writing file: {staged_file_node}");
 
     let mut buf = Vec::new();
     staged_file_node
@@ -1177,7 +1171,7 @@ pub fn p_add_file_node_to_staged_db(
         .unwrap();
 
     let relative_path_str = relative_path.to_str().unwrap_or_default();
-    log::debug!("writing to staged db {:?}", relative_path_str);
+    log::debug!("writing to staged db {relative_path_str:?}");
     staged_db.put(relative_path_str, &buf)?;
 
     // Add all the parent dirs to the staged db
@@ -1357,7 +1351,7 @@ mod tests {
             )?;
 
             let oxenignore_path = repo.path.join(".oxenignore");
-            test::write_txt_file_to_path(&oxenignore_path, format!("{}/", dir_to_ignore))?;
+            test::write_txt_file_to_path(&oxenignore_path, format!("{dir_to_ignore}/"))?;
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 
@@ -1367,21 +1361,21 @@ mod tests {
             assert!(status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file1.txt", normal_dir))));
+                .any(|path| path.0.ends_with(format!("{normal_dir}/file1.txt"))));
             assert!(status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file2.txt", normal_dir))));
+                .any(|path| path.0.ends_with(format!("{normal_dir}/file2.txt"))));
 
             // Files in ignored_dir should not be staged
             assert!(!status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file1.txt", dir_to_ignore))));
+                .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file1.txt"))));
             assert!(!status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file2.txt", dir_to_ignore))));
+                .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file2.txt"))));
 
             // The oxenignore file itself should be staged
             assert!(status

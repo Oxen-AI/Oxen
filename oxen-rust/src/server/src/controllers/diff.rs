@@ -160,7 +160,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit)?;
-    log::debug!("dir_diffs: {:?}", dir_diffs);
+    log::debug!("dir_diffs: {dir_diffs:?}");
 
     let dir_diff_tree = group_dir_diffs_by_dir(dir_diffs);
 
@@ -209,7 +209,7 @@ pub async fn dir_entries(
     )
     .await?;
 
-    log::debug!("entries_diff: {:?}", entries_diff);
+    log::debug!("entries_diff: {entries_diff:?}");
 
     // For this view, exclude anything that isn't a direct child of the directory in question
     let summary = GenericDiffSummary::DirDiffSummary(DirDiffSummary {
@@ -218,7 +218,7 @@ pub async fn dir_entries(
         },
     });
 
-    log::debug!("summary: {:?}", summary);
+    log::debug!("summary: {summary:?}");
 
     let self_entry =
         get_dir_diff_entry_with_summary(&repository, dir, &base_commit, &head_commit, summary)?;
@@ -255,9 +255,9 @@ pub async fn file(
     //   main..feature/add-data/path/to/file.txt
     let (base_commit, head_commit, resource) = parse_base_head_resource(&repository, &base_head)?;
 
-    log::debug!("base_commit: {:?}", base_commit);
-    log::debug!("head_commit: {:?}", head_commit);
-    log::debug!("resource: {:?}", resource);
+    log::debug!("base_commit: {base_commit:?}");
+    log::debug!("head_commit: {head_commit:?}");
+    log::debug!("resource: {resource:?}");
     let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
     let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
 
@@ -269,7 +269,7 @@ pub async fn file(
 
     let start = if page == 0 { 0 } else { page_size * (page - 1) };
     let end = page_size * page;
-    opts.slice = Some(format!("{}..{}", start, end));
+    opts.slice = Some(format!("{start}..{end}"));
 
     let diff = repositories::diffs::diff_entries(
         &repository,
@@ -305,9 +305,7 @@ pub async fn create_df_diff(
         Ok(data) => data,
         Err(err) => {
             log::error!(
-                "unable to parse tabular comparison data. Err: {}\n{}",
-                err,
-                body
+                "unable to parse tabular comparison data. Err: {err}\n{body}"
             );
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
@@ -395,9 +393,7 @@ pub async fn update_df_diff(
         Ok(data) => data,
         Err(err) => {
             log::error!(
-                "unable to parse tabular comparison data. Err: {}\n{}",
-                err,
-                body
+                "unable to parse tabular comparison data. Err: {err}\n{body}"
             );
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
@@ -409,11 +405,11 @@ pub async fn update_df_diff(
     let targets = data.compare;
     let display = data.display;
 
-    log::debug!("display is {:?}", display);
+    log::debug!("display is {display:?}");
 
     let display_by_column = get_display_by_columns(display);
 
-    log::debug!("display by col is {:?}", display_by_column);
+    log::debug!("display by col is {display_by_column:?}");
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
         .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
@@ -576,7 +572,7 @@ pub async fn get_derived_df(
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);
-    log::debug!("get_derived_df got opts: {:?}", opts);
+    log::debug!("get_derived_df got opts: {opts:?}");
 
     // Clear these for the first transform
     opts.page = None;
@@ -595,14 +591,14 @@ pub async fn get_derived_df(
     // We have to run the query param transforms, then paginate separately
     match tabular::transform(df, opts).await {
         Ok(view_df) => {
-            log::debug!("View df {:?}", view_df);
+            log::debug!("View df {view_df:?}");
 
             let view_width = view_df.width();
             let view_height = view_df.height();
 
             // Paginate after transform
             let mut paginate_opts = DFOpts::empty();
-            paginate_opts.slice = Some(format!("{}..{}", start, end));
+            paginate_opts.slice = Some(format!("{start}..{end}"));
             let mut paginated_df = tabular::transform(view_df, paginate_opts).await?;
 
             let total_pages = (view_height as f64 / page_size as f64).ceil() as usize;
@@ -613,11 +609,11 @@ pub async fn get_derived_df(
 
             // Merge the metadata from the original schema
             let mut view_schema = Schema::from_polars(paginated_df.schema());
-            log::debug!("OG schema {:?}", og_schema);
-            log::debug!("Pre-Slice schema {:?}", view_schema);
+            log::debug!("OG schema {og_schema:?}");
+            log::debug!("Pre-Slice schema {view_schema:?}");
             view_schema.update_metadata_from_schema(&og_schema);
 
-            log::debug!("View schema {:?}", view_schema);
+            log::debug!("View schema {view_schema:?}");
 
             let df = JsonDataFrame::from_slice(
                 &mut paginated_df,
@@ -652,7 +648,7 @@ pub async fn get_derived_df(
             let derived_resource = DerivedDFResource {
                 resource_type: DFResourceType::Compare,
                 resource_id: compare_id.clone(),
-                path: format!("/compare/data_frames/{}/diff", compare_id),
+                path: format!("/compare/data_frames/{compare_id}/diff"),
             };
 
             let response = JsonDataFrameViewResponse {
@@ -669,11 +665,11 @@ pub async fn get_derived_df(
             Ok(HttpResponse::Ok().json(response))
         }
         Err(OxenError::SQLParseError(sql)) => {
-            log::error!("Error parsing SQL: {}", sql);
+            log::error!("Error parsing SQL: {sql}");
             Err(OxenHttpError::SQLParseError(sql))
         }
         Err(e) => {
-            log::error!("Error transforming df: {}", e);
+            log::error!("Error transforming df: {e}");
             Err(OxenHttpError::InternalServerError)
         }
     }
@@ -683,7 +679,7 @@ fn parse_base_head_resource(
     repo: &LocalRepository,
     base_head: &str,
 ) -> Result<(Commit, Commit, PathBuf), OxenError> {
-    log::debug!("Parsing base_head_resource: {}", base_head);
+    log::debug!("Parsing base_head_resource: {base_head}");
 
     let mut split = base_head.split("..");
     let base = split
@@ -703,8 +699,8 @@ fn parse_base_head_resource(
     let mut resource: Option<PathBuf> = None;
 
     for s in split_head {
-        let maybe_revision = format!("{}{}", longest_str, s);
-        log::debug!("Checking maybe head revision: {}", maybe_revision);
+        let maybe_revision = format!("{longest_str}{s}");
+        log::debug!("Checking maybe head revision: {maybe_revision}");
         let commit = repositories::revisions::get(repo, &maybe_revision)?;
         if commit.is_some() {
             head_commit = commit;
@@ -713,11 +709,11 @@ fn parse_base_head_resource(
             r_str.remove(0);
             resource = Some(PathBuf::from(r_str));
         }
-        longest_str = format!("{}/", maybe_revision);
+        longest_str = format!("{maybe_revision}/");
     }
 
-    log::debug!("Got head_commit: {:?}", head_commit);
-    log::debug!("Got resource: {:?}", resource);
+    log::debug!("Got head_commit: {head_commit:?}");
+    log::debug!("Got resource: {resource:?}");
 
     let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
     let resource = resource.ok_or(OxenError::revision_not_found(head.into()))?;
@@ -729,10 +725,10 @@ fn get_display_by_columns(display: Vec<TabularCompareTargetBody>) -> Vec<String>
     let mut display_by_column = vec![];
     for d in display {
         if let Some(left) = d.left {
-            display_by_column.push(format!("{}.left", left));
+            display_by_column.push(format!("{left}.left"));
         }
         if let Some(right) = d.right {
-            display_by_column.push(format!("{}.right", right));
+            display_by_column.push(format!("{right}.right"));
         }
     }
     display_by_column

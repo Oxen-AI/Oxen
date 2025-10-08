@@ -38,11 +38,9 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     };
 
     log::info!(
-        "create row {namespace}/{repo_name} for file {:?} on in workspace id {}",
-        file_path,
-        workspace_id
+        "create row {namespace}/{repo_name} for file {file_path:?} on in workspace id {workspace_id}"
     );
-    log::debug!("create row with data {:?}", data);
+    log::debug!("create row with data {data:?}");
 
     // Get the workspace
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -162,11 +160,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
     log::debug!(
-        "update row repo {}/{} -> {}/{:?}",
-        namespace,
-        repo_name,
-        workspace_id,
-        file_path
+        "update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?}"
     );
 
     let modified_row = repositories::workspaces::data_frames::rows::update(
@@ -178,7 +172,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
 
     let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
-    log::debug!("Modified row in controller is {:?}", modified_row);
+    log::debug!("Modified row in controller is {modified_row:?}");
     let schema = Schema::from_polars(modified_row.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -258,7 +252,7 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
-    log::debug!("Restored row in controller is {:?}", restored_row);
+    log::debug!("Restored row in controller is {restored_row:?}");
     let schema = Schema::from_polars(restored_row.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -303,11 +297,7 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
     log::debug!(
-        "update row repo {}/{} -> {}/{:?}",
-        namespace,
-        repo_name,
-        workspace_id,
-        file_path
+        "update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?}"
     );
 
     let modified_rows = repositories::workspaces::data_frames::rows::batch_update(

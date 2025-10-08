@@ -67,15 +67,15 @@ where
             // Ensure directory exists
             if !refs_dir.exists() {
                 util::fs::create_dir_all(&refs_dir).map_err(|e| {
-                    log::error!("Failed to create refs directory: {}", e);
-                    OxenError::basic_str(format!("Failed to create refs directory: {}", e))
+                    log::error!("Failed to create refs directory: {e}");
+                    OxenError::basic_str(format!("Failed to create refs directory: {e}"))
                 })?;
             }
 
             let opts = db::key_val::opts::default();
             let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|e| {
-                log::error!("Failed to open refs database: {}", e);
-                OxenError::basic_str(format!("Failed to open refs database: {}", e))
+                log::error!("Failed to open refs database: {e}");
+                OxenError::basic_str(format!("Failed to open refs database: {e}"))
             })?;
             let arc_db = Arc::new(db);
             instances.put(refs_dir, arc_db.clone());
@@ -129,8 +129,7 @@ impl RefManager {
             Ok(None) => Ok(None),
             Err(err) => {
                 log::error!(
-                    "get_commit_id_for_branch error finding commit id for branch {}",
-                    name
+                    "get_commit_id_for_branch error finding commit id for branch {name}"
                 );
                 Err(OxenError::basic_str(err))
             }
@@ -368,7 +367,7 @@ mod tests {
                 let handle = thread::spawn(move || {
                     // Each thread creates its own branch and reads all branches
                     with_ref_manager(&repo_clone, |manager| {
-                        manager.create_branch(format!("branch-{}", i), format!("commit-{}", i))?;
+                        manager.create_branch(format!("branch-{i}"), format!("commit-{i}"))?;
                         manager.list_branches()
                     })
                 });

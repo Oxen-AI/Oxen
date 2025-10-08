@@ -77,8 +77,7 @@ impl RunCmd for TreeCmd {
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
                 return Err(OxenError::basic_str(format!(
-                    "Commit {} not found",
-                    commit_id
+                    "Commit {commit_id} not found"
                 )));
             };
             commit
@@ -114,8 +113,8 @@ impl TreeCmd {
         let load_start = Instant::now(); // Start timing
         match (repo.subtree_paths(), repo.depth()) {
             (Some(subtrees), Some(depth)) => {
-                println!("Working with subtrees: {:?}", subtrees);
-                println!("Depth: {}", depth);
+                println!("Working with subtrees: {subtrees:?}");
+                println!("Depth: {depth}");
                 println!("Loading first tree...");
                 repositories::tree::print_tree_depth_subtree(
                     repo,
@@ -133,7 +132,7 @@ impl TreeCmd {
             }
         };
         let load_duration = load_start.elapsed(); // Calculate duration
-        println!("Time to load tree: {:?}", load_duration);
+        println!("Time to load tree: {load_duration:?}");
         Ok(())
     }
 }

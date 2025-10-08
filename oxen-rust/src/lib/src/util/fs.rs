@@ -93,7 +93,7 @@ pub fn handle_image_resize(
     version_path: &Path,
     img_resize: ImgResize,
 ) -> Result<PathBuf, OxenError> {
-    log::debug!("img_resize {:?}", img_resize);
+    log::debug!("img_resize {img_resize:?}");
     let resized_path = resized_path_for_version_store_file(
         Arc::clone(&version_store),
         &file_hash,
@@ -110,7 +110,7 @@ pub fn handle_image_resize(
         img_resize,
     )?;
 
-    log::debug!("In the resize cache! {:?}", resized_path);
+    log::debug!("In the resize cache! {resized_path:?}");
     Ok(resized_path)
 }
 
@@ -228,7 +228,7 @@ pub fn version_path_from_hash_and_file_v0_10_0(
     //     version_dir
     // );
     let extension = extension_from_path(filename);
-    version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension))
+    version_dir.join(format!("{VERSION_FILE_NAME}.{extension}"))
 }
 
 pub fn version_path_from_hash_and_file(
@@ -248,7 +248,7 @@ pub fn version_path_from_hash_and_file(
         version_dir.join(VERSION_FILE_NAME)
     } else {
         // backwards compatibility
-        let path = version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension));
+        let path = version_dir.join(format!("{VERSION_FILE_NAME}.{extension}"));
         if path.exists() {
             // Older files have the extension in the filename
             path
@@ -312,7 +312,7 @@ pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
                 "util::fs::read_from_path could not open: {}",
                 path.display()
             );
-            log::warn!("{}", err);
+            log::warn!("{err}");
             Err(OxenError::basic_str(&err))
         }
     }
@@ -618,9 +618,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
     let from = from.as_ref();
     let to = to.as_ref();
     log::debug!(
-        "copy_dir_all Copy directory from: {:?} -> to: {:?}",
-        from,
-        to
+        "copy_dir_all Copy directory from: {from:?} -> to: {to:?}"
     );
 
     let mut stack = Vec::new();
@@ -659,7 +657,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
                         std::fs::copy(&path, &dest_path)?;
                     }
                     None => {
-                        log::error!("copy_dir_all could not get file_name: {:?}", path);
+                        log::error!("copy_dir_all could not get file_name: {path:?}");
                     }
                 }
             }
@@ -684,8 +682,7 @@ pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenErro
                     attempt += 1;
                     if attempt == max_retries {
                         return Err(OxenError::basic_str(format!(
-                            "File is in use by another process after {} attempts: {src:?}",
-                            max_retries
+                            "File is in use by another process after {max_retries} attempts: {src:?}"
                         )));
                     }
                     // Exponential backoff: 100ms, 200ms, 400ms
@@ -782,7 +779,7 @@ pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
     match std::fs::create_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("create_dir_all {:?} {}", src, err);
+            log::error!("create_dir_all {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -794,7 +791,7 @@ pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
     match std::fs::remove_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("remove_dir_all {:?} {}", src, err);
+            log::error!("remove_dir_all {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -806,7 +803,7 @@ pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenEr
     match std::fs::write(src, data) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("write {:?} {}", src, err);
+            log::error!("write {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -819,7 +816,7 @@ pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
     match std::fs::remove_file(src) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("remove_file {:?} {}", src, err);
+            log::error!("remove_file {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -831,7 +828,7 @@ pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> 
     match std::fs::metadata(path) {
         Ok(file) => Ok(file),
         Err(err) => {
-            log::debug!("metadata {:?} {}", path, err);
+            log::debug!("metadata {path:?} {err}");
             Err(OxenError::file_metadata_error(path, err))
         }
     }
@@ -843,7 +840,7 @@ pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
     match std::fs::File::create(path) {
         Ok(file) => Ok(file),
         Err(err) => {
-            log::error!("file_create {:?} {}", path, err);
+            log::error!("file_create {path:?} {err}");
             Err(OxenError::file_create_error(path, err))
         }
     }
@@ -1215,15 +1212,15 @@ pub fn p_count_files_in_dir_w_progress(dir: &Path, pb: Option<ProgressBar>) -> u
                             if !is_in_oxen_hidden_dir(&path) && path.is_file() {
                                 count += 1;
                                 if let Some(ref pb) = pb {
-                                    pb.set_message(format!("🐂 Found {:?} files", count));
+                                    pb.set_message(format!("🐂 Found {count:?} files"));
                                 }
                             }
                         }
-                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                        Err(err) => log::warn!("error reading dir entry: {err}"),
                     }
                 }
             }
-            Err(err) => log::warn!("error reading dir: {}", err),
+            Err(err) => log::warn!("error reading dir: {err}"),
         }
     }
     count
@@ -1258,11 +1255,11 @@ pub fn count_files_in_dir_with_progress(dir: impl AsRef<Path>) -> usize {
                                 ))
                             }
                         }
-                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                        Err(err) => log::warn!("error reading dir entry: {err}"),
                     }
                 }
             }
-            Err(err) => log::warn!("error reading dir: {}", err),
+            Err(err) => log::warn!("error reading dir: {err}"),
         }
     }
     count
@@ -1281,11 +1278,11 @@ pub fn count_items_in_dir(dir: &Path) -> usize {
                                 count += 1;
                             }
                         }
-                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                        Err(err) => log::warn!("error reading dir entry: {err}"),
                     }
                 }
             }
-            Err(err) => log::warn!("error reading dir: {}", err),
+            Err(err) => log::warn!("error reading dir: {err}"),
         }
     }
     count
@@ -1401,8 +1398,7 @@ fn stem_from_canonical_child_path(
 
     if child_components.len() < parent_components.len() + relative_components.len() {
         return Err(OxenError::basic_str(format!(
-            "Invalid path relationship: child path {:?} is not under parent path {:?}",
-            child_path, parent_path
+            "Invalid path relationship: child path {child_path:?} is not under parent path {parent_path:?}"
         )));
     }
 
@@ -1544,7 +1540,7 @@ pub fn linux_path(path: &Path) -> PathBuf {
 }
 
 pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
-    log::debug!("disk_usage_for_path: {:?}", path);
+    log::debug!("disk_usage_for_path: {path:?}");
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
     if disks.is_empty() {
@@ -1568,7 +1564,7 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
         }
     }
 
-    log::debug!("disk_usage_for_path selected disk: {:?}", selected_disk);
+    log::debug!("disk_usage_for_path selected disk: {selected_disk:?}");
     let total_gb = selected_disk.total_space() as f64 / bytesize::GB as f64;
     let free_gb = selected_disk.available_space() as f64 / bytesize::GB as f64;
     let used_gb = total_gb - free_gb;
@@ -1584,9 +1580,9 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
 pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bool {
     let mut current_path = file_path.to_path_buf();
     // Iterate through parent directories
-    log::debug!("checking if {:?} is in {:?}", current_path, path_set);
+    log::debug!("checking if {current_path:?} is in {path_set:?}");
     while let Some(parent) = current_path.parent() {
-        log::debug!("checking if {:?} is in {:?}", current_path, path_set);
+        log::debug!("checking if {current_path:?} is in {path_set:?}");
         if path_set.contains(parent) {
             return true;
         }
@@ -1615,16 +1611,16 @@ fn detect_image_format_from_version(
 
     let mut header = [0u8; 10];
     let n = file.read(&mut header).map_err(|e| {
-        OxenError::basic_str(format!("Failed to read version file {}: {}", hash, e))
+        OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
     })?;
     // Set the pointer back to the front
     file.seek(SeekFrom::Start(0)).map_err(|e| {
-        OxenError::basic_str(format!("Failed to seek version file {}: {}", hash, e))
+        OxenError::basic_str(format!("Failed to seek version file {hash}: {e}"))
     })?;
 
     // detect format
     let format = image::guess_format(&header[..n])
-        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {}", hash)))?;
+        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
 
     Ok(format)
 }
@@ -1637,7 +1633,7 @@ pub fn resize_cache_image_version_store(
     resize_path: &Path,
     resize: ImgResize,
 ) -> Result<(), OxenError> {
-    log::debug!("resize to path {:?} from {:?}", resize_path, image_path);
+    log::debug!("resize to path {resize_path:?} from {image_path:?}");
     if resize_path.exists() {
         return Ok(());
     }
@@ -1679,7 +1675,7 @@ pub fn resize_cache_image_version_store(
     } else {
         img
     };
-    log::debug!("about to save {:?}", resize_path);
+    log::debug!("about to save {resize_path:?}");
 
     let resize_parent = resize_path.parent().unwrap_or(Path::new(""));
     if !resize_parent.exists() {
@@ -1687,7 +1683,7 @@ pub fn resize_cache_image_version_store(
     }
 
     resized_img.save(resize_path).unwrap();
-    log::debug!("saved {:?}", resize_path);
+    log::debug!("saved {resize_path:?}");
     Ok(())
 }
 

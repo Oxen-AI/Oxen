@@ -71,7 +71,7 @@ pub async fn get(
     if (img_resize.width.is_some() || img_resize.height.is_some())
         && mime_type.starts_with("image/")
     {
-        log::debug!("img_resize {:?}", img_resize);
+        log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
@@ -80,7 +80,7 @@ pub async fn get(
             &version_path,
             img_resize,
         )?;
-        log::debug!("In the resize cache! {:?}", resized_path);
+        log::debug!("In the resize cache! {resized_path:?}");
 
         // Generate stream for the resized image
         let file = File::open(&resized_path).await?;
@@ -122,7 +122,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 
     for file in files.iter() {
         let path = repositories::workspaces::files::add(&workspace, file).await?;
-        log::debug!("add_file ✅ success! staged file {:?}", path);
+        log::debug!("add_file ✅ success! staged file {path:?}");
         ret_files.push(path);
     }
     Ok(HttpResponse::Ok().json(FilePathsResponse {
@@ -208,7 +208,7 @@ pub async fn rm_files(
 
     for path in &paths_to_remove {
         err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
-        println!("rm ✅ success! staged file {:?} as removed", path);
+        println!("rm ✅ success! staged file {path:?} as removed");
         ret_files.push(path);
     }
 
@@ -273,7 +273,7 @@ pub async fn rm_files_from_staged(
                     .await?;
             }
             Err(e) => {
-                log::debug!("Failed to stage file {path:?} for removal: {:?}", e);
+                log::debug!("Failed to stage file {path:?} for removal: {e:?}");
                 err_paths.push(path);
             }
         }
@@ -341,8 +341,7 @@ pub async fn save_parts(
                 let filepath = full_dir.join(&upload_filename);
                 let filepath_cpy = filepath.clone();
                 log::debug!(
-                    "workspace::files::save_parts writing file to {:?}",
-                    filepath
+                    "workspace::files::save_parts writing file to {filepath:?}"
                 );
 
                 // File::create is blocking operation, use threadpool
