@@ -25,6 +25,7 @@ pub struct ChunkQuery {
     pub chunk_size: Option<u64>,
 }
 
+// Deprecated. Only kept to support older clients before v0.37.2
 pub async fn download_data_from_version_paths(
     req: HttpRequest,
     mut body: web::Payload,
