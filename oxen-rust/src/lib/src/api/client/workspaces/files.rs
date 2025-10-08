@@ -25,6 +25,8 @@ use walkdir::WalkDir;
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
 const MAX_RETRIES: usize = 5;
+const WORKSPACE_ADD_LIMIT: u64 = 100_000_000;
+
 #[derive(Debug)]
 pub struct UploadResult {
     pub files_to_add: Vec<FileWithHash>,
@@ -558,6 +560,14 @@ async fn p_upload_bytes_as_file(
     path: impl AsRef<Path>,
     mut buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
+    // Check if the total size of the files is too large (over 100mb for now)
+    let limit = WORKSPACE_ADD_LIMIT;
+    let total_size: u64 = buf.len().try_into().unwrap();
+    if total_size > limit {
+        let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
+        return Err(OxenError::basic_str(error_msg));
+    }
+
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
@@ -617,7 +627,7 @@ pub async fn add_many(
     let workspace_id = workspace_id.as_ref();
     let directory_name = directory_name.as_ref();
     // Check if the total size of the files is too large (over 100mb for now)
-    let limit = 100_000_000;
+    let limit = WORKSPACE_ADD_LIMIT;
     let total_size: u64 = paths.iter().map(|p| p.metadata().unwrap().len()).sum();
     if total_size > limit {
         let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
