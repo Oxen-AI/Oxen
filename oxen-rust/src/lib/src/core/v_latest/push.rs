@@ -294,10 +294,12 @@ async fn get_commit_missing_hashes(
         shared_hashes.extend(unique_hashes_and_type);
         dir_nodes.insert(commit.hash()?);
         log::debug!("push_commits dir nodes: {:?}", dir_nodes);
+        let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
 
         let push_commit_info = PushCommitInfo {
             unique_dir_nodes: dir_nodes,
             unique_file_hashes: files,
+            total_bytes,
         };
         result.insert(commit.hash()?, push_commit_info);
     }
@@ -309,6 +311,7 @@ async fn get_commit_missing_hashes(
 struct PushCommitInfo {
     unique_dir_nodes: HashSet<MerkleHash>,
     unique_file_hashes: Vec<Entry>,
+    total_bytes: u64,
 }
 
 async fn push_commits(
@@ -318,8 +321,6 @@ async fn push_commits(
     commits: Vec<Commit>,
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
-    let progress = Arc::new(PushProgress::new());
-
     if opts.missing_files {
         return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
     }
@@ -343,10 +344,21 @@ async fn push_commits(
             Ok((commit, info))
         })
         .collect::<Result<Vec<(Commit, PushCommitInfo)>, OxenError>>()?;
+
+    let total_bytes = commits_with_info
+        .iter()
+        .map(|(_, info)| info.total_bytes)
+        .sum();
+    let num_files: usize = commits_with_info
+        .iter()
+        .map(|(_, info)| info.unique_file_hashes.len())
+        .sum();
     log::debug!("got commits with info {:?}", commits_with_info);
     let num_commits = commits_with_info.len();
     log::debug!("got commit info {}", num_commits);
     let errors = Arc::new(Mutex::new(Vec::new()));
+
+    let progress = Arc::new(PushProgress::new_with_totals(num_files as u64, total_bytes));
 
     stream::iter(commits_with_info)
         .for_each_concurrent(
