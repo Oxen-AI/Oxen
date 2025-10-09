@@ -1,13 +1,10 @@
-use futures::prelude::*;
 use std::collections::HashSet;
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
@@ -455,14 +452,8 @@ pub async fn push_entries(
         .map(|e| e.to_owned())
         .collect();
 
-    let large_entries_sync = chunk_and_send_large_entries(
-        local_repo,
-        remote_repo,
-        larger_entries,
-        commit,
-        AVG_CHUNK_SIZE,
-        progress,
-    );
+    let large_entries_sync =
+        chunk_and_send_large_entries(local_repo, remote_repo, larger_entries, progress);
     let small_entries_sync = bundle_and_send_small_entries(
         local_repo,
         remote_repo,
@@ -493,8 +484,6 @@ async fn chunk_and_send_large_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entries: Vec<Entry>,
-    commit: &Commit,
-    chunk_size: u64,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
@@ -502,7 +491,7 @@ async fn chunk_and_send_large_entries(
     }
 
     use tokio::time::sleep;
-    type PieceOfWork = (Entry, LocalRepository, Commit, RemoteRepository);
+    type PieceOfWork = (Entry, PathBuf, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
@@ -511,8 +500,7 @@ async fn chunk_and_send_large_entries(
         .map(|e| {
             (
                 e.to_owned(),
-                local_repo.to_owned(),
-                commit.to_owned(),
+                local_repo.path.clone(),
                 remote_repo.to_owned(),
             )
         })
@@ -522,6 +510,7 @@ async fn chunk_and_send_large_entries(
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
     }
+    let version_store = local_repo.version_store()?;
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     log::debug!(
@@ -538,6 +527,7 @@ async fn chunk_and_send_large_entries(
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
+        let version_store = Arc::clone(&version_store);
 
         let handle = tokio::spawn(async move {
             loop {
@@ -545,18 +535,39 @@ async fn chunk_and_send_large_entries(
                     break;
                 }
 
-                let Some((entry, repo, commit, remote_repo)) = queue.try_pop() else {
+                let Some((entry, repo_path, remote_repo)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
 
-                match upload_large_file_chunks(
-                    entry.clone(),
-                    repo,
-                    commit,
-                    remote_repo,
-                    chunk_size,
-                    &bar,
+                let version_path = match version_store.get_version_path(&entry.hash()) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        log::error!("Failed to get version path: {}", e);
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        break;
+                    }
+                };
+                let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
+                    .unwrap_or_else(|e| {
+                        log::error!("Failed to get relative path: {}", e);
+                        entry.path()
+                    });
+                let path = if relative_path.exists() {
+                    relative_path
+                } else {
+                    // for test environment
+                    repo_path.join(relative_path)
+                };
+
+                match api::client::versions::parallel_large_file_upload(
+                    &remote_repo,
+                    path,
+                    None::<PathBuf>,
+                    None,
+                    Some(entry.clone()),
+                    Some(&bar),
                 )
                 .await
                 {
