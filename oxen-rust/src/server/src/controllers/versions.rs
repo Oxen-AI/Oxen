@@ -9,11 +9,9 @@ use actix_web::{web, Error, HttpRequest, HttpResponse};
 use async_compression::tokio::write::GzipEncoder;
 use flate2::read::GzDecoder;
 use futures_util::{StreamExt, TryStreamExt as _};
-use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
-use liboxen::model::MerkleHash;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::versions::{VersionFile, VersionFileResponse};
@@ -283,6 +281,7 @@ pub async fn batch_upload(
     }))
 }
 
+// Read the payload files into memory and save to version store
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
@@ -293,10 +292,8 @@ pub async fn save_multiparts(
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
-    let json_mime: mime::Mime = "application/json".parse().unwrap();
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
-    // let mut synced_nodes: Option<ReceivedMetadata> = None
 
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
@@ -404,39 +401,6 @@ pub async fn save_multiparts(
                             format!("Failed to store version: {}", e),
                         );
                         continue;
-                    }
-                }
-            } else if name == "synced_nodes"
-                && field.content_type().is_some_and(|mime| {
-                    mime.type_() == json_mime.type_() && mime.subtype() == json_mime.subtype()
-                })
-            {
-                let mut field_bytes = Vec::new();
-                while let Some(chunk) = field.try_next().await? {
-                    field_bytes.extend_from_slice(&chunk);
-                }
-
-                let json_string = String::from_utf8(field_bytes.to_vec()).map_err(|e| {
-                    actix_web::error::ErrorBadRequest(format!("Invalid UTF-8 in JSON part: {}", e))
-                })?;
-
-                log::debug!("Received synced_nodes JSON: {}", json_string);
-
-                match serde_json::from_str::<Vec<MerkleHash>>(&json_string) {
-                    Ok(synced_nodes) => {
-                        log::debug!("Successfully parsed synced_nodes: {:?}", synced_nodes);
-
-                        for node_hash in synced_nodes {
-                            // TODO: log::error! with the error if this fails
-                            let _ = node_sync_status::mark_node_as_synced(repo, &node_hash);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to parse synced_nodes JSON: {}", e);
-                        return Err(actix_web::error::ErrorBadRequest(format!(
-                            "Invalid JSON for synced_nodes: {}",
-                            e
-                        )));
                     }
                 }
             }
