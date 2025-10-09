@@ -302,7 +302,7 @@ wheels = [
 [[package]]
 name = "oxenai"
 version = "0.37.2"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "fsspec" },
     { name = "maturin" },
