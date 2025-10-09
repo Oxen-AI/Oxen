@@ -658,7 +658,7 @@ mod tests {
             )?;
 
             for entry in paginated.entries.iter() {
-                println!("{:?}", entry.filename());
+                println!("{entry:?}");
             }
 
             assert_eq!(paginated.entries.first().unwrap().filename(), "dir_010");

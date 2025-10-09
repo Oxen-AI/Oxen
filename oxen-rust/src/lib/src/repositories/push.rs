@@ -1666,7 +1666,11 @@ A: Checkout Oxen.ai
             api::client::tree::create_nodes(
                 &local_repo,
                 &remote_repo,
-                candidate_nodes.clone(),
+                candidate_nodes
+                    .clone()
+                    .into_iter()
+                    .map(|node| node.hash)
+                    .collect(),
                 &progress,
             )
             .await?;
@@ -1680,6 +1684,111 @@ A: Checkout Oxen.ai
                 api::client::tree::get_node_hash_by_path(&remote_repo, &commit.id, new_path)
                     .await?;
             Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_push_large_file_and_clone_verify() -> Result<(), OxenError> {
+        // Test pushing a 100MB file and cloning to verify all files
+        // 1) Create local repo with 100MB file
+        // 2) Push to remote
+        // 3) Clone to different directory
+        // 4) Verify file exists and contents match
+
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            // Create a 100MB file with random data
+            let file_size = 100 * 1024 * 1024; // 100MB
+            let file_path = local_repo.path.join("large_file.bin");
+
+            println!("Generating 100MB random data...");
+            let mut rng = rand::thread_rng();
+            let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen::<u8>()).collect();
+
+            // Write the data to the file
+            util::fs::write_data(&file_path, &random_data)?;
+
+            // Verify the file size is exactly 100MB
+            let metadata = util::fs::metadata(&file_path)?;
+            assert_eq!(
+                metadata.len(),
+                file_size as u64,
+                "File size should be exactly 100MB"
+            );
+
+            // Add and commit the file
+            println!("Adding and committing 100MB file...");
+            repositories::add(&local_repo, &file_path).await?;
+            let commit = repositories::commit(&local_repo, "Add 100MB file")?;
+
+            // Set up remote and push
+            println!("Setting up remote repository...");
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+
+            let mut local_repo_mut = local_repo.clone();
+            command::config::set_remote(
+                &mut local_repo_mut,
+                constants::DEFAULT_REMOTE_NAME,
+                &remote_repo.remote.url,
+            )?;
+
+            println!("Pushing 100MB file to remote...");
+            repositories::push(&local_repo_mut).await?;
+
+            // Verify the push was successful by checking the remote repository
+            let remote_commit_opt =
+                api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
+            assert!(remote_commit_opt.is_some(), "Remote commit should exist");
+
+            let remote_repo_clone = remote_repo.clone();
+            let random_data_clone = random_data.clone();
+
+            // Clone to a different directory and verify
+            test::run_empty_dir_test_async(|clone_dir| async move {
+                println!("Cloning repository to verify files...");
+                let clone_repo_path = clone_dir.join("cloned_repo");
+                let clone_repo =
+                    repositories::clone_url(&remote_repo_clone.remote.url, &clone_repo_path)
+                        .await?;
+
+                // Verify the cloned file exists
+                let cloned_file_path = clone_repo.path.join("large_file.bin");
+                assert!(
+                    cloned_file_path.exists(),
+                    "Cloned file should exist at {:?}",
+                    cloned_file_path
+                );
+
+                // Verify the file size matches
+                let cloned_metadata = util::fs::metadata(&cloned_file_path)?;
+                assert_eq!(
+                    cloned_metadata.len(),
+                    file_size as u64,
+                    "Cloned file size should match original (100MB)"
+                );
+
+                // Verify the file contents match the original data
+                println!("Verifying file contents match...");
+                let cloned_data = util::fs::read_bytes_from_path(&cloned_file_path)?;
+                assert_eq!(
+                    cloned_data.len(),
+                    random_data_clone.len(),
+                    "Cloned file data length should match original"
+                );
+                assert_eq!(
+                    cloned_data, random_data_clone,
+                    "Cloned file contents should match the original data"
+                );
+
+                println!("Successfully verified 100MB file after clone!");
+                Ok(())
+            })
+            .await?;
+
+            // Cleanup remote repo
+            api::client::repositories::delete(&remote_repo).await?;
+
+            Ok(())
         })
         .await
     }

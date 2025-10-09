@@ -277,10 +277,6 @@ mod tests {
                     api::client::dir::list(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(""), 1, 10)
                         .await?;
 
-                for entry in root_entries.entries.iter() {
-                    println!("entry: {:?}", entry);
-                }
-
                 assert_eq!(root_entries.entries.len(), 4);
 
                 Ok(())
