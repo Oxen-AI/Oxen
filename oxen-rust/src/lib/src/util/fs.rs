@@ -27,12 +27,7 @@ use crate::constants::TREE_DIR;
 use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-<<<<<<< HEAD
-use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-=======
->>>>>>> 8f18d4ac8 (version store refactor and clean up unused function)
-use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
