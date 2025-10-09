@@ -321,9 +321,7 @@ pub fn commit_history_is_complete(
     // Ensure all commits and their parents are synced
     // Initialize commit reader
     for c in &history {
-        log::debug!(
-            "commit_history_is_complete checking if commit is synced: {c}"
-        );
+        log::debug!("commit_history_is_complete checking if commit is synced: {c}");
 
         if !core::commit_sync_status::commit_is_synced(repo, &MerkleHash::from_str(&c.id)?) {
             log::debug!("commit_history_is_complete ❌ commit is not synced: {c}");

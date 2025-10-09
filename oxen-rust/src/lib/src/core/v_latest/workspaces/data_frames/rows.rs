@@ -39,9 +39,7 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    log::debug!(
-        "add_row() path: {row_changes_path:?} got db_path: {db_path:?}"
-    );
+    log::debug!("add_row() path: {row_changes_path:?} got db_path: {db_path:?}");
 
     let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {df:?}");
@@ -278,9 +276,7 @@ pub async fn prepare_modified_or_removed_row(
         path.as_ref(),
     );
 
-    log::debug!(
-        "prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}"
-    );
+    log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 
     // TODONOW should not be using all rows - just need to parse delim
     let lazy_df =

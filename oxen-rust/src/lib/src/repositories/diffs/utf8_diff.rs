@@ -130,9 +130,7 @@ pub fn diff(
         if let Some(Difference::Same(text)) = diffs.get(current_idx) {
             let lines: Vec<_> = text.split('\n').collect();
             let count = 2.min(lines.len());
-            log::debug!(
-                "Adding post-context from diff [{current_idx}], lines [..{count}]"
-            );
+            log::debug!("Adding post-context from diff [{current_idx}], lines [..{count}]");
             add_lines_to_diff(&mut result, text, ChangeType::Unchanged, Some((0, count)));
 
             last_processed_diff_idx = current_idx as i32;

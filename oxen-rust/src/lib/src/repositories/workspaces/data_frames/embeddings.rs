@@ -103,9 +103,8 @@ fn perform_indexing(
             conn.execute("SET hnsw_enable_experimental_persistence = true;", [])?;
 
             // Convert column type
-            let sql = format!(
-                "ALTER TABLE df ALTER COLUMN {column_name} TYPE FLOAT[{vector_length}];"
-            );
+            let sql =
+                format!("ALTER TABLE df ALTER COLUMN {column_name} TYPE FLOAT[{vector_length}];");
             log::debug!("Updating column type: {sql}");
             conn.execute(&sql, [])?;
             Ok(())

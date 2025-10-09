@@ -130,9 +130,7 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
 
     // ✍️ Do all the rewriting
     let num_children = root_dir_node.children.len();
-    log::debug!(
-        "setting num children {num_children} for root dir on commit {commit}"
-    );
+    log::debug!("setting num children {num_children} for root dir on commit {commit}");
     let mut dir_node_opts = dir_node.get_opts();
     dir_node_opts.num_entries = num_children as u64;
     let dir_node = DirNode::new(&new_repo, dir_node_opts)?;

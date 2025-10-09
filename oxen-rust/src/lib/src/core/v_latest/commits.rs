@@ -103,11 +103,10 @@ pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     let head_commit_id = head_commit_id(repo)?;
     log::debug!("head_commit: head_commit_id: {head_commit_id:?}");
 
-    let node = repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(
-        OxenError::basic_str(format!(
-            "Merkle tree node not found for head commit: '{head_commit_id}'"
-        )),
-    )?;
+    let node =
+        repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(OxenError::basic_str(
+            format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
+        ))?;
     let commit = node.commit()?;
     Ok(commit.to_commit())
 }

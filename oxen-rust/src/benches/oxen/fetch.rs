@@ -48,9 +48,7 @@ async fn setup_repo_for_fetch_benchmark(
     println!(
         "setup_repo_for_fetch_benchmark got repo_size {repo_size}, num_files_to_fetch {num_files_to_fetch_in_benchmark}, and dir_size {dir_size}",
     );
-    let repo_dir = base_dir.join(format!(
-        "repo_{num_files_to_fetch_in_benchmark}_{dir_size}"
-    ));
+    let repo_dir = base_dir.join(format!("repo_{num_files_to_fetch_in_benchmark}_{dir_size}"));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }

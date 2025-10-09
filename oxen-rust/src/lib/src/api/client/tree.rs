@@ -151,9 +151,7 @@ pub async fn download_node_with_children(
     let uri = format!("/tree/nodes/hash/{node_hash_str}/download");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!(
-        "downloading node with children {node_hash_str} from {url}"
-    );
+    log::debug!("downloading node with children {node_hash_str} from {url}");
 
     node_download_request(local_repo, &url).await?;
 
@@ -383,9 +381,7 @@ async fn node_download_request(
     // The remote tar packs it in TREE_DIR/NODES_DIR
     // So this will unpack it in OXEN_HIDDEN_DIR/TREE_DIR/NODES_DIR
     let full_unpacked_path = local_repo.path.join(OXEN_HIDDEN_DIR);
-    log::debug!(
-        "node_download_request unpacking to {full_unpacked_path:?}"
-    );
+    log::debug!("node_download_request unpacking to {full_unpacked_path:?}");
 
     // create the temp path if it doesn't exist
     util::fs::create_dir_all(&full_unpacked_path)?;

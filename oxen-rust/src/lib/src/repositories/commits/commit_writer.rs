@@ -222,9 +222,7 @@ pub fn commit_dir_entries_with_parents(
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
 
-    log::debug!(
-        "collecting existing nodes for directories: {directories:?}"
-    );
+    log::debug!("collecting existing nodes for directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -836,9 +834,7 @@ fn r_create_dir_node(
     log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
 
     let Some(vnodes) = entries.get(&path) else {
-        log::debug!(
-            "r_create_dir_node No entries found for directory {path:?}"
-        );
+        log::debug!("r_create_dir_node No entries found for directory {path:?}");
         return Ok(());
     };
 
@@ -996,9 +992,7 @@ fn r_create_dir_node(
         }
     }
 
-    log::debug!(
-        "Finished processing dir {path:?} total written {total_written} entries"
-    );
+    log::debug!("Finished processing dir {path:?} total written {total_written} entries");
 
     Ok(())
 }

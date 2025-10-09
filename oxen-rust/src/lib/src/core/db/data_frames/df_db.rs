@@ -148,21 +148,15 @@ impl DfDBManager {
 /// Get a connection to a duckdb database.
 pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, OxenError> {
     let path = path.as_ref();
-    log::debug!(
-        "get_connection: Opening new DuckDB connection for path: {path:?}"
-    );
+    log::debug!("get_connection: Opening new DuckDB connection for path: {path:?}");
 
     if let Some(parent) = path.parent() {
-        log::debug!(
-            "get_connection: Ensuring parent directory exists: {parent:?}"
-        );
+        log::debug!("get_connection: Ensuring parent directory exists: {parent:?}");
         util::fs::create_dir_all(parent)?;
     }
 
     let conn = duckdb::Connection::open(path)?;
-    log::info!(
-        "get_connection: Successfully created new DuckDB connection for path: {path:?}"
-    );
+    log::info!("get_connection: Successfully created new DuckDB connection for path: {path:?}");
     Ok(conn)
 }
 
@@ -513,9 +507,7 @@ pub fn modify_row_with_polars_df(
 
     let where_clause = format!("\"{OXEN_ID_COL}\" = '{id}'");
 
-    let sql = format!(
-        "UPDATE {table_name} SET {set_clauses} WHERE {where_clause} RETURNING *"
-    );
+    let sql = format!("UPDATE {table_name} SET {set_clauses} WHERE {where_clause} RETURNING *");
 
     let values = df.get(0).unwrap(); // Checked above
 

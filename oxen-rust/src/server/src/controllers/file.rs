@@ -334,9 +334,7 @@ pub async fn import(
     let email = req.headers().get("oxen-commit-email");
     let message = req.headers().get("oxen-commit-message");
 
-    log::debug!(
-        "file::import commit info author:{author:?}, email:{email:?}, message:{message:?}"
-    );
+    log::debug!("file::import commit info author:{author:?}, email:{email:?}, message:{message:?}");
 
     // Make sure the resource path is not already a file
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;

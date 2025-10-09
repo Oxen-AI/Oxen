@@ -519,9 +519,7 @@ pub async fn upload_chunk(
     // mkdir if !exists
     if !tmp_dir.exists() {
         if let Err(err) = util::fs::create_dir_all(&tmp_dir) {
-            log::error!(
-                "upload_chunk could not complete chunk upload, mkdir failed: {err:?}"
-            );
+            log::error!("upload_chunk could not complete chunk upload, mkdir failed: {err:?}");
             return Ok(
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
             );
@@ -671,9 +669,7 @@ async fn check_if_upload_complete_and_unpack(
         // Cleanup tmp files
         match util::fs::remove_dir_all(&tmp_dir) {
             Ok(_) => {
-                log::debug!(
-                    "check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}"
-                );
+                log::debug!("check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}");
             }
             Err(err) => {
                 log::error!(

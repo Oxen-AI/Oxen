@@ -164,9 +164,7 @@ where
                         }
                     }
                     (Ok(key), _) => {
-                        log::error!(
-                            "list_added_path_entries() Could not values for key {key}."
-                        )
+                        log::error!("list_added_path_entries() Could not values for key {key}.")
                     }
                     (_, Ok(val)) => {
                         log::error!("list_added_path_entries() Could not key for value {val}.")

@@ -411,9 +411,7 @@ pub fn read_staged_entries_below_path(
 
                 // add the file or dir as an entry under its parent dir
                 if let Some(parent) = path.parent() {
-                    log::debug!(
-                        "read_staged_entries adding file {path:?} to parent {parent:?}"
-                    );
+                    log::debug!("read_staged_entries adding file {path:?} to parent {parent:?}");
                     dir_entries
                         .entry(parent.to_path_buf())
                         .or_default()
@@ -457,9 +455,7 @@ fn find_changes(
     let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
     let is_dir = full_path.is_dir();
-    log::debug!(
-        "find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}"
-    );
+    log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
 
     if let Some(ignore) = &opts.ignore {
         if ignore.contains(search_node_path) || ignore.contains(&full_path) {
@@ -669,9 +665,7 @@ fn find_local_changes(
     let full_path = repo.path.join(search_node_path);
     let is_dir = full_path.is_dir();
 
-    log::debug!(
-        "find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}"
-    );
+    log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
 
     if let Some(ignore) = &opts.ignore {
         if ignore.contains(search_node_path) || ignore.contains(&full_path) {

@@ -110,9 +110,7 @@ pub fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
 }
 
 pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
-    log::debug!(
-        "repositories::entries::list_namespaces repositories for sync dir: {sync_dir:?}"
-    );
+    log::debug!("repositories::entries::list_namespaces repositories for sync dir: {sync_dir:?}");
     let mut namespaces: Vec<String> = vec![];
     for path in std::fs::read_dir(sync_dir)? {
         let path = path.unwrap().path();
@@ -168,17 +166,13 @@ pub fn transfer_namespace(
     from_namespace: &str,
     to_namespace: &str,
 ) -> Result<LocalRepository, OxenError> {
-    log::debug!(
-        "transfer_namespace from: {from_namespace} to: {to_namespace}"
-    );
+    log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
     let repo_dir = sync_dir.join(from_namespace).join(repo_name);
     let new_repo_dir = sync_dir.join(to_namespace).join(repo_name);
 
     if !repo_dir.exists() {
-        log::debug!(
-            "Error while transferring repo: repo does not exist: {repo_dir:?}"
-        );
+        log::debug!("Error while transferring repo: repo does not exist: {repo_dir:?}");
         return Err(OxenError::repo_not_found(RepoNew::from_namespace_name(
             from_namespace,
             repo_name,

@@ -383,8 +383,7 @@ impl error::ResponseError for OxenHttpError {
                             .map(|f| format!("{}: {}", f.name, f.dtype))
                             .collect::<Vec<String>>()
                             .join(", ");
-                        let error =
-                            format!("Schema does not match. Valid Fields [{schema_vals}]");
+                        let error = format!("Schema does not match. Valid Fields [{schema_vals}]");
 
                         let error_json = json!({
                             "error": {

@@ -139,13 +139,9 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
 pub async fn get_repo_data_by_remote(
     remote: &Remote,
 ) -> Result<Option<RepositoryDataTypesView>, OxenError> {
-    log::debug!(
-        "api::client::repositories::get_repo_data_by_remote({remote:?})"
-    );
+    log::debug!("api::client::repositories::get_repo_data_by_remote({remote:?})");
     let url = api::endpoint::url_from_remote(remote, "")?;
-    log::debug!(
-        "api::client::repositories::get_repo_data_by_remote url: {url}"
-    );
+    log::debug!("api::client::repositories::get_repo_data_by_remote url: {url}");
 
     let client = client::new_for_url(&url)?;
     match client.get(&url).send().await {

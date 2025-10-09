@@ -128,9 +128,7 @@ impl RefManager {
             Ok(Some(value)) => Ok(Some(String::from(str::from_utf8(&value)?))),
             Ok(None) => Ok(None),
             Err(err) => {
-                log::error!(
-                    "get_commit_id_for_branch error finding commit id for branch {name}"
-                );
+                log::error!("get_commit_id_for_branch error finding commit id for branch {name}");
                 Err(OxenError::basic_str(err))
             }
         }

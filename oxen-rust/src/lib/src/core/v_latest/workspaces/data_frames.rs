@@ -120,9 +120,7 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
-    log::debug!(
-        "core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}"
-    );
+    log::debug!("core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}");
 
     let commit_merkle_tree = CommitMerkleTree::from_path(repo, commit, path, true)?;
     let file_hash = commit_merkle_tree.root.hash;
@@ -297,9 +295,8 @@ fn add_row_status_cols(conn: &Connection) -> Result<(), OxenError> {
     );
     conn.execute(&query_status, [])?;
 
-    let query_hash = format!(
-        "ALTER TABLE \"{TABLE_NAME}\" ADD COLUMN \"{DIFF_HASH_COL}\" VARCHAR DEFAULT NULL"
-    );
+    let query_hash =
+        format!("ALTER TABLE \"{TABLE_NAME}\" ADD COLUMN \"{DIFF_HASH_COL}\" VARCHAR DEFAULT NULL");
     conn.execute(&query_hash, [])?;
     Ok(())
 }
@@ -310,9 +307,7 @@ pub fn extract_file_node_to_working_dir(
     file_node: &FileNode,
 ) -> Result<PathBuf, OxenError> {
     let dir_path = dir_path.as_ref();
-    log::debug!(
-        "extract_file_node_to_working_dir dir_path: {dir_path:?} file_node: {file_node}"
-    );
+    log::debug!("extract_file_node_to_working_dir dir_path: {dir_path:?} file_node: {file_node}");
     let workspace_repo = &workspace.workspace_repo;
     let path = PathBuf::from(file_node.name());
 

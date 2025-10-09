@@ -71,9 +71,7 @@ pub fn parse_resource_from_path(
                 // Continue to branch resolution below if no workspace is found
             }
             Err(e) => {
-                log::debug!(
-                    "Workspace lookup failed for '{first_str}' with error: {e:?}"
-                );
+                log::debug!("Workspace lookup failed for '{first_str}' with error: {e:?}");
                 // Continue to branch resolution below if no workspace is found
             }
         }

@@ -1171,9 +1171,7 @@ fn p_scan_df_with_extension(
     total_rows: usize,
 ) -> Result<LazyFrame, OxenError> {
     let input_path = path.as_ref();
-    log::debug!(
-        "Scanning df {input_path:?} with extension {extension:?}"
-    );
+    log::debug!("Scanning df {input_path:?} with extension {extension:?}");
     let err = format!("Unknown file type scan_df {input_path:?} {extension:?}");
     let quote_char = opts.quote_char.as_ref().map(|s| s.as_bytes()[0]);
     match extension {
@@ -1213,9 +1211,7 @@ fn p_get_size_with_extension(
     extension: Option<&str>,
 ) -> Result<DataFrameSize, OxenError> {
     let input_path = path.as_ref();
-    log::debug!(
-        "Getting size of df {input_path:?} with extension {extension:?}"
-    );
+    log::debug!("Getting size of df {input_path:?} with extension {extension:?}");
 
     // Don't need that many rows to get the width
     let num_scan_rows = constants::DEFAULT_PAGE_SIZE;

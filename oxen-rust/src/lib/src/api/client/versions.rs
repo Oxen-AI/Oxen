@@ -188,9 +188,7 @@ pub async fn download_data_from_version_paths(
                 num_retries += 1;
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
-                log::warn!(
-                    "Could not download content {err:?} sleeping {sleep_time}"
-                );
+                log::warn!("Could not download content {err:?} sleeping {sleep_time}");
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
@@ -270,9 +268,8 @@ pub async fn try_download_data_from_version_paths(
                     );
                 }
                 Err(err) => {
-                    let err = format!(
-                        "Could not store file {file_hash} to version store -> {err:?}"
-                    );
+                    let err =
+                        format!("Could not store file {file_hash} to version store -> {err:?}");
                     return Err(OxenError::basic_str(err));
                 }
             }
@@ -671,9 +668,7 @@ pub async fn workspace_multipart_batch_upload_versions(
         }
 
         let Some(_file_name) = path.file_name() else {
-            return Err(OxenError::basic_str(format!(
-                "Invalid file path: {path:?}"
-            )));
+            return Err(OxenError::basic_str(format!("Invalid file path: {path:?}")));
         };
 
         let file = std::fs::read(&path)

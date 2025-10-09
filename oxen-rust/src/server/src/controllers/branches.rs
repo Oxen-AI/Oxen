@@ -175,9 +175,7 @@ pub async fn maybe_create_merge(
     let current_commit = repositories::commits::get_by_id(&repository, &current_commit_id)?
         .ok_or(OxenError::resource_not_found(&current_commit_id))?;
 
-    log::debug!(
-        "maybe_create_merge got client head commit {incoming_commit_id:?}"
-    );
+    log::debug!("maybe_create_merge got client head commit {incoming_commit_id:?}");
 
     let maybe_merge_commit = repositories::merge::merge_commit_into_base_on_branch(
         &repository,

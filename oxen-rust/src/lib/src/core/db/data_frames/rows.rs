@@ -83,9 +83,7 @@ pub fn modify_row(
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
-        log::error!(
-            "modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}"
-        );
+        log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
         return Err(OxenError::incompatible_schemas(table_schema));
     }
 
@@ -149,9 +147,7 @@ pub fn modify_rows(
             .collect();
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
-            log::error!(
-                "modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}"
-            );
+            log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
             return Err(OxenError::incompatible_schemas(table_schema));
         }
 

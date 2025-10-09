@@ -125,9 +125,7 @@ pub fn create_with_name(
     log::debug!("index::workspaces::create called! {oxen_dir:?}");
 
     if oxen_dir.exists() {
-        log::debug!(
-            "index::workspaces::create already have oxen repo directory {oxen_dir:?}"
-        );
+        log::debug!("index::workspaces::create already have oxen repo directory {oxen_dir:?}");
         return Err(OxenError::basic_str(format!(
             "Workspace {workspace_id} already exists"
         )));
@@ -167,9 +165,7 @@ pub fn create_with_name(
 
     // Write the TOML string to WORKSPACE_CONFIG
     let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
-    log::debug!(
-        "index::workspaces::create writing workspace config to: {workspace_config_path:?}"
-    );
+    log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
     util::fs::write_to_path(&workspace_config_path, toml_string)?;
 
     Ok(Workspace {
@@ -297,17 +293,13 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
         return Err(OxenError::workspace_not_found(workspace_id.into()));
     }
 
-    log::debug!(
-        "workspace::delete cleaning up workspace dir: {workspace_dir:?}"
-    );
+    log::debug!("workspace::delete cleaning up workspace dir: {workspace_dir:?}");
 
     // Clean up caches before deleting the workspace
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
     match util::fs::remove_dir_all(&workspace_dir) {
-        Ok(_) => log::debug!(
-            "workspace::delete removed workspace dir: {workspace_dir:?}"
-        ),
+        Ok(_) => log::debug!("workspace::delete removed workspace dir: {workspace_dir:?}"),
         Err(e) => log::error!("workspace::delete error removing workspace dir: {e:?}"),
     }
 
@@ -334,9 +326,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
-        log::error!(
-            "Failed to parse workspace config: {config_path:?}, err: {e}"
-        );
+        log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
         OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
     })?;
 
@@ -349,12 +339,8 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     config.workspace_commit_id = new_commit_id.to_string();
 
     let toml_string = toml::to_string(&config).map_err(|e| {
-        log::error!(
-            "Failed to serialize workspace config to TOML: {config_path:?}, err: {e}"
-        );
-        OxenError::basic_str(format!(
-            "Failed to serialize workspace config to TOML: {e}"
-        ))
+        log::error!("Failed to serialize workspace config to TOML: {config_path:?}, err: {e}");
+        OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
     })?;
 
     util::fs::write_to_path(&config_path, toml_string)?;

@@ -285,9 +285,7 @@ pub async fn list_diff_entries(
         base_path,
         dirs.len()
     );
-    log::debug!(
-        "list_diff_entries dir: '{base_path:?}' Page num {page} Page size {page_size}"
-    );
+    log::debug!("list_diff_entries dir: '{base_path:?}' Page num {page} Page size {page_size}");
     let all = dirs.into_iter().chain(file_entries).collect();
 
     Ok(DiffEntriesCounts {
@@ -702,9 +700,7 @@ fn subset_dir_diffs_to_direct_children(
         if let Some(meta_entry) = relevant_entry {
             if let Some(resource) = &meta_entry.resource {
                 let path = PathBuf::from(&resource.path);
-                log::debug!(
-                    "subset_dir_diffs_to_direct_children path {path:?} dir {dir:?}"
-                );
+                log::debug!("subset_dir_diffs_to_direct_children path {path:?} dir {dir:?}");
                 if path.parent() == Some(dir.as_path()) {
                     filtered_entries.push(entry);
                 }

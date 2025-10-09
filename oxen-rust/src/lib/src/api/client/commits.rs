@@ -332,9 +332,7 @@ pub async fn download_dir_hashes_from_commit(
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!(
-        "calling download_dir_hashes_from_commit for commit {commit_id}"
-    );
+    log::debug!("calling download_dir_hashes_from_commit for commit {commit_id}");
     download_dir_hashes_from_url(url, path).await
 }
 
@@ -436,9 +434,7 @@ pub async fn download_dir_hashes_db_to_path(
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{commit_id}/commit_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!(
-        "calling download_dir_hashes_db_to_path for commit {commit_id}"
-    );
+    log::debug!("calling download_dir_hashes_db_to_path for commit {commit_id}");
     log::debug!("{} downloading from {}", current_function!(), url);
     let client = client::new_for_url(&url)?;
     match client.get(url).send().await {
@@ -463,9 +459,7 @@ pub async fn download_dir_hashes_db_to_path(
             util::fs::create_dir_all(&tmp_path)?;
 
             let archive_result = archive.unpack(&tmp_path).await;
-            log::debug!(
-                "archive_result for commit {commit_id:?} is {archive_result:?}"
-            );
+            log::debug!("archive_result for commit {commit_id:?} is {archive_result:?}");
             archive_result?;
 
             if full_unpacked_path.exists() {
@@ -895,9 +889,7 @@ async fn upload_data_to_server_in_chunks_with_client(
     filename: &Option<String>,
 ) -> Result<(), OxenError> {
     let total_size = buffer.len();
-    log::debug!(
-        "upload_data_to_server_in_chunks chunking data {total_size} ..."
-    );
+    log::debug!("upload_data_to_server_in_chunks chunking data {total_size} ...");
     let chunks: Vec<&[u8]> = buffer.chunks(chunk_size).collect();
     let hash = hash_buffer(buffer);
     log::debug!(

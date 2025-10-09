@@ -116,10 +116,7 @@ pub async fn create_checkout_branch(
             )));
         }
         other => {
-            println!(
-                "{}",
-                format!("Unexpected workspace status: {other}").red()
-            );
+            println!("{}", format!("Unexpected workspace status: {other}").red());
         }
     }
     println!("{} {}", "Workspace ID:".green().bold(), workspace.id.bold());

@@ -681,16 +681,12 @@ pub fn determine_file_status(
     // Check if the file is already in the head commit
     let file_path = file_name.as_ref();
     let data_path = data_path.as_ref();
-    log::debug!(
-        "determine_file_status data_path {data_path:?} file_name {file_path:?}"
-    );
+    log::debug!("determine_file_status data_path {data_path:?} file_name {file_path:?}");
     let maybe_file_node = get_file_node(maybe_dir_node, file_path)?;
     let mut previous_oxen_metadata: Option<GenericMetadata> = None;
     // This is ugly - but makes sure we don't have to rehash the file if it hasn't changed
     let (status, hash, num_bytes, mtime) = if let Some(file_node) = &maybe_file_node {
-        log::debug!(
-            "got existing file_node: {file_node} data_path {data_path:?}"
-        );
+        log::debug!("got existing file_node: {file_node} data_path {data_path:?}");
 
         // first check if the file timestamp is different
         let metadata = util::fs::metadata(data_path)?;
@@ -700,9 +696,7 @@ pub fn determine_file_status(
             log::debug!("has_different_modification_time true {file_node}");
             let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
             if file_node.hash().to_u128() != hash {
-                log::debug!(
-                    "has_different_modification_time hash is different true {file_node}"
-                );
+                log::debug!("has_different_modification_time hash is different true {file_node}");
                 let num_bytes = metadata.len();
                 (
                     StagedEntryStatus::Modified,
@@ -1115,9 +1109,7 @@ pub fn maybe_construct_generic_metadata_for_tabular(
     df_metadata: Option<GenericMetadata>,
     previous_oxen_metadata: GenericMetadata,
 ) -> Option<GenericMetadata> {
-    log::debug!(
-        "maybe_construct_generic_metadata_for_tabular {df_metadata:?}"
-    );
+    log::debug!("maybe_construct_generic_metadata_for_tabular {df_metadata:?}");
     log::debug!("previous_oxen_metadata {previous_oxen_metadata:?}");
 
     if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {

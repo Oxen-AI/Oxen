@@ -345,9 +345,7 @@ pub async fn diff_commits(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
-    log::debug!(
-        "Compare command called with: {cpath_1:?} and {cpath_2:?}"
-    );
+    log::debug!("Compare command called with: {cpath_1:?} and {cpath_2:?}");
 
     let (node_1, node_2) = match (cpath_1.commit, cpath_2.commit) {
         (Some(commit_1), Some(commit_2)) => {
@@ -878,9 +876,7 @@ fn get_keys_targets_smart_defaults(
     targets: Vec<String>,
     schema_diff: &SchemaDiff,
 ) -> Result<(Vec<String>, Vec<String>), OxenError> {
-    log::debug!(
-        "get_keys_targets_smart_defaults keys {keys:?} targets {targets:?}"
-    );
+    log::debug!("get_keys_targets_smart_defaults keys {keys:?} targets {targets:?}");
     let has_keys = !keys.is_empty();
     let has_targets = !targets.is_empty();
 
@@ -1267,9 +1263,7 @@ pub fn delete_df_diff(repo: &LocalRepository, compare_id: &str) -> Result<(), Ox
     let compare_dir = get_diff_dir(repo, compare_id);
 
     if compare_dir.exists() {
-        log::debug!(
-            "delete_df_compare() found compare_dir, deleting: {compare_dir:?}"
-        );
+        log::debug!("delete_df_compare() found compare_dir, deleting: {compare_dir:?}");
         std::fs::remove_dir_all(&compare_dir)?;
     }
     Ok(())

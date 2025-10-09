@@ -18,9 +18,7 @@ pub fn save_data_frame_row_changes(
 
     db.put(key, val_json.as_bytes())?;
 
-    log::debug!(
-        "save_data_frame_row_changes() saved change: {data_frame_row_change:?}"
-    );
+    log::debug!("save_data_frame_row_changes() saved change: {data_frame_row_change:?}");
 
     Ok(())
 }
@@ -28,9 +26,7 @@ pub fn save_data_frame_row_changes(
 pub fn delete_data_frame_row_changes(db: &DB, row_id: &str) -> Result<(), OxenError> {
     db.delete(row_id)?;
 
-    log::debug!(
-        "delete_data_frame_row_changes() deleted change in: {row_id:?}"
-    );
+    log::debug!("delete_data_frame_row_changes() deleted change in: {row_id:?}");
 
     Ok(())
 }

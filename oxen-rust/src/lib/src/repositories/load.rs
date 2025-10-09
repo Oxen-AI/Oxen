@@ -11,9 +11,7 @@ pub async fn load(
     dest_path: &Path,
     no_working_dir: bool,
 ) -> Result<(), OxenError> {
-    let done_msg: String = format!(
-        "✅ Loaded {src_path:?} to an oxen repo at {dest_path:?}"
-    );
+    let done_msg: String = format!("✅ Loaded {src_path:?} to an oxen repo at {dest_path:?}");
 
     let dest_path = if dest_path.exists() {
         if dest_path.is_file() {

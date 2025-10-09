@@ -279,9 +279,7 @@ fn collect_missing_entries(
                     &mut unique_hashes,
                 )?
                 else {
-                    log::warn!(
-                        "get_subtree_by_depth returned None for path: {subtree_path:?}"
-                    );
+                    log::warn!("get_subtree_by_depth returned None for path: {subtree_path:?}");
                     continue;
                 };
 
@@ -305,9 +303,7 @@ fn collect_missing_entries(
                 &mut unique_hashes,
             )?
             else {
-                log::warn!(
-                    "get_subtree_by_depth returned None for commit: {commit:?}"
-                );
+                log::warn!("get_subtree_by_depth returned None for commit: {commit:?}");
                 continue;
             };
 
@@ -443,9 +439,7 @@ pub async fn maybe_fetch_missing_entries(
     };
 
     let Some(commit_merkle_tree) = repositories::tree::get_root_with_children(repo, commit)? else {
-        log::warn!(
-            "get_root_with_children returned None for commit: {commit:?}"
-        );
+        log::warn!("get_root_with_children returned None for commit: {commit:?}");
         return Ok(());
     };
 

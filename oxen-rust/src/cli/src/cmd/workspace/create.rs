@@ -70,10 +70,7 @@ impl RunCmd for WorkspaceCreateCmd {
                 println!("{}", "Workspace already exists".yellow().bold());
             }
             other => {
-                println!(
-                    "{}",
-                    format!("Unexpected workspace status: {other}").red()
-                );
+                println!("{}", format!("Unexpected workspace status: {other}").red());
             }
         }
         println!("{} {}", "Workspace ID:".green().bold(), workspace.id.bold());

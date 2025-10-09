@@ -489,9 +489,7 @@ async fn p_upload_single_file(
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!(
-        "api::client::workspaces::files::add sending file_name: {file_name:?}"
-    );
+    log::info!("api::client::workspaces::files::add sending file_name: {file_name:?}");
 
     let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
     let form = reqwest::multipart::Form::new().part("file", file_part);
@@ -651,9 +649,7 @@ pub async fn rm_files(
         let body = client::parse_json_body(&url, response).await?;
         log::debug!("rm_files got body: {body}");
 
-        println!(
-            "🐂 oxen staged paths {paths:?} as removed for workspace {workspace_id}"
-        );
+        println!("🐂 oxen staged paths {paths:?} as removed for workspace {workspace_id}");
 
         // Remove files locally
         for path in expanded_paths {

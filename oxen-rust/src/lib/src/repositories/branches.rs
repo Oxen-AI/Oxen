@@ -270,9 +270,7 @@ pub fn latest_synced_commit(repo: &LocalRepository, name: &str) -> Result<Commit
     if is_locked(repo, name)? {
         log::debug!("Latest synced commit is locked for branch {name}");
         let commit_id = read_lock_file(repo, name)?;
-        log::debug!(
-            "Latest synced commit read from lock file for branch {name} is {commit_id}"
-        );
+        log::debug!("Latest synced commit read from lock file for branch {name} is {commit_id}");
         let commit = repositories::commits::get_by_id(repo, &commit_id)?
             .ok_or(OxenError::commit_id_does_not_exist(&commit_id))?;
         return Ok(commit);

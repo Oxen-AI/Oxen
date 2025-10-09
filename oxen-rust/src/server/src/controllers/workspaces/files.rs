@@ -340,9 +340,7 @@ pub async fn save_parts(
                 // Need copy to pass to thread and return the name
                 let filepath = full_dir.join(&upload_filename);
                 let filepath_cpy = filepath.clone();
-                log::debug!(
-                    "workspace::files::save_parts writing file to {filepath:?}"
-                );
+                log::debug!("workspace::files::save_parts writing file to {filepath:?}");
 
                 // File::create is blocking operation, use threadpool
                 let mut f = web::block(|| std::fs::File::create(filepath)).await??;

@@ -114,9 +114,7 @@ pub fn list_commits_between_branches(
     base_branch: &Branch,
     head_branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
-    log::debug!(
-        "list_commits_between_branches() base: {base_branch:?} head: {head_branch:?}"
-    );
+    log::debug!("list_commits_between_branches() base: {base_branch:?} head: {head_branch:?}");
     let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
     let head_commit = get_commit_or_head(repo, Some(head_branch.commit_id.clone()))?;
 
@@ -132,15 +130,11 @@ pub fn list_commits_between_commits(
     base_commit: &Commit,
     head_commit: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    log::debug!(
-        "list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}"
-    );
+    log::debug!("list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}");
 
     let lca = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)?;
 
-    log::debug!(
-        "For commits {base_commit:?} -> {head_commit:?} found lca {lca:?}"
-    );
+    log::debug!("For commits {base_commit:?} -> {head_commit:?} found lca {lca:?}");
 
     log::debug!("Reading history from lca to head");
     list_between(repo, &lca, head_commit)
@@ -175,9 +169,7 @@ pub async fn merge_into_base(
     merge_branch: &Branch,
     base_branch: &Branch,
 ) -> Result<Option<Commit>, OxenError> {
-    log::debug!(
-        "merge_into_base merge {merge_branch} into {base_branch}"
-    );
+    log::debug!("merge_into_base merge {merge_branch} into {base_branch}");
 
     if merge_branch.commit_id == base_branch.commit_id {
         // If the merge branch is the same as the base branch, there is nothing to merge
@@ -188,9 +180,7 @@ pub async fn merge_into_base(
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
 
     let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
-    log::debug!(
-        "merge_into_base base: {base_commit:?} merge: {merge_commit:?} lca: {lca:?}"
-    );
+    log::debug!("merge_into_base base: {base_commit:?} merge: {merge_commit:?} lca: {lca:?}");
 
     let commits = MergeCommits {
         lca,
@@ -532,9 +522,7 @@ fn r_ff_merge_commit(
                         results.cannot_overwrite_entries.push(file_path.clone());
                     }
                 } else {
-                    log::debug!(
-                        "Merge entry has not changed, but still !restore: {file_path:?}"
-                    );
+                    log::debug!("Merge entry has not changed, but still !restore: {file_path:?}");
                     if !should_restore {
                         results.cannot_overwrite_entries.push(file_path.clone());
                     }

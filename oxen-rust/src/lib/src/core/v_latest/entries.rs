@@ -55,9 +55,7 @@ pub fn list_directory(
         version: revision.clone(),
     });
 
-    log::debug!(
-        "list_directory directory {directory:?} revision {revision:?}"
-    );
+    log::debug!("list_directory directory {directory:?} revision {revision:?}");
 
     let commit = parsed_resource
         .commit

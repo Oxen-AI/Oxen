@@ -73,9 +73,7 @@ fn get_storage_for_repo(repo: &LocalRepository) -> Result<u64, OxenError> {
             }
         },
         Err(e) => {
-            log::error!(
-                "repositories::namespaces::get_storage_for_repo error getting size: {e}"
-            );
+            log::error!("repositories::namespaces::get_storage_for_repo error getting size: {e}");
             Err(e)
         }
     }

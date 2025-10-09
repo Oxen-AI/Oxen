@@ -199,9 +199,7 @@ async fn restore_dir(
         match restore_file(repo, file_node, file_path, version_store).await {
             Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
             Err(e) => {
-                log::error!(
-                    "restore::restore_dir: error restoring file {file_path:?}: {e:?}"
-                );
+                log::error!("restore::restore_dir: error restoring file {file_path:?}: {e:?}");
             }
         }
         bar.inc(1);

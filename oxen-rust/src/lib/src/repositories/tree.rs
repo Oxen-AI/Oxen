@@ -259,22 +259,16 @@ pub fn get_subtree_by_depth(
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match (maybe_subtree, maybe_depth) {
         (Some(subtree), Some(depth)) => {
-            log::debug!(
-                "Getting subtree {subtree:?} with depth {depth} for commit {commit}"
-            );
+            log::debug!("Getting subtree {subtree:?} with depth {depth} for commit {commit}");
             get_subtree(repo, commit, subtree, *depth)
         }
         (Some(subtree), None) => {
             // If the depth is not provided, we default to -1 which means the entire subtree
-            log::debug!(
-                "Getting subtree {subtree:?} for commit {commit} with depth -1"
-            );
+            log::debug!("Getting subtree {subtree:?} for commit {commit} with depth -1");
             get_subtree(repo, commit, subtree, -1)
         }
         (None, Some(depth)) => {
-            log::debug!(
-                "Getting tree from root with depth {depth} for commit {commit}"
-            );
+            log::debug!("Getting tree from root with depth {depth} for commit {commit}");
             get_subtree(repo, commit, PathBuf::from("."), *depth)
         }
         _ => {
@@ -471,9 +465,7 @@ pub fn list_missing_file_hashes_from_commits(
     for commit_id in commit_ids {
         let commit_id_str = commit_id.to_string();
         let Some(commit) = repositories::commits::get_by_id(repo, &commit_id_str)? else {
-            log::error!(
-                "list_missing_file_hashes_from_commits Commit {commit_id_str} not found"
-            );
+            log::error!("list_missing_file_hashes_from_commits Commit {commit_id_str} not found");
             return Err(OxenError::revision_not_found(commit_id_str.into()));
         };
         // Handle the case where we are given a list of subtrees to check
@@ -540,9 +532,7 @@ pub fn list_missing_file_hashes_from_nodes(
     for commit_id in commit_ids {
         let commit_id_str = commit_id.to_string();
         let Some(commit) = repositories::commits::get_by_id(repo, &commit_id_str)? else {
-            log::error!(
-                "list_missing_file_hashes_from_nodes Commit {commit_id_str} not found"
-            );
+            log::error!("list_missing_file_hashes_from_nodes Commit {commit_id_str} not found");
             return Err(OxenError::revision_not_found(commit_id_str.into()));
         };
         // Handle the case where we are given a list of subtrees to check
@@ -866,9 +856,7 @@ pub fn list_files_by_type(
 ) -> Result<HashSet<FileNode>, OxenError> {
     let mut file_nodes = HashSet::new();
     let Some(tree) = get_root_with_children(repo, commit)? else {
-        log::warn!(
-            "get_root_with_children returned None for commit: {commit:?}"
-        );
+        log::warn!("get_root_with_children returned None for commit: {commit:?}");
         return Ok(file_nodes);
     };
     r_list_files_by_type(&tree, data_type, &mut file_nodes, PathBuf::new())?;

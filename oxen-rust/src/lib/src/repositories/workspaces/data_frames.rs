@@ -343,9 +343,8 @@ pub async fn from_directory(
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                let bulk_insert_sql = format!(
-                    "INSERT INTO file_listing (file_path) VALUES {values_clause}"
-                );
+                let bulk_insert_sql =
+                    format!("INSERT INTO file_listing (file_path) VALUES {values_clause}");
 
                 let params: Vec<&dyn duckdb::ToSql> = file_paths
                     .iter()

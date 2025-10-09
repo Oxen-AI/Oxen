@@ -558,9 +558,7 @@ pub async fn download_large_entry(
         util::fs::create_dir_all(&tmp_dir)?;
     }
 
-    log::debug!(
-        "Trying to download file {remote_path:?} to dir {tmp_dir:?}"
-    );
+    log::debug!("Trying to download file {remote_path:?} to dir {tmp_dir:?}");
 
     // Download chunks in parallel
     type PieceOfWork = (
@@ -821,9 +819,7 @@ pub async fn download_data_from_version_paths(
                 num_retries += 1;
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
-                log::warn!(
-                    "Could not download content {err:?} sleeping {sleep_time}"
-                );
+                log::warn!("Could not download content {err:?} sleeping {sleep_time}");
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
@@ -882,17 +878,11 @@ pub async fn try_download_data_from_version_paths(
 
             let file_hash = match file.header().path() {
                 Ok(path) => path.to_string_lossy().to_string(),
-                Err(e) => {
-                    return Err(OxenError::basic_str(format!(
-                        "Invalid tar entry path: {e}"
-                    )))
-                }
+                Err(e) => return Err(OxenError::basic_str(format!("Invalid tar entry path: {e}"))),
             };
 
             let Some(entry_path) = content_ids.get(&file_hash) else {
-                log::warn!(
-                    "Skipping unexpected tar entry not in requested set: {file_hash}"
-                );
+                log::warn!("Skipping unexpected tar entry not in requested set: {file_hash}");
                 continue;
             };
             log::debug!(

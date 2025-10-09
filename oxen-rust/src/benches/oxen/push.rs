@@ -49,9 +49,7 @@ async fn setup_repo_for_push_benchmark(
     println!(
         "setup_repo_for_push_benchmark got repo_size {repo_size}, num_files_to_push {num_files_to_push_in_benchmark}, and dir_size {dir_size}",
     );
-    let repo_dir = base_dir.join(format!(
-        "repo_{num_files_to_push_in_benchmark}_{dir_size}"
-    ));
+    let repo_dir = base_dir.join(format!("repo_{num_files_to_push_in_benchmark}_{dir_size}"));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
@@ -169,7 +167,6 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
         group.bench_with_input(
             BenchmarkId::new(
                 format!("{num_files_to_push}k_files_in_{dir_size}dirs"),
-
                 format!("{:?}", (num_files_to_push, dir_size)),
             ),
             &(num_files_to_push, dir_size),

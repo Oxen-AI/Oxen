@@ -617,9 +617,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
     // There is not a recursive copy in the standard library, so we implement it here
     let from = from.as_ref();
     let to = to.as_ref();
-    log::debug!(
-        "copy_dir_all Copy directory from: {from:?} -> to: {to:?}"
-    );
+    log::debug!("copy_dir_all Copy directory from: {from:?} -> to: {to:?}");
 
     let mut stack = Vec::new();
     stack.push(PathBuf::from(from));
@@ -1610,13 +1608,12 @@ fn detect_image_format_from_version(
     let mut file = versioned_store.open_version(hash)?;
 
     let mut header = [0u8; 10];
-    let n = file.read(&mut header).map_err(|e| {
-        OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
-    })?;
+    let n = file
+        .read(&mut header)
+        .map_err(|e| OxenError::basic_str(format!("Failed to read version file {hash}: {e}")))?;
     // Set the pointer back to the front
-    file.seek(SeekFrom::Start(0)).map_err(|e| {
-        OxenError::basic_str(format!("Failed to seek version file {hash}: {e}"))
-    })?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| OxenError::basic_str(format!("Failed to seek version file {hash}: {e}")))?;
 
     // detect format
     let format = image::guess_format(&header[..n])

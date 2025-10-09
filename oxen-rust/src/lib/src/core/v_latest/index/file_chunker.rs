@@ -341,9 +341,7 @@ impl ChunkShardManager {
             .db
             .get(hash)?
             .ok_or(OxenError::basic_str("Chunk not found"))?;
-        log::debug!(
-            "Reading chunk from shard: [{shard_idx}] for hash: {hash}"
-        );
+        log::debug!("Reading chunk from shard: [{shard_idx}] for hash: {hash}");
         // Cache the current shard file for faster reads of the same shard
         if shard_idx as i32 != self.current_idx {
             self.current_file = Some(ChunkShardFile::open(&self.repo, shard_idx)?);

@@ -78,14 +78,10 @@ impl CommitMerkleTree {
         if node_path == PathBuf::from(".") {
             node_path = PathBuf::from("");
         }
-        log::debug!(
-            "Read path {node_path:?} in commit {commit:?} depth: {depth}"
-        );
+        log::debug!("Read path {node_path:?} in commit {commit:?} depth: {depth}");
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
         let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
-            log::debug!(
-                "dir_hashes {dir_hashes:?} does not contain path: {node_path:?}"
-            );
+            log::debug!("dir_hashes {dir_hashes:?} does not contain path: {node_path:?}");
             return Err(OxenError::basic_str(format!(
                 "Can only load a subtree with an existing directory path: '{}'",
                 node_path.to_str().unwrap()
@@ -217,9 +213,7 @@ impl CommitMerkleTree {
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read depth {} node hash [{}]", depth, hash);
         if !MerkleNodeDB::exists(repo, hash) {
-            log::debug!(
-                "read_depth merkle node db does not exist for hash: {hash}"
-            );
+            log::debug!("read_depth merkle node db does not exist for hash: {hash}");
             return Ok(None);
         }
 
@@ -286,9 +280,7 @@ impl CommitMerkleTree {
 
             // log::debug!("Loading node for path: {:?} hash: {}", path, hash);
             let Some(node) = CommitMerkleTree::read_depth(repo, hash, 1)? else {
-                log::warn!(
-                    "Merkle tree hash not found for parent: {path:?} hash: {hash:?}"
-                );
+                log::warn!("Merkle tree hash not found for parent: {path:?} hash: {hash:?}");
                 continue;
             };
             nodes.insert(path.clone(), node);

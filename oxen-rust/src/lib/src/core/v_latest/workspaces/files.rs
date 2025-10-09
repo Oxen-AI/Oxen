@@ -218,9 +218,8 @@ pub async fn import(
 
     log::debug!("files::import_file Got uploaded file name: {filename}");
 
-    let auth_header_value = HeaderValue::from_str(auth).map_err(|_e| {
-        OxenError::file_import_error(format!("Invalid header auth value {auth}"))
-    })?;
+    let auth_header_value = HeaderValue::from_str(auth)
+        .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
     fetch_file(url, auth_header_value, directory, filename, workspace).await?;
 
@@ -344,9 +343,7 @@ async fn fetch_file(
         save_path = save_stream(workspace, &filepath, buffer.freeze().to_vec())
             .await
             .map_err(|e| {
-                OxenError::file_import_error(format!(
-                    "Error occurred when saving file stream: {e}"
-                ))
+                OxenError::file_import_error(format!("Error occurred when saving file stream: {e}"))
             })?;
     }
     log::debug!("workspace::files::import_file save_path is {save_path:?}");
@@ -494,9 +491,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         }
     }
 
-    log::debug!(
-        "liboxen::files::decompress_zip zip filepath is {zip_filepath:?}"
-    );
+    log::debug!("liboxen::files::decompress_zip zip filepath is {zip_filepath:?}");
 
     // Get the canonical (absolute) path of the parent directory
     let parent = match zip_filepath.parent() {
@@ -558,9 +553,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         files.push(outpath.clone());
     }
 
-    log::debug!(
-        "files::decompress_zip removing zip file: {zip_filepath:?}"
-    );
+    log::debug!("files::decompress_zip removing zip file: {zip_filepath:?}");
 
     // remove the zip file after decompress
     std::fs::remove_file(zip_filepath)?;

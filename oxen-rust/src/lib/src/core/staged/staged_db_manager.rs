@@ -346,9 +346,7 @@ impl StagedDBManager {
                         for path in paths {
                             let path = util::fs::path_relative_to_dir(path, &repo.path)?;
                             let db_path = PathBuf::from(key);
-                            log::debug!(
-                                "considering rm db_path: {db_path:?} for path: {path:?}"
-                            );
+                            log::debug!("considering rm db_path: {db_path:?} for path: {path:?}");
                             if db_path.starts_with(&path) && path != PathBuf::from("") {
                                 let mut parent = db_path.parent().unwrap_or(Path::new(""));
                                 self.delete_entry_with_lock(&db_path, Some(&db_w))?;

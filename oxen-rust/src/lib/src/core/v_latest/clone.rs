@@ -118,10 +118,7 @@ pub async fn clone_repo_remote_mode(
             return Err(OxenError::basic_str("Err: Cannot "));
         }
         other => {
-            println!(
-                "{}",
-                format!("Unexpected workspace status: {other}").red()
-            );
+            println!("{}", format!("Unexpected workspace status: {other}").red());
         }
     }
     println!("{} {}", "Workspace ID:".green().bold(), workspace.id.bold());

@@ -95,11 +95,9 @@ pub fn diff(
     for key in keys.clone() {
         joined_df = joined_df
             .lazy()
-            .with_columns([coalesce(&[
-                col(format!("{key}.right")),
-                col(format!("{key}.left")),
+            .with_columns([
+                coalesce(&[col(format!("{key}.right")), col(format!("{key}.left"))]).alias(key),
             ])
-            .alias(key)])
             .collect()?;
     }
     log::debug!("joined_df after coalesce is {joined_df:?}");

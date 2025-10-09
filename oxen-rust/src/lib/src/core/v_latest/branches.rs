@@ -112,9 +112,7 @@ pub fn list_entry_versions_for_commit(
     commit_id: &str,
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
-    log::debug!(
-        "list_entry_versions_for_commit {commit_id} for file: {path:?}"
-    );
+    log::debug!("list_entry_versions_for_commit {commit_id} for file: {path:?}");
     let mut branch_commits = repositories::commits::list_from(repo, commit_id)?;
 
     // Sort on timestamp oldest to newest
@@ -129,9 +127,7 @@ pub fn list_entry_versions_for_commit(
 
         if let Some(node) = node {
             if !seen_hashes.contains(&node.node.hash().to_string()) {
-                log::debug!(
-                    "list_entry_versions_for_commit adding {commit} -> {node}"
-                );
+                log::debug!("list_entry_versions_for_commit adding {commit} -> {node}");
                 seen_hashes.insert(node.node.hash().to_string());
 
                 match node.node {

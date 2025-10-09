@@ -65,8 +65,8 @@ pub async fn get_file(
     let mut stream = res.bytes_stream();
     let mut buffer = BytesMut::new();
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result
-            .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
+        let chunk =
+            chunk_result.map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
         buffer.extend_from_slice(&chunk);
     }
 
