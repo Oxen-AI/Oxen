@@ -1,10 +1,11 @@
 use crate::api;
 use crate::api::client;
 use crate::constants::{AVG_CHUNK_SIZE, NUM_HTTP_RETRIES};
+use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
-use crate::util::hasher;
+use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
     CompleteVersionUploadRequest, CompletedFileUpload, CreateVersionUploadRequest,
     MultipartLargeFileUpload, MultipartLargeFileUploadStatus, VersionFile, VersionFileResponse,
@@ -32,14 +33,12 @@ use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
 use crate::repositories;
-use crate::util;
 
 // Multipart upload strategy, based off of AWS S3 Multipart Upload and huggingface hf_transfer
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
 // https://github.com/huggingface/hf_transfer/blob/main/src/lib.rs#L104
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
-const MAX_FILES: usize = 64;
 const PARALLEL_FAILURES: usize = 63;
 const MAX_RETRIES: usize = 5;
 
@@ -87,19 +86,24 @@ pub async fn get(
 pub async fn parallel_large_file_upload(
     remote_repo: &RemoteRepository,
     file_path: impl AsRef<Path>,
-    dst_dir: Option<impl AsRef<Path>>,
+    dst_dir: Option<impl AsRef<Path>>, // dst_dir is provided for workspace add workflow
     workspace_id: Option<String>,
+    entry: Option<Entry>,                 // entry is provided for push workflow
+    progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
-    let mut upload = create_multipart_large_file_upload(remote_repo, file_path, dst_dir).await?;
+
+    let mut upload =
+        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, entry).await?;
+
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
     let results = upload_chunks(
         remote_repo,
         &mut upload,
         AVG_CHUNK_SIZE,
-        MAX_FILES,
         PARALLEL_FAILURES,
         MAX_RETRIES,
+        progress,
     )
     .await?;
     log::debug!(
@@ -117,16 +121,23 @@ async fn create_multipart_large_file_upload(
     remote_repo: &RemoteRepository,
     file_path: impl AsRef<Path>,
     dst_dir: Option<impl AsRef<Path>>,
+    entry: Option<Entry>,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let file_path = file_path.as_ref();
     let dst_dir = dst_dir.as_ref();
 
-    // Figure out how many parts we need to upload
-    let Ok(metadata) = file_path.metadata() else {
-        return Err(OxenError::path_does_not_exist(file_path));
+    let (file_size, hash) = match entry {
+        Some(entry) => (entry.num_bytes(), entry.hash()),
+        None => {
+            // Figure out how many parts we need to upload
+            let Ok(metadata) = file_path.metadata() else {
+                return Err(OxenError::path_does_not_exist(file_path));
+            };
+            let file_size = metadata.len();
+            let hash = util::hasher::hash_file_contents(file_path)?;
+            (file_size, hash)
+        }
     };
-    let file_size = metadata.len();
-    let hash = util::hasher::hash_file_contents(file_path)?.parse::<MerkleHash>()?;
 
     let uri = format!("/versions/{hash}/create");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -151,7 +162,7 @@ async fn create_multipart_large_file_upload(
     Ok(MultipartLargeFileUpload {
         local_path: file_path.to_path_buf(),
         dst_dir: dst_dir.map(|d| d.as_ref().to_path_buf()),
-        hash,
+        hash: hash.parse()?,
         size: file_size,
         status: MultipartLargeFileUploadStatus::Pending,
         reason: None,
@@ -207,9 +218,9 @@ pub async fn try_download_data_from_version_paths(
     let body = encoder.finish()?;
     log::debug!("download_data_from_version_paths body len: {}", body.len());
 
-    let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
+    let url = api::endpoint::url_from_repo(remote_repo, "/versions/fetch")?;
     let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.get(&url).body(body).send().await {
+    if let Ok(res) = client.post(&url).body(body).send().await {
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
             log::error!("{}", err);
@@ -282,28 +293,25 @@ async fn upload_chunks(
     remote_repo: &RemoteRepository,
     upload: &mut MultipartLargeFileUpload,
     chunk_size: u64,
-    max_files: usize,
     parallel_failures: usize,
     max_retries: usize,
+    progress: Option<&Arc<PushProgress>>,
 ) -> Result<Vec<HashMap<String, String>>, OxenError> {
-    let file_path = &upload.local_path;
-    let client = api::client::builder_for_remote_repo(remote_repo)?.build()?;
+    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
 
+    // Figure out how many parts we need to upload
+    let file_size = upload.size;
+    let num_chunks = file_size.div_ceil(chunk_size);
+
+    let max_files = concurrency::num_threads_for_items(num_chunks as usize);
     let mut handles = FuturesUnordered::new();
     let semaphore = Arc::new(Semaphore::new(max_files));
     let parallel_failures_semaphore = Arc::new(Semaphore::new(parallel_failures));
 
-    // Figure out how many parts we need to upload
-    let Ok(metadata) = file_path.metadata() else {
-        return Err(OxenError::path_does_not_exist(file_path));
-    };
-    let file_size = metadata.len();
-    let num_chunks = file_size.div_ceil(chunk_size);
-
     for chunk_number in 0..num_chunks {
         let remote_repo = remote_repo.clone();
         let upload = upload.clone();
-        let client = client.clone();
+        let client = Arc::clone(&client);
 
         let start = chunk_number * chunk_size;
         let semaphore = semaphore.clone();
@@ -352,6 +360,9 @@ async fn upload_chunks(
             Ok(Ok((chunk_number, headers, size))) => {
                 log::debug!("Uploaded part {chunk_number} with size {size}");
                 results[chunk_number as usize] = headers;
+                if let Some(p) = progress {
+                    p.add_bytes(size);
+                }
             }
             Ok(Err(py_err)) => {
                 return Err(py_err);
@@ -363,7 +374,9 @@ async fn upload_chunks(
             }
         }
     }
-
+    if let Some(p) = progress {
+        p.add_files(1);
+    }
     Ok(results)
 }
 
@@ -377,7 +390,8 @@ async fn upload_chunk(
     let path = &upload.local_path;
     let mut options = OpenOptions::new();
     let mut file = options.read(true).open(path).await?;
-    let file_size = file.metadata().await?.len();
+
+    let file_size = upload.size;
     let bytes_transferred = std::cmp::min(file_size - start, chunk_size);
 
     file.seek(SeekFrom::Start(start)).await?;
@@ -764,6 +778,8 @@ mod tests {
                 path,
                 dst_dir,
                 workspace_id,
+                None,
+                None,
             )
             .await;
             assert!(result.is_ok());

@@ -1,13 +1,11 @@
 use futures::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
@@ -451,14 +449,8 @@ pub async fn push_entries(
         .map(|e| e.to_owned())
         .collect();
 
-    let large_entries_sync = chunk_and_send_large_entries(
-        local_repo,
-        remote_repo,
-        larger_entries,
-        commit,
-        AVG_CHUNK_SIZE,
-        progress,
-    );
+    let large_entries_sync =
+        chunk_and_send_large_entries(local_repo, remote_repo, larger_entries, progress);
     let small_entries_sync = bundle_and_send_small_entries(
         local_repo,
         remote_repo,
@@ -489,8 +481,6 @@ async fn chunk_and_send_large_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entries: Vec<Entry>,
-    commit: &Commit,
-    chunk_size: u64,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
@@ -498,7 +488,7 @@ async fn chunk_and_send_large_entries(
     }
 
     use tokio::time::sleep;
-    type PieceOfWork = (Entry, LocalRepository, Commit, RemoteRepository);
+    type PieceOfWork = (Entry, PathBuf, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
@@ -507,8 +497,7 @@ async fn chunk_and_send_large_entries(
         .map(|e| {
             (
                 e.to_owned(),
-                local_repo.to_owned(),
-                commit.to_owned(),
+                local_repo.path.clone(),
                 remote_repo.to_owned(),
             )
         })
@@ -518,6 +507,7 @@ async fn chunk_and_send_large_entries(
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
     }
+    let version_store = local_repo.version_store()?;
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     log::debug!(
@@ -534,6 +524,7 @@ async fn chunk_and_send_large_entries(
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
+        let version_store = Arc::clone(&version_store);
 
         let handle = tokio::spawn(async move {
             loop {
@@ -541,18 +532,39 @@ async fn chunk_and_send_large_entries(
                     break;
                 }
 
-                let Some((entry, repo, commit, remote_repo)) = queue.try_pop() else {
+                let Some((entry, repo_path, remote_repo)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
 
-                match upload_large_file_chunks(
-                    entry.clone(),
-                    repo,
-                    commit,
-                    remote_repo,
-                    chunk_size,
-                    &bar,
+                let version_path = match version_store.get_version_path(&entry.hash()) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        log::error!("Failed to get version path: {}", e);
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        break;
+                    }
+                };
+                let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
+                    .unwrap_or_else(|e| {
+                        log::error!("Failed to get relative path: {}", e);
+                        entry.path()
+                    });
+                let path = if relative_path.exists() {
+                    relative_path
+                } else {
+                    // for test environment
+                    repo_path.join(relative_path)
+                };
+
+                match api::client::versions::parallel_large_file_upload(
+                    &remote_repo,
+                    path,
+                    None::<PathBuf>,
+                    None,
+                    Some(entry.clone()),
+                    Some(&bar),
                 )
                 .await
                 {
@@ -596,216 +608,6 @@ async fn chunk_and_send_large_entries(
     // Sleep again to let things sync...
     sleep(Duration::from_millis(100)).await;
 
-    Ok(())
-}
-
-/// Chunk and send large file in parallel
-async fn upload_large_file_chunks(
-    entry: Entry,
-    repo: LocalRepository,
-    commit: Commit,
-    remote_repo: RemoteRepository,
-    chunk_size: u64,
-    progress: &Arc<PushProgress>,
-) -> Result<(), OxenError> {
-    // Open versioned file
-    let version_store = repo.version_store().unwrap();
-    let file = version_store.open_version(&entry.hash()).unwrap();
-    let mut reader = BufReader::new(file);
-    // The version path is just being used for compatibility with the server endpoint,
-    // we aren't using it to read the file.
-    // TODO: This should be migrated to use the new versions API
-    let version_path = util::fs::version_path_for_entry(&repo, &entry);
-
-    // These variables are the same for every chunk
-    // let is_compressed = false;
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let path = util::fs::path_relative_to_dir(&version_path, &hidden_dir).unwrap();
-    let file_name = Some(String::from(path.to_str().unwrap()));
-
-    // Calculate chunk sizes
-    let total_bytes = entry.num_bytes();
-    let total_chunks = ((total_bytes / chunk_size) + 1) as usize;
-    let mut total_bytes_read = 0;
-    let mut chunk_size = chunk_size;
-
-    // Create a client for uploading chunks
-    let client = Arc::new(
-        api::client::builder_for_remote_repo(&remote_repo)
-            .unwrap()
-            .build()
-            .unwrap(),
-    );
-
-    // Create queues for sending data to workers
-    type PieceOfWork = (
-        Vec<u8>,
-        u64,   // chunk size
-        usize, // chunk num
-        usize, // total chunks
-        u64,   // total size
-        Arc<reqwest::Client>,
-        RemoteRepository,
-        String, // entry hash
-        Commit,
-        Option<String>, // filename
-    );
-
-    // In order to upload chunks in parallel
-    // We should only read N chunks at a time so that
-    // the whole file does not get read into memory
-    let sub_chunk_size = concurrency::num_threads_for_items(total_chunks);
-
-    let mut total_chunk_idx = 0;
-    let mut processed_chunk_idx = 0;
-    let num_sub_chunks = (total_chunks / sub_chunk_size) + 1;
-    log::debug!(
-        "upload_large_file_chunks {:?} processing file in {} subchunks of size {} from total {} chunk size {} file size {}",
-        entry.path(),
-        num_sub_chunks,
-        sub_chunk_size,
-        total_chunks,
-        chunk_size,
-        total_bytes
-    );
-    for i in 0..num_sub_chunks {
-        log::debug!(
-            "upload_large_file_chunks Start reading subchunk {i}/{num_sub_chunks} of size {sub_chunk_size} from total {total_chunks} chunk size {chunk_size} file size {total_bytes_read}/{total_bytes}"
-        );
-        // Read and send the subset of buffers sequentially
-        let mut sub_buffers: Vec<Vec<u8>> = Vec::new();
-        for _ in 0..sub_chunk_size {
-            // If we have read all the bytes, break
-            if total_bytes_read >= total_bytes {
-                break;
-            }
-
-            // Make sure we read the last size correctly
-            if (total_bytes_read + chunk_size) > total_bytes {
-                chunk_size = total_bytes % chunk_size;
-            }
-
-            let percent_read = (total_bytes_read as f64 / total_bytes as f64) * 100.0;
-            log::debug!("upload_large_file_chunks has read {total_bytes_read}/{total_bytes} = {percent_read}% about to read {chunk_size}");
-
-            // Only read as much as you need to send so we don't blow up memory on large files
-            let mut buffer = vec![0u8; chunk_size as usize];
-            match reader.read_exact(&mut buffer) {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!("upload_large_file_chunks Error reading file {:?} chunk {total_chunk_idx}/{total_chunks} chunk size {chunk_size} total_bytes_read: {total_bytes_read} total_bytes: {total_bytes} {:?}", entry.path(), err);
-                    return Err(OxenError::from(err));
-                }
-            }
-            total_bytes_read += chunk_size;
-            total_chunk_idx += 1;
-
-            sub_buffers.push(buffer);
-        }
-        log::debug!(
-            "upload_large_file_chunks Done, have read subchunk {}/{} subchunk {}/{} of size {}",
-            processed_chunk_idx,
-            total_chunks,
-            i,
-            num_sub_chunks,
-            sub_chunk_size
-        );
-
-        // Then send sub_buffers over network in parallel
-        // let queue = Arc::new(TaskQueue::new(sub_buffers.len()));
-        // let finished_queue = Arc::new(FinishedTaskQueue::new(sub_buffers.len()));
-        let mut tasks: Vec<PieceOfWork> = Vec::new();
-        for buffer in sub_buffers.iter() {
-            tasks.push((
-                buffer.to_owned(),
-                chunk_size,
-                processed_chunk_idx, // Needs to be the overall chunk num
-                total_chunks,
-                total_bytes,
-                client.clone(),
-                remote_repo.to_owned(),
-                entry.hash().to_owned(),
-                commit.to_owned(),
-                file_name.to_owned(),
-            ));
-            // finished_queue.try_push(false).unwrap();
-            processed_chunk_idx += 1;
-        }
-
-        // Setup the stream chunks in parallel
-        let bodies = stream::iter(tasks)
-            .map(|item| async move {
-                let (
-                    buffer,
-                    chunk_size,
-                    chunk_num,
-                    total_chunks,
-                    total_size,
-                    client,
-                    remote_repo,
-                    entry_hash,
-                    _commit,
-                    file_name,
-                ) = item;
-                let size = buffer.len() as u64;
-                log::debug!(
-                    "upload_large_file_chunks Streaming entry buffer {}/{} of size {}",
-                    chunk_num,
-                    total_chunks,
-                    size
-                );
-
-                let params = ChunkParams {
-                    chunk_num,
-                    total_chunks,
-                    total_size: total_size as usize,
-                };
-
-                let is_compressed = false;
-                match api::client::commits::upload_data_chunk_to_server_with_retry(
-                    &client,
-                    &remote_repo,
-                    &buffer,
-                    &entry_hash,
-                    &params,
-                    is_compressed,
-                    &file_name,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        log::debug!(
-                            "upload_large_file_chunks Successfully uploaded subchunk overall chunk {}/{}",
-                            chunk_num,
-                            total_chunks
-                        );
-                        Ok(chunk_size)
-                    }
-                    Err(err) => {
-                        log::error!("Error uploading chunk: {err}");
-                        Err(err)
-                    }
-                }
-            })
-            .buffer_unordered(sub_chunk_size);
-
-        // Wait for all requests to finish
-        bodies
-            .for_each(|b| async {
-                match b {
-                    Ok(_) => {
-                        progress.add_bytes(chunk_size);
-                    }
-                    Err(err) => {
-                        log::error!("Error uploading chunk: {err}")
-                    }
-                }
-            })
-            .await;
-
-        log::debug!("upload_large_file_chunks Subchunk {i}/{num_sub_chunks} tasks done. :-)");
-    }
-    progress.add_files(1);
     Ok(())
 }
 
