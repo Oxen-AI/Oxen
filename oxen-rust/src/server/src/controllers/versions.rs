@@ -120,15 +120,12 @@ pub async fn batch_upload(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-
-    println!("BATCH upload file for repo: {:?}", repo.path);
     let err_files = save_multiparts(payload, &repo).await?;
-    println!("COMPLETE batch upload with err_files: {}", err_files.len());
-    
+    log::debug!("batch upload complete with err_files: {}", err_files.len());
 
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {
         status: StatusMessage::resource_created(),
-        err_files: err_files,
+        err_files,
     }))
 }
 
@@ -181,33 +178,30 @@ pub async fn save_multiparts(
                 let err_files_clone = Arc::clone(&err_files);
                 let write_task = tokio::task::spawn_blocking(move || {
                     // Decompress the data if it's gzipped
-                    let data_to_store = match {
-                        if is_gzipped {
-                            log::debug!(
-                                "Decompressing gzipped data for hash: {}",
-                                &upload_filehash_copy
-                            );
+                    let data_to_store = match if is_gzipped {
+                        log::debug!(
+                            "Decompressing gzipped data for hash: {}",
+                            &upload_filehash_copy
+                        );
 
-                            let mut decoder = GzDecoder::new(&field_bytes[..]);
-                            let mut decompressed_bytes = Vec::new();
-                            decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                                OxenError::basic_str(format!(
-                                    "Failed to decompress gzipped data: {}",
-                                    e
-                                ))
-                            });
-                            Ok::<Vec<u8>, OxenError>(decompressed_bytes)
-                        } else {
-                                log::debug!(
-                                    "Data for hash {} is not gzipped.",
-                                    &upload_filehash_copy
-                                );
-                                Ok(field_bytes)
+                        let mut decoder = GzDecoder::new(&field_bytes[..]);
+                        let mut decompressed_bytes = Vec::new();
+
+                        match decoder.read_to_end(&mut decompressed_bytes) {
+                            Ok(_) => Ok(decompressed_bytes),
+                            Err(e) => Err(OxenError::basic_str(format!(
+                                "Failed to decompress gzipped data: {}",
+                                e
+                            ))),
                         }
+                    } else {
+                        log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
+
+                        Ok(field_bytes)
                     } {
                         Ok(data) => data,
                         Err(e) => {
-                            println!(
+                            log::error!(
                                 "Failed to execute blocking decompression task for hash {}: {}",
                                 &upload_filehash,
                                 e
@@ -224,7 +218,7 @@ pub async fn save_multiparts(
                             return;
                         }
                     };
-                    
+
                     // Write data to version store
                     match version_store_copy
                         .store_version_blocking(&upload_filehash, &data_to_store)
@@ -236,7 +230,7 @@ pub async fn save_multiparts(
                             );
                         }
                         Err(e) => {
-                            println!(
+                            log::error!(
                                 "Failed to store version for hash {}: {}",
                                 &upload_filehash,
                                 e
@@ -261,11 +255,10 @@ pub async fn save_multiparts(
 
     while let Some(res) = save_tasks.join_next().await {
         match res {
-            Ok(_) => {
-                // println!("All file processing tasks completed.")
-            }
+            Ok(_) => {}
             Err(e) => {
-                println!("A task panicked or was cancelled: {:?}", e);
+                // Only log the error here, as err_files are recorded immediately when the error occurs
+                log::error!("A task panicked or was cancelled: {:?}", e);
             }
         }
     }
@@ -281,7 +274,6 @@ pub async fn save_multiparts(
     };
 
     let err_files = mutex.into_inner();
-    println!("Ending");
     Ok(err_files)
 }
 

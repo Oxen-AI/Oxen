@@ -23,8 +23,18 @@ const LONG_ABOUT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(16000000)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     util::logging::init_logging();
 
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![

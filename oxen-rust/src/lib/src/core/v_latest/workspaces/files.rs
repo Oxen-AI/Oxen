@@ -120,7 +120,7 @@ pub fn add_version_files(
                     // let parent_dirs = item.parents;
                 }
                 Err(e) => {
-                    println!("Error: {e:?}");
+                    log::error!("error with adding file: {e:?}");
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
@@ -130,7 +130,10 @@ pub fn add_version_files(
                 }
             }
         }
-        println!("Err files: {:?}", err_files.len());
+        log::debug!(
+            "add_version_files complete with {:?} err_files",
+            err_files.len()
+        );
         Ok(err_files)
     })
 }

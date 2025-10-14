@@ -4,7 +4,7 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;
- use tokio::time::Instant;
+use tokio::time::Instant;
 
 use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
@@ -779,13 +779,11 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
-                let _synced_nodes = HashSet::new();
                 match api::client::versions::multipart_batch_upload_with_retry(
                     &repo,
                     &remote_repo,
                     &chunk,
                     &client,
-                    &_synced_nodes,
                 )
                 .await
                 {

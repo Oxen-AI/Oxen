@@ -1,7 +1,7 @@
+use std;
 use std::collections::HashMap;
 use std::io::{self};
 use std::path::{Path, PathBuf};
-use std;
 
 use crate::constants::{VERSION_CHUNKS_DIR, VERSION_CHUNK_FILE_NAME, VERSION_FILE_NAME};
 use crate::error::OxenError;
