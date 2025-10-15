@@ -76,6 +76,13 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `data` - The raw bytes to store
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
 
+    /// Synchronous method to store a version file from bytes
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `data` - The raw bytes to store
+    fn store_version_blocking(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
+
     /// Store a chunk of a version file
     ///
     /// # Arguments
