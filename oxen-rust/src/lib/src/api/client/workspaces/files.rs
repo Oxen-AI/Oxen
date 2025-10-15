@@ -354,7 +354,8 @@ async fn parallel_batched_small_file_upload(
     let producer_lock = Arc::clone(&err_files);
     let producer_handle = tokio::spawn(async move {
         let head_commit_maybe = if let Some(ref local_repo_clone) = local_repo_clone {
-            repositories::commits::head_commit_maybe(local_repo_clone).expect("")
+            repositories::commits::head_commit_maybe(local_repo_clone)
+                .expect("Remote-mode repos must always have a head commit")
         } else {
             None
         };
@@ -374,7 +375,7 @@ async fn parallel_batched_small_file_upload(
             let producer_lock = Arc::clone(&producer_lock);
             let task_handle = tokio::task::spawn_blocking(move || {
                 let relative_path =
-                    util::fs::path_relative_to_dir(&path, &repo_path_clone).expect("");
+                    util::fs::path_relative_to_dir(&path, &repo_path_clone).unwrap();
 
                 // In remote-mode repos, skip adding files already present in tree
                 if let Some(ref head_commit) = head_commit_maybe_clone {
@@ -518,7 +519,7 @@ async fn parallel_batched_small_file_upload(
                 let workspace_id_clone = workspace_id.clone();
                 let directory_str = directory_clone.clone();
 
-                let batch_size = current_batch_size.clone();
+                let batch_size = current_batch_size;
                 let bar = Arc::clone(&progress_clone);
 
                 // TODO: Find way not to have to clone files_to_stage
@@ -615,7 +616,7 @@ async fn parallel_batched_small_file_upload(
             let workspace_id_clone = workspace_id.clone();
             let directory_str = directory_clone.clone();
 
-            let batch_size = current_batch_size.clone();
+            let batch_size = current_batch_size;
             let num_entries = current_batch_parts.len();
             let bar = Arc::clone(&progress_clone);
 
