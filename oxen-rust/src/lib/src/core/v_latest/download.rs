@@ -50,6 +50,8 @@ pub async fn download_dir(
     )
     .await?;
 
+    pull_progress.finish();
+
     Ok(())
 }
 
@@ -83,6 +85,8 @@ pub async fn download_dir_entries(
         &pull_progress,
     )
     .await?;
+
+    pull_progress.finish();
 
     Ok(())
 }
@@ -133,7 +137,7 @@ async fn r_download_entries(
             "r_download_entries downloading {} entries to working dir",
             entries.len()
         );
-        core::v_latest::fetch::pull_entries_to_working_dir(
+        core::v_latest::fetch::download_entries_to_working_dir(
             remote_repo,
             &entries,
             local_repo_path,

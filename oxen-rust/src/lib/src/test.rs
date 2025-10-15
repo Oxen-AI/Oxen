@@ -113,6 +113,7 @@ pub async fn create_or_clear_remote_repo(
     let url = api::endpoint::url_from_host(&host, &remote_name);
 
     let _ = api::client::repositories::delete_from_url(url).await;
+    std::thread::sleep(std::time::Duration::from_millis(500));
     api::client::repositories::create_from_local(repo, repo_new).await
 }
 
@@ -227,7 +228,7 @@ where
     };
 
     // Remove repo dir
-    maybe_cleanup_repo(&repo_dir)?;
+    // maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);
@@ -605,7 +606,7 @@ where
     };
 
     // Cleanup local repo
-    maybe_cleanup_repo_with_remote(&repo_dir, &remote_repo).await?;
+    // maybe_cleanup_repo_with_remote(&repo_dir, &remote_repo).await?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);

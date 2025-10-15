@@ -1,5 +1,6 @@
 use std;
 use std::collections::HashMap;
+use std::fs::Metadata;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
@@ -11,7 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
-use tokio::io::BufReader;
+use tokio::io::{BufReader, BufWriter};
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
@@ -51,14 +52,14 @@ impl LocalVersionStore {
     }
 
     /// Get the directory containing a version file
-    /// .oxen/versions/{hash}/chunks/{chunk_number}
-    fn version_chunk_dir(&self, hash: &str, chunk_number: u32) -> PathBuf {
-        self.version_chunks_dir(hash).join(chunk_number.to_string())
+    /// .oxen/versions/{hash}/chunks
+    fn version_chunk_dir(&self, hash: &str, offset: u64) -> PathBuf {
+        self.version_chunks_dir(hash).join(offset.to_string())
     }
 
     /// Get the directory containing a version file
-    fn version_chunk_file(&self, hash: &str, chunk_number: u32) -> PathBuf {
-        self.version_chunk_dir(hash, chunk_number)
+    fn version_chunk_file(&self, hash: &str, offset: u64) -> PathBuf {
+        self.version_chunk_dir(hash, offset)
             .join(VERSION_CHUNK_FILE_NAME)
     }
 }
@@ -137,6 +138,12 @@ impl VersionStore for LocalVersionStore {
         Ok(Box::new(file))
     }
 
+    async fn get_version_metadata(&self, hash: &str) -> Result<Metadata, OxenError> {
+        let path = self.version_path(hash);
+        let metadata = fs::metadata(&path).await?;
+        Ok(metadata)
+    }
+
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
         let path = self.version_path(hash);
         let data = fs::read(&path).await?;
@@ -213,19 +220,34 @@ impl VersionStore for LocalVersionStore {
     async fn store_version_chunk(
         &self,
         hash: &str,
-        chunk_number: u32,
+        offset: u64,
         data: &[u8],
     ) -> Result<(), OxenError> {
-        let chunk_dir = self.version_chunk_dir(hash, chunk_number);
+        let chunk_dir = self.version_chunk_dir(hash, offset);
         fs::create_dir_all(&chunk_dir).await?;
 
-        let chunk_path = self.version_chunk_file(hash, chunk_number);
+        let chunk_path = self.version_chunk_file(hash, offset);
 
         if !chunk_path.exists() {
             fs::write(&chunk_path, data).await?;
         }
 
         Ok(())
+    }
+
+    async fn get_version_chunk_writer(
+        &self,
+        hash: &str,
+        offset: u64,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
+        let chunk_dir = self.version_chunk_dir(hash, offset);
+        fs::create_dir_all(&chunk_dir).await?;
+
+        let chunk_path = self.version_chunk_file(hash, offset);
+        let file = File::create(&chunk_path).await?;
+        let writer = BufWriter::new(file);
+
+        Ok(Box::new(writer))
     }
 
     async fn get_version_chunk(
@@ -297,7 +319,7 @@ impl VersionStore for LocalVersionStore {
         Ok(Box::new(stream))
     }
 
-    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u32>, OxenError> {
+    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
         let chunk_dir = self.version_chunks_dir(hash);
         let mut chunks = Vec::new();
 
@@ -305,8 +327,8 @@ impl VersionStore for LocalVersionStore {
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
             if file_type.is_dir() {
-                if let Ok(chunk_number) = entry.file_name().to_string_lossy().parse::<u32>() {
-                    chunks.push(chunk_number);
+                if let Ok(chunk_offset) = entry.file_name().to_string_lossy().parse::<u64>() {
+                    chunks.push(chunk_offset);
                 }
             }
         }
@@ -326,14 +348,14 @@ impl VersionStore for LocalVersionStore {
         chunks.sort();
 
         // Process each chunk
-        for chunk_number in chunks {
-            let chunk_path = self.version_chunk_file(hash, chunk_number);
+        for chunk_offset in chunks {
+            let chunk_path = self.version_chunk_file(hash, chunk_offset);
             let mut chunk_file = File::open(&chunk_path).await?;
             tokio::io::copy(&mut chunk_file, &mut output_file).await?;
 
             // Cleanup chunk if requested
             if cleanup {
-                let chunk_dir = self.version_chunk_dir(hash, chunk_number);
+                let chunk_dir = self.version_chunk_dir(hash, chunk_offset);
                 fs::remove_dir_all(&chunk_dir).await?;
             }
         }

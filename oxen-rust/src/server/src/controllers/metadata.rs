@@ -58,6 +58,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
             }
             Err(_) => {
                 let added_entry = repositories::workspaces::get_added_entry(
+                    &repo,
                     &resource.path,
                     workspace,
                     &resource,

@@ -2,11 +2,9 @@ use async_trait::async_trait;
 use clap::{Arg, Command};
 use liboxen::core::v_latest::index::CommitMerkleTree;
 use liboxen::error::OxenError;
-use liboxen::model::{Commit, LocalRepository, MerkleHash};
+use liboxen::model::{Commit, LocalRepository};
 use liboxen::repositories;
 use std::time::Instant;
-
-use std::str::FromStr;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "tree";
@@ -97,7 +95,7 @@ impl RunCmd for TreeCmd {
 
 impl TreeCmd {
     fn print_node(&self, repo: &LocalRepository, node: &str, depth: i32) -> Result<(), OxenError> {
-        let node_hash = MerkleHash::from_str(node)?;
+        let node_hash = node.parse()?;
         let tree = CommitMerkleTree::read_node(repo, &node_hash, true)?.unwrap();
         CommitMerkleTree::print_node_depth(&tree, depth);
 

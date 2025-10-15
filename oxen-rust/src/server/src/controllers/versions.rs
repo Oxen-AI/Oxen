@@ -6,8 +6,9 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use actix_multipart::Multipart;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
+use async_compression::tokio::write::GzipEncoder;
 use flate2::read::GzDecoder;
-use futures_util::TryStreamExt as _;
+use futures_util::{StreamExt, TryStreamExt as _};
 use liboxen::error::OxenError;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
@@ -21,9 +22,13 @@ use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
+use tokio_tar::Builder;
 use tokio::task::JoinSet;
-use tokio_util::io::ReaderStream;
+use tokio_util::io::{ReaderStream, StreamReader};
+
+const DOWNLOAD_BUFFER_SIZE: usize = 64 * 1024;
 
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
@@ -38,12 +43,15 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Err(OxenHttpError::NotFound);
     }
 
-    let data = repo.version_store()?.get_version(&version_id).await?;
+    let metadata = repo
+        .version_store()?
+        .get_version_metadata(&version_id)
+        .await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
             hash: version_id,
-            size: data.len() as u64,
+            size: metadata.len() as u64,
         },
     }))
 }
@@ -111,6 +119,151 @@ pub async fn download(
         .streaming(stream))
 }
 
+pub async fn batch_download(
+    req: HttpRequest,
+    mut body: web::Payload,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let version_store = repo.version_store()?;
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = body.next().await {
+        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+    }
+
+    log::debug!(
+        "batch_download got repo [{}] and content_ids size {}",
+        repo_name,
+        bytes.len()
+    );
+
+    let mut gz = GzDecoder::new(&bytes[..]);
+    let mut line_delimited_files = String::new();
+    if let Err(e) = gz.read_to_string(&mut line_delimited_files) {
+        log::error!("Failed to decompress gzip payload: {}", e);
+        return Err(OxenHttpError::from(e));
+    }
+
+    let file_hashes: Vec<String> = line_delimited_files
+        .lines()
+        .map(str::trim)
+        .filter(|hash| !hash.is_empty())
+        .filter(|hash| hash.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|hash| hash.to_string())
+        .collect();
+
+    log::debug!("Got {} file hashes", file_hashes.len());
+
+    // create duplex stream for streaming
+    let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
+
+    let version_store_clone = version_store.clone();
+    let file_hashes_clone = file_hashes.clone();
+
+    // create an error channel to surface errors
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+    // stream to the client while reading
+    tokio::spawn(async move {
+        let enc = GzipEncoder::new(writer);
+        let mut tar = Builder::new(enc);
+
+        for file_hash in file_hashes_clone.iter() {
+            match version_store_clone.get_version_stream(file_hash).await {
+                Ok(data) => {
+                    let metadata = match version_store_clone.get_version_metadata(file_hash).await {
+                        Ok(metadata) => metadata,
+                        Err(e) => {
+                            log::error!("Failed to get metadata for {}: {}", file_hash, e);
+                            error_tx.send(e).ok();
+                            return;
+                        }
+                    };
+                    let file_size = metadata.len();
+
+                    let mut header = tokio_tar::Header::new_gnu();
+                    header.set_size(file_size as u64);
+                    if let Err(e) = header.set_path(file_hash) {
+                        log::error!("Failed to set path for {}: {}", file_hash, e);
+                        error_tx
+                            .send(OxenError::basic_str(format!(
+                                "Failed to set path for {}: {}",
+                                file_hash, e
+                            )))
+                            .ok();
+                        return;
+                    }
+                    header.set_mode(0o644);
+                    header.set_uid(0);
+                    header.set_gid(0);
+                    header.set_cksum();
+
+                    let mut reader = StreamReader::new(data);
+                    if let Err(e) = tar.append(&header, &mut reader).await {
+                        log::error!("Failed to append {} to tar: {}", file_hash, e);
+                        error_tx.send(OxenError::IO(e)).ok();
+                        return;
+                    }
+                    log::info!(
+                        "Successfully appended data to tarball for hash: {}",
+                        &file_hash
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to get version {}: {}", file_hash, e);
+                    error_tx.send(e).ok();
+                    return;
+                }
+            }
+        }
+
+        if let Err(e) = tar.finish().await {
+            log::error!("Failed to finish tar: {}", e);
+            error_tx.send(OxenError::IO(e)).ok();
+            return;
+        }
+
+        // get encoder
+        let mut enc = match tar.into_inner().await {
+            Ok(enc) => enc,
+            Err(e) => {
+                log::error!("Failed to get encoder: {}", e);
+                error_tx.send(OxenError::IO(e)).ok();
+                return;
+            }
+        };
+
+        if let Err(e) = enc.flush().await {
+            log::error!("Failed to flush encoder: {}", e);
+            error_tx.send(OxenError::IO(e)).ok();
+            return;
+        }
+
+        // shutdown encoder
+        if let Err(e) = enc.shutdown().await {
+            log::error!("Failed to shutdown encoder: {}", e);
+            error_tx.send(OxenError::IO(e)).ok();
+            return;
+        }
+
+        log::info!("Tar streaming completed successfully");
+    });
+
+    if let Ok(error) = error_rx.try_recv() {
+        return Err(OxenHttpError::from(error));
+    }
+
+    // convert reader to stream
+    let stream =
+        tokio_util::io::ReaderStream::new(reader).map(|result| result.map_err(OxenHttpError::from));
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/gzip")
+        .streaming(stream))
+}
+
 pub async fn batch_upload(
     req: HttpRequest,
     payload: Multipart,
@@ -129,6 +282,7 @@ pub async fn batch_upload(
     }))
 }
 
+// Read the payload files into memory and save to version store
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,

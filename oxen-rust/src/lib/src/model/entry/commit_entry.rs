@@ -1,11 +1,9 @@
 use crate::constants::VERSION_FILE_NAME;
-use crate::model::merkle_tree::node::{DirNode, FileNode};
-use crate::model::{Commit, ContentHashable, LocalRepository, RemoteEntry, Schema};
-use crate::util;
+use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
+use crate::model::{Commit, ContentHashable, MerkleHash, RemoteEntry, Schema};
 
 use filetime::FileTime;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
@@ -141,7 +139,7 @@ impl ContentHashable for CommitEntry {
 // Hash on the path field so we can quickly look up
 impl PartialEq for CommitEntry {
     fn eq(&self, other: &CommitEntry) -> bool {
-        self.path == other.path
+        self.hash == other.hash && self.path == other.path
     }
 }
 
@@ -165,6 +163,25 @@ impl CommitEntry {
         }
     }
 
+    pub fn from_merkle_hash(hash: &MerkleHash) -> CommitEntry {
+        CommitEntry {
+            commit_id: String::from(""),
+            path: PathBuf::from(""), //Should we do this?
+            hash: hash.to_string(),
+            num_bytes: 0,
+            last_modified_seconds: 0,
+            last_modified_nanoseconds: 0,
+        }
+    }
+
+    pub fn from_node(node: &EMerkleTreeNode) -> CommitEntry {
+        match node {
+            EMerkleTreeNode::Directory(dir_node) => CommitEntry::from_dir_node(dir_node),
+            EMerkleTreeNode::File(file_node) => CommitEntry::from_file_node(file_node),
+            _ => panic!("Cannot convert EMerkleTreeNode to CommitEntry"),
+        }
+    }
+
     pub fn from_file_node(file_node: &FileNode) -> CommitEntry {
         CommitEntry {
             commit_id: file_node.last_commit_id().to_string(),
@@ -185,13 +202,6 @@ impl CommitEntry {
             last_modified_seconds: dir_node.last_modified_seconds(),
             last_modified_nanoseconds: dir_node.last_modified_nanoseconds(),
         }
-    }
-
-    pub fn version_file(&self) -> PathBuf {
-        let current_dir = env::current_dir().unwrap();
-        let repo_dir = util::fs::get_repo_root(&current_dir).expect("Oxen repo not found.");
-        let repo = LocalRepository::from_dir(&repo_dir).unwrap();
-        util::fs::version_path(&repo, self)
     }
 
     // <= 0.8.4:

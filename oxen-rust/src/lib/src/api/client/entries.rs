@@ -2,12 +2,13 @@ use crate::api::client;
 use crate::config::UserConfig;
 use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
 use crate::error::OxenError;
+use crate::model::entry::commit_entry::Entry;
 use crate::model::{
     EntryDataType, LocalRepository, MetadataEntry, NewCommitBody, RemoteRepository,
 };
 use crate::opts::UploadOpts;
 use crate::repositories;
-use crate::util::hasher;
+use crate::storage::VersionStore;
 use crate::view::entries::{EMetadataEntry, PaginatedMetadataEntriesResponse};
 use crate::{api, constants};
 use crate::{current_function, util};
@@ -16,11 +17,15 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
+use std::collections::HashMap;
 use std::fs::{self};
 use std::io::prelude::*;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 
 /// Returns the metadata given a file path
 pub async fn get_entry(
@@ -236,7 +241,7 @@ pub async fn download_entries_to_repo(
             let file = std::fs::read(local_path).map_err(|e| {
                 OxenError::basic_str(format!("Failed to read file '{:?}': {e}", remote_path))
             })?;
-            let hash = hasher::hash_buffer(&file);
+            let hash = util::hasher::hash_buffer(&file);
             version_store
                 .store_version_from_path(&hash, local_path)
                 .await?;
@@ -294,15 +299,234 @@ pub async fn download_small_entry(
             if let Some(parent) = dest.parent() {
                 util::fs::create_dir_all(parent)?;
             }
-            let mut dest_file = { util::fs::file_create(dest)? };
-            // log::debug!("Dest file: {dest_file:?}");
-            let mut content = Cursor::new(response.bytes().await?);
-            std::io::copy(&mut content, &mut dest_file)?;
 
+            // Create async reader and writer to receive the file stream
+            let mut dest_file = File::create(dest).await?;
+            let mut stream = response.bytes_stream();
+            while let Some(chunk_result) = stream.next().await {
+                let chunk = chunk_result
+                    .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {}", e)))?;
+                dest_file.write_all(&chunk).await?;
+            }
+
+            dest_file.flush().await?;
             Ok(())
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
+        _ => {
+            let err = format!("Could not download entry status: {status}");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
+/// Download a file from the remote repository in parallel chunks
+pub async fn pull_large_entry(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    entry: &Entry,
+) -> Result<(), OxenError> {
+    // Read chunks
+    let chunk_size = AVG_CHUNK_SIZE;
+    let total_size = entry.num_bytes();
+    let num_chunks = total_size.div_ceil(chunk_size) as usize;
+    let hash = entry.hash();
+    let revision = entry.commit_id();
+    let version_store = repo.version_store()?;
+
+    let remote_path = remote_path.as_ref();
+
+    log::debug!("Trying to download file {:?}", remote_path);
+
+    // Download chunks in parallel
+    type PieceOfWork = (
+        Arc<dyn VersionStore>,
+        RemoteRepository,
+        PathBuf, // remote_path
+        String,  // hash
+        String,  // revision
+        u64,     // chunk_start
+        u64,     // chunk_size
+    );
+    let mut tasks: Vec<PieceOfWork> = Vec::new();
+    for i in 0..num_chunks {
+        // Make sure we read the last size correctly
+        let chunk_start = (i as u64) * chunk_size;
+        let this_chunk_size = std::cmp::min(chunk_size, total_size - chunk_start);
+
+        tasks.push((
+            Arc::clone(&version_store),
+            remote_repo.to_owned(),
+            remote_path.to_path_buf(),
+            hash.to_string(),
+            revision.to_string(),
+            chunk_start,
+            this_chunk_size,
+        ));
+    }
+
+    // Try to download the first chunk and return error if it fails
+    if tasks.is_empty() {
+        return Err(OxenError::basic_str("No chunks to download"));
+    }
+    let item = tasks.remove(0);
+    let (version_store, remote_repo, remote_path, hash, revision, chunk_start, chunk_size) = item;
+    // Will error out if the first chunk is not found or unauthorized
+    try_pull_entry_chunk(
+        Arc::clone(&version_store),
+        &remote_repo,
+        &remote_path,
+        &hash,
+        &revision,
+        chunk_start,
+        chunk_size,
+    )
+    .await?;
+
+    use futures::prelude::*;
+    let num_workers = constants::DEFAULT_NUM_WORKERS;
+    let futures_vec: Vec<_> = tasks
+        .into_iter()
+        .map(|item| {
+            let (version_store, remote_repo, remote_path, hash, revision, chunk_start, chunk_size) =
+                item;
+            log::debug!("Downloading chunk {:?}", remote_path);
+            async move {
+                match try_pull_entry_chunk(
+                    version_store,
+                    &remote_repo,
+                    &remote_path,
+                    &hash,
+                    &revision,
+                    chunk_start,
+                    chunk_size,
+                )
+                .await
+                {
+                    Ok(_) => Ok(chunk_size),
+                    Err(err) => Err(err),
+                }
+            }
+        })
+        .collect();
+
+    let bodies = futures::stream::iter(futures_vec).buffer_unordered(num_workers);
+
+    // Wait for all requests to finish
+    bodies
+        .for_each(|b| async {
+            match b {
+                Ok(s) => {
+                    log::debug!("Downloaded chunk {:?}", s);
+                }
+                Err(err) => {
+                    log::error!("Error downloading chunk: {:?}", err)
+                }
+            }
+        })
+        .await;
+
+    // Once all downloaded, recombine file and delete temp dir
+    version_store.combine_version_chunks(&hash, true).await?;
+
+    Ok(())
+}
+
+async fn try_pull_entry_chunk(
+    version_store: Arc<dyn VersionStore>,
+    remote_repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    hash: &str,
+    revision: impl AsRef<str>,
+    chunk_start: u64,
+    chunk_size: u64,
+) -> Result<u64, OxenError> {
+    let mut try_num = 0;
+    while try_num < constants::NUM_HTTP_RETRIES {
+        match pull_entry_chunk(
+            Arc::clone(&version_store),
+            remote_repo,
+            &remote_path,
+            hash,
+            &revision,
+            chunk_start,
+            chunk_size,
+        )
+        .await
+        {
+            Ok(status) => match status {
+                reqwest::StatusCode::OK => {
+                    log::debug!("Downloaded chunk {:?}", remote_path.as_ref());
+                    return Ok(chunk_size);
+                }
+                reqwest::StatusCode::NOT_FOUND => {
+                    return Err(OxenError::path_does_not_exist(remote_path));
+                }
+                reqwest::StatusCode::UNAUTHORIZED => {
+                    return Err(OxenError::must_supply_valid_api_key());
+                }
+                _ => {
+                    return Err(OxenError::basic_str(format!(
+                        "Could not download entry status: {status}"
+                    )));
+                }
+            },
+            Err(err) => {
+                log::error!(
+                    "Failed to download chunk for the {} time, trying again: {}",
+                    util::str::to_ordinal(try_num),
+                    err
+                );
+                try_num += 1;
+                let sleep_time = try_num * try_num;
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
+            }
+        }
+    }
+    Err(OxenError::basic_str("Retry download chunk failed"))
+}
+
+/// Downloads a chunk of a file
+async fn pull_entry_chunk(
+    version_store: Arc<dyn VersionStore>,
+    remote_repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    hash: &str,
+    revision: impl AsRef<str>,
+    chunk_start: u64,
+    chunk_size: u64,
+) -> Result<reqwest::StatusCode, OxenError> {
+    let remote_path = remote_path.as_ref();
+    log::debug!("{} {:?}", current_function!(), remote_path);
+
+    let uri = format!(
+        "/chunk/{}/{}?chunk_start={}&chunk_size={}",
+        revision.as_ref(),
+        remote_path.to_string_lossy(),
+        chunk_start,
+        chunk_size
+    );
+
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    log::debug!("download_entry_chunk {}", url);
+
+    let client = client::new_for_url(&url)?;
+    let response = client.get(&url).send().await?;
+
+    let status = response.status();
+
+    match status {
+        reqwest::StatusCode::OK => {
+            let bytes = response.bytes().await?;
+            version_store
+                .store_version_chunk(hash, chunk_start, &bytes)
+                .await?;
+            Ok(status)
+        }
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => Ok(status),
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))
@@ -521,7 +745,7 @@ async fn try_download_entry_chunk(
                 );
                 try_num += 1;
                 let sleep_time = try_num * try_num;
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
@@ -587,7 +811,7 @@ async fn download_entry_chunk(
 
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    content_ids: &[(String, PathBuf)], // tuple of content id and entry path
+    content_ids: &HashMap<String, PathBuf>, // hashmap of file hash and entry path
     dst: &Path,
 ) -> Result<u64, OxenError> {
     let total_retries = constants::NUM_HTTP_RETRIES;
@@ -606,7 +830,7 @@ pub async fn download_data_from_version_paths(
                     err,
                     sleep_time
                 );
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
@@ -621,11 +845,9 @@ pub async fn download_data_from_version_paths(
 
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    content_ids: &[(String, PathBuf)], // tuple of content id and entry path
+    content_ids: &HashMap<String, PathBuf>, // tuple of content id and entry path
     dst: impl AsRef<Path>,
 ) -> Result<u64, OxenError> {
-    use async_std::prelude::*;
-
     let dst = dst.as_ref();
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     for (content_id, _path) in content_ids.iter() {
@@ -635,10 +857,10 @@ pub async fn try_download_data_from_version_paths(
     }
     let body = encoder.finish()?;
     log::debug!("download_data_from_version_paths body len: {}", body.len());
-    let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
+    let url = api::endpoint::url_from_repo(remote_repo, "/versions/fetch")?;
 
     let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.get(&url).body(body).send().await {
+    if let Ok(res) = client.post(&url).body(body).send().await {
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
             log::error!("{}", err);
@@ -653,33 +875,46 @@ pub async fn try_download_data_from_version_paths(
         let archive = Archive::new(decoder);
 
         let mut size: u64 = 0;
-        let mut idx: usize = 0;
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
         while let Some(file) = entries.next().await {
-            let entry_path = &content_ids[idx].1;
-            // let version = &content_ids[idx];
-            // log::debug!(
-            //     "download_data_from_version_paths Unpacking {:?} -> {:?}",
-            //     version,
-            //     entry_path
-            // );
-
-            let full_path = dst.join(entry_path);
-
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file {:?} -> {:?}", entry_path, err);
+                    let err = format!("Could not unwrap file: {:?}", err);
                     return Err(OxenError::basic_str(err));
                 }
             };
+
+            let file_hash = match file.header().path() {
+                Ok(path) => path.to_string_lossy().to_string(),
+                Err(e) => {
+                    return Err(OxenError::basic_str(format!(
+                        "Invalid tar entry path: {}",
+                        e
+                    )))
+                }
+            };
+
+            let Some(entry_path) = content_ids.get(&file_hash) else {
+                log::warn!(
+                    "Skipping unexpected tar entry not in requested set: {}",
+                    file_hash
+                );
+                continue;
+            };
+            log::debug!(
+                "download_data_from_version_paths Unpacking {:?} -> {:?}",
+                file_hash,
+                entry_path
+            );
+
+            let full_path = dst.join(entry_path);
 
             if let Some(parent) = full_path.parent() {
                 util::fs::create_dir_all(parent)?;
             }
 
-            log::debug!("Unpacking {:?} into path {:?}", entry_path, full_path);
             match file.unpack(&full_path).await {
                 Ok(_) => {
                     log::debug!("Successfully unpacked {:?} into dst {:?}", entry_path, dst);
@@ -692,10 +927,8 @@ pub async fn try_download_data_from_version_paths(
 
             let metadata = util::fs::metadata(&full_path)?;
             size += metadata.len();
-            idx += 1;
             log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
-
         Ok(size)
     } else {
         let err =
@@ -898,7 +1131,6 @@ mod tests {
             let revision = DEFAULT_BRANCH_NAME;
             api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
                 .await?;
-
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
             assert!(local_path

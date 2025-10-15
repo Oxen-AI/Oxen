@@ -220,3 +220,6 @@ pub const MAX_DISPLAY_DIRS: usize = 10;
 
 /// Default notebook base image
 pub const DEFAULT_NOTEBOOK_BASE_IMAGE: &str = "debian:bookworm-slim";
+
+// Oxen stack size
+pub const OXEN_STACK_SIZE: usize = 16_777_216;

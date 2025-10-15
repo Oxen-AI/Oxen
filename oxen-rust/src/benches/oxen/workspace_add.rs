@@ -7,7 +7,6 @@ use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
 use liboxen::test::create_or_clear_remote_repo;
 use liboxen::util;
-use liboxen::view::workspaces::WorkspaceResponseWithStatus;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
@@ -46,15 +45,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     num_files_to_add_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
-) -> Result<
-    (
-        LocalRepository,
-        RemoteRepository,
-        WorkspaceResponseWithStatus,
-        Vec<PathBuf>,
-    ),
-    OxenError,
-> {
+) -> Result<(LocalRepository, RemoteRepository, Vec<PathBuf>), OxenError> {
     println!("setup_repo_for_workspace_add_benchmark got repo_size {}, num_files_to_add {}, and dir_size {}",
         repo_size,
         num_files_to_add_in_benchmark,
@@ -80,11 +71,11 @@ async fn setup_repo_for_workspace_add_benchmark(
     let mut rng = rand::thread_rng();
 
     // TODO: Support creating workspace on empty repo
-    let files_dir = repo_dir.join("files");
-    util::fs::create_dir_all(&files_dir)?;
-    let mut dirs: Vec<PathBuf> = (0..dir_size)
+    let base_dir = repo_dir.join("base");
+    util::fs::create_dir_all(&base_dir)?;
+    let mut base_dirs: Vec<PathBuf> = (0..dir_size)
         .map(|_| {
-            let mut path = files_dir.clone();
+            let mut path = base_dir.clone();
             let depth = rng.gen_range(1..=4);
             for _ in 0..depth {
                 path = path.join(generate_random_string(10));
@@ -92,7 +83,7 @@ async fn setup_repo_for_workspace_add_benchmark(
             path
         })
         .collect();
-    dirs.push(files_dir.clone());
+    base_dirs.push(base_dir.clone());
 
     let large_file_percentage: f64;
     let min_repo_size_for_scaling = 1000.0;
@@ -117,24 +108,38 @@ async fn setup_repo_for_workspace_add_benchmark(
     }
 
     for i in 0..repo_size {
-        let dir_idx = rng.gen_range(0..dirs.len());
-        let dir = &dirs[dir_idx];
+        let dir_idx = rng.gen_range(0..base_dirs.len());
+        let dir = &base_dirs[dir_idx];
         util::fs::create_dir_all(dir)?;
         let file_path = dir.join(format!("file_{}.txt", i));
         write_file_for_workspace_add_benchmark(&file_path, large_file_percentage)?;
     }
 
-    repositories::add(&repo, black_box(&files_dir)).await?;
+    repositories::add(&repo, black_box(&base_dir)).await?;
     repositories::commit(&repo, "Init")?;
     repositories::push(&repo).await?;
+
+    let files_dir = repo_dir.join("files");
+    util::fs::create_dir_all(&files_dir)?;
+    let mut files_dirs: Vec<PathBuf> = (0..dir_size)
+        .map(|_| {
+            let mut path = base_dir.clone();
+            let depth = rng.gen_range(1..=4);
+            for _ in 0..depth {
+                path = path.join(generate_random_string(10));
+            }
+            path
+        })
+        .collect();
+    files_dirs.push(files_dir.clone());
 
     let files: Vec<PathBuf> = if let Some(data_path) = data_path {
         vec![PathBuf::from(data_path)]
     } else {
         let mut files = vec![];
         for i in repo_size..(repo_size + num_files_to_add_in_benchmark) {
-            let dir_idx = rng.gen_range(0..dirs.len());
-            let dir = &dirs[dir_idx];
+            let dir_idx = rng.gen_range(0..files_dirs.len());
+            let dir = &files_dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
 
             let file_path = dir.join(format!("file_{}.txt", i));
@@ -146,24 +151,7 @@ async fn setup_repo_for_workspace_add_benchmark(
         files
     };
 
-    let branch_name = DEFAULT_BRANCH_NAME;
-
-    // Generate a random workspace id
-    let workspace_id = Uuid::new_v4().to_string();
-
-    // Use the branch name as the workspace name
-    let name = format!("{}: {workspace_id}", branch_name);
-
-    let workspace = api::client::workspaces::create_with_new_branch(
-        &remote_repo,
-        &branch_name,
-        &workspace_id,
-        Path::new("/"),
-        Some(name.clone()),
-    )
-    .await?;
-
-    Ok((repo, remote_repo, workspace, files))
+    Ok((repo, remote_repo, files))
 }
 
 pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
@@ -186,7 +174,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
     ];
     for &(repo_size, dir_size) in params.iter() {
         let num_files_to_add = repo_size / 1000;
-        let (_, remote_repo, workspace, files) = rt
+        let (_, remote_repo, files) = rt
             .block_on(setup_repo_for_workspace_add_benchmark(
                 &base_dir,
                 repo_size,
@@ -203,6 +191,24 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
             ),
             &(num_files_to_add, dir_size),
             |b, _| {
+                let branch_name = DEFAULT_BRANCH_NAME;
+
+                // Generate a random workspace id
+                let workspace_id = Uuid::new_v4().to_string();
+
+                // Use the branch name as the workspace name
+                let name = format!("{}: {workspace_id}", branch_name);
+
+                let workspace = rt
+                    .block_on(api::client::workspaces::create_with_new_branch(
+                        &remote_repo,
+                        &branch_name,
+                        &workspace_id,
+                        Path::new("/"),
+                        Some(name.clone()),
+                    ))
+                    .unwrap();
+
                 b.to_async(&rt).iter(|| async {
                     api::client::workspaces::files::add(
                         &remote_repo,
@@ -213,13 +219,13 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                     )
                     .await
                     .unwrap();
-                })
+                });
+
+                let _ = rt
+                    .block_on(api::client::workspaces::delete(&remote_repo, &workspace.id))
+                    .unwrap();
             },
         );
-
-        let _ = rt
-            .block_on(api::client::workspaces::delete(&remote_repo, &workspace.id))
-            .unwrap();
     }
     group.finish();
 

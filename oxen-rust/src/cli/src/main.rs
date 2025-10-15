@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::process::ExitCode;
 
 use crate::cmd::RemoteModeCmd;
@@ -23,9 +24,16 @@ const LONG_ABOUT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
+fn oxen_stack_size() -> usize {
+    env::var("OXEN_STACK_SIZE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(liboxen::constants::OXEN_STACK_SIZE)
+}
+
 fn main() -> ExitCode {
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .thread_stack_size(16000000)
+        .thread_stack_size(oxen_stack_size())
         .enable_io()
         .enable_time()
         .build()

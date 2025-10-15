@@ -12,6 +12,8 @@ use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWith
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures_util::StreamExt;
 use glob::glob;
 use glob_match::glob_match;
@@ -32,6 +34,7 @@ use flate2::Compression;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
+const WORKSPACE_ADD_LIMIT: u64 = 100_000_000;
 
 #[derive(Debug)]
 pub struct UploadResult {
@@ -167,6 +170,28 @@ pub async fn add(
     Ok(())
 }
 
+pub async fn add_bytes(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    path: PathBuf,
+    buf: &[u8],
+) -> Result<(), OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let directory = directory.as_ref();
+
+    match upload_bytes_as_file(remote_repo, workspace_id, directory, &path, buf).await {
+        Ok(path) => {
+            println!("🐂 oxen added entry {path:?} to workspace {}", workspace_id);
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn upload_single_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -188,6 +213,8 @@ pub async fn upload_single_file(
             path,
             Some(directory),
             Some(workspace_id.as_ref().to_string()),
+            None,
+            None,
         )
         .await
         {
@@ -200,7 +227,7 @@ pub async fn upload_single_file(
     }
 }
 
-pub async fn upload_file_as_bytes(
+pub async fn upload_bytes_as_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
@@ -266,6 +293,8 @@ async fn upload_multiple_files(
             &path,
             Some(directory),
             Some(workspace_id.to_string()),
+            None,
+            None,
         )
         .await
         {
@@ -879,8 +908,73 @@ async fn p_upload_single_file(
     let client = client::new_for_url(&url)?;
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
+    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match result {
+        Ok(val) => {
+            log::debug!("File path response: {:?}", val);
+            if let Some(path) = val.paths.first() {
+                Ok(path.clone())
+            } else {
+                Err(OxenError::basic_str("No file path returned from server"))
+            }
+        }
+        Err(err) => {
+            let err = format!("api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
+async fn p_upload_bytes_as_file(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    mut buf: &[u8],
+) -> Result<PathBuf, OxenError> {
+    // Check if the total size of the files is too large (over 100mb for now)
+    let limit = WORKSPACE_ADD_LIMIT;
+    let total_size: u64 = buf.len().try_into().unwrap();
+    if total_size > limit {
+        let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
+        return Err(OxenError::basic_str(error_msg));
+    }
+
+    let workspace_id = workspace_id.as_ref();
+    let directory = directory.as_ref();
+    let directory_name = directory.to_string_lossy();
+    let path = path.as_ref();
+    log::debug!("multipart_file_upload path: {:?}", path);
+
+    let file_name: String = path.file_name().unwrap().to_string_lossy().into();
+    log::info!("uploading bytes with file_name: {:?}", file_name);
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    std::io::copy(&mut buf, &mut encoder)?;
+    let compressed_bytes = match encoder.finish() {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(OxenError::basic_str(format!(
+                "Failed to finish gzip for file {}: {}",
+                &file_name, e
+            )));
+        }
+    };
+
+    let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+        .file_name(file_name)
+        .mime_str("application/gzip")?;
+
+    let form = reqwest::multipart::Form::new().part("file[]", file_part);
+
+    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let response = client.post(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, response).await?;
+    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match result {
         Ok(val) => {
             log::debug!("File path response: {:?}", val);
             if let Some(path) = val.paths.first() {
@@ -951,7 +1045,7 @@ pub async fn add_many(
     let workspace_id = workspace_id.as_ref();
     let directory_name = directory_name.as_ref();
     // Check if the total size of the files is too large (over 100mb for now)
-    let limit = 100_000_000;
+    let limit = WORKSPACE_ADD_LIMIT;
     let total_size: u64 = paths.iter().map(|p| p.metadata().unwrap().len()).sum();
     if total_size > limit {
         let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));

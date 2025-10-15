@@ -2,6 +2,7 @@ use crate::error::OxenError;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use tokio_stream::Stream;
 
@@ -74,6 +75,11 @@ impl VersionStore for S3VersionStore {
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }
 
+    async fn get_version_metadata(&self, _hash: &str) -> Result<Metadata, OxenError> {
+        // TODO: Implement S3 version retrieval
+        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    }
+
     async fn get_version(&self, _hash: &str) -> Result<Vec<u8>, OxenError> {
         // TODO: Implement S3 version retrieval
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
@@ -101,10 +107,19 @@ impl VersionStore for S3VersionStore {
     async fn store_version_chunk(
         &self,
         _hash: &str,
-        _chunk_number: u32,
+        _offset: u64,
         _data: &[u8],
     ) -> Result<(), OxenError> {
         // TODO: Implement S3 version chunk storage
+        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    }
+
+    async fn get_version_chunk_writer(
+        &self,
+        _hash: &str,
+        _offset: u64,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
+        // TODO: Implement S3 version chunk stream storage
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }
 
@@ -129,7 +144,7 @@ impl VersionStore for S3VersionStore {
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }
 
-    async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u32>, OxenError> {
+    async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u64>, OxenError> {
         // TODO: Implement S3 version chunk listing
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }

@@ -18,11 +18,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::SeekFrom;
 
-use crate::constants;
 use crate::constants::CACHE_DIR;
 use crate::constants::CHUNKS_DIR;
 use crate::constants::CONTENT_IS_VALID;
-use crate::constants::DATA_ARROW_FILE;
 use crate::constants::HISTORY_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::TREE_DIR;
@@ -30,19 +28,20 @@ use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
-use crate::model::Schema;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
+use crate::{constants, repositories, util};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
 
-use crate::repositories;
-use crate::util;
+use glob::Pattern;
+use glob_match::glob_match;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -87,28 +86,6 @@ pub fn commit_content_is_valid_path(repo: &LocalRepository, commit: &Commit) -> 
         .join(&commit.id)
         .join(CACHE_DIR)
         .join(CONTENT_IS_VALID)
-}
-
-pub fn version_path_for_commit_id(
-    repo: &LocalRepository,
-    commit_id: &str,
-    filepath: &Path,
-) -> Result<PathBuf, OxenError> {
-    match repositories::commits::get_by_id(repo, commit_id)? {
-        Some(commit) => match repositories::entries::get_commit_entry(repo, &commit, filepath)? {
-            Some(entry) => {
-                let path = version_path(repo, &entry);
-                let arrow_path = path.parent().unwrap().join(DATA_ARROW_FILE);
-                if arrow_path.exists() {
-                    Ok(arrow_path)
-                } else {
-                    Ok(path)
-                }
-            }
-            None => Err(OxenError::path_does_not_exist(filepath)),
-        },
-        None => Err(OxenError::revision_not_found(commit_id.into())),
-    }
 }
 
 pub fn handle_image_resize(
@@ -158,28 +135,6 @@ pub fn resized_path_for_version_store_file(
         extension
     ));
     Ok(resized_path)
-}
-
-pub fn version_file_size(repo: &LocalRepository, entry: &CommitEntry) -> Result<u64, OxenError> {
-    let version_path = version_path(repo, entry);
-    // if is_tabular(&version_path) {
-    //     let data_file = version_path.parent().unwrap().join(DATA_ARROW_FILE);
-    //     if !data_file.exists() {
-    //         // just for unit tests to pass for now, we only really call file size from the server
-    //         // on the client we don't have the data.arrow file and would have to compute size on the fly
-    //         // but a warning for now should be good
-    //         log::warn!("TODO: compute size of data file: {:?}", data_file);
-    //         return Ok(0);
-    //     }
-    //     let meta = util::fs::metadata(&data_file)?;
-    //     Ok(meta.len())
-    // } else {
-    if !version_path.exists() {
-        return Err(OxenError::path_does_not_exist(version_path));
-    }
-    let meta = util::fs::metadata(&version_path)?;
-    Ok(meta.len())
-    // }
 }
 
 pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
@@ -262,11 +217,6 @@ pub fn version_path_from_dst_generic(dst: impl AsRef<Path>, entry: &Entry) -> Pa
     }
 }
 
-pub fn df_version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
-    let version_dir = version_dir_from_hash(&repo.path, entry.hash.clone());
-    version_dir.join(DATA_ARROW_FILE)
-}
-
 pub fn version_path_from_hash_and_file_v0_10_0(
     dst: impl AsRef<Path>,
     hash: impl AsRef<str>,
@@ -309,11 +259,6 @@ pub fn version_path_from_hash_and_file(
             version_dir.join(VERSION_FILE_NAME)
         }
     }
-}
-
-pub fn version_path_from_schema(dst: impl AsRef<Path>, schema: &Schema) -> PathBuf {
-    // Save schemas as path with no extension
-    version_path_from_schema_hash(dst, schema.hash.clone())
 }
 
 pub fn version_path_from_schema_hash(dst: impl AsRef<Path>, hash: String) -> PathBuf {
@@ -647,6 +592,66 @@ pub fn rlist_dirs_in_repo(repo: &LocalRepository) -> Vec<PathBuf> {
         }
     }
     dirs
+}
+
+pub fn parse_glob_path(
+    path: &Path,
+    repo: &LocalRepository,
+    is_staged: &bool,
+) -> Result<HashSet<PathBuf>, OxenError> {
+    let mut paths: HashSet<PathBuf> = HashSet::new();
+
+    let root_path = PathBuf::from("");
+    let repo_path = &repo.path;
+    let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+    let full_path = repo_path.join(&relative_path);
+
+    if util::fs::is_glob_path(&relative_path) {
+        let path_str = relative_path.to_str().unwrap();
+
+        // If --staged, only operate on staged files
+        if *is_staged {
+            let pattern = Pattern::new(path_str)?;
+            let staged_data = repositories::status::status(repo)?;
+            for entry in staged_data.staged_files {
+                let entry_path_str = entry.0.to_str().unwrap();
+                if pattern.matches(entry_path_str) {
+                    paths.insert(entry.0.to_owned());
+                }
+            }
+        } else if let Some(ref head_commit) = repositories::commits::head_commit_maybe(repo)? {
+            let glob_pattern = full_path.file_name().unwrap().to_string_lossy().to_string();
+            let parent_path = relative_path.parent().unwrap_or(&root_path);
+
+            // Otherwise, traverse the tree for files to restore
+            if let Some(dir_node) =
+                repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
+            {
+                let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
+                for child in dir_children {
+                    if let EMerkleTreeNode::File(file_node) = &child.node {
+                        let child_str = file_node.name();
+                        let child_path = parent_path.join(child_str);
+                        if glob_match(&glob_pattern, child_str) {
+                            paths.insert(child_path);
+                        }
+                    } else if let EMerkleTreeNode::Directory(dir_node) = &child.node {
+                        let child_str = dir_node.name();
+                        let child_path = parent_path.join(child_str);
+                        if glob_match(&glob_pattern, child_str) {
+                            // TODO: Method to detect if dirs are modified from the tree
+                            paths.insert(child_path);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        paths.insert(relative_path);
+    }
+
+    log::debug!("parse_glob_paths found paths: {paths:?}");
+    Ok(paths)
 }
 
 /// Recursively tries to traverse up for an .oxen directory, returns None if not found
@@ -1772,17 +1777,19 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
     }
 }
 
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    // First, check if the file exists; return false if not
+pub fn is_modified_from_node_with_metadata(
+    path: &Path,
+    node: &FileNode,
+    metadata: Result<std::fs::Metadata, OxenError>,
+) -> Result<bool, OxenError> {
     if !path.exists() {
         log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
         return Ok(false);
     }
 
+    let metadata = metadata?;
     // Second, check the length of the file
-    let meta = util::fs::metadata(path)?;
-
-    let file_size = meta.len();
+    let file_size = metadata.len();
     let node_size = node.num_bytes();
 
     if file_size != node_size {
@@ -1790,7 +1797,7 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
     }
 
     // Third, check the last modified times
-    let file_last_modified = FileTime::from_last_modification_time(&meta);
+    let file_last_modified = FileTime::from_last_modification_time(&metadata);
     let node_last_modified = util::fs::last_modified_time(
         node.last_modified_seconds(),
         node.last_modified_nanoseconds(),
@@ -1802,13 +1809,17 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
 
     // Finally, check the hashes
     let node_hash = node.hash().to_u128();
-    let working_hash = util::hasher::get_hash_given_metadata(path, &meta)?;
+    let working_hash = util::hasher::get_hash_given_metadata(path, &metadata)?;
 
     if node_hash == working_hash {
         Ok(false)
     } else {
         Ok(true)
     }
+}
+
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+    is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
 }
 
 // Only uses the metadata to check for modification
@@ -1955,8 +1966,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn version_path() -> Result<(), OxenError> {
+    #[test]
+    fn version_path() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
             let entry = CommitEntry {
                 commit_id: String::from("1234"),
@@ -1981,8 +1992,8 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn detect_file_type() -> Result<(), OxenError> {
+    #[test]
+    fn detect_file_type() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";

@@ -5,7 +5,7 @@ use crate::params::{app_data, parse_resource, path_param};
 use liboxen::core::staged::staged_db_manager::with_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
-use liboxen::model::file::{FileContents, FileNew, TempFileNew};
+use liboxen::model::file::{FileContents, FileNew, TempFileNew, TempFilePathNew};
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::{Commit, User};
@@ -164,7 +164,7 @@ pub async fn put(
         ));
     }
 
-    let (name, email, message, temp_files) = parse_multipart_fields(payload).await?;
+    let (name, email, message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -206,6 +206,61 @@ pub async fn put(
     }))
 }
 
+pub async fn upload_zip(
+    req: HttpRequest,
+    payload: Multipart,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::upload_zip path {:?}", req.path());
+
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    let resource = parse_resource(&req, &repo)?;
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let directory = resource.path.clone();
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let (commit_message, name, email, temp_files) =
+        parse_multipart_fields_for_upload_zip(payload, &workspace, directory).await?;
+
+    let user = create_user_from_options(name.clone(), email.clone())?;
+
+    // Make sure the resource path is not already a file
+    let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    if node.is_some() && node.unwrap().is_file() {
+        return Err(OxenHttpError::BasicError(
+            format!(
+                "Target path must be a directory: {}",
+                resource.path.display()
+            )
+            .into(),
+        ));
+    }
+
+    let commit_message = commit_message.unwrap_or("Upload zip file".to_string());
+
+    let commit = repositories::workspaces::files::upload_zip(
+        &commit_message,
+        &user,
+        temp_files,
+        &workspace,
+        &branch,
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
 // Helper: when the repository has no commits yet, accept the upload as the first commit on the
 // default branch ("main").
 async fn handle_initial_put_empty_repo(
@@ -221,7 +276,7 @@ async fn handle_initial_put_empty_repo(
         .to_string_lossy()
         .to_string();
 
-    let (name, email, _message, temp_files) = parse_multipart_fields(payload).await?;
+    let (name, email, _message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -368,7 +423,7 @@ pub async fn import(
     }))
 }
 
-async fn parse_multipart_fields(
+async fn parse_multipart_fields_for_repo(
     mut payload: Multipart,
 ) -> actix_web::Result<
     (
@@ -452,6 +507,129 @@ async fn parse_multipart_fields(
     }
 
     Ok((name, email, message, temp_files))
+}
+
+async fn parse_multipart_fields_for_upload_zip(
+    mut payload: Multipart,
+    workspace: &liboxen::repositories::workspaces::TemporaryWorkspace,
+    directory: PathBuf,
+) -> actix_web::Result<
+    (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Vec<TempFilePathNew>,
+    ),
+    OxenHttpError,
+> {
+    let mut commit_message: Option<String> = None;
+    let mut temp_files: Vec<TempFilePathNew> = vec![];
+    let mut fields_data: Vec<(String, PathBuf)> = Vec::new();
+    let mut name: Option<String> = None;
+    let mut email: Option<String> = None;
+
+    while let Some(mut field) = payload
+        .try_next()
+        .await
+        .map_err(OxenHttpError::MultipartError)?
+    {
+        let disposition = field.content_disposition().ok_or(OxenHttpError::NotFound)?;
+        let field_name = disposition
+            .get_name()
+            .ok_or(OxenHttpError::NotFound)?
+            .to_string();
+
+        match field_name.as_str() {
+            "name" | "email" => {
+                let mut bytes = Vec::new();
+                while let Some(chunk) = field
+                    .try_next()
+                    .await
+                    .map_err(OxenHttpError::MultipartError)?
+                {
+                    bytes.extend_from_slice(&chunk);
+                }
+                let value = String::from_utf8(bytes)
+                    .map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
+
+                if field_name == "name" {
+                    name = Some(value);
+                } else {
+                    email = Some(value);
+                }
+            }
+            "commit_message" => {
+                let mut bytes = Vec::new();
+                while let Some(chunk) = field
+                    .try_next()
+                    .await
+                    .map_err(OxenHttpError::MultipartError)?
+                {
+                    bytes.extend_from_slice(&chunk);
+                }
+                let value = String::from_utf8(bytes)
+                    .map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
+                commit_message = Some(value);
+            }
+            "files[]" | "file" => {
+                let filename = disposition.get_filename().map_or_else(
+                    || uuid::Uuid::new_v4().to_string(),
+                    sanitize_filename::sanitize,
+                );
+
+                let workspace_path = workspace.dir().join(directory.clone()).join(&filename);
+
+                // Create parent directories if they don't exist
+                if let Some(parent) = workspace_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                        OxenHttpError::BadRequest(
+                            format!("Failed to create directories: {}", e).into(),
+                        )
+                    })?;
+                }
+
+                // Create the file in the workspace directory
+                let mut file = tokio::fs::File::create(&workspace_path)
+                    .await
+                    .map_err(|e| {
+                        OxenHttpError::BadRequest(format!("Failed to create file: {}", e).into())
+                    })?;
+
+                while let Some(chunk) = field
+                    .try_next()
+                    .await
+                    .map_err(OxenHttpError::MultipartError)?
+                {
+                    tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+                        .await
+                        .map_err(|e| {
+                            OxenHttpError::BadRequest(
+                                format!("Failed to write to file: {}", e).into(),
+                            )
+                        })?;
+                }
+
+                // Flush to ensure data is written
+                tokio::io::AsyncWriteExt::flush(&mut file)
+                    .await
+                    .map_err(|e| {
+                        OxenHttpError::BadRequest(format!("Failed to flush file: {}", e).into())
+                    })?;
+
+                fields_data.push((filename, workspace_path));
+            }
+            _ => {}
+        }
+    }
+
+    for (_filename, temp_path) in fields_data {
+        temp_files.push(TempFilePathNew {
+            path: directory.clone(),
+            temp_file_path: temp_path,
+        });
+    }
+
+    Ok((commit_message, name, email, temp_files))
 }
 
 // Helper function for user creation

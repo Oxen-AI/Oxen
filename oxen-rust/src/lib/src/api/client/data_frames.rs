@@ -6,6 +6,8 @@ use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::opts::DFOpts;
 use crate::util;
+use crate::view::commit::CommitResponse;
+use crate::view::data_frames::FromDirectoryRequest;
 use crate::view::{JsonDataFrameViewResponse, StatusMessage};
 
 pub async fn get(
@@ -62,6 +64,41 @@ pub async fn index(
     }
 }
 
+pub async fn from_directory(
+    remote_repo: &RemoteRepository,
+    commit_or_branch: &str,
+    path: impl AsRef<Path>,
+    request: FromDirectoryRequest,
+) -> Result<CommitResponse, OxenError> {
+    let path_str = util::fs::to_unix_str(path);
+    let uri = format!("/data_frames/from_directory/{commit_or_branch}/{path_str}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let json_body = serde_json::to_string(&request)?;
+
+    let res = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(json_body)
+        .send()
+        .await?;
+
+    let body = client::parse_json_body(&url, res).await?;
+    log::debug!("got body: {}", body);
+
+    let response: Result<CommitResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(val) => {
+            log::debug!("got CommitResponse: {:?}", val);
+            Ok(val)
+        }
+        Err(err) => Err(OxenError::basic_str(format!(
+            "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -77,6 +114,8 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::view::data_frames::columns::NewColumn;
+    use crate::view::data_frames::FromDirectoryRequest;
 
     use serde_json::json;
 
@@ -558,7 +597,6 @@ mod tests {
                 constants::DEFAULT_PAGE_SIZE
             );
 
-            println!("{}", df.data_frame.view.data[0]["title"]);
             assert_eq!(df.data_frame.view.data[0]["title"], "Anarchism");
 
             Ok(())
@@ -680,6 +718,114 @@ mod tests {
 
             println!("{}", df.data_frame.view.data[0]["title"]);
             assert_eq!(df.data_frame.view.data[0]["title"], "April 26");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_from_directory() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+            let repo_dir = &local_repo.path;
+
+            // Create test directory structure
+            let test_dir = repo_dir.join("test_files");
+            util::fs::create_dir_all(&test_dir)?;
+
+            let subdir = test_dir.join("subdir");
+            util::fs::create_dir_all(&subdir)?;
+
+            // Create some test files
+            let file1 = test_dir.join("file1.txt");
+            std::fs::write(&file1, "content1")?;
+
+            let file2 = test_dir.join("file2.txt");
+            std::fs::write(&file2, "content2")?;
+
+            let file3 = subdir.join("file3.txt");
+            std::fs::write(&file3, "content3")?;
+
+            // Add and commit the files
+            repositories::add(&local_repo, &test_dir).await?;
+            repositories::commit(&local_repo, "add test files")?;
+
+            // Set the proper remote
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
+
+            // Create the repo
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+
+            // Push the repo
+            repositories::push(&local_repo).await?;
+
+            // Create request for from_directory
+            let request = FromDirectoryRequest {
+                output_path: Some("file_listing.parquet".to_string()),
+                extra_columns: Some(vec![
+                    NewColumn {
+                        name: "file_size".to_string(),
+                        data_type: "float".to_string(),
+                    },
+                    NewColumn {
+                        name: "file_type".to_string(),
+                        data_type: "float".to_string(),
+                    },
+                ]),
+                commit_message: Some("Generated directory listing".to_string()),
+                user_name: Some("test_user".to_string()),
+                user_email: Some("test@example.com".to_string()),
+                recursive: Some(true),
+            };
+
+            // Call from_directory
+            let response = api::client::data_frames::from_directory(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                "test_files",
+                request,
+            )
+            .await?;
+
+            let files = api::client::data_frames::get(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                "file_listing.parquet",
+                DFOpts::empty(),
+            )
+            .await?;
+            let p_df = files.data_frame.view.to_df().await;
+            assert_eq!(p_df.height(), 3);
+            assert_eq!(p_df.width(), 3);
+
+            let file_path_col = p_df.column("file_path").unwrap();
+            let file_paths: Vec<&str> = file_path_col.str().unwrap().into_no_null_iter().collect();
+            let file_1_str = PathBuf::from("test_files")
+                .join("file1.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let file_2_str = PathBuf::from("test_files")
+                .join("file2.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let file_3_str = PathBuf::from("test_files")
+                .join("subdir")
+                .join("file3.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            assert!(file_paths.contains(&file_1_str.as_str()));
+            assert!(file_paths.contains(&file_2_str.as_str()));
+            assert!(file_paths.contains(&file_3_str.as_str()));
+
+            // Verify response
+            assert!(response.status.status_message == "resource_created");
+            assert!(!response.commit.id.is_empty());
+            assert_eq!(response.commit.message, "Generated directory listing");
 
             Ok(())
         })
