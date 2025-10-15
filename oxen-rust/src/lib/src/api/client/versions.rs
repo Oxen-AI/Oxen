@@ -1,6 +1,6 @@
 use crate::api;
 use crate::api::client;
-use crate::constants::{AVG_CHUNK_SIZE, MAX_RETRIES as DEFAULT_MAX_RETRIES};
+use crate::constants::{AVG_CHUNK_SIZE, MAX_RETRIES as DEFAULT_MAX_RETRIES, NUM_HTTP_RETRIES};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
@@ -11,6 +11,7 @@ use crate::view::versions::{
 };
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
 
+use crate::core::progress::push_progress::PushProgress;
 use async_compression::tokio::bufread::GzipDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;

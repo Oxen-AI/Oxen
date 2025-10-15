@@ -12,8 +12,6 @@ use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWith
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use futures_util::StreamExt;
 use glob::glob;
 use glob_match::glob_match;
@@ -489,6 +487,7 @@ async fn parallel_batched_small_file_upload(
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
     let client_clone = client.clone();
     let remote_repo_clone = remote_repo.clone();
+    let progress_clone = progress.clone();
 
     let consumer_handle = tokio::spawn(async move {
         let mut upload_handles = Vec::new();
@@ -507,6 +506,8 @@ async fn parallel_batched_small_file_upload(
 
             if current_batch_size >= AVG_CHUNK_SIZE || rx.is_closed() {
                 let mut form = reqwest::multipart::Form::new();
+
+                let num_entries = current_batch_parts.len();
                 for part in current_batch_parts {
                     form = form.part("file[]", part);
                 }
@@ -516,6 +517,9 @@ async fn parallel_batched_small_file_upload(
                 let consumer_lock_clone = Arc::clone(&consumer_lock.clone());
                 let workspace_id_clone = workspace_id.clone();
                 let directory_str = directory_clone.clone();
+
+                let batch_size = current_batch_size.clone();
+                let bar = Arc::clone(&progress_clone);
 
                 // TODO: Find way not to have to clone files_to_stage
                 let files_to_stage_clone = files_to_stage.clone();
@@ -558,6 +562,9 @@ async fn parallel_batched_small_file_upload(
                                 // If the staging operation returned successfully, record the err_files for re-upload
                                 Ok(err_files) => {
                                     log::debug!("Successfully staged files to workspace with errs {err_files:?}");
+
+                                    bar.add_bytes(batch_size);
+                                    bar.add_files(num_entries as u64);
 
                                     let mut consumer_err_files = consumer_lock_clone.lock();
                                     consumer_err_files.extend(err_files);
@@ -608,6 +615,10 @@ async fn parallel_batched_small_file_upload(
             let workspace_id_clone = workspace_id.clone();
             let directory_str = directory_clone.clone();
 
+            let batch_size = current_batch_size.clone();
+            let num_entries = current_batch_parts.len();
+            let bar = Arc::clone(&progress_clone);
+
             let final_handle = tokio::spawn(async move {
                 // First, upload the version files
                 let mut form = reqwest::multipart::Form::new();
@@ -625,6 +636,9 @@ async fn parallel_batched_small_file_upload(
                 {
                     Ok(err_files) => {
                         if !err_files.is_empty() {
+                            bar.add_bytes(batch_size);
+                            bar.add_files(num_entries as u64);
+
                             let mut consumer_err_files = consumer_lock_clone.lock();
                             consumer_err_files.extend(err_files.clone());
                         }
@@ -975,52 +989,6 @@ async fn p_upload_bytes_as_file(
     let body = client::parse_json_body(&url, response).await?;
     let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
     match result {
-        Ok(val) => {
-            log::debug!("File path response: {:?}", val);
-            if let Some(path) = val.paths.first() {
-                Ok(path.clone())
-            } else {
-                Err(OxenError::basic_str("No file path returned from server"))
-            }
-        }
-        Err(err) => {
-            let err = format!("api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}");
-            Err(OxenError::basic_str(err))
-        }
-    }
-}
-
-async fn p_upload_bytes_as_file(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
-    buf: &[u8],
-) -> Result<PathBuf, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-    let directory_name = directory.to_string_lossy();
-    let path = path.as_ref();
-    log::debug!("multipart_file_upload path: {:?}", path);
-
-    let file_data: Vec<u8> = buf.to_vec();
-
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!(
-        "api::client::workspaces::files::add sending file_name: {:?}",
-        file_name
-    );
-
-    let file_part = reqwest::multipart::Part::bytes(file_data).file_name(file_name);
-    let form = reqwest::multipart::Form::new().part("file", file_part);
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
         Ok(val) => {
             log::debug!("File path response: {:?}", val);
             if let Some(path) = val.paths.first() {

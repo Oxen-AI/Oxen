@@ -24,8 +24,8 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tokio_tar::Builder;
 use tokio::task::JoinSet;
+use tokio_tar::Builder;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 const DOWNLOAD_BUFFER_SIZE: usize = 64 * 1024;
