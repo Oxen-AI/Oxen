@@ -279,7 +279,7 @@ mod tests {
             let train_dir = repo.path.join("train");
             test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
             test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
-            repositories::add(&repo, &train_dir)?;
+            repositories::add(&repo, &train_dir).await?;
             repositories::commit(&repo, "Add files")?;
 
             // Run prune - should not remove anything
@@ -293,12 +293,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_prune_branch() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            let train_dir = repo.path.join("train");
+            test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
+            test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
+            repositories::add(&repo, &train_dir).await?;
+            let initial_commit = repositories::commit(&repo, "Add files")?;
+
+            // Create a new branch
+            let branch_name = "test-branch";
+            repositories::branches::create(&repo, branch_name, &initial_commit.id)?;
+
+            // Run prune - should not remove anything
+            let stats = prune(&repo, false).await?;
+            assert_eq!(stats.nodes_removed, 0);
+            assert_eq!(stats.versions_removed, 0);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_prune_dry_run() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let stats = prune(&repo, true).await?;
             // Dry run should not actually remove anything
             assert_eq!(stats.nodes_scanned, 0);
             assert_eq!(stats.versions_scanned, 0);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_prune_deleted_branch_commits() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // Initial commit
+            let train_dir = repo.path.join("train");
+            let initial_file = test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
+            repositories::add(&repo, &initial_file).await?;
+            let initial_commit = repositories::commit(&repo, "Add file1")?;
+
+            // Create a new branch and add a commit
+            let branch_1_name = "branch-1";
+            repositories::branches::create(&repo, branch_1_name, &initial_commit.id)?;
+            repositories::checkout(&repo, branch_1_name).await?;
+            let branch_1_file = test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
+            repositories::add(&repo, &branch_1_file).await?;
+            let branch_1_commit = repositories::commit(&repo, "Commit on branch 1")?;
+
+            // Create a second branch and add another commit
+            let branch_2_name = "branch-2";
+            repositories::branches::create(&repo, branch_2_name, &branch_1_commit.id)?;
+            repositories::checkout(&repo, branch_2_name).await?;
+            let branch_2_file = test::add_txt_file_to_dir(&train_dir, "file3.txt")?;
+            repositories::add(&repo, &branch_2_file).await?;
+            let branch_2_commit = repositories::commit(&repo, "Commit on branch 2")?;
+
+            // Checkout main and delete the branches
+            repositories::checkout(&repo, "main").await?;
+            repositories::branches::force_delete(&repo, branch_1_name)?;
+            repositories::branches::force_delete(&repo, branch_2_name)?;
+
+            // Prune the repo
+            prune(&repo, false).await?;
+
+            // The commits from the deleted branches should be gone
+            let all_commits = repositories::commits::list_all(&repo)?;
+            assert_eq!(all_commits.len(), 1);
+            assert!(all_commits.contains(&initial_commit));
+            assert!(!all_commits.contains(&branch_1_commit));
+            assert!(!all_commits.contains(&branch_2_commit));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_prune_does_not_delete_referenced_data() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // Initial commit on main
+            let file1 = repo.path.join("file1.txt");
+            tokio::fs::write(&file1, "file1").await?;
+            repositories::add(&repo, &file1).await?;
+            let initial_commit = repositories::commit(&repo, "Add file1")?;
+
+            // Create a feature branch and dd a commit to the feature branch
+            let branch_name = "feature";
+            repositories::branches::create(&repo, branch_name, &initial_commit.id)?;
+
+            repositories::checkout(&repo, branch_name).await?;
+            let file2 = repo.path.join("file2.txt");
+            tokio::fs::write(&file2, "file2").await?;
+            repositories::add(&repo, &file2).await?;
+            repositories::commit(&repo, "Add file2")?;
+
+            // Checkout main and merge the feature branch
+            repositories::checkout(&repo, "main").await?;
+            repositories::merge::merge(&repo, branch_name).await?;
+
+            // Delete the feature branch
+            repositories::branches::delete(&repo, branch_name)?;
+
+            // Get all referenced nodes and versions before pruning
+            let (referenced_nodes_before, referenced_versions_before) =
+                collect_referenced_hashes(&repo)?;
+
+            // Prune the repo
+            let stats = prune(&repo, false).await?;
+
+            // No nodes or versions should be removed
+            assert_eq!(stats.nodes_removed, 0);
+            assert_eq!(stats.versions_removed, 0);
+
+            // Get all referenced nodes and versions after pruning
+            let (referenced_nodes_after, referenced_versions_after) =
+                collect_referenced_hashes(&repo)?;
+
+            // The set of referenced hashes should be the same
+            assert_eq!(referenced_nodes_before, referenced_nodes_after);
+            assert_eq!(referenced_versions_before, referenced_versions_after);
+
+            // All commits should still be present
+            let all_commits = repositories::commits::list_all(&repo)?;
+            assert_eq!(all_commits.len(), 2); // Initial commit + merge commit
+
             Ok(())
         })
         .await
