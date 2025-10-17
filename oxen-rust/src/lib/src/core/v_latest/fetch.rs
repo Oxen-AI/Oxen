@@ -731,7 +731,6 @@ async fn pull_small_entries(
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            // Create HashMap from hash -> path for this chunk
             let hashes = chunk.iter().map(|entry| entry.hash().to_string()).collect();
             (remote_repo.to_owned(), hashes, repo.to_owned())
         })
@@ -968,16 +967,16 @@ async fn download_small_entries(
     );
 
     // Split into chunks, zip up, and post to server
-    type PieceOfWork = (RemoteRepository, HashMap<String, PathBuf>, PathBuf);
+    type PieceOfWork = (RemoteRepository, Vec<(String, PathBuf)>, PathBuf);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            let content_ids: HashMap<String, PathBuf> = chunk
-                .iter()
-                .map(|e| (e.hash(), e.path().to_owned()))
-                .collect();
+            let mut content_ids: Vec<(String, PathBuf)> = vec![];
+            for e in chunk {
+                content_ids.push((e.hash(), e.path().to_owned()));
+            }
             (remote_repo.to_owned(), content_ids, dst.as_ref().to_owned())
         })
         .collect();
