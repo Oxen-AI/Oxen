@@ -516,8 +516,8 @@ mod tests {
             let dir_entries = paginated.entries;
             let size = paginated.total_entries;
 
-            assert_eq!(size, 5);
-            assert_eq!(dir_entries.len(), 5);
+            assert_eq!(size, 7);
+            assert_eq!(dir_entries.len(), 7);
 
             Ok(())
         })
@@ -561,7 +561,7 @@ mod tests {
                 Path::new("train"),
                 &commit.id,
                 &PaginateOpts {
-                    page_num: 2,
+                    page_num: 3,
                     page_size: 3,
                 },
             )?;
@@ -573,8 +573,8 @@ mod tests {
                 println!("{entry:?}");
             }
 
-            assert_eq!(total_entries, 5);
-            assert_eq!(dir_entries.len(), 2);
+            assert_eq!(total_entries, 7);
+            assert_eq!(dir_entries.len(), 1);
 
             Ok(())
         })

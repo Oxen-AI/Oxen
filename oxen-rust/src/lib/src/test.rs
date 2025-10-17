@@ -1828,6 +1828,14 @@ pub fn populate_train_dir(repo_dir: &Path) -> Result<(), OxenError> {
             .join("dog_3.jpg"),
         train_dir.join("dog_3.jpg"),
     )?;
+    // Add file with same content and different names to test edge cases
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("dog_3.jpg"),
+        train_dir.join("dog_4.jpg"),
+    )?;
     util::fs::copy(
         Path::new("data")
             .join("test")
@@ -1841,6 +1849,13 @@ pub fn populate_train_dir(repo_dir: &Path) -> Result<(), OxenError> {
             .join("images")
             .join("cat_2.jpg"),
         train_dir.join("cat_2.jpg"),
+    )?;
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("cat_2.jpg"),
+        train_dir.join("cat_3.jpg"),
     )?;
 
     Ok(())
@@ -1862,6 +1877,20 @@ pub fn populate_test_dir(repo_dir: &Path) -> Result<(), OxenError> {
             .join("images")
             .join("cat_3.jpg"),
         test_dir.join("2.jpg"),
+    )?;
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("dog_4.jpg"),
+        test_dir.join("3.jpg"),
+    )?;
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("cat_3.jpg"),
+        test_dir.join("4.jpg"),
     )?;
 
     Ok(())
