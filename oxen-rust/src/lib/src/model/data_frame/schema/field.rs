@@ -69,14 +69,14 @@ impl Field {
             let field = field.trim();
             let field_parts: Vec<&str> = field.split(':').collect();
             if field_parts.len() != 2 {
-                panic!("Invalid field: {}", field);
+                panic!("Invalid field: {field}");
             }
             let name = field_parts[0];
             let dtype = field_parts[1];
             if DataType::from_string(dtype) == DataType::Unknown
                 && CustomDataType::from_string(dtype) == CustomDataType::Unknown
             {
-                panic!("Invalid dtype: {}", dtype);
+                panic!("Invalid dtype: {dtype}");
             }
 
             let field = Field::new(name, dtype);

@@ -15,5 +15,5 @@ pub fn to_ordinal(n: u64) -> String {
         (3, _) => "rd",
         _ => "th",
     };
-    format!("{}{}", n, suffix)
+    format!("{n}{suffix}")
 }

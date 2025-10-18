@@ -176,7 +176,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 3);
 
             for entry in &root_entries.entries {
-                println!("entry: {:?}", entry);
+                println!("entry: {entry:?}");
             }
             println!("----------------------");
 
@@ -244,7 +244,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 4);
 
             for entry in &root_entries.entries {
-                println!("entry: {:?}", entry);
+                println!("entry: {entry:?}");
             }
 
             // Make sure the commit hash for "a_data" is correct.
@@ -333,7 +333,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 1);
 
             for entry in &root_entries.entries {
-                println!("entry: {:?}", entry);
+                println!("entry: {entry:?}");
             }
 
             // Find the README.md entry among the metadata entries.

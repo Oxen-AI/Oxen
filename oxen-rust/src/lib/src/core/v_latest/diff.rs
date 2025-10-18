@@ -26,11 +26,7 @@ pub async fn list_diff_entries(
     page_size: usize,
 ) -> Result<DiffEntriesCounts, OxenError> {
     log::debug!(
-        "list_diff_entries base_dir: '{:?}', head_dir: '{:?}' base_commit: '{}', head_commit: '{}'",
-        base_path,
-        head_path,
-        base_commit,
-        head_commit
+        "list_diff_entries base_dir: '{base_path:?}', head_dir: '{head_path:?}' base_commit: '{base_commit}', head_commit: '{head_commit}'"
     );
 
     let base_tree = CommitMerkleTree::node_from_path_maybe(repo, base_commit, &base_path, true)?;
@@ -75,8 +71,7 @@ pub async fn list_diff_entries(
                 }
                 _ => {
                     return Err(OxenError::basic_str(format!(
-                        "Failed to get base tree for commit: {}",
-                        base_commit
+                        "Failed to get base tree for commit: {base_commit}"
                     )));
                 }
             }
@@ -100,8 +95,7 @@ pub async fn list_diff_entries(
             }
             _ => {
                 return Err(OxenError::basic_str(format!(
-                    "Failed to get base tree for commit: {}",
-                    base_commit
+                    "Failed to get base tree for commit: {base_commit}"
                 )));
             }
         },
@@ -124,8 +118,7 @@ pub async fn list_diff_entries(
             }
             _ => {
                 return Err(OxenError::basic_str(format!(
-                    "Failed to get head tree for commit: {}",
-                    head_commit
+                    "Failed to get head tree for commit: {head_commit}"
                 )));
             }
         },
@@ -292,12 +285,7 @@ pub async fn list_diff_entries(
         base_path,
         dirs.len()
     );
-    log::debug!(
-        "list_diff_entries dir: '{:?}' Page num {} Page size {}",
-        base_path,
-        page,
-        page_size
-    );
+    log::debug!("list_diff_entries dir: '{base_path:?}' Page num {page} Page size {page_size}");
     let all = dirs.into_iter().chain(file_entries).collect();
 
     Ok(DiffEntriesCounts {
@@ -316,14 +304,12 @@ pub fn list_changed_dirs(
 
     let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
         return Err(OxenError::basic_str(format!(
-            "Failed to get base tree for commit: {}",
-            base_commit
+            "Failed to get base tree for commit: {base_commit}"
         )));
     };
     let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
         return Err(OxenError::basic_str(format!(
-            "Failed to get head tree for commit: {}",
-            head_commit
+            "Failed to get head tree for commit: {head_commit}"
         )));
     };
 
@@ -386,14 +372,12 @@ pub fn get_dir_diff_entry_with_summary(
 ) -> Result<Option<DiffEntry>, OxenError> {
     let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
         return Err(OxenError::basic_str(format!(
-            "Failed to get base tree for commit: {}",
-            base_commit
+            "Failed to get base tree for commit: {base_commit}"
         )));
     };
     let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
         return Err(OxenError::basic_str(format!(
-            "Failed to get head tree for commit: {}",
-            head_commit
+            "Failed to get head tree for commit: {head_commit}"
         )));
     };
 
@@ -511,7 +495,7 @@ fn collect_added_directories(
     for head_dir in head_dirs {
         // HEAD entry is *not* in BASE
         if !base_dirs.contains(head_dir) {
-            log::debug!("collect_added_directories adding dir {:?}", head_dir);
+            log::debug!("collect_added_directories adding dir {head_dir:?}");
             diff_entries.push(DiffEntry::from_dir_nodes(
                 repo,
                 base_path.join(&head_dir.path),
@@ -554,7 +538,7 @@ fn collect_removed_directories(
     for base_dir in base_dirs {
         // HEAD entry is *not* in BASE
         if !head_dirs.contains(base_dir) {
-            log::debug!("collect_removed_directories adding dir {:?}", base_dir);
+            log::debug!("collect_removed_directories adding dir {base_dir:?}");
             diff_entries.push(DiffEntry::from_dir_nodes(
                 repo,
                 base_path.join(&base_dir.path),
@@ -583,7 +567,7 @@ fn collect_modified_directories(
     for head_dir in head_dirs {
         // HEAD entry is in BASE
         if let Some(base_dir) = base_dirs.get(head_dir) {
-            log::debug!("collect_modified_directories adding dir {:?}", head_dir);
+            log::debug!("collect_modified_directories adding dir {head_dir:?}");
             let diff_entry = DiffEntry::from_dir_nodes(
                 repo,
                 base_path.join(&head_dir.path),
@@ -716,11 +700,7 @@ fn subset_dir_diffs_to_direct_children(
         if let Some(meta_entry) = relevant_entry {
             if let Some(resource) = &meta_entry.resource {
                 let path = PathBuf::from(&resource.path);
-                log::debug!(
-                    "subset_dir_diffs_to_direct_children path {:?} dir {:?}",
-                    path,
-                    dir
-                );
+                log::debug!("subset_dir_diffs_to_direct_children path {path:?} dir {dir:?}");
                 if path.parent() == Some(dir.as_path()) {
                     filtered_entries.push(entry);
                 }

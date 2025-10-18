@@ -16,7 +16,7 @@ pub struct EntryMergeConflictReader {
 impl EntryMergeConflictReader {
     pub fn new(repo: &LocalRepository) -> Result<EntryMergeConflictReader, OxenError> {
         let db_path = util::fs::oxen_hidden_dir(&repo.path).join(Path::new(MERGE_DIR));
-        log::debug!("EntryMergeConflictReader::new() DB {:?}", db_path);
+        log::debug!("EntryMergeConflictReader::new() DB {db_path:?}");
 
         let opts = db::key_val::opts::default();
         if !db_path.exists() {

@@ -136,7 +136,7 @@ mod tests {
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_none());
@@ -218,7 +218,7 @@ mod tests {
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -304,7 +304,7 @@ mod tests {
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -351,7 +351,7 @@ mod tests {
             }
 
             let diff = compare.diff.as_ref().unwrap();
-            println!("diff: {:#?}", diff);
+            println!("diff: {diff:#?}");
             match diff {
                 GenericDiff::TabularDiff(diff) => {
                     assert!(diff.tabular.added_cols.as_ref().is_none());
@@ -432,7 +432,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -572,7 +572,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -705,7 +705,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -912,7 +912,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 4 dogs, one dir
             assert_eq!(compare.entries.len(), 5);
@@ -1027,7 +1027,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 4 dogs, modified 1 cat, removed 1 cat, three dirs
             assert_eq!(compare.entries.len(), 9);
@@ -1276,7 +1276,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Removed 3 cats, two parent dirs
             assert_eq!(compare.entries.len(), 5);
@@ -1390,7 +1390,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 3 dogs, 3 parent dirs
             assert_eq!(compare.entries.len(), 6);
@@ -1530,7 +1530,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 3 dogs, added 1 dwight/vince, 3 parent dirs
             assert_eq!(compare.entries.len(), 7);

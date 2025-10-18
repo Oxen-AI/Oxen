@@ -24,7 +24,7 @@ pub async fn get_slice(
     let file_node = repositories::tree::get_file_by_path(repo, commit, &path)?
         .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
 
-    log::debug!("get_slice file_node {:?}", file_node);
+    log::debug!("get_slice file_node {file_node:?}");
 
     let metadata: Result<MetadataTabularImpl, OxenError> = match file_node.metadata() {
         Some(metadata) => match metadata {
@@ -38,7 +38,7 @@ pub async fn get_slice(
         }
     };
     let metadata = metadata?;
-    log::debug!("get_slice metadata {:?}", metadata);
+    log::debug!("get_slice metadata {metadata:?}");
 
     let source_schema = metadata.schema;
     let data_frame_size = DataFrameSize {
@@ -65,7 +65,7 @@ pub async fn get_slice(
     // Update the schema metadata from the source schema
     let mut slice_schema = Schema::from_polars(df.schema());
     slice_schema.update_metadata_from_schema(&source_schema);
-    log::debug!("get_slice slice_schema {:?}", slice_schema);
+    log::debug!("get_slice slice_schema {slice_schema:?}");
     // Return a DataFrameSlice
     Ok(DataFrameSlice {
         schemas: DataFrameSliceSchemas {
@@ -112,7 +112,7 @@ async fn handle_sql_querying(
         let df = with_df_db_manager(db_path, |manager| {
             manager.with_conn_mut(|conn| sql::query_df(conn, sql, None))
         })?;
-        log::debug!("handle_sql_querying got df {:?}", df);
+        log::debug!("handle_sql_querying got df {df:?}");
         let paginated_df = transform_new(df.clone().lazy(), opts).await?.collect()?;
 
         let source_schema = if let Some(schema) =

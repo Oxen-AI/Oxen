@@ -15,7 +15,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
             Ok(HttpResponse::Ok().json(response))
         }
         Err(err) => {
-            log::error!("Error getting disk usage: {:?}", err);
+            log::error!("Error getting disk usage: {err:?}");
             Err(OxenHttpError::InternalServerError)
         }
     }

@@ -517,7 +517,7 @@ mod tests {
         test::run_empty_local_repo_test_async(|mut repo| async move {
             // create 5 text files in the repo.path
             for i in 1..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 test::write_txt_file_to_path(&filepath, &filename)?;
             }
@@ -547,7 +547,7 @@ mod tests {
 
             // Add the rest of the files
             for i in 3..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 repositories::add(&repo, &filepath).await?;
             }
@@ -597,7 +597,7 @@ mod tests {
         test::run_empty_local_repo_test_async(|mut repo| async move {
             // create 5 text files in the repo.path
             for i in 1..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 test::write_txt_file_to_path(&filepath, &filename)?;
             }
@@ -627,7 +627,7 @@ mod tests {
 
             // Add the rest of the files
             for i in 3..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 repositories::add(&repo, &filepath).await?;
             }
@@ -746,7 +746,7 @@ mod tests {
                 // Try to push upstream branch
                 let push_result = repositories::push::push_remote_branch(&cloned_repo, &opts).await;
 
-                log::debug!("Push result: {:?}", push_result);
+                log::debug!("Push result: {push_result:?}");
 
                 assert!(push_result.is_ok());
 

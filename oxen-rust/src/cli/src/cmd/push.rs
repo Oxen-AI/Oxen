@@ -111,11 +111,11 @@ impl RunCmd for PushCmd {
             match repositories::push::push_remote_branch(&repo, &opts).await {
                 Ok(_) => Ok(()),
                 Err(OxenError::BranchNotFound(branch)) => {
-                    let msg = format!("{}\nMake sure you are on the correct branch and have committed your changes.", branch);
+                    let msg = format!("{branch}\nMake sure you are on the correct branch and have committed your changes.");
                     Err(OxenError::basic_str(msg))
                 }
                 Err(e) => {
-                    println!("Error pushing: {}", e);
+                    println!("Error pushing: {e}");
                     Err(e)
                 }
             }

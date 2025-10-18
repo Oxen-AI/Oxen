@@ -14,7 +14,7 @@ pub fn create(repo: &LocalRepository) -> Option<Gitignore> {
             Some(gitignore)
         }
         (_, Some(err)) => {
-            log::debug!("Could not open .oxenignore file. Reason: {}", err);
+            log::debug!("Could not open .oxenignore file. Reason: {err}");
             None
         }
     }

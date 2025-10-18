@@ -148,10 +148,10 @@ mod tests {
                 // Perform several sequential commits and store the commit objects
                 let mut commits = vec![];
                 for i in 1..=4 {
-                    let filename = format!("file_{}.txt", i);
+                    let filename = format!("file_{i}.txt");
                     let file_path = PathBuf::from(&filename);
                     let full_path = cloned_repo.path.join(&file_path);
-                    let file_content = format!("This is the content for file {}", i);
+                    let file_content = format!("This is the content for file {i}");
 
                     test::write_txt_file_to_path(&full_path, &file_content)?;
                     api::client::workspaces::files::add(

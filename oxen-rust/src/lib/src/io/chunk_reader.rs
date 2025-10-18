@@ -78,7 +78,7 @@ impl Read for ChunkReader {
         // chunk_offset is the offset within the chunk
         let mut chunk_offset = self.offset % CHUNK_SIZE as u64;
 
-        log::debug!("Chunk index: {:?} offset {:?}", chunk_index, chunk_offset);
+        log::debug!("Chunk index: {chunk_index:?} offset {chunk_offset:?}");
         log::debug!("Chunk hashes len {:?}", self.node.chunk_hashes().len());
 
         // read chunks until we fill the buffer
@@ -97,12 +97,12 @@ impl Read for ChunkReader {
             let chunk_data = self.csm.read_chunk(chunk_hash).unwrap();
             let chunk_data_len = chunk_data.len() as u64;
 
-            log::debug!("Chunk file size {:?}", chunk_data_len);
+            log::debug!("Chunk file size {chunk_data_len:?}");
 
             let bytes_to_copy =
                 std::cmp::min(buf.len() as u64 - total_read, chunk_data_len - chunk_offset);
 
-            log::debug!("Bytes to copy {:?}", bytes_to_copy);
+            log::debug!("Bytes to copy {bytes_to_copy:?}");
 
             if bytes_to_copy == 0 {
                 break;
@@ -125,7 +125,7 @@ impl Read for ChunkReader {
             log::debug!("-end- Offset {:?} / {}", self.offset, self.node.num_bytes());
         }
 
-        log::debug!("--END-- Total read {:?}", total_read);
+        log::debug!("--END-- Total read {total_read:?}");
 
         Ok(total_read as usize)
     }

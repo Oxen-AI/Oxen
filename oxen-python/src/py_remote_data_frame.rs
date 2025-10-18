@@ -64,8 +64,7 @@ impl PyRemoteDataFrame {
             match serde_json::to_string(&response.data_frame.view.data) {
                 Ok(json) => Ok(json),
                 Err(e) => Err(OxenError::basic_str(format!(
-                    "Could not convert view to json: {}",
-                    e
+                    "Could not convert view to json: {e}",
                 ))),
             }
         })?;
@@ -84,7 +83,7 @@ impl PyRemoteDataFrame {
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let mut opts = DFOpts::empty();
-            opts.slice = Some(format!("{}..{}", start, end));
+            opts.slice = Some(format!("{start}..{end}"));
 
             if !columns.is_empty() {
                 // turn columns into comma separated list
@@ -99,8 +98,7 @@ impl PyRemoteDataFrame {
             match serde_json::to_string(&response.data_frame.view.data) {
                 Ok(json) => Ok(json),
                 Err(e) => Err(OxenError::basic_str(format!(
-                    "Could not convert view to json: {}",
-                    e
+                    "Could not convert view to json: {e}",
                 ))),
             }
         })?;

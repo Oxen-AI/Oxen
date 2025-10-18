@@ -129,7 +129,7 @@ pub async fn add_row(
         println!("\nAdded row: {row_id:?}");
     }
 
-    println!("{:?}", df);
+    println!("{df:?}");
     Ok(df)
 }
 
@@ -165,7 +165,7 @@ pub async fn get_row(
     )
     .await?;
     let df = df_json.data_frame.view.to_df().await;
-    println!("{:?}", df);
+    println!("{df:?}");
     Ok(df)
 }
 

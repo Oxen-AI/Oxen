@@ -54,7 +54,7 @@ async fn main() -> std::io::Result<()> {
 
     match from_filename("src/server/.env.local") {
         Ok(_) => log::debug!("Loaded .env file from current directory"),
-        Err(e) => log::debug!("Failed to load .env file: {}", e),
+        Err(e) => log::debug!("Failed to load .env file: {e}"),
     }
 
     util::logging::init_logging();
@@ -211,7 +211,7 @@ async fn main() -> std::io::Result<()> {
             ) {
                 (Some(email), Some(name), Some(output)) => {
                     let path = Path::new(&sync_dir);
-                    log::debug!("Saving to sync dir: {:?}", path);
+                    log::debug!("Saving to sync dir: {path:?}");
                     if let Ok(keygen) = auth::access_keys::AccessKeyManager::new(path) {
                         let new_user = User {
                             name: name.to_string(),

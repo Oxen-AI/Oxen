@@ -26,12 +26,8 @@ fn read_status(repo_path: &Path) -> Result<Option<ForkStatus>, OxenError> {
 
     let content = fs::read_to_string(&status_path)?;
     let status_file: ForkStatusFile = toml::from_str(&content).map_err(|e| {
-        log::error!(
-            "Failed to parse fork status on file: {:?} error: {}",
-            status_path,
-            e
-        );
-        OxenError::basic_str(format!("Failed to parse fork status on file: {}", e))
+        log::error!("Failed to parse fork status on file: {status_path:?} error: {e}");
+        OxenError::basic_str(format!("Failed to parse fork status on file: {e}"))
     })?;
 
     let status = &status_file.status;
@@ -70,9 +66,9 @@ pub fn start_fork(
         let total_items = match count_items(&original_path, &new_path, &mut current_count) {
             Ok(count) => count as f32,
             Err(e) => {
-                log::error!("Failed to count items: {}", e);
+                log::error!("Failed to count items: {e}");
                 write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(|e| {
-                    log::error!("Failed to write error status: {}", e);
+                    log::error!("Failed to write error status: {e}");
                 });
                 return;
             }
@@ -87,12 +83,12 @@ pub fn start_fork(
         ) {
             Ok(()) => {
                 write_status(&new_path, &ForkStatus::Complete).unwrap_or_else(|e| {
-                    log::error!("Failed to write completion status: {}", e);
+                    log::error!("Failed to write completion status: {e}");
                 });
             }
             Err(e) => {
                 write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(|e| {
-                    log::error!("Failed to write error status: {}", e);
+                    log::error!("Failed to write error status: {e}");
                 });
             }
         }

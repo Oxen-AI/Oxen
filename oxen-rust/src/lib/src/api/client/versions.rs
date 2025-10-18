@@ -63,7 +63,7 @@ pub async fn get(
 ) -> Result<Option<VersionFile>, OxenError> {
     let uri = format!("/versions/{version_id}/metadata");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("api::client::versions::get {}", url);
+    log::debug!("api::client::versions::get {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -186,11 +186,7 @@ pub async fn download_data_from_version_paths(
                 num_retries += 1;
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
-                log::warn!(
-                    "Could not download content {:?} sleeping {}",
-                    err,
-                    sleep_time
-                );
+                log::warn!("Could not download content {err:?} sleeping {sleep_time}");
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
@@ -223,7 +219,7 @@ pub async fn try_download_data_from_version_paths(
     if let Ok(res) = client.post(&url).body(body).send().await {
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
-            log::error!("{}", err);
+            log::error!("{err}");
             return Err(OxenError::authentication(err));
         }
 
@@ -244,14 +240,14 @@ pub async fn try_download_data_from_version_paths(
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file -> {:?}", err);
+                    let err = format!("Could not unwrap file -> {err:?}");
                     return Err(OxenError::basic_str(err));
                 }
             };
 
             let file_hash = file
                 .path()
-                .map_err(|e| OxenError::basic_str(format!("Failed to get entry path: {}", e)))?
+                .map_err(|e| OxenError::basic_str(format!("Failed to get entry path: {e}")))?
                 .to_string_lossy()
                 .to_string();
 
@@ -266,16 +262,12 @@ pub async fn try_download_data_from_version_paths(
             {
                 Ok(_) => {
                     log::debug!(
-                        "Successfully stored file {} ({} bytes) to version store",
-                        file_hash,
-                        file_size
+                        "Successfully stored file {file_hash} ({file_size} bytes) to version store"
                     );
                 }
                 Err(err) => {
-                    let err = format!(
-                        "Could not store file {} to version store -> {:?}",
-                        file_hash, err
-                    );
+                    let err =
+                        format!("Could not store file {file_hash} to version store -> {err:?}");
                     return Err(OxenError::basic_str(err));
                 }
             }
@@ -418,7 +410,7 @@ async fn upload_chunk(
             name.to_string(),
             value
                 .to_str()
-                .map_err(|e| OxenError::basic_str(format!("Invalid header value: {}", e)))?
+                .map_err(|e| OxenError::basic_str(format!("Invalid header value: {e}")))?
                 .to_owned(),
         );
     }
@@ -435,7 +427,7 @@ async fn complete_multipart_large_file_upload(
 
     let uri = format!("/versions/{file_hash}/complete");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("complete_multipart_large_file_upload {}", url);
+    log::debug!("complete_multipart_large_file_upload {url}");
     let client = client::new_for_url(&url)?;
 
     let body = CompleteVersionUploadRequest {
@@ -456,7 +448,7 @@ async fn complete_multipart_large_file_upload(
     let body = serde_json::to_string(&body)?;
     let response = client.post(&url).body(body).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    log::debug!("complete_multipart_large_file_upload got body: {}", body);
+    log::debug!("complete_multipart_large_file_upload got body: {body}");
     Ok(upload)
 }
 
@@ -674,14 +666,11 @@ pub async fn workspace_multipart_batch_upload_versions(
         }
 
         let Some(_file_name) = path.file_name() else {
-            return Err(OxenError::basic_str(format!(
-                "Invalid file path: {:?}",
-                path
-            )));
+            return Err(OxenError::basic_str(format!("Invalid file path: {path:?}")));
         };
 
         let file = std::fs::read(&path)
-            .map_err(|e| OxenError::basic_str(format!("Failed to read file '{:?}': {e}", path)))?;
+            .map_err(|e| OxenError::basic_str(format!("Failed to read file '{path:?}': {e}")))?;
 
         let hash = hasher::hash_buffer(&file);
         let file_name = PathBuf::from(path.file_name().unwrap());

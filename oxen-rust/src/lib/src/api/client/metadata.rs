@@ -19,7 +19,7 @@ pub async fn get_file(
 ) -> Result<Option<EMetadataEntryResponseView>, OxenError> {
     let path = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
-    let uri = format!("/meta/{}/{}", revision, path);
+    let uri = format!("/meta/{revision}/{path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;

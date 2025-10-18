@@ -524,7 +524,7 @@ mod tests {
             repositories::add(&repo, &bbox_path).await?;
 
             let status = repositories::status(&repo)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             status.print();
 
             // Add the schema
@@ -671,7 +671,7 @@ mod tests {
                 "root": "images"
             });
             repositories::add(&repo, &bbox_path).await?;
-            println!("after add initial metadata to: {:?}", bbox_file);
+            println!("after add initial metadata to: {bbox_file:?}");
 
             repositories::data_frames::schemas::add_column_metadata(
                 &repo,
@@ -680,7 +680,7 @@ mod tests {
                 &file_metadata,
             )?;
 
-            println!("staged column metadata to: {:?}", bbox_file);
+            println!("staged column metadata to: {bbox_file:?}");
 
             // Fetch staged
             let schema =

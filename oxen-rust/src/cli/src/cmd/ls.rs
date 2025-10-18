@@ -63,8 +63,7 @@ impl RunCmd for LsCmd {
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
                 return Err(OxenError::basic_str(format!(
-                    "Commit {} not found",
-                    commit_id
+                    "Commit {commit_id} not found"
                 )));
             };
             commit
@@ -162,15 +161,7 @@ impl LsCmd {
         };
 
         format!(
-            "{:<width1$}{:<width2$}{:<width3$}{:<width4$}",
-            node_type,
-            formatted_name,
-            last_modified_date,
-            size,
-            width1 = TYPE_WIDTH,
-            width2 = NAME_WIDTH,
-            width3 = DATE_WIDTH,
-            width4 = SIZE_WIDTH
+            "{node_type:<TYPE_WIDTH$}{formatted_name:<NAME_WIDTH$}{last_modified_date:<DATE_WIDTH$}{size:<SIZE_WIDTH$}"
         )
     }
 
@@ -267,16 +258,16 @@ impl LsCmd {
             &dirs,
             |(entry, status)| match status {
                 StagedEntryStatus::Removed => {
-                    vec!["  -  ".red(), format!("{}\n", entry).into()]
+                    vec!["  -  ".red(), format!("{entry}\n").into()]
                 }
                 StagedEntryStatus::Modified => {
-                    vec!["  Δ   ".yellow(), format!("{}\n", entry).into()]
+                    vec!["  Δ   ".yellow(), format!("{entry}\n").into()]
                 }
                 StagedEntryStatus::Added => {
-                    vec!["  +  ".green(), format!("{}\n", entry).into()]
+                    vec!["  +  ".green(), format!("{entry}\n").into()]
                 }
                 StagedEntryStatus::Unmodified => {
-                    vec!["     ".into(), format!("{}\n", entry).into()]
+                    vec!["     ".into(), format!("{entry}\n").into()]
                 }
             },
             &mut outputs,
@@ -287,16 +278,16 @@ impl LsCmd {
             &files,
             |(entry, status)| match status {
                 StagedEntryStatus::Removed => {
-                    vec!["  -  ".red(), format!("{}\n", entry).into()]
+                    vec!["  -  ".red(), format!("{entry}\n").into()]
                 }
                 StagedEntryStatus::Modified => {
-                    vec!["  Δ   ".yellow(), format!("{}\n", entry).into()]
+                    vec!["  Δ   ".yellow(), format!("{entry}\n").into()]
                 }
                 StagedEntryStatus::Added => {
-                    vec!["  +   ".green(), format!("{}\n", entry).into()]
+                    vec!["  +   ".green(), format!("{entry}\n").into()]
                 }
                 StagedEntryStatus::Unmodified => {
-                    vec!["      ".into(), format!("{}\n", entry).into()]
+                    vec!["      ".into(), format!("{entry}\n").into()]
                 }
             },
             &mut outputs,

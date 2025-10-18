@@ -39,7 +39,7 @@ async fn setup_repo_for_add_benchmark(
     dir_size: usize,
     data_path: Option<String>,
 ) -> Result<(LocalRepository, PathBuf), OxenError> {
-    let repo_dir = base_dir.join(format!("repo_{}", num_files_to_add_in_benchmark));
+    let repo_dir = base_dir.join(format!("repo_{num_files_to_add_in_benchmark}"));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
@@ -92,7 +92,7 @@ async fn setup_repo_for_add_benchmark(
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
-            let file_path = dir.join(format!("file_{}.txt", i));
+            let file_path = dir.join(format!("file_{i}.txt"));
             write_file_for_add_benchmark(&file_path, large_file_percentage, "this is a test file")?;
         }
 
@@ -103,7 +103,7 @@ async fn setup_repo_for_add_benchmark(
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
-            let file_path = dir.join(format!("file_{}.txt", i));
+            let file_path = dir.join(format!("file_{i}.txt"));
             write_file_for_add_benchmark(
                 &file_path,
                 large_file_percentage,
@@ -149,7 +149,7 @@ pub fn add_benchmark(c: &mut Criterion, data_path: Option<String>, iters: Option
 
         group.bench_with_input(
             BenchmarkId::new(
-                format!("{}k_files_in_{}dirs", num_files_to_add, dir_size),
+                format!("{num_files_to_add}k_files_in_{dir_size}dirs"),
                 format!("{:?}", (num_files_to_add, dir_size)),
             ),
             &(num_files_to_add, dir_size),

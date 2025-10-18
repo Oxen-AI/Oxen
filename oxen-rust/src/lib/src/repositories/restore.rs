@@ -237,7 +237,7 @@ mod tests {
             let og_contents = util::fs::read_from_path(&bbox_path)?;
             util::fs::remove_file(&bbox_path)?;
 
-            println!("restoring {:?}", bbox_file);
+            println!("restoring {bbox_file:?}");
 
             repositories::restore::restore(
                 &repo,

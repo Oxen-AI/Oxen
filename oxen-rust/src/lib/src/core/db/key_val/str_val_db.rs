@@ -90,7 +90,7 @@ where
             Ok(())
         }
         Err(err) => {
-            log::error!("Err: Could not encode value {}", err);
+            log::error!("Err: Could not encode value {err}");
             Err(OxenError::basic_str("Could not encode value..."))
         }
     }
@@ -139,10 +139,10 @@ where
                     results.push((key, value));
                 }
                 (Ok(key), _) => {
-                    log::error!("str_val_db::list() Could not values for key {}.", key)
+                    log::error!("str_val_db::list() Could not values for key {key}.")
                 }
                 (_, Ok(val)) => {
-                    log::error!("str_val_db::list() Could not key for value {:?}.", val)
+                    log::error!("str_val_db::list() Could not key for value {val:?}.")
                 }
                 _ => {
                     log::error!("str_val_db::list() Could not decoded keys and values.")
@@ -173,10 +173,10 @@ where
                     results.insert(key, value);
                 }
                 (Ok(key), _) => {
-                    log::error!("str_val_db::list() Could not values for key {}.", key)
+                    log::error!("str_val_db::list() Could not values for key {key}.")
                 }
                 (_, Ok(val)) => {
-                    log::error!("str_val_db::list() Could not key for value {:?}.", val)
+                    log::error!("str_val_db::list() Could not key for value {val:?}.")
                 }
                 _ => {
                     log::error!("str_val_db::list() Could not decoded keys and values.")

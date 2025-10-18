@@ -35,7 +35,7 @@ pub fn commit(
     log::debug!("commit looking up branch: {:#?}", &branch);
 
     if branch.is_none() {
-        log::debug!("commit creating branch: {}", branch_name);
+        log::debug!("commit creating branch: {branch_name}");
         branch = Some(repositories::branches::create(
             repo,
             branch_name,
@@ -47,7 +47,7 @@ pub fn commit(
 
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
 
-    log::debug!("workspaces::commit staged db path: {:?}", staged_db_path);
+    log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
     let commit = {
         let commit_progress_bar = ProgressBar::new_spinner();
 
@@ -121,19 +121,19 @@ pub fn mergeability(
         ));
     };
 
-    log::debug!("workspaces::mergeability base: {:?}", base);
-    log::debug!("workspaces::mergeability head: {:?}", head);
+    log::debug!("workspaces::mergeability base: {base:?}");
+    log::debug!("workspaces::mergeability head: {head:?}");
 
     // Get commits between the base and head
     let commits =
         repositories::merge::list_commits_between_commits(&workspace.base_repo, base, &head)?;
 
-    log::debug!("workspaces::mergeability commits: {:?}", commits);
+    log::debug!("workspaces::mergeability commits: {commits:?}");
 
     // Get conflicts between the base and head
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
 
-    log::debug!("workspaces::commit staged db path: {:?}", staged_db_path);
+    log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
 
     // Read all the staged entries
     let commit_progress_bar = ProgressBar::new_spinner();
@@ -220,25 +220,25 @@ fn list_conflicts(
                 continue;
             };
 
-            log::debug!("checking if workspace is behind: {:?} -> {}", path, entry);
+            log::debug!("checking if workspace is behind: {path:?} -> {entry}");
             let file_path = entry.node.maybe_path()?;
-            log::debug!("checking if branch tree has file: {:?}", file_path);
+            log::debug!("checking if branch tree has file: {file_path:?}");
             let Some(branch_node) = branch_tree.get_by_path(&file_path)? else {
-                log::debug!("branch node not found: {:?}", file_path);
+                log::debug!("branch node not found: {file_path:?}");
                 continue;
             };
             let Some(workspace_node) = workspace_tree.get_by_path(&file_path)? else {
-                log::debug!("workspace node not found: {:?}", file_path);
+                log::debug!("workspace node not found: {file_path:?}");
                 continue;
             };
-            log::debug!("comparing hashes: {:?} -> {}", path, entry);
+            log::debug!("comparing hashes: {path:?} -> {entry}");
             log::debug!("branch node hash: {:?}", branch_node.hash);
             log::debug!("workspace node hash: {:?}", workspace_node.hash);
             if branch_node.hash == workspace_node.hash {
-                log::debug!("branch node hashes match: {:?} -> {}", path, entry);
+                log::debug!("branch node hashes match: {path:?} -> {entry}");
                 continue;
             }
-            log::debug!("got conflict: {:?}", file_path);
+            log::debug!("got conflict: {file_path:?}");
             conflicts.push(file_path.to_path_buf());
         }
     }
@@ -285,7 +285,7 @@ fn export_tabular_data_frames(
                                 workspace, &dir_path, file_node,
                             )?;
 
-                        log::debug!("exported path: {:?}", exported_path);
+                        log::debug!("exported path: {exported_path:?}");
 
                         // Update the metadata in the new staged merkle tree node
                         let new_staged_merkle_tree_node = compute_staged_merkle_tree_node(
@@ -295,8 +295,7 @@ fn export_tabular_data_frames(
                         )?;
 
                         log::debug!(
-                            "export_tabular_data_frames new_staged_merkle_tree_node: {:?}",
-                            new_staged_merkle_tree_node
+                            "export_tabular_data_frames new_staged_merkle_tree_node: {new_staged_merkle_tree_node:?}"
                         );
                         new_dir_entries
                             .entry(dir_path.to_path_buf())
@@ -336,9 +335,9 @@ fn compute_staged_merkle_tree_node(
     // Get the data type of the file
     let mime_type = util::fs::file_mime_type(path);
     let data_type = util::fs::datatype_from_mimetype(path, &mime_type);
-    log::debug!("compute_staged_merkle_tree_node path: {:?}", path);
+    log::debug!("compute_staged_merkle_tree_node path: {path:?}");
     let mut metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
-    log::debug!("compute_staged_merkle_tree_node metadata: {:?}", metadata);
+    log::debug!("compute_staged_merkle_tree_node metadata: {metadata:?}");
 
     // Here we give priority to the staged schema, as it can contained metadata that was changed during the
     if let Ok(Some(staged_schema)) =
@@ -369,7 +368,7 @@ fn compute_staged_merkle_tree_node(
     let relative_path = util::fs::path_relative_to_dir(path, &workspace.workspace_repo.path)?;
     let dst = dst_dir.join("data");
 
-    log::debug!("compute_staged_merkle_tree_node copying file to {:?}", dst);
+    log::debug!("compute_staged_merkle_tree_node copying file to {dst:?}");
 
     util::fs::copy(path, &dst).unwrap();
     let file_extension = path.extension().unwrap_or_default().to_string_lossy();

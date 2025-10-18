@@ -40,7 +40,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
             ))
         }
         Err(err) => {
-            let err = format!("Could not get video metadata {:?}", err);
+            let err = format!("Could not get video metadata {err:?}");
             Err(OxenError::basic_str(err))
         }
     }
@@ -60,7 +60,7 @@ mod tests {
     fn test_get_metadata_video_mp4() {
         let file = test::test_video_file_with_name("basketball.mp4");
         let metadata = repositories::metadata::get(file).unwrap();
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 23599);
         assert_eq!(metadata.data_type, EntryDataType::Video);
@@ -80,7 +80,7 @@ mod tests {
     fn test_get_metadata_video_mov() {
         let file = test::test_video_file_with_name("dog_skatez.mov");
         let metadata = repositories::metadata::get(file).unwrap();
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 11657299);
         assert_eq!(metadata.data_type, EntryDataType::Video);

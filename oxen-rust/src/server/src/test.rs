@@ -54,7 +54,7 @@ where
     let result = std::panic::catch_unwind(|| match test(&sync_dir) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     });
 

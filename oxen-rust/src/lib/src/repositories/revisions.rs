@@ -18,13 +18,13 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
     }
 
     if repositories::branches::exists(repo, revision)? {
-        log::debug!("revision is a branch: {}", revision);
+        log::debug!("revision is a branch: {revision}");
         let branch = repositories::branches::get_by_name(repo, revision)?;
         let branch = branch.ok_or(OxenError::local_branch_not_found(revision))?;
         let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?;
         Ok(commit)
     } else {
-        log::debug!("revision is a commit id: {}", revision);
+        log::debug!("revision is a commit id: {revision}");
         let commit = repositories::commits::get_by_id(repo, revision)?;
         Ok(commit)
     }

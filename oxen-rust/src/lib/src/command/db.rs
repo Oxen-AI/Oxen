@@ -38,7 +38,7 @@ pub fn list(path: impl AsRef<Path>, limit: Option<usize>) -> Result<(), OxenErro
                             OxenError::basic_str("Could not convert key to [u8; 16]")
                         })?;
                         let key = u128::from_le_bytes(key);
-                        format!("{}", key)
+                        format!("{key}")
                     } else {
                         return Err(OxenError::basic_str(
                             "Could not read iterate over db values",
@@ -71,7 +71,7 @@ pub fn list(path: impl AsRef<Path>, limit: Option<usize>) -> Result<(), OxenErro
         count += 1;
     }
 
-    println!("{} total entries", count);
+    println!("{count} total entries");
 
     Ok(())
 }
@@ -80,17 +80,17 @@ pub fn list(path: impl AsRef<Path>, limit: Option<usize>) -> Result<(), OxenErro
 pub fn count(path: impl AsRef<Path>) -> Result<usize, OxenError> {
     let path = path.as_ref();
     let opts = Options::default();
-    log::debug!("Opening db at {:?}", path);
+    log::debug!("Opening db at {path:?}");
     let db = DB::open_for_read_only(&opts, dunce::simplified(path), false)?;
-    log::debug!("Opened db at {:?}", path);
+    log::debug!("Opened db at {path:?}");
     let iter = db.iterator(IteratorMode::Start);
-    log::debug!("Iterating over db at {:?}", path);
-    let progress = spinner_with_msg(format!("Counting db at {:?}", path));
+    log::debug!("Iterating over db at {path:?}");
+    let progress = spinner_with_msg(format!("Counting db at {path:?}"));
     let mut count = 0;
     for _ in iter {
         count += 1;
         progress.inc(1);
-        progress.set_message(format!("{} entries", count));
+        progress.set_message(format!("{count} entries"));
     }
     progress.finish_and_clear();
     Ok(count)
@@ -118,18 +118,18 @@ pub fn get(
         str_key.as_bytes().to_vec()
     };
 
-    log::debug!("Opening db at {:?}", path);
+    log::debug!("Opening db at {path:?}");
     let db = DB::open_for_read_only(&opts, dunce::simplified(path), false)?;
-    log::debug!("Opened db at {:?}", path);
+    log::debug!("Opened db at {path:?}");
 
     if let Some(value) = db.get(key)? {
-        log::debug!("Got value from db at {:?}", path);
+        log::debug!("Got value from db at {path:?}");
         if let Ok(value) = str::from_utf8(&value) {
             Ok(value.to_string())
         } else {
             Ok(format!("<{} bytes>", value.len()))
         }
     } else {
-        Err(OxenError::basic_str(format!("Key {} not found", str_key)))
+        Err(OxenError::basic_str(format!("Key {str_key} not found")))
     }
 }

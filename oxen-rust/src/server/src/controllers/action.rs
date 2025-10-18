@@ -12,7 +12,7 @@ struct ActionResponse {
 
 pub async fn completed(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let action = path_param(&req, "action")?;
-    log::debug!("{} action completed", action);
+    log::debug!("{action} action completed");
     let resp = ActionResponse {
         action: action.to_string(),
         state: "completed".to_string(),

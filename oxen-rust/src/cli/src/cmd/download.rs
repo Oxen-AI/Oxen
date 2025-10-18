@@ -106,7 +106,7 @@ impl RunCmd for DownloadCmd {
                 repositories::download(&remote_repo, &path, &dst, &revision).await?;
             }
         } else {
-            eprintln!("Repository does not exist {}", id);
+            eprintln!("Repository does not exist {id}");
         }
 
         Ok(())

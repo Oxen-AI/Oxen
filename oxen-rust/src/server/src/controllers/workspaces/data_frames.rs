@@ -69,9 +69,9 @@ impl Stream for CleanupFileStream {
                 if let Some(tx) = this.tx.take() {
                     let path = this.temp_path.clone();
                     tokio::spawn(async move {
-                        log::debug!("removing temporary file {:?}", path);
+                        log::debug!("removing temporary file {path:?}");
                         if let Err(e) = std::fs::remove_file(&path) {
-                            log::error!("Failed to remove temporary file: {:?}", e);
+                            log::error!("Failed to remove temporary file: {e:?}");
                         }
                         drop(tx); // Signal completion
                     });
@@ -125,8 +125,8 @@ pub async fn get(
         return Ok(HttpResponse::Ok().json(response));
     }
 
-    log::debug!("querying data frame {:?}", file_path);
-    log::debug!("opts: {:?}", opts);
+    log::debug!("querying data frame {file_path:?}");
+    log::debug!("opts: {opts:?}");
     let count = repositories::workspaces::data_frames::count(&workspace, &file_path)?;
 
     // Query the data frame
@@ -135,7 +135,7 @@ pub async fn get(
     let Some(mut df_schema) =
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
     else {
-        log::error!("Failed to get schema for data frame {:?}", file_path);
+        log::error!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
 
@@ -250,8 +250,8 @@ pub async fn download(
         return Ok(HttpResponse::Ok().json(response));
     }
 
-    log::debug!("exporting data frame {:?}", file_path);
-    log::debug!("opts: {:?}", opts);
+    log::debug!("exporting data frame {file_path:?}");
+    log::debug!("opts: {opts:?}");
 
     // Create temporary file
     let temp_dir = std::env::temp_dir();
@@ -274,8 +274,8 @@ pub async fn download(
     match repositories::workspaces::data_frames::export(&workspace, &file_path, &opts, &temp_file) {
         Ok(_) => (),
         Err(e) => {
-            log::error!("Error exporting data frame {:?}: {:?}", file_path, e);
-            let error_str = format!("{:?}", e);
+            log::error!("Error exporting data frame {file_path:?}: {e:?}");
+            let error_str = format!("{e:?}");
             let response = StatusMessageDescription::bad_request(error_str);
             return Ok(HttpResponse::BadRequest().json(response));
         }
@@ -288,7 +288,7 @@ pub async fn download(
 
     // Remove the temporary file
     if let Err(e) = std::fs::remove_file(&temp_file) {
-        log::error!("Failed to remove temporary file: {:?}", e);
+        log::error!("Failed to remove temporary file: {e:?}");
     }
 
     // Create non-streaming response
@@ -298,7 +298,7 @@ pub async fn download(
         .append_header(("Content-Type", "text/csv"))
         .append_header((
             "Content-Disposition",
-            format!("attachment; filename=\"{}\"", filename),
+            format!("attachment; filename=\"{filename}\""),
         ))
         .body(contents))
 }
@@ -341,8 +341,8 @@ pub async fn download_streaming(
         return Ok(HttpResponse::Ok().json(response));
     }
 
-    log::debug!("exporting data frame {:?}", file_path);
-    log::debug!("opts: {:?}", opts);
+    log::debug!("exporting data frame {file_path:?}");
+    log::debug!("opts: {opts:?}");
 
     // Create temporary file
     let temp_dir = std::env::temp_dir();
@@ -357,8 +357,8 @@ pub async fn download_streaming(
     match repositories::workspaces::data_frames::export(&workspace, &file_path, &opts, &temp_file) {
         Ok(_) => (),
         Err(e) => {
-            log::error!("Error exporting data frame {:?}: {:?}", file_path, e);
-            let error_str = format!("{:?}", e);
+            log::error!("Error exporting data frame {file_path:?}: {e:?}");
+            let error_str = format!("{e:?}");
             let response = StatusMessageDescription::bad_request(error_str);
             return Ok(HttpResponse::BadRequest().json(response));
         }
@@ -373,7 +373,7 @@ pub async fn download_streaming(
         .append_header(("Content-Type", "text/csv"))
         .append_header((
             "Content-Disposition",
-            format!("attachment; filename=\"{}\"", filename),
+            format!("attachment; filename=\"{filename}\""),
         ))
         .streaming(stream))
 }
@@ -409,12 +409,12 @@ pub async fn get_by_branch(
 
     let mut editable_entries = vec![];
     for entry in entries {
-        log::debug!("considering entry {:?}", entry);
+        log::debug!("considering entry {entry:?}");
         let path = PathBuf::from(&entry.filename);
         if repositories::workspaces::data_frames::is_indexed(&workspace, &path)? {
             editable_entries.push(entry);
         } else {
-            log::debug!("not indexed {:?}", path);
+            log::debug!("not indexed {path:?}");
         }
     }
 
@@ -502,13 +502,13 @@ pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHtt
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
-    log::debug!("workspace {} data frame put {:?}", workspace_id, file_path);
+    log::debug!("workspace {workspace_id} data frame put {file_path:?}");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
     let data: DataFramePayload = serde_json::from_str(&body)?;
-    log::debug!("workspace {} data frame put {:?}", workspace_id, data);
+    log::debug!("workspace {workspace_id} data frame put {data:?}");
 
     let to_index = data.is_indexed;
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;

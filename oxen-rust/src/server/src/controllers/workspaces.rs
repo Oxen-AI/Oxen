@@ -30,7 +30,7 @@ pub async fn get_or_create(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {}\n{}", err, body);
+            log::error!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -53,7 +53,7 @@ pub async fn get_or_create(
     } else {
         workspace_identifier = workspace_id.clone();
     }
-    log::debug!("get_or_create workspace_id {:?}", workspace_id);
+    log::debug!("get_or_create workspace_id {workspace_id:?}");
     if let Ok(Some(workspace)) = repositories::workspaces::get(&repo, &workspace_identifier) {
         return Ok(HttpResponse::Ok().json(WorkspaceResponseView {
             status: StatusMessage::resource_found(),
@@ -121,7 +121,7 @@ pub async fn create(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {}\n{}", err, body);
+            log::error!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -170,7 +170,7 @@ pub async fn create_with_new_branch(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {}\n{}", err, body);
+            log::error!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -304,10 +304,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let branch_name = path_param(&req, "branch")?;
 
     log::debug!(
-        "workspace::commit {namespace}/{repo_name} workspace id {} to branch {} got body: {}",
-        workspace_id,
-        branch_name,
-        body
+        "workspace::commit {namespace}/{repo_name} workspace id {workspace_id} to branch {branch_name} got body: {body}"
     );
 
     let data: Result<NewCommitBody, serde_json::Error> = serde_json::from_str(&body);
@@ -315,7 +312,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse commit data. Err: {}\n{}", err, body);
+            log::error!("unable to parse commit data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -331,7 +328,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
 
     match repositories::workspaces::commit(&workspace, &data, &branch_name) {
         Ok(commit) => {
-            log::debug!("workspace::commit ✅ success! commit {:?}", commit);
+            log::debug!("workspace::commit ✅ success! commit {commit:?}");
             Ok(HttpResponse::Ok().json(CommitResponse {
                 status: StatusMessage::resource_created(),
                 commit,
@@ -344,7 +341,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             })))
         }
         Err(err) => {
-            log::error!("unable to commit branch {:?}. Err: {}", branch_name, err);
+            log::error!("unable to commit branch {branch_name:?}. Err: {err}");
             Ok(HttpResponse::UnprocessableEntity().json(StatusMessage::error(format!("{err:?}"))))
         }
     }

@@ -112,11 +112,7 @@ pub fn list_entry_versions_for_commit(
     commit_id: &str,
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
-    log::debug!(
-        "list_entry_versions_for_commit {} for file: {:?}",
-        commit_id,
-        path
-    );
+    log::debug!("list_entry_versions_for_commit {commit_id} for file: {path:?}");
     let mut branch_commits = repositories::commits::list_from(repo, commit_id)?;
 
     // Sort on timestamp oldest to newest
@@ -126,16 +122,12 @@ pub fn list_entry_versions_for_commit(
     let mut seen_hashes: HashSet<String> = HashSet::new();
 
     for commit in branch_commits {
-        log::debug!("list_entry_versions_for_commit {}", commit);
+        log::debug!("list_entry_versions_for_commit {commit}");
         let node = repositories::tree::get_node_by_path(repo, &commit, path)?;
 
         if let Some(node) = node {
             if !seen_hashes.contains(&node.node.hash().to_string()) {
-                log::debug!(
-                    "list_entry_versions_for_commit adding {} -> {}",
-                    commit,
-                    node
-                );
+                log::debug!("list_entry_versions_for_commit adding {commit} -> {node}");
                 seen_hashes.insert(node.node.hash().to_string());
 
                 match node.node {
@@ -150,7 +142,7 @@ pub fn list_entry_versions_for_commit(
                     _ => {}
                 }
             } else {
-                log::debug!("list_entry_versions_for_commit already seen {}", node);
+                log::debug!("list_entry_versions_for_commit already seen {node}");
             }
         }
     }
@@ -196,7 +188,7 @@ pub async fn checkout_subtrees(
             )? {
             target_root
         } else {
-            log::error!("Cannot get subtree for commit: {}", to_commit);
+            log::error!("Cannot get subtree for commit: {to_commit}");
             continue;
         };
 
@@ -217,7 +209,7 @@ pub async fn checkout_subtrees(
                 &mut partial_nodes,
             )
             .map_err(|e| {
-                OxenError::basic_str(format!("Cannot get root node for base commit: {:?}", e))
+                OxenError::basic_str(format!("Cannot get root node for base commit: {e:?}"))
             })?
         } else {
             log::warn!("head commit missing, might be a clone");
@@ -248,7 +240,7 @@ pub async fn checkout_subtrees(
         }
 
         if from_root.is_some() {
-            log::debug!("🔥 from node: {:?}", from_root);
+            log::debug!("🔥 from node: {from_root:?}");
             cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
@@ -290,7 +282,7 @@ pub async fn checkout_commit(
     to_commit: &Commit,
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
-    log::debug!("checkout_commit to {} from {:?}", to_commit, from_commit);
+    log::debug!("checkout_commit to {to_commit} from {from_commit:?}");
 
     if let Some(from_commit) = from_commit {
         if from_commit.id == to_commit.id {
@@ -438,10 +430,10 @@ async fn cleanup_removed_files(
     for full_path in paths_to_remove {
         // If it's a directory, and it's empty, remove it
         if full_path.is_dir() && full_path.read_dir()?.next().is_none() {
-            log::debug!("Removing dir: {:?}", full_path);
+            log::debug!("Removing dir: {full_path:?}");
             util::fs::remove_dir_all(&full_path)?;
         } else if full_path.is_file() {
-            log::debug!("Removing file: {:?}", full_path);
+            log::debug!("Removing file: {full_path:?}");
             util::fs::remove_file(&full_path)?;
         }
         progress.increment_removed();
@@ -577,7 +569,7 @@ fn r_restore_missing_or_modified_files(
             hashes.seen_paths.insert(file_path.clone());
             if !full_path.exists() {
                 // File doesn't exist, restore it
-                log::debug!("Restoring missing file: {:?}", file_path);
+                log::debug!("Restoring missing file: {file_path:?}");
                 results.files_to_restore.push(FileToRestore {
                     file_node: file_node.clone(),
                     path: file_path.clone(),

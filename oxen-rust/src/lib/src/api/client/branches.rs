@@ -41,7 +41,7 @@ pub async fn create_from_branch(
     let from_name = from_name.as_ref();
 
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
-    log::debug!("branches::create_from_branch {}", url);
+    log::debug!("branches::create_from_branch {url}");
 
     let params = serde_json::to_string(&BranchNewFromBranchName {
         new_name: new_name.to_string(),
@@ -65,7 +65,7 @@ pub async fn create_from_commit(
     let new_name = new_name.as_ref();
 
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
-    log::debug!("branches::create_from_commit {}", url);
+    log::debug!("branches::create_from_commit {url}");
 
     let params = serde_json::to_string(&BranchNewFromCommitId {
         new_name: new_name.to_string(),
@@ -88,7 +88,7 @@ pub async fn create_from_commit_id(
     let commit_id = commit_id.as_ref();
 
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
-    log::debug!("branches::create_from_commit_id {}", url);
+    log::debug!("branches::create_from_commit_id {url}");
 
     let params = serde_json::to_string(&BranchNewFromCommitId {
         new_name: new_name.to_string(),
@@ -122,7 +122,7 @@ pub async fn update(
     let branch_name = branch_name.as_ref();
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("api::client::branches::update url: {}", url);
+    log::debug!("api::client::branches::update url: {url}");
 
     let params = serde_json::to_string(&json!({ "commit_id": commit.id }))?;
     let client = client::new_for_url(&url)?;
@@ -141,7 +141,7 @@ pub async fn maybe_create_merge(
 ) -> Result<Commit, OxenError> {
     let uri = format!("/branches/{branch_name}/merge");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("api::client::branches::maybe_create_merge url: {}", url);
+    log::debug!("api::client::branches::maybe_create_merge url: {url}");
 
     let commits = BranchRemoteMerge {
         client_commit_id: local_head_id.to_string(),
@@ -186,7 +186,7 @@ pub async fn delete(
 ) -> Result<StatusMessage, OxenError> {
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Deleting branch: {}", url);
+    log::debug!("Deleting branch: {url}");
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
@@ -200,7 +200,7 @@ pub async fn lock(
 ) -> Result<StatusMessage, OxenError> {
     let uri = format!("/branches/{branch_name}/lock");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Locking branch: {}", url);
+    log::debug!("Locking branch: {url}");
     let client = client::new_for_url(&url)?;
     let res = client.post(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
@@ -214,7 +214,7 @@ pub async fn unlock(
 ) -> Result<StatusMessage, OxenError> {
     let uri = format!("/branches/{branch_name}/unlock");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Unlocking branch: {}", url);
+    log::debug!("Unlocking branch: {url}");
     let client = client::new_for_url(&url)?;
     let res = client.post(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
@@ -228,7 +228,7 @@ pub async fn is_locked(
 ) -> Result<bool, OxenError> {
     let uri = format!("/branches/{branch_name}/lock");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Checking if branch is locked: {}", url);
+    log::debug!("Checking if branch is locked: {url}");
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
@@ -262,7 +262,7 @@ pub async fn list_entry_versions(
         page_opts.page_num, page_opts.page_size
     );
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Listing entry versions for branch: {}", url);
+    log::debug!("Listing entry versions for branch: {url}");
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;

@@ -118,7 +118,7 @@ impl ChunkShardFile {
 
     pub fn shard_path(repo: &LocalRepository, file_idx: u32) -> PathBuf {
         let path = Self::db_path(repo);
-        path.join(format!("shard_{}", file_idx))
+        path.join(format!("shard_{file_idx}"))
     }
 
     pub fn shard_idx(path: &Path) -> u32 {
@@ -193,7 +193,7 @@ impl ChunkShardFile {
         self.file.seek(SeekFrom::Start(start as u64))?;
         let mut buffer = vec![0u8; offset.1 as usize];
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         Ok(buffer)
     }
 
@@ -201,12 +201,12 @@ impl ChunkShardFile {
         // read the index size
         let mut buffer = [0u8; 4]; // u32 is 4 bytes
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         let index_size = u32::from_le_bytes(buffer) as usize;
 
         let mut index_bytes = vec![0u8; index_size];
         let bytes_read = self.file.read(&mut index_bytes)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         self.index = bincode::deserialize(&index_bytes)?;
         self.data_start = index_size + 8; // 4 for size of index and 4 for data size
 
@@ -223,7 +223,7 @@ impl ChunkShardFile {
         // read the buffer size
         let mut buffer = [0u8; 4]; // u32 is 4 bytes
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         self.offset = u32::from_le_bytes(buffer) as usize;
 
         log::debug!("read data with {:?} bytes", self.offset);
@@ -231,7 +231,7 @@ impl ChunkShardFile {
         // read the buffer
         let mut buffer = vec![0u8; self.offset];
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
 
         // Allocate the full size for the buffer
         self.data = vec![0u8; SHARD_CAPACITY];
@@ -304,13 +304,13 @@ impl ChunkShardManager {
         let mut current_idx = 0;
         let mut current_file: Option<ChunkShardFile> = None;
         for path in shard_paths {
-            log::debug!("Opening shard file: {:?}", path);
+            log::debug!("Opening shard file: {path:?}");
             let file_idx = ChunkShardFile::shard_idx(&path);
             if let Ok(mut shard_file) = ChunkShardFile::open(&self.repo, file_idx) {
                 shard_file.read_index()?;
-                log::debug!("Opened shard file: {:?}", path);
+                log::debug!("Opened shard file: {path:?}");
                 if shard_file.has_capacity(CHUNK_SIZE) {
-                    log::debug!("Shard [{}] has capacity, using it", file_idx);
+                    log::debug!("Shard [{file_idx}] has capacity, using it");
                     shard_file.read_data()?;
                     current_idx = file_idx;
                     current_file = Some(shard_file);
@@ -326,7 +326,7 @@ impl ChunkShardManager {
             current_file = Some(ChunkShardFile::create(&self.repo, current_idx)?);
         }
 
-        log::debug!("Current shard index: {:?}", current_idx);
+        log::debug!("Current shard index: {current_idx:?}");
         self.current_idx = current_idx as i32; // can always cast u32 to i32
         self.current_file = current_file;
         Ok(())
@@ -341,11 +341,7 @@ impl ChunkShardManager {
             .db
             .get(hash)?
             .ok_or(OxenError::basic_str("Chunk not found"))?;
-        log::debug!(
-            "Reading chunk from shard: [{}] for hash: {}",
-            shard_idx,
-            hash
-        );
+        log::debug!("Reading chunk from shard: [{shard_idx}] for hash: {hash}");
         // Cache the current shard file for faster reads of the same shard
         if shard_idx as i32 != self.current_idx {
             self.current_file = Some(ChunkShardFile::open(&self.repo, shard_idx)?);

@@ -64,29 +64,13 @@ impl TabularDiffWrapper {
                 // TODO - this can be made less naive
                 let schema_has_changed = base_size.width != head_size.width;
 
-                let num_added_rows = if base_size.height < head_size.height {
-                    head_size.height - base_size.height
-                } else {
-                    0
-                };
+                let num_added_rows = head_size.height.saturating_sub(base_size.height);
 
-                let num_removed_rows = if base_size.height > head_size.height {
-                    base_size.height - head_size.height
-                } else {
-                    0
-                };
+                let num_removed_rows = base_size.height.saturating_sub(head_size.height);
 
-                let num_added_cols = if base_size.width < head_size.width {
-                    head_size.width - base_size.width
-                } else {
-                    0
-                };
+                let num_added_cols = head_size.width.saturating_sub(base_size.width);
 
-                let num_removed_cols = if base_size.width > head_size.width {
-                    base_size.width - head_size.width
-                } else {
-                    0
-                };
+                let num_removed_cols = base_size.width.saturating_sub(head_size.width);
 
                 Ok(TabularDiffWrapper {
                     tabular: TabularDiffSummaryImpl {

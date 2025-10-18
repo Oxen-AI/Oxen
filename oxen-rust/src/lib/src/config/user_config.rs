@@ -47,7 +47,7 @@ impl UserConfig {
         if std::env::var("TEST").is_ok() {
             config_file = PathBuf::from("data/test/config/user_config.toml");
         }
-        log::debug!("looking for config file in...{:?}", config_file);
+        log::debug!("looking for config file in...{config_file:?}");
         if config_file.exists() {
             Ok(UserConfig::new(&config_file))
         } else {
@@ -81,7 +81,7 @@ impl UserConfig {
     pub fn save_default(&self) -> Result<(), OxenError> {
         let config_dir = util::fs::oxen_config_dir()?;
         let config_file = config_dir.join(Path::new(USER_CONFIG_FILENAME));
-        log::debug!("Saving config to {:?}", config_file);
+        log::debug!("Saving config to {config_file:?}");
         if !config_dir.exists() {
             fs::create_dir_all(config_dir)?;
         }

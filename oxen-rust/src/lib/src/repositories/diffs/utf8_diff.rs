@@ -73,7 +73,7 @@ pub fn diff(
         if (change_idx as i32) <= last_processed_diff_idx {
             continue;
         }
-        log::debug!("Processing change at index: {}", change_idx);
+        log::debug!("Processing change at index: {change_idx}");
 
         if !is_first_chunk {
             result.lines.push(LineDiff {
@@ -96,9 +96,7 @@ pub fn diff(
                 let desired_start = lines.len().saturating_sub(3);
                 let actual_start = desired_start.max(pre_context_lines_to_skip);
                 log::debug!(
-                    "Adding pre-context from diff [{}], lines [{}..]",
-                    context_diff_idx,
-                    actual_start
+                    "Adding pre-context from diff [{context_diff_idx}], lines [{actual_start}..]"
                 );
                 add_lines_to_diff(
                     &mut result,
@@ -114,11 +112,11 @@ pub fn diff(
         while let Some(diff) = diffs.get(current_idx) {
             match diff {
                 Difference::Add(text) => {
-                    log::debug!("Adding Added block at index {}", current_idx);
+                    log::debug!("Adding Added block at index {current_idx}");
                     add_lines_to_diff(&mut result, text, ChangeType::Added, None);
                 }
                 Difference::Rem(text) => {
-                    log::debug!("Adding Removed block at index {}", current_idx);
+                    log::debug!("Adding Removed block at index {current_idx}");
                     add_lines_to_diff(&mut result, text, ChangeType::Removed, None);
                 }
                 Difference::Same(_) => {
@@ -132,11 +130,7 @@ pub fn diff(
         if let Some(Difference::Same(text)) = diffs.get(current_idx) {
             let lines: Vec<_> = text.split('\n').collect();
             let count = 2.min(lines.len());
-            log::debug!(
-                "Adding post-context from diff [{}], lines [..{}]",
-                current_idx,
-                count
-            );
+            log::debug!("Adding post-context from diff [{current_idx}], lines [..{count}]");
             add_lines_to_diff(&mut result, text, ChangeType::Unchanged, Some((0, count)));
 
             last_processed_diff_idx = current_idx as i32;

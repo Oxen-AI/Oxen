@@ -11,7 +11,7 @@ pub fn has_key<T: ThreadMode, S: AsRef<str>>(db: &DBWithThreadMode<T>, key: S) -
         Ok(Some(_value)) => true,
         Ok(None) => false,
         Err(err) => {
-            log::error!("Error checking for entry: {}", err);
+            log::error!("Error checking for entry: {err}");
             false
         }
     }
@@ -48,7 +48,7 @@ pub fn list_keys<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<Vec<String>,
                         keys.push(String::from(key));
                     }
                     _ => {
-                        log::error!("list_keys() Could not decode key {:?}", key)
+                        log::error!("list_keys() Could not decode key {key:?}")
                     }
                 }
             }

@@ -221,7 +221,7 @@ pub async fn download_tree_nodes(
     let base_head_str = path_param(&req, "base_head")?;
     let is_download = query.is_download.unwrap_or(false);
 
-    log::debug!("download_tree_nodes for base_head: {}", base_head_str);
+    log::debug!("download_tree_nodes for base_head: {base_head_str}");
     log::debug!(
         "download_tree_nodes subtrees: {:?}, depth: {:?}",
         query.subtrees,

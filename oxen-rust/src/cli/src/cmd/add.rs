@@ -45,8 +45,8 @@ impl RunCmd for AddCmd {
             .expect("Must supply files")
             .map(|p| -> Result<PathBuf, OxenError> {
                 let current_dir = std::env::current_dir().map_err(|e| {
-                    log::warn!("Failed to get current directory: {}", e);
-                    OxenError::basic_str(format!("Failed to get current directory: {}", e))
+                    log::warn!("Failed to get current directory: {e}");
+                    OxenError::basic_str(format!("Failed to get current directory: {e}"))
                 })?;
                 let joined_path = current_dir.join(p);
                 util::fs::canonicalize(&joined_path).or_else(|_| Ok(joined_path))

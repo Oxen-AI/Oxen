@@ -16,10 +16,10 @@ pub async fn create(
     let path = &opts.notebook;
 
     let url =
-        api::endpoint::url_from_repo(repository, &format!("/notebooks/file/{}/{}", branch, path))?;
+        api::endpoint::url_from_repo(repository, &format!("/notebooks/file/{branch}/{path}"))?;
 
     let params = serde_json::to_string(&NotebookRequest::new(opts))?;
-    log::debug!("notebooks::create {}\n{}", url, params);
+    log::debug!("notebooks::create {url}\n{params}");
 
     let client = client::new_for_url(&url)?;
     let res = client
@@ -40,8 +40,8 @@ pub async fn run(
 ) -> Result<Notebook, OxenError> {
     let notebook_id = &notebook.id;
 
-    let url = api::endpoint::url_from_repo(repository, &format!("/notebooks/{}", notebook_id))?;
-    log::debug!("notebooks::start {}", url);
+    let url = api::endpoint::url_from_repo(repository, &format!("/notebooks/{notebook_id}"))?;
+    log::debug!("notebooks::start {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.post(&url).send().await?;
@@ -57,8 +57,8 @@ pub async fn get(
 ) -> Result<Notebook, OxenError> {
     let notebook_id = notebook_id.as_ref();
 
-    let url = api::endpoint::url_from_repo(repository, &format!("/notebooks/{}", notebook_id))?;
-    log::debug!("notebooks::start {}", url);
+    let url = api::endpoint::url_from_repo(repository, &format!("/notebooks/{notebook_id}"))?;
+    log::debug!("notebooks::start {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -74,8 +74,8 @@ pub async fn stop(
 ) -> Result<Notebook, OxenError> {
     let notebook_id = &notebook.id;
 
-    let url = api::endpoint::url_from_repo(repository, &format!("/notebooks/{}", notebook_id))?;
-    log::debug!("notebooks::stop {}", url);
+    let url = api::endpoint::url_from_repo(repository, &format!("/notebooks/{notebook_id}"))?;
+    log::debug!("notebooks::stop {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
@@ -96,7 +96,7 @@ pub async fn list_base_images(
     );
 
     let url = format!("{base_url}/notebook_base_images");
-    log::debug!("notebooks::list_base_images {}", url);
+    log::debug!("notebooks::list_base_images {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;

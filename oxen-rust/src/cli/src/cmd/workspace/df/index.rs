@@ -93,7 +93,7 @@ impl RunCmd for WorkspaceDFIndexCmd {
                 ));
             };
             let use_background_thread = args.get_flag("use-background-thread");
-            println!("Indexing embeddings for column: {}", column);
+            println!("Indexing embeddings for column: {column}");
             let path = Path::new(&path);
             api::client::workspaces::data_frames::embeddings::index(
                 &remote_repo,

@@ -62,12 +62,12 @@ pub fn diff(
         schema_diff.clone(),
     );
 
-    log::debug!("df_1 is {:?}", df_1);
-    log::debug!("df_2 is {:?}", df_2);
-    log::debug!("keys are {:?}", keys);
-    log::debug!("targets are {:?}", targets);
-    log::debug!("display are {:?}", display);
-    log::debug!("output_columns are {:?}", output_columns);
+    log::debug!("df_1 is {df_1:?}");
+    log::debug!("df_2 is {df_2:?}");
+    log::debug!("keys are {keys:?}");
+    log::debug!("targets are {targets:?}");
+    log::debug!("display are {display:?}");
+    log::debug!("output_columns are {output_columns:?}");
 
     let joined_df = join_hashed_dfs(
         df_1,
@@ -77,10 +77,10 @@ pub fn diff(
         schema_diff.clone(),
     )?;
 
-    log::debug!("joined_df is {:?}", joined_df);
+    log::debug!("joined_df is {joined_df:?}");
 
     let joined_df = add_diff_status_column(joined_df, keys.clone(), targets.clone())?;
-    log::debug!("joined_df after add_diff_status_column is {:?}", joined_df);
+    log::debug!("joined_df after add_diff_status_column is {joined_df:?}");
     let unchanged_vec = vec![DIFF_STATUS_UNCHANGED; joined_df.height()];
     let unchanged_series = Column::Series(
         Series::new(PlSmallStr::from_str(DIFF_STATUS_UNCHANGED), unchanged_vec).into(),
@@ -90,19 +90,17 @@ pub fn diff(
             .column(DIFF_STATUS_COL)?
             .not_equal(&unchanged_series)?,
     )?;
-    log::debug!("joined_df after filter is {:?}", joined_df);
+    log::debug!("joined_df after filter is {joined_df:?}");
     // Once we've joined and calculated group membership based on .left and .right nullity, coalesce keys
     for key in keys.clone() {
         joined_df = joined_df
             .lazy()
-            .with_columns([coalesce(&[
-                col(format!("{}.right", key)),
-                col(format!("{}.left", key)),
+            .with_columns([
+                coalesce(&[col(format!("{key}.right")), col(format!("{key}.left"))]).alias(key),
             ])
-            .alias(key)])
             .collect()?;
     }
-    log::debug!("joined_df after coalesce is {:?}", joined_df);
+    log::debug!("joined_df after coalesce is {joined_df:?}");
     let modifications = calculate_compare_mods(&joined_df)?;
 
     // Sort by all keys with primitive dtypes
@@ -231,12 +229,12 @@ fn get_output_columns(
 
     for target in ordered_targets.iter() {
         if schema_diff.added_cols.contains(&target.to_string()) {
-            out_columns.push(format!("{}.right", target));
+            out_columns.push(format!("{target}.right"));
         } else if schema_diff.removed_cols.contains(&target.to_string()) {
-            out_columns.push(format!("{}.left", target));
+            out_columns.push(format!("{target}.left"));
         } else {
-            out_columns.push(format!("{}.left", target));
-            out_columns.push(format!("{}.right", target))
+            out_columns.push(format!("{target}.left"));
+            out_columns.push(format!("{target}.right"))
         };
     }
 
@@ -286,11 +284,11 @@ fn join_hashed_dfs(
     targets: Vec<&str>,
     schema_diff: SchemaDiff,
 ) -> Result<DataFrame, OxenError> {
-    log::debug!("left_df: {:?}", left_df);
-    log::debug!("right_df: {:?}", right_df);
+    log::debug!("left_df: {left_df:?}");
+    log::debug!("right_df: {right_df:?}");
 
     let mut joined_df = left_df.full_join(right_df, [KEYS_HASH_COL], [KEYS_HASH_COL])?;
-    log::debug!("joined_df: {:?}", joined_df);
+    log::debug!("joined_df: {joined_df:?}");
 
     let mut cols_to_rename = targets.clone();
     for key in keys.iter() {
@@ -316,7 +314,7 @@ fn join_hashed_dfs(
             // See: https://github.com/pola-rs/polars/pull/22380
             joined_df = joined_df
                 .lazy()
-                .rename([col.as_str()], [&format!("{}.right", col)], false)
+                .rename([col.as_str()], [&format!("{col}.right")], false)
                 .collect()?;
         }
     }
@@ -325,16 +323,16 @@ fn join_hashed_dfs(
         if joined_df.schema().contains(col) {
             joined_df = joined_df
                 .lazy()
-                .rename([col.as_str()], [&format!("{}.left", col)], false)
+                .rename([col.as_str()], [&format!("{col}.left")], false)
                 .collect()?;
         }
     }
 
     for target in cols_to_rename.iter() {
         let left_before = target.to_string();
-        let left_after = format!("{}.left", target);
-        let right_before = format!("{}_right", target);
-        let right_after = format!("{}.right", target);
+        let left_after = format!("{target}.left");
+        let right_before = format!("{target}_right");
+        let right_after = format!("{target}.right");
         // Rename conditionally for asymetric targets
         if joined_df.schema().contains(&left_before) {
             joined_df = joined_df

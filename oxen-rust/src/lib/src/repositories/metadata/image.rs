@@ -19,7 +19,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataImage, OxenError> 
     match reader.into_dimensions() {
         Ok((width, height)) => Ok(MetadataImage::new(width, height)),
         Err(e) => {
-            log::debug!("Could not get image metadata {:?}", e);
+            log::debug!("Could not get image metadata {e:?}");
             Err(OxenError::basic_str("Could not get image metadata"))
         }
     }

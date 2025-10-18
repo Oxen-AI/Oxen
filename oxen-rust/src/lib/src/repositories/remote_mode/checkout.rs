@@ -21,7 +21,7 @@ pub async fn checkout(repo: &mut LocalRepository, name: &str) -> Result<(), Oxen
             //println!("Checked out commit: {}", name);
         }
         Err(OxenError::RevisionNotFound(name)) => {
-            println!("Revision not found: {}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {}\n\nto update the local copy, then try again.", name, name);
+            println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
             return Err(OxenError::RevisionNotFound(name));
         }
         Err(e) => {
@@ -73,7 +73,7 @@ pub async fn create_checkout_branch(
     let workspace_id = Uuid::new_v4().to_string();
 
     // Use the branch name as the workspace name
-    let workspace_name = format!("{}: {workspace_id}", branch_name);
+    let workspace_name = format!("{branch_name}: {workspace_id}");
     let Some(remote) = repo.remote() else {
         return Err(OxenError::basic_str(
             "Error: local repository has no remote",
@@ -112,15 +112,11 @@ pub async fn create_checkout_branch(
             );
             println!("{}", err_msg.yellow().bold());
             return Err(OxenError::basic_str(format!(
-                "Error: Remote-mode repo already exists for workspace {}",
-                workspace_id
+                "Error: Remote-mode repo already exists for workspace {workspace_id}"
             )));
         }
         other => {
-            println!(
-                "{}",
-                format!("Unexpected workspace status: {}", other).red()
-            );
+            println!("{}", format!("Unexpected workspace status: {other}").red());
         }
     }
     println!("{} {}", "Workspace ID:".green().bold(), workspace.id.bold());

@@ -120,7 +120,7 @@ pub fn polar_insert_column(
     );
     conn.execute(&sql, [])?;
 
-    let sql_query = format!("SELECT * FROM {}", table_name);
+    let sql_query = format!("SELECT * FROM {table_name}");
     let result_set: Vec<RecordBatch> = conn.prepare(&sql_query)?.query_arrow([])?.collect();
 
     df_db::record_batches_to_polars_df(result_set)
@@ -140,7 +140,7 @@ pub fn polar_delete_column(
     );
     conn.execute(&sql, [])?;
 
-    let sql_query = format!("SELECT * FROM {}", table_name);
+    let sql_query = format!("SELECT * FROM {table_name}");
     let result_set: Vec<RecordBatch> = conn.prepare(&sql_query)?.query_arrow([])?.collect();
 
     df_db::record_batches_to_polars_df(result_set)
@@ -176,7 +176,7 @@ pub fn polar_update_column(
         conn.execute(&sql, [])?;
     }
 
-    let sql_query = format!("SELECT * FROM {}", table_name);
+    let sql_query = format!("SELECT * FROM {table_name}");
     let result_set: Vec<RecordBatch> = conn.prepare(&sql_query)?.query_arrow([])?.collect();
 
     df_db::record_batches_to_polars_df(result_set)

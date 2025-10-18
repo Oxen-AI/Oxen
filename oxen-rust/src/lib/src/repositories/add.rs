@@ -175,7 +175,7 @@ A: Oxen.ai
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
             test::modify_txt_file(one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             status.print();
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
@@ -470,7 +470,7 @@ A: Oxen.ai
 
             // There now there are no untracked directories
             let status = repositories::status(&repo)?;
-            println!("status after add: {:?}", status);
+            println!("status after add: {status:?}");
             status.print();
             let dirs = status.untracked_dirs;
             assert_eq!(dirs.len(), 0);

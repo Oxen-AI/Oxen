@@ -11,7 +11,7 @@ pub async fn get(
     let revision = revision.as_ref();
     let uri = format!("/revisions/{revision}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("api::client::revisions::get {}", url);
+    log::debug!("api::client::revisions::get {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -20,7 +20,7 @@ pub async fn get(
     }
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("api::client::revisions::get Got response {}", body);
+    log::debug!("api::client::revisions::get Got response {body}");
     let response: Result<ParseResourceResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(Some(j_res.resource)),

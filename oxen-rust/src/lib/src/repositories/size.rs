@@ -31,7 +31,7 @@ pub struct RepoSizeFile {
 impl fmt::Display for RepoSizeFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match serde_json::to_string(self) {
-            Ok(s) => write!(f, "{}", s),
+            Ok(s) => write!(f, "{s}"),
             Err(_) => write!(f, ""),
         }
     }
@@ -47,13 +47,12 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
             },
             Err(e) => {
                 return Err(OxenError::basic_str(format!(
-                    "Failed to parse size file: {}",
-                    e
+                    "Failed to parse size file: {e}"
                 )));
             }
         },
         Err(e) => {
-            log::info!("Size file not found, creating it: {}", e);
+            log::info!("Size file not found, creating it: {e}");
 
             RepoSizeFile {
                 status: SizeStatus::Pending,
@@ -77,11 +76,11 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     size: calculated_size,
                 };
                 if let Err(e) = util::fs::write_to_path(&path_clone, size.to_string()) {
-                    log::error!("Failed to write size result: {}", e);
+                    log::error!("Failed to write size result: {e}");
                 }
             }
             Err(e) => {
-                log::error!("Failed to calculate repository size: {}", e);
+                log::error!("Failed to calculate repository size: {e}");
                 let size = RepoSizeFile {
                     status: SizeStatus::Error,
                     size: 0,
@@ -103,7 +102,7 @@ pub fn get_size(repo: &LocalRepository) -> Result<RepoSizeFile, OxenError> {
             Ok(size)
         }
         Err(e) => {
-            log::info!("Size file not found, creating it: {}", e);
+            log::info!("Size file not found, creating it: {e}");
             update_size(repo)?;
             get_size(repo)
         }

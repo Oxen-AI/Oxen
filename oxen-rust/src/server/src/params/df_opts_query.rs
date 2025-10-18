@@ -27,7 +27,7 @@ pub struct DFOptsQuery {
 /// Provide some default vals for opts
 pub fn parse_opts(query: &web::Query<DFOptsQuery>, filter_ops: &mut DFOpts) -> DFOpts {
     // Default to 0..10 unless they ask for "all"
-    log::debug!("Parsing opts {:?}", query);
+    log::debug!("Parsing opts {query:?}");
     if let Some(slice) = query.slice.clone() {
         if slice == "all" {
             // Return everything...probably don't want to do this unless explicitly asked for

@@ -40,7 +40,7 @@ pub fn write_conflicts_to_disk(
 
     for conflict in conflicts.iter() {
         let (_, base_path) = &conflict.base_entry;
-        log::debug!("writing conflict to db: {:?}", base_path);
+        log::debug!("writing conflict to db: {base_path:?}");
         let key = base_path.to_str().unwrap();
         let key_bytes = key.as_bytes();
         let val_json = serde_json::to_string(&conflict)?;

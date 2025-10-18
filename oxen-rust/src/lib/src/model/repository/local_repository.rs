@@ -195,7 +195,7 @@ impl LocalRepository {
         match MinOxenVersion::or_earliest(self.min_version.clone()) {
             Ok(version) => version,
             Err(err) => {
-                panic!("Invalid repo version\n{}", err)
+                panic!("Invalid repo version\n{err}")
             }
         }
     }
@@ -366,8 +366,7 @@ impl LocalRepository {
 
         if self.workspaces.is_none() {
             return Err(OxenError::basic_str(format!(
-                "Error: Cannot delete workspace {:?} as it does not exist",
-                name
+                "Error: Cannot delete workspace {name:?} as it does not exist"
             )));
         }
 
@@ -409,7 +408,7 @@ impl LocalRepository {
             .clone()
             .unwrap()
             .iter()
-            .find(|ws| ws.starts_with(&format!("{}: ", workspace_name)))
+            .find(|ws| ws.starts_with(&format!("{workspace_name}: ")))
         {
             self.workspace_name = Some(ws_name.to_string());
         } else {

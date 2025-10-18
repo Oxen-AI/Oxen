@@ -80,7 +80,7 @@ impl fmt::Display for StagedData {
         let outputs = self.__collect_outputs(&opts);
 
         for output in outputs {
-            write!(f, "{}", output)?;
+            write!(f, "{output}")?;
         }
 
         Ok(())
@@ -318,7 +318,7 @@ impl StagedData {
                     1 => Some(format!(" with {} file\n", staged_dir.num_files_staged).normal()),
                     0 => {
                         // limit since we don't have any staged files in this dir
-                        log::warn!("Added dir with no files staged: {:?}", path);
+                        log::warn!("Added dir with no files staged: {path:?}");
                         None
                     }
                     _ => Some(format!(" with {} files\n", staged_dir.num_files_staged).normal()),

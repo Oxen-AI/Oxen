@@ -33,7 +33,7 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
-    log::debug!("add_column() got db_path: {:?}", db_path);
+    log::debug!("add_column() got db_path: {db_path:?}");
     let result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| columns::add_column(conn, new_column))
     })?;
@@ -64,7 +64,7 @@ pub fn delete(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
-    log::debug!("delete_column() got db_path: {:?}", db_path);
+    log::debug!("delete_column() got db_path: {db_path:?}");
     let (result, column_data_type) = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
@@ -106,7 +106,7 @@ pub async fn update(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
-    log::debug!("update_column() got db_path: {:?}", db_path);
+    log::debug!("update_column() got db_path: {db_path:?}");
     let (result, column_data_type) = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
@@ -175,7 +175,7 @@ pub async fn restore(
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(&column_changes_path))?;
 
-    log::debug!("restore_column() got db_path: {:?}", db_path);
+    log::debug!("restore_column() got db_path: {db_path:?}");
 
     let og_schema = repositories::data_frames::schemas::get_by_path(
         &workspace.base_repo,

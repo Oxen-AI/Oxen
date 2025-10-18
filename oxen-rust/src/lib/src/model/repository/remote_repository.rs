@@ -56,7 +56,7 @@ impl RemoteRepository {
         match MinOxenVersion::or_earliest(self.min_version.clone()) {
             Ok(version) => version,
             Err(err) => {
-                panic!("Invalid repo version\n{}", err)
+                panic!("Invalid repo version\n{err}")
             }
         }
     }

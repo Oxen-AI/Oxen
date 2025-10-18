@@ -14,7 +14,7 @@ pub fn config_auth(host: String, token: String, path: String) -> Result<(), PyOx
         match std::fs::create_dir_all(parent) {
             Ok(_) => (),
             Err(e) => {
-                log::error!("Failed to create parent dir: {}", e);
+                log::error!("Failed to create parent dir: {e}");
             }
         }
     }

@@ -13,10 +13,7 @@ impl FromStr for OxenVersion {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split(['.', '-']).collect();
         if parts.len() < 3 || parts.len() > 4 {
-            return Err(OxenError::basic_str(format!(
-                "Invalid version string: {}",
-                s
-            )));
+            return Err(OxenError::basic_str(format!("Invalid version string: {s}")));
         }
         let major = parts[0].parse::<u32>()?;
         let minor = parts[1].parse::<u32>()?;

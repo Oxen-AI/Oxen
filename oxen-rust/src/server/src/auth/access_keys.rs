@@ -54,7 +54,7 @@ impl AccessKeyManager {
             // Just generating a random UUID for now
             let secret = uuid::Uuid::new_v4();
             let key = hex::encode(secret.as_bytes());
-            log::debug!("Got secret key: {}", key);
+            log::debug!("Got secret key: {key}");
             util::fs::write_to_path(&secret_file, &key)?;
         }
 
@@ -142,7 +142,7 @@ impl AccessKeyManager {
                         token_data.claims == claim
                     }
                     _ => {
-                        log::info!("auth token is not valid: {}", token);
+                        log::info!("auth token is not valid: {token}");
                         false
                     }
                 }

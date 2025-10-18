@@ -48,7 +48,7 @@ impl MerkleTreeNodeType {
             2u8 => MerkleTreeNodeType::VNode,
             3u8 => MerkleTreeNodeType::File,
             4u8 => MerkleTreeNodeType::FileChunk,
-            _ => panic!("Invalid MerkleTreeNodeType: {}", val),
+            _ => panic!("Invalid MerkleTreeNodeType: {val}"),
         }
     }
 }

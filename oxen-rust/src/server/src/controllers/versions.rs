@@ -87,7 +87,7 @@ pub async fn download(
     if (img_resize.width.is_some() || img_resize.height.is_some())
         && mime_type.starts_with("image/")
     {
-        log::debug!("img_resize {:?}", img_resize);
+        log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
@@ -141,7 +141,7 @@ pub async fn batch_download(
     let mut gz = GzDecoder::new(&bytes[..]);
     let mut line_delimited_files = String::new();
     if let Err(e) = gz.read_to_string(&mut line_delimited_files) {
-        log::error!("Failed to decompress gzip payload: {}", e);
+        log::error!("Failed to decompress gzip payload: {e}");
         return Err(OxenHttpError::from(e));
     }
 
@@ -174,7 +174,7 @@ pub async fn batch_download(
                     let metadata = match version_store_clone.get_version_metadata(file_hash).await {
                         Ok(metadata) => metadata,
                         Err(e) => {
-                            log::error!("Failed to get metadata for {}: {}", file_hash, e);
+                            log::error!("Failed to get metadata for {file_hash}: {e}");
                             error_tx.send(e).ok();
                             had_error = true;
                             break;
@@ -185,11 +185,10 @@ pub async fn batch_download(
                     let mut header = tokio_tar::Header::new_gnu();
                     header.set_size(file_size as u64);
                     if let Err(e) = header.set_path(file_hash) {
-                        log::error!("Failed to set path for {}: {}", file_hash, e);
+                        log::error!("Failed to set path for {file_hash}: {e}");
                         error_tx
                             .send(OxenError::basic_str(format!(
-                                "Failed to set path for {}: {}",
-                                file_hash, e
+                                "Failed to set path for {file_hash}: {e}"
                             )))
                             .ok();
                         had_error = true;
@@ -202,7 +201,7 @@ pub async fn batch_download(
 
                     let mut reader = StreamReader::new(data);
                     if let Err(e) = tar.append(&header, &mut reader).await {
-                        log::error!("Failed to append {} to tar: {}", file_hash, e);
+                        log::error!("Failed to append {file_hash} to tar: {e}");
                         error_tx.send(OxenError::IO(e)).ok();
                         had_error = true;
                         break;
@@ -213,7 +212,7 @@ pub async fn batch_download(
                     );
                 }
                 Err(e) => {
-                    log::error!("Failed to get version {}: {}", file_hash, e);
+                    log::error!("Failed to get version {file_hash}: {e}");
                     error_tx.send(e).ok();
                     had_error = true;
                     break;
@@ -222,7 +221,7 @@ pub async fn batch_download(
         }
 
         if let Err(e) = tar.finish().await {
-            log::error!("Failed to finish tar: {}", e);
+            log::error!("Failed to finish tar: {e}");
             error_tx.send(OxenError::IO(e)).ok();
             had_error = true;
         }
@@ -238,7 +237,7 @@ pub async fn batch_download(
                 log::info!("Successfully finished tarball");
             }
             Err(e) => {
-                log::error!("Failed to get encoder: {}", e);
+                log::error!("Failed to get encoder: {e}");
                 error_tx.send(OxenError::IO(e)).ok();
                 had_error = true;
             }
@@ -294,7 +293,7 @@ pub async fn save_multiparts(
 ) -> Result<Vec<ErrorFileInfo>, Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {:?}", oxen_err);
+        log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
@@ -344,8 +343,7 @@ pub async fn save_multiparts(
                             let mut decompressed_bytes = Vec::new();
                             decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
                                 OxenError::basic_str(format!(
-                                    "Failed to decompress gzipped data: {}",
-                                    e
+                                    "Failed to decompress gzipped data: {e}"
                                 ))
                             })?;
                             Ok(decompressed_bytes)
@@ -367,7 +365,7 @@ pub async fn save_multiparts(
                                 &mut err_files,
                                 upload_filehash.clone(),
                                 None,
-                                format!("Failed to decompress data: {}", e),
+                                format!("Failed to decompress data: {e}"),
                             );
                             continue;
                         }
@@ -381,7 +379,7 @@ pub async fn save_multiparts(
                                 &mut err_files,
                                 upload_filehash.clone(),
                                 None,
-                                format!("Failed to execute blocking decompression: {}", e),
+                                format!("Failed to execute blocking decompression: {e}"),
                             );
                             continue;
                         }
@@ -404,7 +402,7 @@ pub async fn save_multiparts(
                             &mut err_files,
                             upload_filehash.clone(),
                             None,
-                            format!("Failed to store version: {}", e),
+                            format!("Failed to store version: {e}"),
                         );
                         continue;
                     }

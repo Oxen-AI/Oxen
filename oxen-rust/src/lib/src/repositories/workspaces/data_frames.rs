@@ -40,14 +40,14 @@ pub fn is_behind(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, 
 
 pub fn is_indexed(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
     let path = path.as_ref();
-    log::debug!("checking dataset is indexed for {:?}", path);
+    log::debug!("checking dataset is indexed for {path:?}");
     let db_path = duckdb_path(workspace, path);
-    log::debug!("getting conn at path {:?}", db_path);
+    log::debug!("getting conn at path {db_path:?}");
 
     with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| {
             let table_exists = df_db::table_exists(conn, TABLE_NAME)?;
-            log::debug!("dataset_is_indexed() got table_exists: {:?}", table_exists);
+            log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");
             Ok(table_exists)
         })
     })
@@ -149,8 +149,8 @@ pub fn query(
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("query_staged_df() got db_path: {:?}", db_path);
-    log::debug!("query() opts: {:?}", opts);
+    log::debug!("query_staged_df() got db_path: {db_path:?}");
+    log::debug!("query() opts: {opts:?}");
 
     with_df_db_manager(db_path, |manager| {
         manager.with_conn_mut(|conn| {
@@ -161,17 +161,17 @@ pub fn query(
 
             // Right now embeddings and sql are mutually exclusive
             let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-                log::debug!("querying embeddings: {:?}", embedding_opts);
+                log::debug!("querying embeddings: {embedding_opts:?}");
                 repositories::workspaces::data_frames::embeddings::query_with_conn(
                     conn,
                     workspace,
                     &embedding_opts,
                 )?
             } else if let Some(sql) = &opts.sql {
-                log::debug!("querying sql: {:?}", sql);
+                log::debug!("querying sql: {sql:?}");
                 return sql::query_df(conn, sql.clone(), None);
             } else {
-                log::debug!("querying select cols: {:?}", col_names);
+                log::debug!("querying select cols: {col_names:?}");
                 let select = Select::new().select(&col_names).from(TABLE_NAME);
                 df_db::select(conn, &select, Some(opts))?
             };
@@ -189,7 +189,7 @@ pub fn export(
 ) -> Result<(), OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("export() got db_path: {:?}", db_path);
+    log::debug!("export() got db_path: {db_path:?}");
 
     with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| {
@@ -204,11 +204,11 @@ pub fn export(
             } else if let Some(sql) = opts.sql.clone() {
                 add_exclude_to_sql(&sql)?
             } else {
-                let sql = format!("SELECT * FROM {}", TABLE_NAME);
+                let sql = format!("SELECT * FROM {TABLE_NAME}");
                 add_exclude_to_sql(&sql)?
             };
 
-            log::debug!("exporting data frame with sql: {:?}", sql);
+            log::debug!("exporting data frame with sql: {sql:?}");
 
             sql::export_df(conn, sql, Some(opts), temp_file)?;
 
@@ -247,7 +247,7 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
     with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| {
             let diff_df = workspace_df_db::df_diff(conn)?;
-            log::debug!("full_diff() diff_df: {:?}", diff_df);
+            log::debug!("full_diff() diff_df: {diff_df:?}");
 
             if diff_df.is_empty() {
                 return Ok(DiffResult::Tabular(TabularDiff::empty()));
@@ -343,10 +343,8 @@ pub async fn from_directory(
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                let bulk_insert_sql = format!(
-                    "INSERT INTO file_listing (file_path) VALUES {}",
-                    values_clause
-                );
+                let bulk_insert_sql =
+                    format!("INSERT INTO file_listing (file_path) VALUES {values_clause}");
 
                 let params: Vec<&dyn duckdb::ToSql> = file_paths
                     .iter()
@@ -456,7 +454,7 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
     // Create the EXCLUDE clause
     let excluded_cols = OXEN_COLS
         .iter()
-        .map(|col| format!("\"{}\"", col))
+        .map(|col| format!("\"{col}\""))
         .collect::<Vec<String>>()
         .join(", ");
 
@@ -484,15 +482,15 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
         before_from.trim().to_string()
     } else if before_from.trim().to_lowercase().ends_with("select *") {
         // For SELECT *, replace with SELECT * EXCLUDE (...)
-        format!("SELECT * EXCLUDE ({})", excluded_cols)
+        format!("SELECT * EXCLUDE ({excluded_cols})")
     } else {
         // For explicit column selections, add EXCLUDE after the columns
         let (select_part, columns_part) = before_from.split_at(select_idx + "select".len());
         let columns = columns_part.trim();
-        format!("{} {} EXCLUDE ({})", select_part, columns, excluded_cols)
+        format!("{select_part} {columns} EXCLUDE ({excluded_cols})")
     };
 
-    Ok(format!("{} {}", modified_select, after_from))
+    Ok(format!("{modified_select} {after_from}"))
 }
 
 #[cfg(test)]
@@ -608,7 +606,7 @@ mod tests {
 
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
-            log::debug!("status is {:?}", status);
+            log::debug!("status is {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             // List the staged mods
@@ -775,7 +773,7 @@ mod tests {
             }
 
             let status = repositories::status(&repo)?;
-            log::debug!("got this status {:?}", status);
+            log::debug!("got this status {status:?}");
 
             // Commit the new file
 
@@ -792,7 +790,7 @@ mod tests {
             // copy the file to the same path but with .csv as the extension
             let file_1_csv = file_1.with_extension("csv");
             util::fs::copy(&file_1, &file_1_csv)?;
-            log::debug!("copied file 1 to {:?}", file_1_csv);
+            log::debug!("copied file 1 to {file_1_csv:?}");
 
             let file_2 = repositories::revisions::get_version_file_from_commit_id(
                 &repo,
@@ -801,12 +799,12 @@ mod tests {
             )?;
             let file_2_csv = file_2.with_extension("csv");
             util::fs::copy(&file_2, &file_2_csv)?;
-            log::debug!("copied file 2 to {:?}", file_2_csv);
+            log::debug!("copied file 2 to {file_2_csv:?}");
             let diff_result =
                 repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])
                     .await?;
 
-            log::debug!("diff result is {:?}", diff_result);
+            log::debug!("diff result is {diff_result:?}");
             match diff_result {
                 DiffResult::Tabular(tabular_diff) => {
                     let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
@@ -875,7 +873,7 @@ mod tests {
             )?;
             // List the files that are changed - this file should be back into unchanged state
             let status = workspaces::status::status(&workspace)?;
-            log::debug!("found mod entries: {:?}", status);
+            log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -943,7 +941,7 @@ mod tests {
             log::debug!("done deleting row");
             // List the files that are changed - this file should be back into unchanged state
             let status = workspaces::status::status(&workspace)?;
-            log::debug!("found mod entries: {:?}", status);
+            log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 0);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -1029,7 +1027,7 @@ mod tests {
                 &json_data,
             )?;
 
-            log::debug!("res is... {:?}", res);
+            log::debug!("res is... {res:?}");
 
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 0);
@@ -1090,7 +1088,7 @@ mod tests {
 
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -1111,7 +1109,7 @@ mod tests {
             )
             .await?;
 
-            log::debug!("res is... {:?}", res);
+            log::debug!("res is... {res:?}");
 
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 0);
@@ -1165,7 +1163,7 @@ mod tests {
             // Stage a deletion
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
             let status = workspaces::status::status(&workspace)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -1182,7 +1180,7 @@ mod tests {
                 .await?;
 
             let status = workspaces::status::status(&workspace)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             assert!(status.is_clean());
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;

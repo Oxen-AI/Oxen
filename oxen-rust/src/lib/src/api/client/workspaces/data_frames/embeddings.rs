@@ -17,8 +17,7 @@ pub async fn get(
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
     let uri = format!("/workspaces/{workspace_id}/data_frames/embeddings/columns/{file_path_str}");
@@ -42,8 +41,7 @@ pub async fn neighbors(
 ) -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
     let uri =
@@ -76,8 +74,7 @@ pub async fn index(
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -261,7 +258,7 @@ mod tests {
 
             // Query the embeddings by id
             let opts = DFOpts {
-                find_embedding_where: Some(format!("{} = 1", OXEN_ROW_ID_COL)),
+                find_embedding_where: Some(format!("{OXEN_ROW_ID_COL} = 1")),
                 sort_by_similarity_to: Some(column.to_string()),
                 page_size: Some(23),
                 ..DFOpts::empty()
@@ -413,7 +410,7 @@ mod tests {
 
                 // Download the data frame sorted by embeddings
                 let opts = DFOpts {
-                    find_embedding_where: Some(format!("{} = 1", OXEN_ROW_ID_COL)),
+                    find_embedding_where: Some(format!("{OXEN_ROW_ID_COL} = 1")),
                     sort_by_similarity_to: Some(column.to_string()),
                     output: Some(output_path.clone()),
                     ..DFOpts::empty()

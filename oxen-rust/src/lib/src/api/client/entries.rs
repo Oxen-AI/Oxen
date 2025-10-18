@@ -51,9 +51,9 @@ pub async fn list_entries_with_type(
     let path = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = if path.is_empty() || path == "/" {
-        format!("/{}/{}", data_type, revision)
+        format!("/{data_type}/{revision}")
     } else {
-        format!("/{}/{}/{}", data_type, revision, path)
+        format!("/{data_type}/{revision}/{path}")
     };
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -76,7 +76,7 @@ pub async fn upload_entries(
     let mut file_paths: Vec<PathBuf> = Vec::new();
     for path in &opts.paths {
         if path.is_dir() {
-            eprintln!("Directory upload not yet supported: {:?}", path);
+            eprintln!("Directory upload not yet supported: {path:?}");
             continue;
         }
 
@@ -90,7 +90,7 @@ pub async fn upload_entries(
         DEFAULT_BRANCH_NAME.to_string()
     };
 
-    log::debug!("Uploading to {}", branch_name);
+    log::debug!("Uploading to {branch_name}");
 
     // Create uniq workspace id
     let workspace_id = uuid::Uuid::new_v4().to_string();
@@ -106,7 +106,7 @@ pub async fn upload_entries(
     )
     .await?;
 
-    log::debug!("Committing on {}", branch_name);
+    log::debug!("Committing on {branch_name}");
 
     // Commit the data
     let user = UserConfig::get()?.to_user();
@@ -155,14 +155,13 @@ pub async fn download_entry(
     if let Some(parent) = local_path.parent() {
         if parent.is_file() {
             return Err(OxenError::basic_str(format!(
-                "{:?} is not a directory",
-                parent
+                "{parent:?} is not a directory"
             )));
         }
 
         // * if the dst parent does not exist, we error because cannot copy a directory to a non-existent location
         if !parent.exists() && parent != Path::new("") {
-            return Err(OxenError::basic_str(format!("{:?} does not exist", parent)));
+            return Err(OxenError::basic_str(format!("{parent:?} does not exist")));
         }
     }
 
@@ -212,8 +211,7 @@ pub async fn download_entries_to_repo(
         if let Some(parent) = local_path.parent() {
             if parent.is_file() {
                 return Err(OxenError::basic_str(format!(
-                    "{:?} is not a directory",
-                    parent
+                    "{parent:?} is not a directory"
                 )));
             }
 
@@ -238,7 +236,7 @@ pub async fn download_entries_to_repo(
             // Save contents to version store
             let version_store = local_repo.version_store()?;
             let file = std::fs::read(local_path).map_err(|e| {
-                OxenError::basic_str(format!("Failed to read file '{:?}': {e}", remote_path))
+                OxenError::basic_str(format!("Failed to read file '{remote_path:?}': {e}"))
             })?;
             let hash = util::hasher::hash_buffer(&file);
             version_store
@@ -279,7 +277,7 @@ pub async fn download_small_entry(
 ) -> Result<(), OxenError> {
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
-    let uri = format!("/file/{}/{}", revision, path);
+    let uri = format!("/file/{revision}/{path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     // log::debug!("url: {url:?}");
     let client = client::new_for_url(&url)?;
@@ -304,7 +302,7 @@ pub async fn download_small_entry(
             let mut stream = response.bytes_stream();
             while let Some(chunk_result) = stream.next().await {
                 let chunk = chunk_result
-                    .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {}", e)))?;
+                    .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
                 dest_file.write_all(&chunk).await?;
             }
 
@@ -337,7 +335,7 @@ pub async fn pull_large_entry(
 
     let remote_path = remote_path.as_ref();
 
-    log::debug!("Trying to download file {:?}", remote_path);
+    log::debug!("Trying to download file {remote_path:?}");
 
     // Download chunks in parallel
     type PieceOfWork = (
@@ -391,7 +389,7 @@ pub async fn pull_large_entry(
         .map(|item| {
             let (version_store, remote_repo, remote_path, hash, revision, chunk_start, chunk_size) =
                 item;
-            log::debug!("Downloading chunk {:?}", remote_path);
+            log::debug!("Downloading chunk {remote_path:?}");
             async move {
                 match try_pull_entry_chunk(
                     version_store,
@@ -418,10 +416,10 @@ pub async fn pull_large_entry(
         .for_each(|b| async {
             match b {
                 Ok(s) => {
-                    log::debug!("Downloaded chunk {:?}", s);
+                    log::debug!("Downloaded chunk {s:?}");
                 }
                 Err(err) => {
-                    log::error!("Error downloading chunk: {:?}", err)
+                    log::error!("Error downloading chunk: {err:?}")
                 }
             }
         })
@@ -510,7 +508,7 @@ async fn pull_entry_chunk(
 
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("download_entry_chunk {}", url);
+    log::debug!("download_entry_chunk {url}");
 
     let client = client::new_for_url(&url)?;
     let response = client.get(&url).send().await?;
@@ -550,7 +548,7 @@ pub async fn download_large_entry(
     // Write files to ~/.oxen/tmp/HASH/chunk_0..N
     let remote_path = remote_path.as_ref();
     let local_path = local_path.as_ref();
-    let hash = util::hasher::hash_str(format!("{:?}_{:?}", remote_path, local_path));
+    let hash = util::hasher::hash_str(format!("{remote_path:?}_{local_path:?}"));
 
     let home_dir = util::fs::oxen_tmp_dir()?;
 
@@ -559,11 +557,7 @@ pub async fn download_large_entry(
         util::fs::create_dir_all(&tmp_dir)?;
     }
 
-    log::debug!(
-        "Trying to download file {:?} to dir {:?}",
-        remote_path,
-        tmp_dir
-    );
+    log::debug!("Trying to download file {remote_path:?} to dir {tmp_dir:?}");
 
     // Download chunks in parallel
     type PieceOfWork = (
@@ -640,17 +634,17 @@ pub async fn download_large_entry(
         .for_each(|b| async {
             match b {
                 Ok(s) => {
-                    log::debug!("Downloaded chunk {:?}", s);
+                    log::debug!("Downloaded chunk {s:?}");
                 }
                 Err(err) => {
-                    log::error!("Error downloading chunk: {:?}", err)
+                    log::error!("Error downloading chunk: {err:?}")
                 }
             }
         })
         .await;
 
     // Once all downloaded, recombine file and delete temp dir
-    log::debug!("Unpack to {:?}", local_path);
+    log::debug!("Unpack to {local_path:?}");
 
     // Create parent dir if it doesn't exist
     if let Some(parent) = local_path.parent() {
@@ -664,7 +658,7 @@ pub async fn download_large_entry(
         let filename = format!("chunk_{i}");
         let tmp_file = tmp_dir.join(filename);
 
-        log::debug!("Reading file bytes {:?}", tmp_file);
+        log::debug!("Reading file bytes {tmp_file:?}");
         match std::fs::File::open(&tmp_file) {
             Ok(mut chunk_file) => {
                 let mut buffer: Vec<u8> = Vec::new();
@@ -674,11 +668,11 @@ pub async fn download_large_entry(
 
                 match combined_file.write_all(&buffer) {
                     Ok(_) => {
-                        log::debug!("Unpack successful! {:?}", local_path);
+                        log::debug!("Unpack successful! {local_path:?}");
                         util::fs::remove_file(tmp_file)?;
                     }
                     Err(err) => {
-                        log::error!("Could not write all data to disk {:?}", err);
+                        log::error!("Could not write all data to disk {err:?}");
                         should_cleanup = true;
                     }
                 }
@@ -691,7 +685,7 @@ pub async fn download_large_entry(
     }
 
     if should_cleanup {
-        log::error!("Cleaning up tmp dir {:?}", tmp_dir);
+        log::error!("Cleaning up tmp dir {tmp_dir:?}");
         util::fs::remove_dir_all(tmp_dir)?;
         return Err(OxenError::basic_str("Could not write all data to disk"));
     }
@@ -779,13 +773,13 @@ async fn download_entry_chunk(
 
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    log::debug!("download_entry_chunk {}", url);
+    log::debug!("download_entry_chunk {url}");
 
     let client = client::new_for_url(&url)?;
     let response = client.get(&url).send().await?;
 
     if let Some(parent) = local_path.parent() {
-        log::debug!("Create parent dir {:?}", parent);
+        log::debug!("Create parent dir {parent:?}");
         util::fs::create_dir_all(parent)?;
     }
 
@@ -824,11 +818,7 @@ pub async fn download_data_from_version_paths(
                 num_retries += 1;
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
-                log::warn!(
-                    "Could not download content {:?} sleeping {}",
-                    err,
-                    sleep_time
-                );
+                log::warn!("Could not download content {err:?} sleeping {sleep_time}");
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
@@ -862,13 +852,13 @@ pub async fn try_download_data_from_version_paths(
     if let Ok(res) = client.post(&url).body(body).send().await {
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
-            log::error!("{}", err);
+            log::error!("{err}");
             return Err(OxenError::authentication(err));
         }
 
         let reader = res
             .bytes_stream()
-            .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+            .map_err(futures::io::Error::other)
             .into_async_read();
         let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
         let archive = Archive::new(decoder);
@@ -884,27 +874,25 @@ pub async fn try_download_data_from_version_paths(
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file {:?} -> {:?}", entry_path, err);
+                    let err = format!("Could not unwrap file {entry_path:?} -> {err:?}");
                     return Err(OxenError::basic_str(err));
                 }
             };
 
             log::debug!(
-                "download_data_from_version_paths Unpacking {:?} -> {:?}",
-                content_ids[idx].0,
-                entry_path
+                "download_data_from_version_paths Unpacking {:?} -> {entry_path:?}",
+                content_ids[idx].0
             );
 
             if let Some(parent) = full_path.parent() {
                 util::fs::create_dir_all(parent)?;
             }
-
             match file.unpack(&full_path).await {
                 Ok(_) => {
-                    log::debug!("Successfully unpacked {:?} into dst {:?}", entry_path, dst);
+                    log::debug!("Successfully unpacked {entry_path:?} into dst {dst:?}");
                 }
                 Err(err) => {
-                    let err = format!("Could not unpack file {:?} -> {:?}", entry_path, err);
+                    let err = format!("Could not unpack file {entry_path:?} -> {err:?}");
                     return Err(OxenError::basic_str(err));
                 }
             }
@@ -1135,7 +1123,7 @@ mod tests {
             let entry =
                 api::client::entries::get_entry(&remote_repo, Path::new(""), DEFAULT_BRANCH_NAME)
                     .await;
-            println!("entry: {:?}", entry);
+            println!("entry: {entry:?}");
             assert!(entry.is_ok());
 
             Ok(remote_repo)

@@ -24,7 +24,7 @@ pub fn select_cols_from_schema(schema: &Schema) -> Result<String, OxenError> {
     // Add the missing oxen cols
     let all_col_names = missing_oxen_cols
         .iter()
-        .map(|col| format!("\"{}\"", col))
+        .map(|col| format!("\"{col}\""))
         .chain(schema.fields.iter().map(|col| format!("\"{}\"", col.name)))
         .collect::<Vec<String>>()
         .join(", ");

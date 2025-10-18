@@ -110,7 +110,7 @@ pub fn commit_with_cfg(
     // Read the staged files from the staged db
     let opts = db::key_val::opts::default();
     let staged_db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
-    log::debug!("commit_with_cfg staged db path: {:?}", staged_db_path);
+    log::debug!("commit_with_cfg staged db path: {staged_db_path:?}");
     let staged_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&staged_db_path))?;
 
@@ -121,7 +121,7 @@ pub fn commit_with_cfg(
     // Read all the staged entries
     let (dir_entries, total_changes) =
         status::read_staged_entries(repo, &staged_db, &commit_progress_bar)?;
-    commit_progress_bar.set_message(format!("Committing {} changes", total_changes));
+    commit_progress_bar.set_message(format!("Committing {total_changes} changes"));
 
     log::debug!("got dir entries: {:?}", dir_entries.len());
 
@@ -142,7 +142,7 @@ pub fn commit_with_cfg(
     let branch = repositories::branches::current_branch(repo)?;
     let maybe_branch_name = branch.map(|b| b.name);
     let commit = if let Some(parent_ids) = parent_ids {
-        log::debug!("parent ids: {:?}", parent_ids);
+        log::debug!("parent ids: {parent_ids:?}");
         commit_dir_entries_with_parents(
             repo,
             parent_ids,
@@ -167,7 +167,7 @@ pub fn commit_with_cfg(
 
     // Write HEAD file and update branch
     let head_path = util::fs::oxen_hidden_dir(&repo.path).join(HEAD_FILE);
-    log::debug!("Looking for HEAD file at {:?}", head_path);
+    log::debug!("Looking for HEAD file at {head_path:?}");
 
     let commit_id = commit.id.to_owned();
     let branch_name = maybe_branch_name.unwrap_or(DEFAULT_BRANCH_NAME.to_string());
@@ -221,10 +221,7 @@ pub fn commit_dir_entries_with_parents(
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
 
-    log::debug!(
-        "collecting existing nodes for directories: {:?}",
-        directories
-    );
+    log::debug!("collecting existing nodes for directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -284,7 +281,7 @@ pub fn commit_dir_entries_with_parents(
         if let Some(path_str) = path.to_str() {
             str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
         } else {
-            log::error!("Failed to convert path to string: {:?}", path);
+            log::error!("Failed to convert path to string: {path:?}");
         }
     }
 
@@ -330,7 +327,7 @@ pub fn commit_dir_entries_new(
         .keys()
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
-    log::debug!("new commit directories: {:?}", directories);
+    log::debug!("new commit directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -385,7 +382,7 @@ pub fn commit_dir_entries_new(
         if let Some(path_str) = path.to_str() {
             str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
         } else {
-            log::error!("Failed to convert path to string: {:?}", path);
+            log::error!("Failed to convert path to string: {path:?}");
         }
     }
 
@@ -457,7 +454,7 @@ pub fn commit_dir_entries(
         .keys()
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
-    log::debug!("commit_dir_entries directories: {:?}", directories);
+    log::debug!("commit_dir_entries directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -504,7 +501,7 @@ pub fn commit_dir_entries(
         if let Some(path_str) = path.to_str() {
             str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
         } else {
-            log::error!("Failed to convert path to string: {:?}", path);
+            log::error!("Failed to convert path to string: {path:?}");
         }
     }
 
@@ -610,7 +607,7 @@ fn split_into_vnodes(
 
         // Lookup children in the existing merkle tree
         if let Some(existing_node) = existing_nodes.get(directory) {
-            log::debug!("got existing node for {:?}", directory);
+            log::debug!("got existing node for {directory:?}");
             children = get_node_dir_children(directory, existing_node)?;
             log::debug!(
                 "got {} existing children for dir {:?}",
@@ -618,7 +615,7 @@ fn split_into_vnodes(
                 directory
             );
         } else {
-            log::debug!("no existing node for {:?}", directory);
+            log::debug!("no existing node for {directory:?}");
         };
 
         log::debug!("new_children {}", new_children.len());
@@ -682,11 +679,7 @@ fn split_into_vnodes(
         // let num_vnodes = (total_children as f32 / 10000_f32).log2();
         // let num_vnodes = 2u128.pow(num_vnodes.ceil() as u32);
         log::debug!(
-            "{} VNodes for {} children in {:?} with vnode size {}",
-            num_vnodes,
-            total_children,
-            directory,
-            vnode_size
+            "{num_vnodes} VNodes for {total_children} children in {directory:?} with vnode size {vnode_size}"
         );
         let mut vnode_children: Vec<EntryVNode> =
             vec![EntryVNode::new(MerkleHash::new(0)); num_vnodes as usize];
@@ -837,13 +830,10 @@ fn r_create_dir_node(
     let path = path.as_ref().to_path_buf();
 
     let keys = entries.keys();
-    log::debug!("r_create_dir_node path {:?} keys: {:?}", path, keys);
+    log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
 
     let Some(vnodes) = entries.get(&path) else {
-        log::debug!(
-            "r_create_dir_node No entries found for directory {:?}",
-            path
-        );
+        log::debug!("r_create_dir_node No entries found for directory {path:?}");
         return Ok(());
     };
 
@@ -1001,11 +991,7 @@ fn r_create_dir_node(
         }
     }
 
-    log::debug!(
-        "Finished processing dir {:?} total written {} entries",
-        path,
-        total_written
-    );
+    log::debug!("Finished processing dir {path:?} total written {total_written} entries");
 
     Ok(())
 }
@@ -1056,16 +1042,11 @@ fn compute_dir_node(
 
     let children = get_children(entries, &path)?;
     log::debug!(
-        "Aggregating dir {:?} for [{}] with {:?} children num_bytes {:?} data_type_counts {:?}",
-        path,
-        commit_id,
-        children,
-        num_bytes,
-        data_type_counts
+        "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"
     );
     for child in children.iter() {
         let Some(vnodes) = entries.get(child) else {
-            let err_msg = format!("compute_dir_node No entries found for directory {:?}", path);
+            let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
             return Err(OxenError::basic_str(err_msg));
         };
         log::debug!(
@@ -1146,12 +1127,7 @@ fn compute_dir_node(
     let hash = MerkleHash::new(hasher.digest128());
     let file_name = path.file_name().unwrap_or_default().to_str().unwrap();
     log::debug!(
-        "Aggregated dir {:?} [{}] num_bytes {:?} num_entries {:?} data_type_counts {:?}",
-        path,
-        hash,
-        num_bytes,
-        num_entries,
-        data_type_counts
+        "Aggregated dir {path:?} [{hash}] num_bytes {num_bytes:?} num_entries {num_entries:?} data_type_counts {data_type_counts:?}"
     );
 
     let node = DirNode::new(
@@ -1601,9 +1577,9 @@ mod tests {
                 let new_file = repo
                     .path
                     .join("files")
-                    .join(format!("dir_{}", dir_num))
-                    .join(format!("new_file_{}.txt", i));
-                util::fs::write_to_path(&new_file, format!("New fileeeee {}", i))?;
+                    .join(format!("dir_{dir_num}"))
+                    .join(format!("new_file_{i}.txt"));
+                util::fs::write_to_path(&new_file, format!("New fileeeee {i}"))?;
                 repositories::add(&repo, &new_file).await?;
             }
 
@@ -1625,8 +1601,8 @@ mod tests {
             for i in 0..10 {
                 let dir_num = i % 2;
                 let file_path = Path::new("files")
-                    .join(format!("dir_{}", dir_num))
-                    .join(format!("new_file_{}.txt", i));
+                    .join(format!("dir_{dir_num}"))
+                    .join(format!("new_file_{i}.txt"));
 
                 let file_node = second_tree.get_by_path(&file_path)?;
                 assert!(file_node.is_some());
@@ -1782,7 +1758,7 @@ mod tests {
             let dir_hashes = CommitMerkleTree::dir_hashes(&repo, &third_commit)?;
 
             for (path, hash) in dir_hashes {
-                println!("dir_hash: {:?} {}", path, hash);
+                println!("dir_hash: {path:?} {hash}");
                 let node = third_tree.get_by_path(&path)?.unwrap();
                 assert_eq!(node.hash, hash);
             }

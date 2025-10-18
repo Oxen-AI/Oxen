@@ -39,10 +39,10 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let branch_name = path_param(&req, "branch_name")?;
     let repository = get_repo(&app_data.path, namespace, name)?;
 
-    log::debug!("show branch {:?}", branch_name);
+    log::debug!("show branch {branch_name:?}");
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
         .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
-    log::debug!("show branch found {:?}", branch);
+    log::debug!("show branch found {branch:?}");
 
     let view = BranchResponse {
         status: StatusMessage::resource_found(),
@@ -143,7 +143,7 @@ pub async fn update(
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let data: Result<BranchUpdate, serde_json::Error> = serde_json::from_str(&body);
-    let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{:?}", err).into()))?;
+    let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
 
     let branch = repositories::branches::update(&repository, branch_name, data.commit_id)?;
 
@@ -166,7 +166,7 @@ pub async fn maybe_create_merge(
         .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
 
     let data: Result<BranchRemoteMerge, serde_json::Error> = serde_json::from_str(&body);
-    let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{:?}", err).into()))?;
+    let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
     let incoming_commit_id = data.client_commit_id;
     let incoming_commit = repositories::commits::get_by_id(&repository, &incoming_commit_id)?
         .ok_or(OxenError::resource_not_found(&incoming_commit_id))?;
@@ -175,10 +175,7 @@ pub async fn maybe_create_merge(
     let current_commit = repositories::commits::get_by_id(&repository, &current_commit_id)?
         .ok_or(OxenError::resource_not_found(&current_commit_id))?;
 
-    log::debug!(
-        "maybe_create_merge got client head commit {:?}",
-        incoming_commit_id
-    );
+    log::debug!("maybe_create_merge got client head commit {incoming_commit_id:?}");
 
     let maybe_merge_commit = repositories::merge::merge_commit_into_base_on_branch(
         &repository,
@@ -190,7 +187,7 @@ pub async fn maybe_create_merge(
 
     // Return what will become the new head of the repo after push is complete.
     if let Some(merge_commit) = maybe_merge_commit {
-        log::debug!("returning merge commit {:?}", merge_commit);
+        log::debug!("returning merge commit {merge_commit:?}");
         // Update branch head
         Ok(HttpResponse::Ok().json(CommitResponse {
             status: StatusMessage::resource_created(),
@@ -199,7 +196,7 @@ pub async fn maybe_create_merge(
     } else {
         // If there are merge conflicts, we can't complete this merge and want to reset the branch to the previous remote head
         // as if this push never happened
-        log::debug!("returning current commit {:?}.", current_commit_id);
+        log::debug!("returning current commit {current_commit_id:?}.");
         Ok(HttpResponse::Ok().json(CommitResponse {
             status: StatusMessage::resource_found(),
             commit: current_commit,
@@ -238,7 +235,7 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         })),
         Err(e) => {
             // Log the error for debugging
-            log::error!("Failed to lock branch: {}", e);
+            log::error!("Failed to lock branch: {e}");
 
             Ok(HttpResponse::Conflict().json(BranchLockResponse {
                 status: StatusMessage::error(e.to_string()),

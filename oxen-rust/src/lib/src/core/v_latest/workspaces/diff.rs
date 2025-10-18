@@ -27,7 +27,7 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
         .ok_or(OxenError::entry_does_not_exist(path))?;
 
-    log::debug!("diff_workspace_df got file_node {}", file_node);
+    log::debug!("diff_workspace_df got file_node {file_node}");
 
     if !is_indexed(workspace, path)? {
         return Err(OxenError::basic_str("Dataset is not indexed"));
@@ -76,12 +76,12 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
 }
 
 pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
-    log::debug!("checking dataset is indexed for {:?}", path);
+    log::debug!("checking dataset is indexed for {path:?}");
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("getting conn at path {:?}", db_path);
+    log::debug!("getting conn at path {db_path:?}");
     let table_exists = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| df_db::table_exists(conn, TABLE_NAME))
     })?;
-    log::debug!("dataset_is_indexed() got table_exists: {:?}", table_exists);
+    log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");
     Ok(table_exists)
 }
