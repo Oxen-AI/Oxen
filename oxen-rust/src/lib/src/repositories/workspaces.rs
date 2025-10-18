@@ -1,10 +1,12 @@
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
+use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
 use crate::repositories;
+use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
 
 use crate::model::{workspace::WorkspaceConfig, Commit, LocalRepository, NewCommitBody, Workspace};
@@ -381,6 +383,7 @@ fn init_workspace_repo(
 }
 
 pub fn populate_entries_with_workspace_data(
+    repo: &LocalRepository,
     directory: &Path,
     workspace: &Workspace,
     entries: &[MetadataEntry],
@@ -388,7 +391,6 @@ pub fn populate_entries_with_workspace_data(
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
     let mut dir_entries: Vec<EMetadataEntry> = Vec::new();
-
     let mut entries: Vec<WorkspaceMetadataEntry> = entries
         .iter()
         .map(|entry| WorkspaceMetadataEntry::from_metadata_entry(entry.clone()))
@@ -412,9 +414,27 @@ pub fn populate_entries_with_workspace_data(
     }
     for (file_path, status) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
-            let file_path_from_workspace = workspace.dir().join(file_path);
-            let metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
-            let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
+            let staged_node =
+                with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+                    staged_db_manager.read_from_staged_db(file_path)
+                })?
+                .expect("Staged node found in status not present in staged db");
+
+            let metadata = match staged_node.node.node {
+                EMerkleTreeNode::File(file_node) => {
+                    repositories::metadata::from_file_node(repo, &file_node, &workspace.commit)?
+                }
+                EMerkleTreeNode::Directory(dir_node) => {
+                    repositories::metadata::from_dir_node(repo, &dir_node, &workspace.commit)?
+                }
+                _ => {
+                    return Err(OxenError::basic_str(
+                        "Unexpected node type found in staged db",
+                    ));
+                }
+            };
+
+            let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
             ws_entry.changes = Some(WorkspaceChanges {
                 status: status.clone(),
             });
@@ -444,6 +464,7 @@ pub fn populate_entry_with_workspace_data(
 }
 
 pub fn get_added_entry(
+    repo: &LocalRepository,
     file_path: &Path,
     workspace: &Workspace,
     resource: &ParsedResource,
@@ -451,11 +472,33 @@ pub fn get_added_entry(
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, file_path)?;
     let (additions_map, _other_changes_map) = build_file_status_maps_for_file(&workspace_changes);
-    let status = additions_map.get(file_path.to_str().unwrap()).cloned();
-    let file_path_from_workspace = workspace.dir().join(file_path);
-    if status == Some(StagedEntryStatus::Added) {
-        let metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
-        let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
+    if let Some(status) = additions_map.get(file_path.to_str().unwrap()).cloned() {
+        if status != StagedEntryStatus::Added {
+            return Err(OxenError::basic_str(
+                "Entry is not in the workspace's staged database",
+            ));
+        }
+
+        let staged_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+            staged_db_manager.read_from_staged_db(file_path)
+        })?
+        .expect("Staged node found in status not present in staged db");
+
+        let metadata = match staged_node.node.node {
+            EMerkleTreeNode::File(file_node) => {
+                repositories::metadata::from_file_node(repo, &file_node, &workspace.commit)?
+            }
+            EMerkleTreeNode::Directory(dir_node) => {
+                repositories::metadata::from_dir_node(repo, &dir_node, &workspace.commit)?
+            }
+            _ => {
+                return Err(OxenError::basic_str(
+                    "Unexpected node type found in staged db",
+                ));
+            }
+        };
+
+        let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
         ws_entry.changes = Some(WorkspaceChanges {
             status: StagedEntryStatus::Added,
         });
@@ -483,6 +526,7 @@ fn build_file_status_maps_for_directory(
 ) {
     let mut additions_map = HashMap::new();
     let mut other_changes_map = HashMap::new();
+    workspace_changes.print();
 
     for (file_path, entry) in workspace_changes.staged_files.iter() {
         let status = entry.status.clone();

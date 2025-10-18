@@ -18,7 +18,6 @@ use async_tar::Archive;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use futures_util::{StreamExt, TryStreamExt};
-use std::collections::HashMap;
 use std::fs::{self};
 use std::io::prelude::*;
 use std::io::Cursor;
@@ -805,7 +804,7 @@ async fn download_entry_chunk(
 
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    content_ids: &HashMap<String, PathBuf>, // hashmap of file hash and entry path
+    content_ids: &[(String, PathBuf)], // tuple of content id and entry path
     dst: &Path,
 ) -> Result<u64, OxenError> {
     let total_retries = constants::NUM_HTTP_RETRIES;
@@ -835,7 +834,7 @@ pub async fn download_data_from_version_paths(
 
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    content_ids: &HashMap<String, PathBuf>, // tuple of content id and entry path
+    content_ids: &[(String, PathBuf)], // tuple of content id and entry path
     dst: impl AsRef<Path>,
 ) -> Result<u64, OxenError> {
     let dst = dst.as_ref();
@@ -865,37 +864,29 @@ pub async fn try_download_data_from_version_paths(
         let archive = Archive::new(decoder);
 
         let mut size: u64 = 0;
+        let mut idx = 0;
         // Iterate over archive entries and unpack them to their entry paths
         let mut entries = archive.entries()?;
         while let Some(file) = entries.next().await {
+            let entry_path = &content_ids[idx].1;
+            let full_path = dst.join(entry_path);
+
             let mut file = match file {
                 Ok(file) => file,
                 Err(err) => {
-                    let err = format!("Could not unwrap file -> {err:?}");
+                    let err = format!("Could not unwrap file {entry_path:?} -> {err:?}");
                     return Err(OxenError::basic_str(err));
                 }
             };
 
-            let file_hash = match file.header().path() {
-                Ok(path) => path.to_string_lossy().to_string(),
-                Err(e) => return Err(OxenError::basic_str(format!("Invalid tar entry path: {e}"))),
-            };
-
-            let Some(entry_path) = content_ids.get(&file_hash) else {
-                log::warn!("Skipping unexpected tar entry not in requested set: {file_hash}");
-                continue;
-            };
             log::debug!(
-                "download_data_from_version_paths Unpacking {file_hash:?} -> {entry_path:?}"
+                "download_data_from_version_paths Unpacking {:?} -> {entry_path:?}",
+                content_ids[idx].0
             );
-
-            let full_path = dst.join(entry_path);
 
             if let Some(parent) = full_path.parent() {
                 util::fs::create_dir_all(parent)?;
             }
-
-            log::debug!("Unpacking {entry_path:?} into path {full_path:?}");
             match file.unpack(&full_path).await {
                 Ok(_) => {
                     log::debug!("Successfully unpacked {entry_path:?} into dst {dst:?}");
@@ -908,9 +899,9 @@ pub async fn try_download_data_from_version_paths(
 
             let metadata = util::fs::metadata(&full_path)?;
             size += metadata.len();
+            idx += 1;
             log::debug!("Unpacked {} bytes {:?}", metadata.len(), entry_path);
         }
-
         Ok(size)
     } else {
         let err =
@@ -1113,7 +1104,6 @@ mod tests {
             let revision = DEFAULT_BRANCH_NAME;
             api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
                 .await?;
-
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
             assert!(local_path

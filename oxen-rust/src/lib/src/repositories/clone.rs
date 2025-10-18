@@ -405,10 +405,12 @@ mod tests {
                 for file in test_dir_files.iter() {
                     println!("file: {file:?}");
                 }
-                assert_eq!(test_dir_files.len(), 2);
+                assert_eq!(test_dir_files.len(), 4);
 
                 assert!(test_dir_path.join("1.jpg").exists());
                 assert!(test_dir_path.join("2.jpg").exists());
+                assert!(test_dir_path.join("3.jpg").exists());
+                assert!(test_dir_path.join("4.jpg").exists());
 
                 Ok(())
             })
@@ -574,8 +576,8 @@ mod tests {
                 )
                 .await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // 2 test, 5 train, 1 labels
-                assert_eq!(8, cloned_num_files);
+                // 4 test, 7 train, 1 labels
+                assert_eq!(12, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 

@@ -301,8 +301,8 @@ wheels = [
 
 [[package]]
 name = "oxenai"
-version = "0.37.2"
-source = { virtual = "." }
+version = "0.38.2"
+source = { editable = "." }
 dependencies = [
     { name = "fsspec" },
     { name = "maturin" },

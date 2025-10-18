@@ -131,11 +131,15 @@ pub async fn list_all(remote_repo: &RemoteRepository) -> Result<Vec<Commit>, Oxe
 
 pub async fn list_missing_hashes(
     remote_repo: &RemoteRepository,
-    commit_hashes: HashSet<MerkleHash>,
-) -> Result<HashSet<MerkleHash>, OxenError> {
+    commits: Vec<Commit>,
+) -> Result<Vec<Commit>, OxenError> {
     let uri = "/commits/missing".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
+    let commit_hashes = commits
+        .iter()
+        .map(|c| c.hash().unwrap())
+        .collect::<HashSet<MerkleHash>>();
     let res = client
         .post(&url)
         .json(&MerkleHashes {
@@ -146,7 +150,10 @@ pub async fn list_missing_hashes(
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(response) => Ok(response.hashes),
+        Ok(response) => {
+            let hashes = response.hashes;
+            Ok(commits.iter().filter(|c| hashes.contains(&c.hash().unwrap())).cloned().collect())
+        },
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
@@ -1029,7 +1036,6 @@ async fn upload_data_chunk_to_server(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
 
     use crate::api;
     use crate::command;
@@ -1037,11 +1043,8 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
 
-    use crate::model::MerkleHash;
     use crate::repositories;
     use crate::test;
-
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_list_remote_commits_all() -> Result<(), OxenError> {
@@ -1240,15 +1243,8 @@ mod tests {
     async fn test_list_unsynced_commit_hashes() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
-
-            println!("first commit_hash: {commit_hash}");
-
-            let missing_commit_hashes = api::client::commits::list_missing_hashes(
-                &remote_repo,
-                HashSet::from([commit_hash]),
-            )
-            .await?;
+            let missing_commit_hashes =
+                api::client::commits::list_missing_hashes(&remote_repo, vec![commit]).await?;
 
             for hash in missing_commit_hashes.iter() {
                 println!("missing commit hash: {hash}");
@@ -1261,22 +1257,16 @@ mod tests {
             let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let missing_commit_nodes =
+                api::client::commits::list_missing_hashes(&remote_repo, vec![commit.clone()])
+                    .await?;
 
-            println!("second commit_hash: {commit_hash}");
-
-            let missing_node_hashes = api::client::commits::list_missing_hashes(
-                &remote_repo,
-                HashSet::from([commit_hash]),
-            )
-            .await?;
-
-            for hash in missing_node_hashes.iter() {
-                println!("missing commit hash: {hash}");
+            for hash in missing_commit_nodes.iter() {
+                println!("missing commit hash: {hash}",);
             }
 
-            assert_eq!(missing_node_hashes.len(), 1);
-            assert!(missing_node_hashes.contains(&commit_hash));
+            assert_eq!(missing_commit_nodes.len(), 1);
+            assert!(missing_commit_nodes.contains(&commit));
 
             Ok(remote_repo)
         })

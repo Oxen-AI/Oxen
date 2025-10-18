@@ -21,8 +21,6 @@ use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
 use crate::repositories;
 
-use std::str::FromStr;
-
 pub struct CommitMerkleTree {
     pub root: MerkleTreeNode,
     pub dir_hashes: HashMap<PathBuf, MerkleHash>,
@@ -33,7 +31,7 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         CommitMerkleTree::read_node(repo, &node_hash, true)
     }
 
@@ -41,7 +39,7 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         // Read the root node at depth 1 to get the directory node as well
         CommitMerkleTree::read_depth(repo, &node_hash, 1)
     }
@@ -50,7 +48,7 @@ impl CommitMerkleTree {
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
-        let node_hash = MerkleHash::from_str(&commit.id)?;
+        let node_hash = commit.id.parse()?;
         let root =
             CommitMerkleTree::read_node(repo, &node_hash, true)?.ok_or(OxenError::basic_str(
                 format!("Merkle tree hash not found for commit: '{}'", commit.id),
@@ -242,7 +240,7 @@ impl CommitMerkleTree {
                 Ok((key, value)) => {
                     let key = str::from_utf8(&key)?;
                     let value = str::from_utf8(&value)?;
-                    let hash = MerkleHash::from_str(value)?;
+                    let hash = value.parse()?;
                     dir_hashes.insert(PathBuf::from(key), hash);
                 }
                 _ => {

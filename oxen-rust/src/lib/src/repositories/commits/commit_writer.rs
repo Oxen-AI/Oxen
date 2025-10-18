@@ -37,7 +37,6 @@ use crate::model::{Commit, LocalRepository, StagedEntryStatus};
 
 use crate::util::hasher;
 use crate::{repositories, util};
-use std::str::FromStr;
 
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::{CommitNode, DirNode};
@@ -357,7 +356,7 @@ pub fn commit_dir_entries_new(
             parent_ids: new_commit
                 .parent_ids
                 .iter()
-                .map(|id: &String| MerkleHash::from_str(id).unwrap())
+                .map(|id: &String| id.parse().unwrap())
                 .collect(),
             email: new_commit.email.clone(),
             author: new_commit.author.clone(),

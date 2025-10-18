@@ -818,10 +818,12 @@ mod tests {
                 for file in test_dir_files.iter() {
                     println!("file: {file:?}");
                 }
-                assert_eq!(test_dir_files.len(), 2);
+                assert_eq!(test_dir_files.len(), 4);
 
                 assert!(test_dir_path.join("1.jpg").exists());
                 assert!(test_dir_path.join("2.jpg").exists());
+                assert!(test_dir_path.join("3.jpg").exists());
+                assert!(test_dir_path.join("4.jpg").exists());
 
                 Ok(())
             })

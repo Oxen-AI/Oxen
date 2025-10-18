@@ -16,7 +16,7 @@ use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager,
+    process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
@@ -84,6 +84,33 @@ pub fn add_version_file(
             workspace_repo,
             version_path,
             dst_path,
+            staged_db_manager,
+            &seen_dirs,
+        )
+    })?;
+
+    Ok(dst_path.to_path_buf())
+}
+
+// Skips re-computing the hash in the add logic
+pub fn add_version_file_with_hash(
+    workspace: &Workspace,
+    version_path: impl AsRef<Path>,
+    dst_path: impl AsRef<Path>,
+    file_hash: &str,
+) -> Result<PathBuf, OxenError> {
+    // version_path is where the file is stored, dst_path is the relative path to the repo
+    let version_path = version_path.as_ref();
+    let dst_path = dst_path.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+
+    with_staged_db_manager(workspace_repo, |staged_db_manager| {
+        stage_file_with_hash(
+            workspace,
+            version_path,
+            dst_path,
+            file_hash,
             staged_db_manager,
             &seen_dirs,
         )
@@ -607,13 +634,12 @@ async fn p_add_file(
     // See if this is a new file or a modified file
     let file_status =
         core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, &full_path)?;
-    log::debug!("File status: {file_status:?}");
+
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();
     version_store
         .store_version_from_path(&hash_str, &full_path)
         .await?;
-
     let conflicts: HashSet<PathBuf> = repositories::merge::list_conflicts(workspace_repo)?
         .into_iter()
         .map(|conflict| conflict.merge_entry.path)

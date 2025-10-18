@@ -12,7 +12,6 @@ use crate::util;
 use crate::view::{PaginatedCommits, StatusMessage};
 use crate::{core, resource};
 
-use derive_more::FromStr;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -323,7 +322,7 @@ pub fn commit_history_is_complete(
     for c in &history {
         log::debug!("commit_history_is_complete checking if commit is synced: {c}");
 
-        if !core::commit_sync_status::commit_is_synced(repo, &MerkleHash::from_str(&c.id)?) {
+        if !core::commit_sync_status::commit_is_synced(repo, &c.id.parse()?) {
             log::debug!("commit_history_is_complete ❌ commit is not synced: {c}");
             return Ok(false);
         } else {
@@ -336,11 +335,9 @@ pub fn commit_history_is_complete(
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::str::FromStr;
 
     use crate::error::OxenError;
     use crate::model::EntryDataType;
-    use crate::model::MerkleHash;
     use crate::model::StagedEntryStatus;
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
@@ -630,7 +627,7 @@ mod tests {
 
             // Get the hash of the file at this timestamp
             let hash_when_add =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
+                util::hasher::hash_file_contents(&text_path)?.parse::<MerkleHash>()?;
             repositories::add(&repo, &text_path).await?;
 
             let status = repositories::status(&repo)?;
@@ -643,8 +640,7 @@ mod tests {
             util::fs::write_to_path(&text_path, "Goodbye, world!")?;
 
             // Get the new hash
-            let hash_after_modification =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
+            let hash_after_modification = util::hasher::hash_file_contents(&text_path)?.parse()?;
 
             // Add and commit the file
             repositories::add(&repo, &text_path).await?;

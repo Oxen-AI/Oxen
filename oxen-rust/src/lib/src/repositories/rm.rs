@@ -9,21 +9,16 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::RmOpts;
-use crate::{core, repositories};
+use crate::{core, util};
 use std::path::{Path, PathBuf};
-
-use glob::glob;
-
-use crate::util;
 
 /// Removes the path from the index
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
+
     let path: &Path = opts.path.as_ref();
+    let paths = util::fs::parse_glob_path(path, repo, &opts.staged)?;
 
-    let paths: HashSet<PathBuf> = parse_glob_path(path, repo)?;
-
-    log::debug!("paths: {paths:?}");
     p_rm(&paths, repo, opts)?;
 
     Ok(())
@@ -38,34 +33,6 @@ fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Resu
         }
     }
     Ok(())
-}
-
-fn parse_glob_path(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
-    let mut paths: HashSet<PathBuf> = HashSet::new();
-    log::debug!("Parsing paths: {path:?}");
-
-    if let Some(path_str) = path.to_str() {
-        if util::fs::is_glob_path(path_str) {
-            // Match against any untracked entries in the current dir
-
-            for entry in glob(path_str)? {
-                paths.insert(entry?.to_path_buf());
-            }
-
-            if let Some(commit) = repositories::commits::head_commit_maybe(repo)? {
-                let pattern_entries =
-                    repositories::commits::search_entries(repo, &commit, path_str)?;
-                log::debug!("pattern entries: {pattern_entries:?}");
-                paths.extend(pattern_entries);
-            }
-        } else {
-            // Non-glob path
-            paths.insert(path.to_path_buf());
-        }
-    }
-
-    log::debug!("parse_glob_paths: {paths:?}");
-    Ok(paths)
 }
 
 #[cfg(test)]
@@ -276,10 +243,6 @@ mod tests {
                 let root_entries =
                     api::client::dir::list(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(""), 1, 10)
                         .await?;
-
-                for entry in root_entries.entries.iter() {
-                    println!("entry: {entry:?}");
-                }
 
                 assert_eq!(root_entries.entries.len(), 4);
 

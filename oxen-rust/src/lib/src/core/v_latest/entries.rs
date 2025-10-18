@@ -95,6 +95,7 @@ pub fn list_directory(
 
     let entries: Vec<EMetadataEntry> = if parsed_resource.workspace.is_some() {
         repositories::workspaces::populate_entries_with_workspace_data(
+            repo,
             directory,
             parsed_resource.workspace.as_ref().unwrap(),
             &entries,

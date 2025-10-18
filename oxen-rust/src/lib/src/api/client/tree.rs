@@ -19,7 +19,6 @@ use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
 use crate::opts::fetch_opts::FetchOpts;
 use crate::view::tree::merkle_hashes::MerkleHashes;
-use crate::view::tree::merkle_hashes::NodeHashes;
 use crate::view::tree::MerkleHashResponse;
 use crate::view::{MerkleHashesResponse, StatusMessage};
 use crate::{api, util};
@@ -54,7 +53,7 @@ pub async fn has_node(
 pub async fn create_nodes(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    nodes: HashSet<MerkleTreeNode>,
+    nodes: HashSet<MerkleHash>,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     // Compress the node
@@ -64,34 +63,25 @@ pub async fn create_nodes(
     log::debug!("create_nodes compressing nodes");
     let mut tar = tar::Builder::new(enc);
     log::debug!("create_nodes creating tar");
-    let mut children_count = 0;
     let node_path = local_repo
         .path
         .join(OXEN_HIDDEN_DIR)
         .join(TREE_DIR)
         .join(NODES_DIR);
 
-    for (i, node) in nodes.iter().enumerate() {
-        let dir_prefix = node_db_prefix(&node.hash);
+    for (i, node_hash) in nodes.iter().enumerate() {
+        let dir_prefix = node_db_prefix(node_hash);
         let node_dir = node_path.join(&dir_prefix);
         // log::debug!(
         //     "create_nodes appending objects dir {:?} to tar at path {:?}",
         //     dir_prefix,
         //     node_dir
         // );
-        progress.set_message(format!(
-            "Packing {}/{} nodes with {} children",
-            i + 1,
-            nodes.len(),
-            children_count
-        ));
+        progress.set_message(format!("Packing {}/{} nodes", i + 1, nodes.len()));
 
         log::debug!("create_nodes appending dir to tar");
         tar.append_dir_all(dir_prefix, node_dir)?;
-        children_count += node.children.len();
-        log::debug!("create_nodes appended dir to tar {children_count}");
     }
-    log::debug!("create_nodes packed {children_count} nodes");
 
     tar.finish()?;
     log::debug!("create_nodes finished tar");
@@ -455,39 +445,6 @@ pub async fn list_missing_file_hashes_from_commits(
     }
 }
 
-pub async fn list_missing_file_hashes_from_nodes(
-    local_repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
-    commit_ids: HashSet<MerkleHash>,
-    dir_hashes: HashSet<MerkleHash>,
-) -> Result<HashSet<MerkleHash>, OxenError> {
-    let uri = "/tree/nodes/missing_file_hashes_from_nodes".to_string();
-    let uri = append_subtree_paths_and_depth_to_uri(
-        uri,
-        &local_repo.subtree_paths(),
-        &local_repo.depth(),
-        false,
-    );
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let node_hashes = NodeHashes {
-        commit_hashes: commit_ids,
-        dir_hashes,
-    };
-    let client = client::builder_for_url(&url)?
-        .timeout(time::Duration::from_secs(12000))
-        .build()?;
-    let res = client.post(&url).json(&node_hashes).send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
-        Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(format!(
-            "api::client::tree::list_missing_file_hashes_from_nodes() Could not deserialize response [{err}]\n{body}"
-        ))),
-    }
-}
-
 pub async fn mark_nodes_as_synced(
     remote_repo: &RemoteRepository,
     commit_hashes: HashSet<MerkleHash>,
@@ -516,7 +473,6 @@ pub async fn mark_nodes_as_synced(
 mod tests {
     use crate::api;
     use crate::error::OxenError;
-    use crate::model::MerkleHash;
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
@@ -524,13 +480,12 @@ mod tests {
 
     use std::collections::HashSet;
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_has_node() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let commit_hash = commit.id.parse()?;
             let has_node = api::client::tree::has_node(&remote_repo, commit_hash).await?;
             assert!(has_node);
 
@@ -693,7 +648,7 @@ mod tests {
     async fn test_list_missing_node_hashes() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let commit_hash = commit.id.parse()?;
             let _missing_node_hashes = api::client::tree::list_missing_node_hashes(
                 &remote_repo,
                 HashSet::from([commit_hash]),
@@ -707,7 +662,7 @@ mod tests {
             let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let commit_hash = commit.id.parse()?;
 
             let missing_node_hashes = api::client::tree::list_missing_node_hashes(
                 &remote_repo,

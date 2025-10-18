@@ -25,7 +25,6 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use std::collections::{HashMap, HashSet};
 use std::io::{SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::OpenOptions;
@@ -135,8 +134,7 @@ async fn create_multipart_large_file_upload(
                 return Err(OxenError::path_does_not_exist(file_path));
             };
             let file_size = metadata.len();
-            let hash =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(file_path)?)?.to_string();
+            let hash = util::hasher::hash_file_contents(file_path)?;
             (file_size, hash)
         }
     };
@@ -146,7 +144,7 @@ async fn create_multipart_large_file_upload(
     let client = client::new_for_url(&url)?;
 
     let body = CreateVersionUploadRequest {
-        hash: hash.clone(),
+        hash: hash.to_string(),
         file_name: file_path.file_name().unwrap().to_string_lossy().to_string(),
         size: file_size,
         dst_dir: dst_dir.map(|d| d.as_ref().to_path_buf()),
@@ -164,7 +162,7 @@ async fn create_multipart_large_file_upload(
     Ok(MultipartLargeFileUpload {
         local_path: file_path.to_path_buf(),
         dst_dir: dst_dir.map(|d| d.as_ref().to_path_buf()),
-        hash: MerkleHash::from_str(&hash)?,
+        hash: hash.parse()?,
         size: file_size,
         status: MultipartLargeFileUploadStatus::Pending,
         reason: None,

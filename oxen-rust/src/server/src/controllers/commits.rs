@@ -179,7 +179,7 @@ pub async fn list_missing(
     Ok(HttpResponse::Ok().json(response))
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 pub struct ListMissingFilesQuery {
     pub base: Option<String>,
     pub head: String,

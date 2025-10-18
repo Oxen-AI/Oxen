@@ -302,11 +302,8 @@ fn rewrite_nodes(
 mod tests {
     use super::*;
 
-    use crate::{
-        model::{merkle_tree::node::EMerkleTreeNode, MerkleHash},
-        test,
-    };
-    use std::{path::PathBuf, str::FromStr};
+    use crate::{model::merkle_tree::node::EMerkleTreeNode, test};
+    use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_add_child_counts_to_nodes_migration() -> Result<(), OxenError> {
@@ -321,7 +318,7 @@ mod tests {
 
             // Test that the root commit
             let latest_commit = repositories::commits::latest_commit(&repo)?;
-            let commit_hash = MerkleHash::from_str(&latest_commit.id)?;
+            let commit_hash = latest_commit.id.parse()?;
             let Some(old_root_node) =
                 repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
             else {
@@ -361,7 +358,7 @@ mod tests {
             let node_version_str = commit_node_version.to_string();
             assert_eq!(node_version_str, "0.36.0");
 
-            let commit_hash = MerkleHash::from_str(&latest_commit.id)?;
+            let commit_hash = latest_commit.id.parse()?;
             let Some(new_root_node) =
                 repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
             else {
@@ -420,7 +417,7 @@ mod tests {
 
             // Test that the root commit
             let latest_commit = repositories::commits::latest_commit(&repo)?;
-            let commit_hash = MerkleHash::from_str(&latest_commit.id)?;
+            let commit_hash = latest_commit.id.parse()?;
             let Some(old_root_node) =
                 repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
             else {
@@ -462,7 +459,7 @@ mod tests {
             let node_version_str = commit_node_version.to_string();
             assert_eq!(node_version_str, "0.36.0");
 
-            let commit_hash = MerkleHash::from_str(&latest_commit.id)?;
+            let commit_hash = latest_commit.id.parse()?;
             let Some(new_root_node) =
                 repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
             else {
