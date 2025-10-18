@@ -38,6 +38,7 @@ pub mod init;
 pub mod load;
 pub mod merge;
 pub mod metadata;
+pub mod prune;
 pub mod pull;
 pub mod push;
 pub mod remote_mode;

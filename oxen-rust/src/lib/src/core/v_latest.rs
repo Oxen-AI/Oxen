@@ -15,6 +15,7 @@ pub mod init;
 pub mod merge;
 pub mod metadata;
 pub mod model;
+pub mod prune;
 pub mod pull;
 pub mod push;
 pub mod resource;
