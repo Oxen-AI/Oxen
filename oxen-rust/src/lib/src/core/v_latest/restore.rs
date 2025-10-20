@@ -6,7 +6,7 @@ use crate::util;
 
 pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     let path = &opts.path;
-    let paths = util::fs::parse_glob_path(path, repo, &opts.staged)?;
+    let paths = util::glob::parse_glob_path(path, Some(repo), &opts.staged)?;
 
     for path in paths {
         let mut opts = opts.clone();

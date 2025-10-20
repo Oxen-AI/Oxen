@@ -28,7 +28,6 @@ use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
@@ -36,12 +35,9 @@ use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
-use crate::{constants, repositories, util};
+use crate::{constants, util};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
-
-use glob::Pattern;
-use glob_match::glob_match;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -592,66 +588,6 @@ pub fn rlist_dirs_in_repo(repo: &LocalRepository) -> Vec<PathBuf> {
         }
     }
     dirs
-}
-
-pub fn parse_glob_path(
-    path: &Path,
-    repo: &LocalRepository,
-    is_staged: &bool,
-) -> Result<HashSet<PathBuf>, OxenError> {
-    let mut paths: HashSet<PathBuf> = HashSet::new();
-
-    let root_path = PathBuf::from("");
-    let repo_path = &repo.path;
-    let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
-    let full_path = repo_path.join(&relative_path);
-
-    if util::fs::is_glob_path(&relative_path) {
-        let path_str = relative_path.to_str().unwrap();
-
-        // If --staged, only operate on staged files
-        if *is_staged {
-            let pattern = Pattern::new(path_str)?;
-            let staged_data = repositories::status::status(repo)?;
-            for entry in staged_data.staged_files {
-                let entry_path_str = entry.0.to_str().unwrap();
-                if pattern.matches(entry_path_str) {
-                    paths.insert(entry.0.to_owned());
-                }
-            }
-        } else if let Some(ref head_commit) = repositories::commits::head_commit_maybe(repo)? {
-            let glob_pattern = full_path.file_name().unwrap().to_string_lossy().to_string();
-            let parent_path = relative_path.parent().unwrap_or(&root_path);
-
-            // Otherwise, traverse the tree for files to restore
-            if let Some(dir_node) =
-                repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
-            {
-                let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
-                for child in dir_children {
-                    if let EMerkleTreeNode::File(file_node) = &child.node {
-                        let child_str = file_node.name();
-                        let child_path = parent_path.join(child_str);
-                        if glob_match(&glob_pattern, child_str) {
-                            paths.insert(child_path);
-                        }
-                    } else if let EMerkleTreeNode::Directory(dir_node) = &child.node {
-                        let child_str = dir_node.name();
-                        let child_path = parent_path.join(child_str);
-                        if glob_match(&glob_pattern, child_str) {
-                            // TODO: Method to detect if dirs are modified from the tree
-                            paths.insert(child_path);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        paths.insert(relative_path);
-    }
-
-    log::debug!("parse_glob_paths found paths: {paths:?}");
-    Ok(paths)
 }
 
 /// Recursively tries to traverse up for an .oxen directory, returns None if not found

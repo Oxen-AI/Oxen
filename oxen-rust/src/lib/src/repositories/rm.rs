@@ -17,7 +17,7 @@ pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
 
     let path: &Path = opts.path.as_ref();
-    let paths = util::fs::parse_glob_path(path, repo, &opts.staged)?;
+    let paths = util::glob::parse_glob_path(path, Some(repo), &opts.staged)?;
 
     p_rm(&paths, repo, opts)?;
 
