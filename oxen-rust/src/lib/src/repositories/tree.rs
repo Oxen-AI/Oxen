@@ -165,7 +165,7 @@ pub fn get_node_by_path(
             match CommitMerkleTreeV0_19_0::from_path(repo, commit, path, load_recursive) {
                 Ok(tree) => Ok(Some(tree.root)),
                 Err(e) => {
-                    log::warn!("Error getting node by path: {:?}", e);
+                    log::warn!("Error getting node by path: {e:?}");
                     Ok(None)
                 }
             }
@@ -173,7 +173,7 @@ pub fn get_node_by_path(
         _ => match CommitMerkleTreeLatest::from_path(repo, commit, path, load_recursive) {
             Ok(tree) => Ok(Some(tree.root)),
             Err(e) => {
-                log::warn!("Error getting node by path: {:?}", e);
+                log::warn!("Error getting node by path: {e:?}");
                 Ok(None)
             }
         },
@@ -258,33 +258,20 @@ pub fn get_subtree_by_depth(
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match (maybe_subtree, maybe_depth) {
         (Some(subtree), Some(depth)) => {
-            log::debug!(
-                "Getting subtree {:?} with depth {} for commit {}",
-                subtree,
-                depth,
-                commit
-            );
+            log::debug!("Getting subtree {subtree:?} with depth {depth} for commit {commit}");
             get_subtree(repo, commit, subtree, *depth)
         }
         (Some(subtree), None) => {
             // If the depth is not provided, we default to -1 which means the entire subtree
-            log::debug!(
-                "Getting subtree {:?} for commit {} with depth -1",
-                subtree,
-                commit
-            );
+            log::debug!("Getting subtree {subtree:?} for commit {commit} with depth -1");
             get_subtree(repo, commit, subtree, -1)
         }
         (None, Some(depth)) => {
-            log::debug!(
-                "Getting tree from root with depth {} for commit {}",
-                depth,
-                commit
-            );
+            log::debug!("Getting tree from root with depth {depth} for commit {commit}");
             get_subtree(repo, commit, PathBuf::from("."), *depth)
         }
         _ => {
-            log::debug!("Getting full tree for commit {}", commit);
+            log::debug!("Getting full tree for commit {commit}");
             get_root_with_children(repo, commit)
         }
     }
@@ -420,12 +407,12 @@ pub fn list_missing_file_hashes(
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     if repo.min_version() == MinOxenVersion::V0_19_0 {
         let Some(node) = CommitMerkleTreeV0_19_0::read_depth(repo, hash, 1)? else {
-            return Err(OxenError::basic_str(format!("Node {} not found", hash)));
+            return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo)
     } else {
         let Some(node) = CommitMerkleTreeLatest::read_depth(repo, hash, 1)? else {
-            return Err(OxenError::basic_str(format!("Node {} not found", hash)));
+            return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo)
     }
@@ -477,10 +464,7 @@ pub fn list_missing_file_hashes_from_commits(
     for commit_id in commit_ids {
         let commit_id_str = commit_id.to_string();
         let Some(commit) = repositories::commits::get_by_id(repo, &commit_id_str)? else {
-            log::error!(
-                "list_missing_file_hashes_from_commits Commit {} not found",
-                commit_id_str
-            );
+            log::error!("list_missing_file_hashes_from_commits Commit {commit_id_str} not found");
             return Err(OxenError::revision_not_found(commit_id_str.into()));
         };
         // Handle the case where we are given a list of subtrees to check
@@ -508,8 +492,7 @@ pub fn list_missing_file_hashes_from_commits(
             // TODO: Use partial load
             let Some(tree) = get_root_with_children(repo, &commit)? else {
                 log::warn!(
-                    "list_missing_file_hashes_from_commits root not found for commit: {:?}",
-                    commit
+                    "list_missing_file_hashes_from_commits root not found for commit: {commit:?}"
                 );
                 continue;
             };
@@ -790,10 +773,7 @@ pub fn list_files_by_type(
 ) -> Result<HashSet<FileNode>, OxenError> {
     let mut file_nodes = HashSet::new();
     let Some(tree) = get_root_with_children(repo, commit)? else {
-        log::warn!(
-            "get_root_with_children returned None for commit: {:?}",
-            commit
-        );
+        log::warn!("get_root_with_children returned None for commit: {commit:?}");
         return Ok(file_nodes);
     };
     r_list_files_by_type(&tree, data_type, &mut file_nodes, PathBuf::new())?;
@@ -869,7 +849,7 @@ pub fn compress_full_tree(
         .join(TREE_DIR)
         .join(NODES_DIR);
 
-    log::debug!("Compressing tree in dir {:?}", nodes_dir);
+    log::debug!("Compressing tree in dir {nodes_dir:?}");
 
     if nodes_dir.exists() {
         tar.append_dir_all(&tar_subdir, nodes_dir)?;
@@ -955,7 +935,7 @@ pub fn compress_commits(
         let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
         let node_dir = node_db_path(repository, &hash);
-        log::debug!("Compressing commit from dir {:?}", node_dir);
+        log::debug!("Compressing commit from dir {node_dir:?}");
         if node_dir.exists() {
             tar.append_dir_all(&tar_subdir, node_dir)?;
         }
@@ -1050,7 +1030,7 @@ fn p_write_tree(
                 db.add_child(file_node)?;
             }
             node => {
-                panic!("p_write_tree Unexpected node type: {:?}", node);
+                panic!("p_write_tree Unexpected node type: {node:?}");
             }
         }
     }
@@ -1064,7 +1044,7 @@ pub fn dir_hashes(
     commit: &Commit,
 ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
     let node_db_dir = repositories::tree::dir_hash_db_path(repo, commit);
-    log::debug!("loading dir_hashes from: {:?}", node_db_dir);
+    log::debug!("loading dir_hashes from: {node_db_dir:?}");
     let opts = db::key_val::opts::default();
     let node_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open_for_read_only(&opts, node_db_dir, false)?;

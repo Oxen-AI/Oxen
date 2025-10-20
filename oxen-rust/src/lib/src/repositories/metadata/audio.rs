@@ -26,12 +26,12 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataAudio, OxenError> 
                 ))
             }
             Err(err) => {
-                let error_str = format!("Could not read audio stream from {:?} {}", path, err);
+                let error_str = format!("Could not read audio stream from {path:?} {err}");
                 Err(OxenError::basic_str(error_str))
             }
         },
         Err(err) => {
-            let error_str = format!("Could not probe audio stream from {:?}: {}", path, err);
+            let error_str = format!("Could not probe audio stream from {path:?}: {err}");
             Err(OxenError::basic_str(error_str))
         }
     }
@@ -52,7 +52,7 @@ mod tests {
         let file = test::test_audio_file_with_name("121-121726-0005.flac");
         let metadata = repositories::metadata::get(file).unwrap();
 
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 37096);
         assert_eq!(metadata.data_type, EntryDataType::Audio);
@@ -74,7 +74,7 @@ mod tests {
         let file = test::test_audio_file_with_name("121-121726-0005.wav");
         let metadata = repositories::metadata::get(file).unwrap();
 
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 99278);
         assert_eq!(metadata.data_type, EntryDataType::Audio);

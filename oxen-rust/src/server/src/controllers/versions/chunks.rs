@@ -111,8 +111,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
         if let Some(workspace_id) = request.workspace_id {
             let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
                 return Ok(HttpResponse::NotFound().json(StatusMessage::error(format!(
-                    "Workspace not found: {}",
-                    workspace_id
+                    "Workspace not found: {workspace_id}"
                 ))));
             };
             // TODO: Can we just replace workspaces::files::add with this?

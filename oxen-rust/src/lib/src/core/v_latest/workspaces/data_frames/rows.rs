@@ -39,14 +39,10 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    log::debug!(
-        "add_row() path: {:?} got db_path: {:?}",
-        row_changes_path,
-        db_path
-    );
+    log::debug!("add_row() path: {row_changes_path:?} got db_path: {db_path:?}");
 
     let df = tabular::parse_json_to_df(data)?;
-    log::debug!("add() df: {:?}", df);
+    log::debug!("add() df: {df:?}");
 
     let mut result = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::append_row(conn, &df))
@@ -119,7 +115,7 @@ pub fn delete(
     let mut deleted_row = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::delete_row(conn, row_id))
     })?;
-    log::debug!("delete() deleted_row: {:?}", deleted_row);
+    log::debug!("delete() deleted_row: {deleted_row:?}");
 
     let row = JsonDataFrameView::json_from_df(&mut deleted_row);
 
@@ -137,7 +133,7 @@ pub fn delete(
 
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
-            log::debug!("no changes, deleting file from staged db {:?}", path);
+            log::debug!("no changes, deleting file from staged db {path:?}");
             // Restored to original state == delete file from staged db
             with_staged_db_manager(&workspace.workspace_repo, |manager| {
                 manager.remove_staged_recursively(
@@ -148,9 +144,9 @@ pub fn delete(
             })?;
         } else {
             log::debug!("there are still changes, not deleting file from staged db");
-            log::debug!("diff: {:?}", diff);
+            log::debug!("diff: {diff:?}");
             // We track that the file has been modified
-            log::debug!("rows::delete() tracking file to staged db: {:?}", path);
+            log::debug!("rows::delete() tracking file to staged db: {path:?}");
             workspaces::files::track_modified_data_frame(workspace, path)?;
         }
     }
@@ -188,7 +184,7 @@ pub fn update(
     )?;
 
     let diff = repositories::workspaces::data_frames::full_diff(workspace, path)?;
-    log::debug!("update() diff: {:?}", diff);
+    log::debug!("update() diff: {diff:?}");
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
             with_staged_db_manager(&workspace.workspace_repo, |manager| {
@@ -280,10 +276,7 @@ pub async fn prepare_modified_or_removed_row(
         path.as_ref(),
     );
 
-    log::debug!(
-        "prepare_modified_or_removed_row() committed_df_path: {:?}",
-        committed_df_path
-    );
+    log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 
     // TODONOW should not be using all rows - just need to parse delim
     let lazy_df =
@@ -345,7 +338,7 @@ pub async fn restore_row_in_db(
                 &row,
             )
             .await?;
-            log::debug!("restore_row() insert_row: {:?}", insert_row);
+            log::debug!("restore_row() insert_row: {insert_row:?}");
             rows::revert_row_changes(&db, row_id.to_owned())?;
             log::debug!("restore_row() after revert");
             with_df_db_manager(&db_path, |manager| {
@@ -358,7 +351,7 @@ pub async fn restore_row_in_db(
         }
     };
 
-    log::debug!("we're returning this row: {:?}", result_row);
+    log::debug!("we're returning this row: {result_row:?}");
 
     Ok(result_row)
 }

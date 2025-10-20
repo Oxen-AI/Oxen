@@ -14,7 +14,7 @@ pub const NAME: &str = "log";
 pub struct LogCmd;
 
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    match writeln!(output, "{}", text) {
+    match writeln!(output, "{text}") {
         Ok(_) => Ok(()),
         Err(_) => Err(OxenError::basic_str("Could not write to pager")),
     }
@@ -83,7 +83,7 @@ impl LogCmd {
 
         for commit in commits {
             let commit_id_str = format!("commit {}", commit.id).yellow();
-            write_to_pager(&mut output, &format!("{}\n", commit_id_str))?;
+            write_to_pager(&mut output, &format!("{commit_id_str}\n"))?;
             write_to_pager(&mut output, &format!("Author: {}", commit.author))?;
             write_to_pager(
                 &mut output,
@@ -95,7 +95,7 @@ impl LogCmd {
         match minus::page_all(output) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Error while paging: {}", e);
+                eprintln!("Error while paging: {e}");
             }
         }
         Ok(())

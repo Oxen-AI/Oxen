@@ -281,12 +281,12 @@ mod tests {
             // Create subdirs with files
             let num_dirs = 5;
             for i in 0..num_dirs {
-                let dir_path = data_dir.join(format!("{}", i));
+                let dir_path = data_dir.join(format!("{i}"));
                 util::fs::create_dir_all(&dir_path)?;
                 let file_path = dir_path.join("file.txt");
-                let file_path = test::write_txt_file_to_path(file_path, format!("file -> {}", i))?;
+                let file_path = test::write_txt_file_to_path(file_path, format!("file -> {i}"))?;
                 repositories::add(&repo, &file_path).await?;
-                repositories::commit(&repo, &format!("Adding file -> data/{}/file.txt", i))?;
+                repositories::commit(&repo, &format!("Adding file -> data/{i}/file.txt"))?;
             }
 
             // modify the 3rd file
@@ -627,7 +627,7 @@ mod tests {
             // Should still have no commits on main
             let history_main =
                 api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME).await;
-            log::debug!("history_main: {:?}", history_main);
+            log::debug!("history_main: {history_main:?}");
             // assert_eq!(history_main.len(), 1);
             assert!(history_main.is_err());
 
@@ -830,7 +830,7 @@ mod tests {
                     repositories::add(&user_a_repo, &a_mod_file_path).await?;
                     let commit_a =
                         repositories::commit(&user_a_repo, "User A modifying the README.")?;
-                    log::debug!("commit_a: {}", commit_a);
+                    log::debug!("commit_a: {commit_a}");
                     repositories::push(&user_a_repo).await?;
 
                     // User B tries to modify the same README.md and push
@@ -840,11 +840,11 @@ mod tests {
                     repositories::add(&user_b_repo, &b_mod_file_path).await?;
                     let commit_b =
                         repositories::commit(&user_b_repo, "User B modifying the README.")?;
-                    log::debug!("commit_b: {}", commit_b);
+                    log::debug!("commit_b: {commit_b}");
 
                     // Push should fail! Remote is ahead
                     let first_push_result = repositories::push(&user_b_repo).await;
-                    log::debug!("first_push_result: {:?}", first_push_result);
+                    log::debug!("first_push_result: {first_push_result:?}");
                     assert!(first_push_result.is_err());
 
                     // Pull should error because there are conflicts
@@ -904,7 +904,7 @@ mod tests {
                 // Log out all files in this directory with fs
                 let files = util::fs::rlist_paths_in_dir(&user_a_repo_dir);
                 for item in files {
-                    log::debug!("\nfile or dir: {:?}\n", item)
+                    log::debug!("\nfile or dir: {item:?}\n")
                 }
 
                 // User A: add files in `nlp`
@@ -973,7 +973,7 @@ mod tests {
                 // Log out all files in this directory with fs
                 let files = util::fs::rlist_paths_in_dir(&user_a_repo_dir);
                 for item in files {
-                    log::debug!("\nfile or dir: {:?}\n", item)
+                    log::debug!("\nfile or dir: {item:?}\n")
                 }
 
                 // User A: add files in `nlp`
@@ -1010,7 +1010,7 @@ mod tests {
                         &user_b_repo.path.join("annotations").join("train"),
                     );
                     for item in files {
-                        log::debug!("\npre file or dir: {:?}\n", item)
+                        log::debug!("\npre file or dir: {item:?}\n")
                     }
                     // User A modifies
                     test::write_txt_file_to_path(&modify_path_a, "fancy new file contents")?;
@@ -1025,7 +1025,7 @@ mod tests {
                         &user_b_repo.path.join("annotations").join("train"),
                     );
                     for item in files {
-                        log::debug!("\npost file or dir: {:?}\n", item)
+                        log::debug!("\npost file or dir: {item:?}\n")
                     }
                     repositories::add(&user_b_repo, &modify_path_b).await?;
                     // also add a file
@@ -1036,7 +1036,7 @@ mod tests {
                     let head = repositories::commits::head_commit(&user_b_repo)?;
                     let pre_b =
                         repositories::tree::get_root_with_children(&user_b_repo, &head)?.unwrap();
-                    log::debug!("b head before is {:?}", head);
+                    log::debug!("b head before is {head:?}");
 
                     let maybe_b_entry = pre_b.get_by_path(
                         PathBuf::from("annotations")
@@ -1044,7 +1044,7 @@ mod tests {
                             .join("annotations.txt"),
                     )?;
 
-                    log::debug!("maybe_b_entry before commit is {:?}", maybe_b_entry);
+                    log::debug!("maybe_b_entry before commit is {maybe_b_entry:?}");
 
                     let commit_b =
                         repositories::commit(&user_b_repo, "user B deleting file path.")?;
@@ -1058,23 +1058,23 @@ mod tests {
                             .join("annotations.txt"),
                     )?;
 
-                    log::debug!("maybe_b_entry after commitis {:?}", maybe_b_entry);
+                    log::debug!("maybe_b_entry after commitis {maybe_b_entry:?}");
 
-                    log::debug!("commit_a is {:?}", commit_a);
-                    log::debug!("commit_b is {:?}", commit_b);
+                    log::debug!("commit_a is {commit_a:?}");
+                    log::debug!("commit_b is {commit_b:?}");
 
                     let commit_a =
                         repositories::commits::get_by_id(&user_a_repo, &commit_a.id)?.unwrap();
                     let commit_b =
                         repositories::commits::get_by_id(&user_b_repo, &commit_b.id)?.unwrap();
 
-                    log::debug!("commit_a pre is {:?}", commit_a);
-                    log::debug!("commit_b pre is {:?}", commit_b);
+                    log::debug!("commit_a pre is {commit_a:?}");
+                    log::debug!("commit_b pre is {commit_b:?}");
 
                     // Push should fail
                     let res = repositories::push(&user_b_repo).await;
 
-                    log::debug!("here's the result and why it failed: {:?}", res);
+                    log::debug!("here's the result and why it failed: {res:?}");
 
                     assert!(res.is_err());
 
@@ -1199,7 +1199,7 @@ A: Oxen.ai is a great tool for this! It can handle any size dataset, and is opti
                 let commit = repositories::commit(&local_repo, "Added another file")?;
 
                 let result = repositories::push(&local_repo).await;
-                println!("push result: {:?}", result);
+                println!("push result: {result:?}");
 
                 assert!(result.is_ok());
 
@@ -1246,7 +1246,7 @@ A: Checkout Oxen.ai
                 let commit = repositories::commit(&local_repo, "adding README.md to the test dir")?;
 
                 let result = repositories::push(&local_repo).await;
-                println!("push result: {:?}", result);
+                println!("push result: {result:?}");
 
                 assert!(result.is_ok());
 
@@ -1259,7 +1259,7 @@ A: Checkout Oxen.ai
                     100,
                 )
                 .await?;
-                println!("dir_entries: {:?}", dir_entries);
+                println!("dir_entries: {dir_entries:?}");
 
                 // Make sure we have the new file
                 assert!(dir_entries

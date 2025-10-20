@@ -111,8 +111,7 @@ impl RunCmd for EmbeddingsQueryCmd {
         let workspace_id = format!("{}-{}", path, commit.id);
         let Some(workspace) = repositories::workspaces::get(&repository, &workspace_id)? else {
             return Err(OxenError::basic_str(format!(
-                "Workspace not found: {}",
-                workspace_id
+                "Workspace not found: {workspace_id}"
             )));
         };
 

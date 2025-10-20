@@ -11,7 +11,7 @@ pub async fn fork(
     req: HttpRequest,
     body: web::Json<ForkRequest>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    log::debug!("Forking repository with request: {:?}", req);
+    log::debug!("Forking repository with request: {req:?}");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -30,12 +30,12 @@ pub async fn fork(
             Ok(HttpResponse::Accepted().json(fork_start_response))
         }
         Err(OxenError::RepoAlreadyExistsAtDestination(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict()
                 .json(StatusMessage::error("Repo already exists at destination.")))
         }
         Err(err) => {
-            log::error!("Failed to fork repository: {:?}", err);
+            log::error!("Failed to fork repository: {err:?}");
             Err(OxenHttpError::from(err))
         }
     }
@@ -46,7 +46,7 @@ pub async fn get_status(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
 
-    log::debug!("Getting fork status for repo: {}/{}", namespace, repo_name);
+    log::debug!("Getting fork status for repo: {namespace}/{repo_name}");
 
     let repo_path = app_data.path.join(&namespace).join(&repo_name);
 
@@ -56,7 +56,7 @@ pub async fn get_status(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
             Ok(HttpResponse::NotFound().json(StatusMessage::error("Fork status not found")))
         }
         Err(e) => {
-            log::error!("Failed to get fork status: {}", e);
+            log::error!("Failed to get fork status: {e}");
             Err(OxenHttpError::from(e))
         }
     }

@@ -85,11 +85,7 @@ pub async fn download_data_from_version_paths(
             tar.append_path_with_name(path_to_read, content_file)
                 .unwrap();
         } else {
-            log::error!(
-                "Could not find content: {:?} -> {:?}",
-                content_file,
-                path_to_read
-            );
+            log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
         }
     }
 
@@ -154,7 +150,7 @@ pub async fn list_tabular(
     );
 
     let entries = repositories::entries::list_tabular_files_in_repo(&repo, &commit)?;
-    log::debug!("list_tabular entries: {:?}", entries);
+    log::debug!("list_tabular entries: {entries:?}");
     let (paginated_entries, pagination) = paginate(entries, page, page_size);
 
     Ok(HttpResponse::Ok().json(PaginatedMetadataEntriesResponse {

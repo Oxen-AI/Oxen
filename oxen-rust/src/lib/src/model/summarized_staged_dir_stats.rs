@@ -82,7 +82,7 @@ impl SummarizedStagedDirStats {
     }
 
     pub fn add_stats(&mut self, stats: &StagedDirStats) {
-        log::debug!("Adding stats: {:?}", stats);
+        log::debug!("Adding stats: {stats:?}");
         if let Some(first_component) = stats.path.components().next() {
             let path: &Path = first_component.as_ref();
             let path = path.to_path_buf();

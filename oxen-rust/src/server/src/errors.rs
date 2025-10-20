@@ -89,7 +89,7 @@ impl From<std::string::FromUtf8Error> for OxenHttpError {
 
 impl error::ResponseError for OxenHttpError {
     fn error_response(&self) -> HttpResponse {
-        log::debug!("OxenHttpError: {:?}", self);
+        log::debug!("OxenHttpError: {self:?}");
         match self {
             OxenHttpError::InternalServerError => {
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
@@ -123,8 +123,7 @@ impl error::ResponseError for OxenHttpError {
             }
             OxenHttpError::PathParamDoesNotExist(param) => {
                 log::error!(
-                    "Param {} does not exist in resource path, make sure it matches in routes.rs",
-                    param
+                    "Param {param} does not exist in resource path, make sure it matches in routes.rs"
                 );
                 HttpResponse::BadRequest().json(StatusMessage::bad_request())
             }
@@ -234,15 +233,14 @@ impl error::ResponseError for OxenHttpError {
                 // Catch specific OxenError's and return the appropriate response
                 match error {
                     OxenError::RepoNotFound(repo) => {
-                        log::debug!("Repo not found: {}", repo);
+                        log::debug!("Repo not found: {repo}");
 
                         HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(
-                            "Repository '{}' not found",
-                            repo
+                            "Repository '{repo}' not found"
                         )))
                     }
                     OxenError::ResourceNotFound(resource) => {
-                        log::debug!("Resource not found: {}", resource);
+                        log::debug!("Resource not found: {resource}");
 
                         let error_json = json!({
                             "error": {
@@ -257,7 +255,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::ParsedResourceNotFound(resource) => {
-                        log::debug!("Resource not found: {}", resource);
+                        log::debug!("Resource not found: {resource}");
 
                         let error_json = json!({
                             "error": {
@@ -298,7 +296,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::PathDoesNotExist(path) => {
-                        log::debug!("Path does not exist: {}", path);
+                        log::debug!("Path does not exist: {path}");
 
                         let error_json = json!({
                             "error": {
@@ -313,7 +311,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::WorkspaceNotFound(workspace) => {
-                        log::error!("Workspace not found: {}", workspace);
+                        log::error!("Workspace not found: {workspace}");
 
                         let error_json = json!({
                             "error": {
@@ -358,26 +356,26 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::InvalidSchema(schema) => {
-                        log::error!("Invalid schema: {}", schema);
+                        log::error!("Invalid schema: {schema}");
 
                         HttpResponse::BadRequest().json(StatusMessageDescription::bad_request(
-                            format!("Schema is invalid: '{}'", schema),
+                            format!("Schema is invalid: '{schema}'"),
                         ))
                     }
                     OxenError::RemoteAheadOfLocal(desc) => {
-                        log::error!("Remote ahead of local: {}", desc);
+                        log::error!("Remote ahead of local: {desc}");
 
                         HttpResponse::BadRequest()
-                            .json(StatusMessageDescription::bad_request(format!("{}", desc)))
+                            .json(StatusMessageDescription::bad_request(format!("{desc}")))
                     }
                     OxenError::IncompleteLocalHistory(desc) => {
-                        log::error!("Cannot push repo with incomplete local history: {}", desc);
+                        log::error!("Cannot push repo with incomplete local history: {desc}");
 
                         HttpResponse::BadRequest()
-                            .json(StatusMessageDescription::bad_request(format!("{}", desc)))
+                            .json(StatusMessageDescription::bad_request(format!("{desc}")))
                     }
                     OxenError::IncompatibleSchemas(schema) => {
-                        log::error!("Incompatible schemas: {}", schema);
+                        log::error!("Incompatible schemas: {schema}");
 
                         let schema_vals = &schema
                             .fields
@@ -385,8 +383,7 @@ impl error::ResponseError for OxenHttpError {
                             .map(|f| format!("{}: {}", f.name, f.dtype))
                             .collect::<Vec<String>>()
                             .join(", ");
-                        let error =
-                            format!("Schema does not match. Valid Fields [{}]", schema_vals);
+                        let error = format!("Schema does not match. Valid Fields [{schema_vals}]");
 
                         let error_json = json!({
                             "error": {
@@ -402,7 +399,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::BadRequest().json(error_json)
                     }
                     OxenError::ColumnNameAlreadyExists(column_name) => {
-                        log::error!("Column Name Already Exists: {}", column_name);
+                        log::error!("Column Name Already Exists: {column_name}");
                         let error_json = json!({
                             "error": {
                                 "type": "column_error",
@@ -417,7 +414,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::BadRequest().json(error_json)
                     }
                     OxenError::ColumnNameNotFound(column_name) => {
-                        log::error!("Column Name Not Found: {}", column_name);
+                        log::error!("Column Name Not Found: {column_name}");
                         let error_json = json!({
                             "error": {
                                 "type": "column_error",
@@ -446,7 +443,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::BadRequest().json(error_json)
                     }
                     OxenError::DUCKDB(error) => {
-                        log::error!("DuckDB error: {}", error);
+                        log::error!("DuckDB error: {error}");
 
                         let error_json = json!({
                             "error": {
@@ -462,7 +459,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::BadRequest().json(error_json)
                     }
                     OxenError::PolarsError(error) => {
-                        log::error!("Polars error: {:?}", error);
+                        log::error!("Polars error: {error:?}");
                         let error_json = json!({
                             "error": {
                                 "type": "data_frame_error",
@@ -476,7 +473,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::InternalServerError().json(error_json)
                     }
                     OxenError::DataFrameError(error) => {
-                        log::error!("DataFrame error: {}", error);
+                        log::error!("DataFrame error: {error}");
                         let error_json = json!({
                             "error": {
                                 "type": "data_frame_error",
@@ -500,7 +497,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::InternalServerError().json(error_json)
                     }
                     OxenError::NoRowsFound(msg) => {
-                        log::error!("No rows found: {}", msg);
+                        log::error!("No rows found: {msg}");
                         let error_json = json!({
                             "error": {
                                 "type": "no_rows_found",
@@ -513,7 +510,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     err => {
-                        log::error!("Internal server error: {:?}", err);
+                        log::error!("Internal server error: {err:?}");
                         HttpResponse::InternalServerError()
                             .json(StatusMessage::internal_server_error())
                     }

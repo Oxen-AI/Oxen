@@ -77,7 +77,7 @@ pub fn get_by_namespace_and_name(
     let repo_dir = sync_dir.join(namespace).join(name);
 
     if !repo_dir.exists() {
-        log::debug!("Repo does not exist: {:?}", repo_dir);
+        log::debug!("Repo does not exist: {repo_dir:?}");
         return Ok(None);
     }
 
@@ -86,7 +86,7 @@ pub fn get_by_namespace_and_name(
         Ok(repo) => Ok(Some(repo)),
         Err(OxenError::LocalRepoNotFound(_)) => is_repo_forked(&repo_dir),
         Err(err) => {
-            log::error!("Error getting repo from dir: {:?}", err);
+            log::error!("Error getting repo from dir: {err:?}");
             Err(err)
         }
     }
@@ -110,10 +110,7 @@ pub fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
 }
 
 pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
-    log::debug!(
-        "repositories::entries::list_namespaces repositories for sync dir: {:?}",
-        sync_dir
-    );
+    log::debug!("repositories::entries::list_namespaces repositories for sync dir: {sync_dir:?}");
     let mut namespaces: Vec<String> = vec![];
     for path in std::fs::read_dir(sync_dir)? {
         let path = path.unwrap().path();
@@ -138,8 +135,7 @@ fn is_namespace_dir(path: &Path) -> bool {
 
 pub fn list_repos_in_namespace(namespace_path: &Path) -> Vec<LocalRepository> {
     log::debug!(
-        "repositories::entries::list_repos_in_namespace repositories for dir: {:?}",
-        namespace_path
+        "repositories::entries::list_repos_in_namespace repositories for dir: {namespace_path:?}"
     );
     let mut repos: Vec<LocalRepository> = vec![];
     for entry in WalkDir::new(namespace_path)
@@ -170,20 +166,13 @@ pub fn transfer_namespace(
     from_namespace: &str,
     to_namespace: &str,
 ) -> Result<LocalRepository, OxenError> {
-    log::debug!(
-        "transfer_namespace from: {} to: {}",
-        from_namespace,
-        to_namespace
-    );
+    log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
     let repo_dir = sync_dir.join(from_namespace).join(repo_name);
     let new_repo_dir = sync_dir.join(to_namespace).join(repo_name);
 
     if !repo_dir.exists() {
-        log::debug!(
-            "Error while transferring repo: repo does not exist: {:?}",
-            repo_dir
-        );
+        log::debug!("Error while transferring repo: repo does not exist: {repo_dir:?}");
         return Err(OxenError::repo_not_found(RepoNew::from_namespace_name(
             from_namespace,
             repo_name,
@@ -225,12 +214,12 @@ pub async fn create(
     }
 
     // Create the repo dir
-    log::debug!("repositories::create repo dir: {:?}", repo_dir);
+    log::debug!("repositories::create repo dir: {repo_dir:?}");
     util::fs::create_dir_all(&repo_dir)?;
 
     // Create oxen hidden dir
     let hidden_dir = util::fs::oxen_hidden_dir(&repo_dir);
-    log::debug!("repositories::create hidden dir: {:?}", hidden_dir);
+    log::debug!("repositories::create hidden dir: {hidden_dir:?}");
     util::fs::create_dir_all(&hidden_dir)?;
 
     // Create config file
@@ -325,7 +314,7 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     core::staged::remove_from_cache_with_children(&repo.path)?;
     core::refs::ref_manager::remove_from_cache(&repo.path)?;
 
-    log::debug!("Deleting repo directory: {:?}", repo);
+    log::debug!("Deleting repo directory: {repo:?}");
     util::fs::remove_dir_all(&repo.path)?;
     Ok(repo)
 }
@@ -566,7 +555,7 @@ mod tests {
                 repositories::transfer_namespace(&sync_dir, name, old_namespace, new_namespace)?;
 
             // Log out updated_repo
-            log::debug!("updated_repo: {:?}", updated_repo);
+            log::debug!("updated_repo: {updated_repo:?}");
 
             let new_repo_path = sync_dir.join(new_namespace).join(name);
             assert_eq!(updated_repo.path, new_repo_path);
