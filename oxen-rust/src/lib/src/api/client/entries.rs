@@ -850,12 +850,7 @@ pub async fn try_download_data_from_version_paths(
     let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
     let client = client::new_for_url(&url)?;
     let query_method = Method::from_bytes(b"QUERY").unwrap();
-    if let Ok(res) = client
-        .request(query_method.clone(), &url)
-        .body(body)
-        .send()
-        .await
-    {
+    if let Ok(res) = client.request(query_method, &url).body(body).send().await {
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
             log::error!("{err}");
