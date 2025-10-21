@@ -17,7 +17,7 @@ import os
 import random
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -461,7 +461,19 @@ Examples:
             file_tasks.append((file_path, args.type, file_size))
             file_counter += 1
 
-    max_workers = args.workers or (os.cpu_count() * 4)
+    # Choose executor type and worker count based on file type
+    if args.type == 'image':
+        # Image generation is CPU-bound, use ProcessPoolExecutor
+        executor_class = ProcessPoolExecutor
+        default_workers = os.cpu_count()
+        executor_type = "processes"
+    else:
+        # Text and binary generation are I/O-bound, use ThreadPoolExecutor
+        executor_class = ThreadPoolExecutor
+        default_workers = os.cpu_count() * 4
+        executor_type = "threads"
+
+    max_workers = args.workers or default_workers
 
     # Display generation plan
     print("\nGeneration Plan:")
@@ -472,10 +484,10 @@ Examples:
     print(f"  Total size: ~{format_size(num_files * file_size)}")
     print(f"  Directories: {num_dirs}")
     print(f"  Files per directory: ~{num_files // num_dirs}")
-    print(f"  Workers: {max_workers} threads")
+    print(f"  Workers: {max_workers} {executor_type}")
     print()
 
-    # Generate files in parallel using threads (faster for I/O-bound workloads)
+    # Generate files in parallel using appropriate executor for workload type
     if args.type == 'text':
         print("Initializing text pool...", flush=True)
         # Initialize text pool in main thread (threads share memory)
@@ -487,7 +499,7 @@ Examples:
     chunksize = max(1, min(10000, num_files // (max_workers * 4)))
 
     start_time = time.time()
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with executor_class(max_workers=max_workers) as executor:
         with tqdm(total=num_files, desc="Generating files", unit="file",
                   unit_scale=False, smoothing=0.1) as pbar:
             for _ in executor.map(generate_file, file_tasks, chunksize=chunksize):
