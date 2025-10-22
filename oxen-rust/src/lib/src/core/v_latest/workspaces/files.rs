@@ -152,7 +152,7 @@ pub fn add_version_files(
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
-                        error: format!("Failed to add file to staged db: {}", e),
+                        error: format!("Failed to add file to staged db: {e}"),
                     });
                     continue;
                 }
@@ -189,7 +189,7 @@ pub async fn remove_files_from_staged_db(
         match delete(workspace, &path) {
             Ok(_) => {}
             Err(e) => {
-                log::debug!("Error removing file path {path:?}: {:?}", e);
+                log::debug!("Error removing file path {path:?}: {e:?}");
                 err_files.push(path);
             }
         }
@@ -239,16 +239,14 @@ pub async fn import(
 
     if filename.is_empty() {
         return Err(OxenError::file_import_error(format!(
-            "URL has an invalid filename {}",
-            url
+            "URL has an invalid filename {url}"
         )));
     }
 
-    log::debug!("files::import_file Got uploaded file name: {}", filename);
+    log::debug!("files::import_file Got uploaded file name: {filename}");
 
-    let auth_header_value = HeaderValue::from_str(auth).map_err(|_e| {
-        OxenError::file_import_error(format!("Invalid header auth value {}", auth))
-    })?;
+    let auth_header_value = HeaderValue::from_str(auth)
+        .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
     fetch_file(url, auth_header_value, directory, filename, workspace).await?;
 
@@ -286,7 +284,7 @@ pub async fn upload_zip(
     let res = repositories::workspaces::commit(workspace, &data, &branch.name);
     match res {
         Ok(commit) => {
-            log::debug!("workspace::commit ✅ success! commit {:?}", commit);
+            log::debug!("workspace::commit ✅ success! commit {commit:?}");
             Ok(commit)
         }
         Err(OxenError::WorkspaceBehind(workspace)) => {
@@ -315,7 +313,7 @@ async fn fetch_file(
         .header("Authorization", auth_header_value)
         .send()
         .await
-        .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {}", e)))?;
+        .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
 
     let resp_headers = response.headers();
 
@@ -328,8 +326,7 @@ async fn fetch_file(
     if let Some(content_length) = content_length {
         if content_length > MAX_CONTENT_LENGTH {
             return Err(OxenError::file_import_error(format!(
-                "Content length {} exceeds maximum allowed size of 1GB",
-                content_length
+                "Content length {content_length} exceeds maximum allowed size of 1GB"
             )));
         }
     }
@@ -338,7 +335,7 @@ async fn fetch_file(
     log::debug!("files::import_file Got filename : {filename:?}");
 
     let filepath = directory.join(filename);
-    log::debug!("files::import_file got download filepath: {:?}", filepath);
+    log::debug!("files::import_file got download filepath: {filepath:?}");
 
     // handle download stream
     let mut stream = response.bytes_stream();
@@ -363,8 +360,7 @@ async fn fetch_file(
                 .await
                 .map_err(|e| {
                     OxenError::file_import_error(format!(
-                        "Error occurred when saving file stream: {}",
-                        e
+                        "Error occurred when saving file stream: {e}"
                     ))
                 })?;
         }
@@ -374,13 +370,10 @@ async fn fetch_file(
         save_path = save_stream(workspace, &filepath, buffer.freeze().to_vec())
             .await
             .map_err(|e| {
-                OxenError::file_import_error(format!(
-                    "Error occurred when saving file stream: {}",
-                    e
-                ))
+                OxenError::file_import_error(format!("Error occurred when saving file stream: {e}"))
             })?;
     }
-    log::debug!("workspace::files::import_file save_path is {:?}", save_path);
+    log::debug!("workspace::files::import_file save_path is {save_path:?}");
 
     // check if the file size matches
     if let Some(content_length) = content_length {
@@ -391,9 +384,7 @@ async fn fetch_file(
         };
 
         log::debug!(
-            "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
-            bytes_written,
-            content_length
+            "workspace::files::import_file has written {bytes_written:?} bytes. It's expecting {content_length:?} bytes"
         );
 
         if bytes_written != content_length {
@@ -409,14 +400,14 @@ async fn fetch_file(
         log::debug!("workspace::files::import_file unzipped file");
 
         for file in files.iter() {
-            log::debug!("file::import add file {:?}", file);
+            log::debug!("file::import add file {file:?}");
             let path = repositories::workspaces::files::add(workspace, file).await?;
-            log::debug!("file::import add file ✅ success! staged file {:?}", path);
+            log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
         log::debug!("file::import add file {:?}", &filepath);
         let path = repositories::workspaces::files::add(workspace, &save_path).await?;
-        log::debug!("file::import add file ✅ success! staged file {:?}", path);
+        log::debug!("file::import add file ✅ success! staged file {path:?}");
     }
 
     Ok(())
@@ -489,13 +480,13 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|e| OxenError::basic_str(format!("Failed to access zip file: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to access zip file: {e}")))?;
 
     // Calculate total uncompressed size
     let mut total_size: u64 = 0;
     for i in 0..archive.len() {
         let zip_file = archive.by_index(i).map_err(|e| {
-            OxenError::basic_str(format!("Failed to access zip file at index {}: {}", i, e))
+            OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
 
         let uncompressed_size = zip_file.size();
@@ -506,8 +497,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
             let compression_ratio = uncompressed_size / compressed_size;
             if compression_ratio > MAX_COMPRESSION_RATIO {
                 return Err(OxenError::basic_str(format!(
-                    "Suspicious zip compression ratio: {} detected",
-                    compression_ratio
+                    "Suspicious zip compression ratio: {compression_ratio} detected"
                 )));
             }
         } else if uncompressed_size > 0 {
@@ -528,10 +518,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         }
     }
 
-    log::debug!(
-        "liboxen::files::decompress_zip zip filepath is {:?}",
-        zip_filepath
-    );
+    log::debug!("liboxen::files::decompress_zip zip filepath is {zip_filepath:?}");
 
     // Get the canonical (absolute) path of the parent directory
     let parent = match zip_filepath.parent() {
@@ -542,7 +529,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
     // iterate thru zip archive and save the decompressed file
     for i in 0..archive.len() {
         let mut zip_file = archive.by_index(i).map_err(|e| {
-            OxenError::basic_str(format!("Failed to access zip file at index {}: {}", i, e))
+            OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
 
         let mut zipfile_name = zip_file.mangled_name();
@@ -565,12 +552,11 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         // Verify the final path is within the parent directory
         if !outpath.starts_with(&parent) {
             return Err(OxenError::basic_str(format!(
-                "Attempted path traversal detected: {:?}",
-                outpath
+                "Attempted path traversal detected: {outpath:?}"
             )));
         }
 
-        log::debug!("files::decompress_zip unzipping file to: {:?}", outpath);
+        log::debug!("files::decompress_zip unzipping file to: {outpath:?}");
 
         if let Some(outdir) = outpath.parent() {
             util::fs::create_dir_all(outdir)?;
@@ -594,10 +580,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         files.push(outpath.clone());
     }
 
-    log::debug!(
-        "files::decompress_zip removing zip file: {:?}",
-        zip_filepath
-    );
+    log::debug!("files::decompress_zip removing zip file: {zip_filepath:?}");
 
     // remove the zip file after decompress
     std::fs::remove_file(zip_filepath)?;
@@ -615,8 +598,7 @@ fn sanitize_path(path: &PathBuf) -> Result<PathBuf, OxenError> {
             Component::CurDir => {} // Skip current directory components (.)
             Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
                 return Err(OxenError::basic_str(format!(
-                    "Invalid path component in zip file: {:?}",
-                    path
+                    "Invalid path component in zip file: {path:?}"
                 )));
             }
         }
@@ -645,7 +627,7 @@ async fn p_add_file(
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
     let full_path = workspace_repo.path.join(&relative_path);
     if !full_path.is_file() {
-        log::debug!("is not a file - skipping add on {:?}", full_path);
+        log::debug!("is not a file - skipping add on {full_path:?}");
         return Ok(());
     }
 
@@ -735,7 +717,7 @@ fn p_modify_file(
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     if let Some(mut file_node) = maybe_file_node {
         file_node.set_name(path.to_str().unwrap());
-        log::debug!("p_modify_file file_node: {}", file_node);
+        log::debug!("p_modify_file file_node: {file_node}");
         add_file_node_to_staged_db(
             workspace_repo,
             path,

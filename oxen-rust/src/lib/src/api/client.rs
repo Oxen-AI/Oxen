@@ -95,7 +95,7 @@ fn builder_for_host<S: AsRef<str>>(
     let config = match AuthConfig::get() {
         Ok(config) => config,
         Err(err) => {
-            log::debug!("remote::client::new_for_host error getting config: {}", err);
+            log::debug!("remote::client::new_for_host error getting config: {err}");
 
             return Err(OxenError::must_supply_valid_api_key());
         }
@@ -106,7 +106,7 @@ fn builder_for_host<S: AsRef<str>>(
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
             Err(err) => {
-                log::debug!("remote::client::new invalid header value: {}", err);
+                log::debug!("remote::client::new invalid header value: {err}");
                 return Err(OxenError::basic_str(
                     "Error setting request auth. Please check your Oxen config.",
                 ));
@@ -159,7 +159,7 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
         let _ = match AuthConfig::get() {
             Ok(config) => config,
             Err(err) => {
-                log::debug!("remote::client::new_for_host error getting config: {}", err);
+                log::debug!("remote::client::new_for_host error getting config: {err}");
                 return Err(OxenError::auth_token_not_set());
             }
         };
@@ -191,7 +191,7 @@ pub async fn parse_json_body_with_err_msg(
             response_msg_override,
         ),
         Err(err) => {
-            log::debug!("Err: {}", err);
+            log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
                 "Could not deserialize response from [{url}]\n{status}\n'{body}'"
             )))

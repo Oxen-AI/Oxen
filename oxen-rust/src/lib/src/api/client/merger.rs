@@ -158,7 +158,7 @@ mod tests {
 
             println!("Got {} commits", mergeability.commits.len());
             for commit in &mergeability.commits {
-                println!("mergeability commit: {:?}", commit);
+                println!("mergeability commit: {commit:?}");
             }
 
             assert!(mergeability.is_mergeable);

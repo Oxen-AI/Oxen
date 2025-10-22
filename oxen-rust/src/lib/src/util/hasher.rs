@@ -44,7 +44,7 @@ where
         commit_hasher.update(input);
     }
 
-    log::debug!("Hashing commit data {:?}", commit_data);
+    log::debug!("Hashing commit data {commit_data:?}");
     let commit_str = format!("{commit_data:?}");
     commit_hasher.update(commit_str.as_bytes());
 
@@ -184,8 +184,8 @@ fn hash_small_file_contents(path: &Path) -> Result<u128, OxenError> {
 
 fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
     let file = File::open(path).map_err(|err| {
-        eprintln!("Could not open file {:?} due to {:?}", path, err);
-        OxenError::basic_str(format!("Could not open file {:?} due to {:?}", path, err))
+        eprintln!("Could not open file {path:?} due to {err:?}");
+        OxenError::basic_str(format!("Could not open file {path:?} due to {err:?}"))
     })?;
 
     let mut reader = BufReader::new(file);
@@ -194,7 +194,7 @@ fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
 
     loop {
         let count = reader.read(&mut buffer).map_err(|_| {
-            eprintln!("Could not read file for hashing {:?}", path);
+            eprintln!("Could not read file for hashing {path:?}");
             OxenError::basic_str("Could not read file for hashing")
         })?;
 

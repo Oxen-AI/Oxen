@@ -119,17 +119,17 @@ pub fn get_by_id(
     let path = path.as_ref();
     let row_id = row_id.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("get_row_by_id() got db_path: {:?}", db_path);
+    log::debug!("get_row_by_id() got db_path: {db_path:?}");
     let data = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let query = Select::new()
                 .select("*")
                 .from(TABLE_NAME)
-                .where_clause(&format!("{} = '{}'", OXEN_ID_COL, row_id));
+                .where_clause(&format!("{OXEN_ID_COL} = '{row_id}'"));
             df_db::select(conn, &query, None)
         })
     })?;
-    log::debug!("get_row_by_id() got data: {:?}", data);
+    log::debug!("get_row_by_id() got data: {data:?}");
     Ok(data)
 }
 
@@ -173,7 +173,7 @@ pub fn get_row_idx(row_df: &DataFrame) -> Result<Option<usize>, OxenError> {
             AnyValue::Int32(val) => Ok(Some(val as usize)),
             AnyValue::Int64(val) => Ok(Some(val as usize)),
             val => {
-                log::debug!("unrecognized row index type {:?}", val);
+                log::debug!("unrecognized row index type {val:?}");
                 Ok(None)
             }
         }

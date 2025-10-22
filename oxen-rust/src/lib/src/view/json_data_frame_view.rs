@@ -158,7 +158,7 @@ impl JsonDataFrameView {
             return JsonDataFrameView::empty_with_schema(&og_schema, full_height, &opts);
         };
 
-        opts.slice = Some(format!("{}..{}", start, end));
+        opts.slice = Some(format!("{start}..{end}"));
         let opts_view = DFOptsView::from_df_opts(&opts);
         let mut sliced_df = tabular::transform(df, opts).await.unwrap();
 
@@ -201,10 +201,10 @@ impl JsonDataFrameView {
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
-        log::debug!("OG schema {:?}", og_schema);
-        log::debug!("Pre-Slice schema {:?}", slice_schema);
+        log::debug!("OG schema {og_schema:?}");
+        log::debug!("Pre-Slice schema {slice_schema:?}");
         slice_schema.update_metadata_from_schema(&og_schema);
-        log::debug!("Slice schema {:?}", slice_schema);
+        log::debug!("Slice schema {slice_schema:?}");
 
         let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
         let page_number = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -234,7 +234,7 @@ impl JsonDataFrameView {
         } else {
             // The fields were coming out of order, so we need to reorder them
             let columns = self.schema.fields_names();
-            log::debug!("Got columns: {:?}", columns);
+            log::debug!("Got columns: {columns:?}");
 
             match &self.data {
                 serde_json::Value::Array(arr) => {
@@ -268,7 +268,7 @@ impl JsonDataFrameView {
     }
 
     pub fn json_from_df(df: &mut DataFrame) -> serde_json::Value {
-        log::debug!("Serializing df: [{}]", df);
+        log::debug!("Serializing df: [{df}]");
 
         sanitize_df_for_serialization(df).expect("Error cleaning df before serialization");
 

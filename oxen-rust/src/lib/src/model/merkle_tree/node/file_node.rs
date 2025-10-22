@@ -312,7 +312,7 @@ impl fmt::Display for FileNode {
             self.last_commit_id().to_short_str()
         )?;
         if let Some(metadata) = self.metadata() {
-            write!(f, " {}", metadata)?;
+            write!(f, " {metadata}")?;
         }
         Ok(())
     }

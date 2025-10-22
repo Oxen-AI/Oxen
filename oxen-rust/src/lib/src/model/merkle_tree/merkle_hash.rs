@@ -27,7 +27,7 @@ impl MerkleHash {
     // only print the first N characters of the hash
     pub fn to_short_str(&self) -> String {
         const SHORT_STR_LEN: usize = 10;
-        let str = format!("{}", self);
+        let str = format!("{self}");
         if str.len() > SHORT_STR_LEN {
             str[..SHORT_STR_LEN].to_string()
         } else {
@@ -61,7 +61,7 @@ impl fmt::Display for MerkleHash {
 
 impl fmt::Debug for MerkleHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "MerkleHash({})", self)
+        write!(f, "MerkleHash({self})")
     }
 }
 

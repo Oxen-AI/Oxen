@@ -30,7 +30,7 @@ fn main() {
             "fetch" => fetch::fetch_benchmark(&mut c, data_path, Some(iters)),
             "download" => download::download_benchmark(&mut c, data_path, Some(iters)),
             _ => {
-                eprintln!("Benchmark not found: {}", name);
+                eprintln!("Benchmark not found: {name}");
                 std::process::exit(1);
             }
         }

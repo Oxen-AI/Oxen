@@ -130,11 +130,7 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
 
     // ✍️ Do all the rewriting
     let num_children = root_dir_node.children.len();
-    log::debug!(
-        "setting num children {} for root dir on commit {}",
-        num_children,
-        commit
-    );
+    log::debug!("setting num children {num_children} for root dir on commit {commit}");
     let mut dir_node_opts = dir_node.get_opts();
     dir_node_opts.num_entries = num_children as u64;
     let dir_node = DirNode::new(&new_repo, dir_node_opts)?;
@@ -332,7 +328,7 @@ mod tests {
             repositories::tree::print_tree(&repo, &latest_commit)?;
 
             old_root_node.walk_tree(|node| {
-                println!("test_add_child_counts_to_nodes node: {}", node);
+                println!("test_add_child_counts_to_nodes node: {node}");
                 match &node.node {
                     EMerkleTreeNode::Commit(commit) => {
                         assert_eq!(commit.version(), MinOxenVersion::V0_19_0);
@@ -370,7 +366,7 @@ mod tests {
             };
 
             new_root_node.walk_tree(|node| {
-                println!("test_add_child_counts_to_nodes node: {}", node);
+                println!("test_add_child_counts_to_nodes node: {node}");
                 match &node.node {
                     EMerkleTreeNode::Commit(commit) => {
                         assert_eq!(
@@ -431,7 +427,7 @@ mod tests {
             repositories::tree::print_tree(&repo, &latest_commit)?;
 
             old_root_node.walk_tree(|node| {
-                println!("test_add_child_counts_to_nodes node: {}", node);
+                println!("test_add_child_counts_to_nodes node: {node}");
                 match &node.node {
                     EMerkleTreeNode::Commit(commit) => {
                         assert_eq!(commit.version(), MinOxenVersion::V0_19_0);
@@ -471,7 +467,7 @@ mod tests {
             };
 
             new_root_node.walk_tree(|node| {
-                println!("test_add_child_counts_to_nodes node: {}", node);
+                println!("test_add_child_counts_to_nodes node: {node}");
                 match &node.node {
                     EMerkleTreeNode::Commit(commit) => {
                         assert_eq!(
@@ -497,7 +493,7 @@ mod tests {
                 }
             });
 
-            println!("Checking files on latest_commit: {}", latest_commit);
+            println!("Checking files on latest_commit: {latest_commit}");
 
             // Make sure we can get an individual file
             let file_node = repositories::tree::get_node_by_path(
@@ -508,15 +504,15 @@ mod tests {
             assert!(file_node.is_some());
 
             for i in 1..3 {
-                let path = PathBuf::from("train").join(format!("cat_{}.jpg", i));
-                log::debug!("LOOKING UP CAT: {:?}", path);
+                let path = PathBuf::from("train").join(format!("cat_{i}.jpg"));
+                log::debug!("LOOKING UP CAT: {path:?}");
                 let file_node = repositories::tree::get_node_by_path(&repo, &latest_commit, &path)?;
                 assert!(file_node.is_some());
             }
 
             for i in 1..4 {
-                let path = PathBuf::from("train").join(format!("dog_{}.jpg", i));
-                log::debug!("LOOKING UP DOG: {:?}", path);
+                let path = PathBuf::from("train").join(format!("dog_{i}.jpg"));
+                log::debug!("LOOKING UP DOG: {path:?}");
                 let file_node = repositories::tree::get_node_by_path(&repo, &latest_commit, &path)?;
                 assert!(file_node.is_some());
             }
