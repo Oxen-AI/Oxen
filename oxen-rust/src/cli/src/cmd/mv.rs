@@ -25,19 +25,19 @@ impl RunCmd for MvCmd {
     fn args(&self) -> Command {
         // Setups the CLI args for the command
         Command::new(MV)
-        .about("Adds the specified files or directories")
-        .arg(
-            Arg::new("source")
-                .index(1)
-                .required(true)
-                .action(clap::ArgAction::Append),
-        )
-        .arg(
-            Arg::new("dest")
-                .index(2)
-                .required(true)
-                .action(clap::ArgAction::Append),
-        )
+            .about("Adds the specified files or directories")
+            .arg(
+                Arg::new("source")
+                    .index(1)
+                    .required(true)
+                    .action(clap::ArgAction::Append),
+            )
+            .arg(
+                Arg::new("dest")
+                    .index(2)
+                    .required(true)
+                    .action(clap::ArgAction::Append),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -62,7 +62,7 @@ impl RunCmd for MvCmd {
         util::fs::rename(&source, &dest)?;
         repositories::add(&repo, dest).await?;
         repositories::rm(&repo, &rm_opts)?;
-    
+
         Ok(())
     }
 }
