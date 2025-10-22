@@ -338,7 +338,14 @@ pub async fn checkout_subtrees_to_commit(
             panic!("checkout_subtree_from_commit not implemented for oxen v0.10.0")
         }
         _ => {
-            core::v_latest::branches::checkout_subtrees(repo, to_commit, subtree_paths, depth, force_checkout).await
+            core::v_latest::branches::checkout_subtrees(
+                repo,
+                to_commit,
+                subtree_paths,
+                depth,
+                force_checkout,
+            )
+            .await
         }
     }
 }
@@ -352,7 +359,10 @@ pub async fn checkout_commit_from_commit(
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit, force_checkout).await,
+        _ => {
+            core::v_latest::branches::checkout_commit(repo, commit, from_commit, force_checkout)
+                .await
+        }
     }
 }
 
@@ -433,7 +443,15 @@ pub async fn set_working_repo_to_commit(
         MinOxenVersion::V0_10_0 => {
             panic!("set_working_repo_to_commit not implemented for oxen v0.10.0")
         }
-        _ => core::v_latest::branches::set_working_repo_to_commit(repo, commit, from_commit, force_checkout).await,
+        _ => {
+            core::v_latest::branches::set_working_repo_to_commit(
+                repo,
+                commit,
+                from_commit,
+                force_checkout,
+            )
+            .await
+        }
     }
 }
 

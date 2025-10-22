@@ -107,13 +107,11 @@ pub async fn add<T: AsRef<Path>>(
             repo_path = util::fs::full_path_from_child_path(&repo_path, &path)?;
         }
 
-        
         if util::fs::is_glob_path(path_str) {
             log::debug!("glob path: {path_str}");
             // Match against any untracked entries in the current dir
             for entry in glob_with(path_str, glob_options)? {
                 expanded_paths.insert(entry?);
-
             }
 
             // For removed files?
