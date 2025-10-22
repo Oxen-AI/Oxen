@@ -1,77 +1,136 @@
-//! Module for handing glob path parsing 
+//! Module for handing glob path parsing
 //!
-use crate::{repositories, util};
-use crate::model::{Commit, LocalRepository};
-use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::core::oxenignore;
 use crate::error::OxenError;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::model::{Commit, LocalRepository};
+use crate::opts::GlobOpts;
+use crate::{repositories, util};
 
-use std::path::{Component, Path, PathBuf};
 use std::collections::HashSet;
+use std::path::{Component, Path, PathBuf};
 
 use glob::{glob, Pattern};
 use glob_match::glob_match;
+use ignore::gitignore::Gitignore;
 
-// TODO: Should ignored paths be ignored for non-glob paths too? 
-/// 
+use walkdir::WalkDir;
 
-// Special cases:
-
-// '.' = whole directory
-// '/' = whole directory
+// TODO: Should 'oxenignore' filter out non-glob paths too, or only dictate which paths glob patterns can expand into?
 
 // Top level module for parsing glob paths
-pub fn parse_glob_path(
-    path: &Path,
+pub fn parse_glob_paths(
+    opts: &GlobOpts,
     repo: Option<&LocalRepository>,
-    is_staged: &bool,
 ) -> Result<HashSet<PathBuf>, OxenError> {
-
-    let path = PathBuf::from(&path);
-    let mut paths: HashSet<PathBuf> = HashSet::new();
-    
-    if util::fs::is_glob_path(&path) {
-        log::debug!("parse_glob_paths got glob path: {:?}", path);
-        
-        if *is_staged {
-            // If staged flag set, only match against the staged db
-            return search_staged_db(
-                &path,
-                &repo.expect("Cannot parse staged_db for paths without a repo"),
-            );
-        } else {
-            // If the repo is given, match against the merkle tree
-            if let Some(repo) = repo {
-                search_merkle_tree(
-                    &mut paths,
-                    &repo, 
-                    &path,
-                )?;
-            }
-
-            // Match against working dir
-            search_working_dir(
-                &mut paths,
-                &path,
-            )?;
-        }
+    let repo_path = if let Some(repo) = repo {
+        repo.path.clone()
     } else {
-        paths.insert(path);
+        PathBuf::new()
+    };
+
+    // If the repo is given, filter out paths with oxenignore
+    let oxenignore = if let Some(repo) = repo {
+        oxenignore::create(repo)
+    } else {
+        None
+    };
+
+    let paths = &opts.paths;
+
+    let staged_db = &opts.staged_db;
+    let merkle_tree = &opts.merkle_tree;
+    let working_dir = &opts.working_dir;
+    let walk_dirs = &opts.walk_dirs;
+
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+
+    for path in paths {
+        // Normalize canonicalization before checking if it's a glob path
+        let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
+        let glob_path = {
+            let cwd = std::env::current_dir()?;
+            if util::fs::is_relative_to_dir(&cwd, &repo_path) {
+                let relative_cwd = util::fs::path_relative_to_dir(&cwd, &repo_path)?;
+                let path_relative_to_cwd = util::fs::path_relative_to_dir(path, &relative_cwd)?;
+
+                relative_cwd.join(&path_relative_to_cwd)
+            } else {
+                relative_path
+            }
+        };
+
+        if util::fs::is_glob_path(&glob_path) {
+            log::debug!("parse_glob_paths got glob path: {:?}", path);
+
+            if *staged_db {
+                // If staged flag set, only match against the staged db
+                let staged_paths = search_staged_db(
+                    path,
+                    repo.expect("Cannot parse staged_db for paths without a repo"),
+                )?;
+
+                expanded_paths.extend(staged_paths);
+            } else {
+                // If the merkle_tree flag is set, match against the merkle tree
+                if *merkle_tree {
+                    if let Some(repo) = repo {
+                        search_merkle_tree(&mut expanded_paths, repo, &glob_path)?;
+                    } else {
+                        return Err(OxenError::basic_str(
+                            "Error: Cannot parse paths from merkle tree without local repository",
+                        ));
+                    }
+                }
+
+                // If working_dir flag set, match against the working directory
+                if *working_dir {
+                    // If walk_dirs is set, walk directories and recursively collect their childrens' file paths
+                    if *walk_dirs {
+                        walk_working_dir(
+                            &mut expanded_paths,
+                            &repo_path,
+                            &glob_path,
+                            oxenignore.clone(),
+                        )?;
+                    } else {
+                        // Else, collect dir and file paths in the directory itself only
+                        search_working_dir(
+                            &mut expanded_paths,
+                            &repo_path,
+                            &glob_path,
+                            oxenignore.clone(),
+                        )?;
+                    }
+                }
+            }
+        } else {
+            // If walk_dirs flag set, walk the dir and recursively collect file paths
+            if *walk_dirs && path.is_dir() {
+                walk_working_dir(
+                    &mut expanded_paths,
+                    &repo_path,
+                    &glob_path,
+                    oxenignore.clone(),
+                )?;
+            } else {
+                // let entry_path = repo_path.join(&relative_path);
+                expanded_paths.insert(path.clone());
+            }
+        }
     }
-        
-    log::debug!("parse_glob_paths found paths: {:?}", paths.len());
-    Ok(paths)
+
+    log::debug!("parse_glob_paths found paths: {:?}", expanded_paths.len());
+    Ok(expanded_paths)
 }
 
-fn search_staged_db(
-    path: &Path, 
-    repo: &LocalRepository,
-) -> Result<HashSet<PathBuf>, OxenError> {
+fn search_staged_db(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
     let mut paths = HashSet::new();
 
     let path_str = path.to_str().unwrap();
     let glob_pattern = Pattern::new(path_str)?;
-
     let staged_data = repositories::status::status(repo)?;
+
     for entry in staged_data.staged_files {
         let entry_path_str = entry.0.to_str().unwrap();
         if glob_pattern.matches(entry_path_str) {
@@ -84,17 +143,14 @@ fn search_staged_db(
 
 // Iterate through the path, expanding glob paths and matching wildcards against the merkle tree
 fn search_merkle_tree(
-    paths: &mut HashSet<PathBuf>, 
+    paths: &mut HashSet<PathBuf>,
     repo: &LocalRepository,
     glob_path: &Path,
 ) -> Result<(), OxenError> {
-
-    let glob_path = util::fs::path_relative_to_dir(&glob_path, &repo.path)?;
-
     if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
         let glob_path_components: Vec<Component> = glob_path.components().collect();
-        
-        let mut search_index = 0; 
+
+        let mut search_index = 0;
         let mut search_path = PathBuf::from("");
 
         r_search_merkle_tree(
@@ -118,37 +174,38 @@ fn r_search_merkle_tree(
     search_path: &mut PathBuf,
     search_index: &mut usize,
 ) -> Result<(), OxenError> {
-
     // Advance to the next wildcard pattern
-    let dir_str = glob_path_components[*search_index].as_os_str().to_string_lossy().to_string();
+    let dir_str = glob_path_components[*search_index]
+        .as_os_str()
+        .to_string_lossy()
+        .to_string();
     let mut dir = PathBuf::from(&dir_str);
-    while *search_index < glob_path_components.len() && !util::fs::is_glob_path(&dir) {
-        *search_index = *search_index + 1;
+    while *search_index < glob_path_components.len() - 1 && !util::fs::is_glob_path(&dir) {
+        *search_index += 1;
         *search_path = search_path.join(&dir);
 
-        let dir_str = glob_path_components[*search_index].as_os_str().to_string_lossy().to_string();
+        let dir_str = glob_path_components[*search_index]
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
         dir = PathBuf::from(&dir_str);
     }
-     
-    if *search_index < glob_path_components.len() {
-        let glob_pattern = dir.to_string_lossy().to_string();
 
-        let is_final = if *search_index == glob_path_components.len() - 1 {
-            true
-        } else {
-            false
+    if *search_index < glob_path_components.len() {
+        let mut glob_pattern = dir.to_string_lossy().to_string();
+
+        let is_final = *search_index == glob_path_components.len() - 1;
+
+        // Special cases for dir
+        if is_final && glob_pattern == "." {
+            glob_pattern = "*".to_string();
         };
 
         // Match the current glob pattern against the Merkle Tree
-        let matched_entries = expand_glob_pattern(
-            repo,
-            head_commit,
-            &glob_pattern,
-            &search_path,
-            &is_final
-        )?;
+        let matched_entries =
+            expand_glob_pattern(repo, head_commit, &glob_pattern, search_path, &is_final)?;
 
-        // If on the final iteration, extend paths with the matched entries 
+        // If on the final iteration, extend paths with the matched entries
         if is_final {
             paths.extend(matched_entries);
             return Ok(());
@@ -158,7 +215,7 @@ fn r_search_merkle_tree(
         let mut new_index = *search_index + 1;
         for mut entry in matched_entries {
             r_search_merkle_tree(
-                repo, 
+                repo,
                 head_commit,
                 glob_path_components,
                 paths,
@@ -179,19 +236,20 @@ fn expand_glob_pattern(
     parent_path: &PathBuf,
     is_final: &bool,
 ) -> Result<HashSet<PathBuf>, OxenError> {
-    let mut paths = HashSet::new(); 
+    let mut paths = HashSet::new();
+
+    log::debug!("Expand_glob_pattern got: pattern: {glob_pattern:?}, parent_path: {parent_path:?}, is_final: {is_final:?}");
 
     if let Some(dir_node) =
         repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
     {
         let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
         for child in dir_children {
-
             match &child.node {
                 EMerkleTreeNode::Directory(dir_node) => {
                     let child_str = dir_node.name();
                     let child_path = parent_path.join(child_str);
-                    if glob_match(&glob_pattern, child_str) {
+                    if glob_match(glob_pattern, child_str) {
                         paths.insert(child_path);
                     }
                 }
@@ -199,9 +257,9 @@ fn expand_glob_pattern(
                     let child_str = file_node.name();
                     let child_path = parent_path.join(child_str);
                     // Only include file paths on final iteration
-                    if *is_final && glob_match(&glob_pattern, child_str) {
+                    if *is_final && glob_match(glob_pattern, child_str) {
                         paths.insert(child_path);
-                    }    
+                    }
                 }
                 _ => {
                     return Err(OxenError::basic_str("Unexpected node type"));
@@ -210,17 +268,95 @@ fn expand_glob_pattern(
         }
     }
 
-    Ok(paths)   
+    Ok(paths)
 }
 
 fn search_working_dir(
-    paths: &mut HashSet<PathBuf>, 
+    paths: &mut HashSet<PathBuf>,
+    repo_path: &PathBuf,
     glob_path: &PathBuf,
+    oxenignore: Option<Gitignore>,
 ) -> Result<(), OxenError> {
-    let path_str = glob_path.to_str().unwrap();
- 
-    for entry in glob(path_str)? {
-        paths.insert(entry?);
+    let full_path = repo_path.join(glob_path);
+    let path_str = full_path.to_str().unwrap();
+
+    if let Some(oxenignore) = oxenignore {
+        let oxenignore = Some(oxenignore);
+        for entry in glob(path_str)? {
+            let entry_path = entry?;
+            if oxenignore::is_ignored(&entry_path, &oxenignore, entry_path.is_dir()) {
+                continue;
+            }
+
+            paths.insert(entry_path);
+        }
+    } else {
+        for entry in glob(path_str)? {
+            paths.insert(entry?);
+        }
+    }
+
+    Ok(())
+}
+
+// Walk through dirs,
+fn walk_working_dir(
+    paths: &mut HashSet<PathBuf>,
+    repo_path: &PathBuf,
+    glob_path: &PathBuf,
+    oxenignore: Option<Gitignore>,
+) -> Result<(), OxenError> {
+    let full_path = repo_path.join(glob_path);
+    let path_str = full_path.to_str().unwrap();
+
+    if let Some(oxenignore) = oxenignore {
+        let oxenignore = Some(oxenignore);
+
+        for entry in glob(path_str)? {
+            let entry_path = entry?;
+            let relative_path = util::fs::path_relative_to_dir(&entry_path, repo_path)?;
+
+            if oxenignore::is_ignored(&relative_path, &oxenignore, relative_path.is_dir()) {
+                continue;
+            }
+
+            let full_path = repo_path.join(relative_path);
+            if full_path.is_dir() {
+                for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
+                    // Walkdir outputs full paths
+                    let entry_path = entry.path().to_path_buf();
+                    if entry.file_type().is_file() {
+                        paths.insert(entry_path);
+                    }
+                }
+            } else {
+                // Correction for unit tests
+                if entry_path.exists() {
+                    paths.insert(entry_path.clone());
+                } else {
+                    paths.insert(full_path);
+                }
+            }
+        }
+    } else {
+        for entry in glob(path_str)? {
+            let entry_path = entry?;
+            let relative_path = util::fs::path_relative_to_dir(&entry_path, repo_path)?;
+
+            let full_path = repo_path.join(relative_path);
+            if full_path.is_dir() {
+                for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
+                    let entry_path = entry.path().to_path_buf();
+                    if entry.file_type().is_file() {
+                        paths.insert(entry_path);
+                    }
+                }
+            } else if entry_path.exists() {
+                paths.insert(entry_path.clone());
+            } else {
+                paths.insert(full_path);
+            }
+        }
     }
 
     Ok(())

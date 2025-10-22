@@ -1,6 +1,5 @@
 use filetime::FileTime;
 use futures::stream::{self, Stream, StreamExt};
-use glob::glob;
 use par_stream::prelude::*;
 use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, MultiThreaded};
@@ -25,7 +24,7 @@ use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::workspace::Workspace;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
-use crate::opts::RmOpts;
+use crate::opts::{GlobOpts, RmOpts};
 use crate::storage::version_store::VersionStore;
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
@@ -80,55 +79,48 @@ pub async fn add<T: AsRef<Path>>(
 
     // Check if the repo is in the working tree
     let mut repo_path = repo.path.clone();
-    let repo_in_working_tree = repo_path.exists();
+    let mut repo_in_working_tree = repo_path.exists();
 
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
-    for path in paths {
-        let path_str = path
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
 
+    for path in paths {
+        let path = path.as_ref();
+        if util::fs::is_glob_path(path) {
+            let glob_opts = GlobOpts {
+                paths: vec![path.to_path_buf()],
+                staged_db: false,
+                merkle_tree: true,
+                working_dir: true,
+                walk_dirs: false,
+            };
+
+            let matching_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+
+            expanded_paths.extend(matching_paths);
+        } else {
+            expanded_paths.insert(path.to_path_buf());
+        }
+
+        // Adjust repo path if outside working tree
         if !repo_in_working_tree {
-            // If adding from outside the scope of the repo, only allow absolute paths
-            if !util::fs::is_canonical(&path)? {
+            // If outside the scope of the repo, only allow absolute paths
+
+            if !util::fs::is_canonical(path)? {
                 return Err(OxenError::basic_str(
-                    "Err: Cannot add relative paths from outside repo scope",
+                    "Err: Cannot use relative paths outside repo scope",
                 ));
             }
 
-            repo_path = util::fs::full_path_from_child_path(&repo_path, &path)?;
-        }
-
-        // TODO: At least on Windows, this is improperly case sensitive
-        if util::fs::is_glob_path(path_str) {
-            log::debug!("glob path: {}", path_str);
-            // Match against any untracked entries in the current dir
-            for entry in glob(path_str)? {
-                expanded_paths.insert(entry?);
-            }
-
-            // For removed files?
-            if let Some(commit) = repositories::commits::head_commit_maybe(repo)? {
-                let pattern_entries =
-                    repositories::commits::search_entries(repo, &commit, path_str)?;
-                log::debug!("pattern entries: {:?}", pattern_entries);
-                expanded_paths.extend(pattern_entries);
-            }
-        } else {
-            // Non-glob path
-            expanded_paths.insert(path.as_ref().to_path_buf());
+            repo_path = util::fs::full_path_from_child_path(&repo_path, path)?;
+            repo_in_working_tree = true;
         }
     }
-
-    log::debug!("final repo path: {repo_path:?}");
 
     // Get the version store from the repository
     let version_store = repo.version_store()?;
 
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
-
     let db_path = repo_path.join(OXEN_HIDDEN_DIR).join(STAGED_DIR);
     log::debug!("staged_db path: {db_path:?}");
 

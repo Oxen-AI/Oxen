@@ -1,8 +1,8 @@
 use crate::api::client;
 use crate::constants::AVG_CHUNK_SIZE;
-use crate::core::oxenignore;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
+use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
@@ -11,7 +11,6 @@ use bytesize::ByteSize;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use futures_util::StreamExt;
-use glob::glob;
 use glob_match::glob_match;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
@@ -20,7 +19,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::time::{sleep, Duration};
-use walkdir::WalkDir;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
@@ -49,94 +47,18 @@ pub async fn add(
         return Ok(());
     }
 
-    let repo_path = if let Some(local_repo) = local_repo {
-        local_repo.path.clone()
-    } else {
-        PathBuf::new()
+    // Parse glob paths
+    let glob_opts = GlobOpts {
+        paths,
+        staged_db: false,
+        merkle_tree: false,
+        working_dir: true,
+        walk_dirs: true,
     };
 
-    let gitignore = local_repo.as_ref().map(oxenignore::create);
-
-    // Parse glob paths
-    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
-
-    for path in paths.clone() {
-        // Get repo path if provided
-        let path_str = &path
-            .to_str()
-            .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
-
-        if util::fs::is_glob_path(path_str) {
-            // Match against any untracked entries in the current dir
-            let glob_path = if local_repo.is_some() {
-                let relative_glob_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-                repo_path.join(relative_glob_path)
-            } else {
-                path.clone()
-            };
-
-            log::debug!("glob path: {glob_path:?}");
-            let glob_path_str = &glob_path
-                .to_str()
-                .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
-
-            for entry in glob(glob_path_str)? {
-                let entry_path = entry?;
-                let relative_path = util::fs::path_relative_to_dir(&entry_path, &repo_path)?;
-
-                if gitignore.is_some()
-                    && oxenignore::is_ignored(
-                        &relative_path,
-                        &gitignore.clone().unwrap(),
-                        relative_path.is_dir(),
-                    )
-                {
-                    continue;
-                }
-
-                let full_path = repo_path.join(relative_path);
-                if full_path.is_dir() {
-                    for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
-                        // Walkdir outputs full paths
-                        let entry_path = entry.path().to_path_buf();
-                        if entry.file_type().is_file() {
-                            expanded_paths.insert(entry_path);
-                        }
-                    }
-                } else {
-                    // Correction for unit tests
-                    if path.exists() {
-                        expanded_paths.insert(path.clone());
-                    } else {
-                        expanded_paths.insert(full_path);
-                    }
-                }
-            }
-        } else {
-            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-            let full_path = repo_path.join(&relative_path);
-            if full_path.is_dir() {
-                for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
-                    let entry_path = entry.path().to_path_buf();
-
-                    if entry.file_type().is_file() {
-                        expanded_paths.insert(entry_path);
-                    }
-                }
-            } else {
-                // Correction for unit tests
-                if path.exists() {
-                    expanded_paths.insert(path);
-                } else {
-                    expanded_paths.insert(full_path);
-                }
-            }
-        }
-    }
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref())?;
 
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
-    log::debug!("expanded paths: {expanded_paths:?}");
-
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
     match upload_multiple_files(
@@ -250,11 +172,24 @@ async fn upload_multiple_files(
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
 
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
     // Group files by size
-    // TODO: NEED NEED NEED full paths to be fed in this far;
     for path in paths {
+        // Adjustment for remote-mode repos
+        let path = if local_repo.is_some() {
+            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+            repo_path.join(&relative_path)
+        } else {
+            path
+        };
+
         if !path.exists() {
-            log::warn!("File does not exist: {:?}", path);
+            log::info!("File does not exist: {:?}", path);
             continue;
         }
 
@@ -698,49 +633,23 @@ pub async fn rm_files(
     let workspace_id = workspace_id.as_ref();
 
     // Parse glob paths
-    let repo_path = local_repo.path.clone();
-    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+    let glob_opts = GlobOpts {
+        paths: paths.clone(),
+        staged_db: false,
+        merkle_tree: true,
+        working_dir: false,
+        walk_dirs: false,
+    };
 
-    for path in paths.clone() {
-        let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
-        let full_path = repo_path.join(&relative_path);
-        if util::fs::is_glob_path(&full_path) {
-            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
-            else {
-                // TODO: Better error message?
-                return Err(OxenError::basic_str(
-                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
-                ));
-            };
-            let glob_pattern = relative_path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
-            let root_path = PathBuf::from("");
-            let parent_path = relative_path.parent().unwrap_or(&root_path);
+    let expanded_paths: HashSet<PathBuf> =
+        util::glob::parse_glob_paths(&glob_opts, Some(local_repo))?;
 
-            // If dir not found in tree, skip glob path
-            let Some(dir_node) =
-                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
-            else {
-                continue;
-            };
-
-            let dir_children = dir_node.list_paths()?;
-            for child_path in dir_children {
-                let child_str = child_path.to_string_lossy().to_string();
-                if glob_match(&glob_pattern, &child_str) {
-                    expanded_paths.insert(parent_path.join(child_path.clone()));
-                }
-            }
-        } else {
-            expanded_paths.insert(relative_path);
-        }
-    }
-
-    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
-    log::debug!("expanded paths: {expanded_paths:?}");
+    // Convert to relative paths
+    let repo_path = &local_repo.path;
+    let expanded_paths: Vec<PathBuf> = expanded_paths
+        .iter()
+        .map(|p| util::fs::path_relative_to_dir(p, repo_path).unwrap())
+        .collect();
 
     let uri = format!("/workspaces/{workspace_id}/versions");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

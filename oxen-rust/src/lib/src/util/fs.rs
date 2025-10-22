@@ -1521,6 +1521,67 @@ pub fn path_relative_to_dir(
     Ok(result)
 }
 
+// Check whether a path can be found relative to a dir
+pub fn is_relative_to_dir(path: impl AsRef<Path>, dir: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    let dir = dir.as_ref();
+
+    let path_components: Vec<Component> = path.components().collect();
+    let dir_components: Vec<Component> = dir.components().collect();
+
+    if path_components.is_empty() || dir == path {
+        return true;
+    }
+
+    if dir_components.is_empty() || dir_components.len() > path_components.len() {
+        return false;
+    }
+
+    // Get iterators for the component vectors
+    let mut path_iter = path_components.iter();
+    let mut dir_iter = dir_components.iter();
+    let starting_dir_iter = dir_iter.clone();
+
+    let mut dir_component = dir_iter.next().unwrap();
+    let mut matches = 0;
+
+    for _ in 0..(path_components.len()) {
+        let path_component = path_iter.next().expect("Path bounds violated");
+        let path_str = path_component.as_os_str();
+        let dir_str = dir_component.as_os_str();
+
+        if path_str == dir_str {
+            matches += 1;
+            if matches == dir_components.len() {
+                return true;
+            }
+            dir_component = dir_iter.next().expect("Dir bounds violated");
+            continue;
+        }
+
+        if path_str.len() == dir_str.len() {
+            let path_lower = path_str.to_string_lossy().to_lowercase();
+            let dir_lower = dir_str.to_string_lossy().to_lowercase();
+
+            if path_lower == dir_lower {
+                matches += 1;
+                if matches == dir_components.len() {
+                    return true;
+                }
+                dir_component = dir_iter.next().expect("Dir bounds violated");
+                continue;
+            }
+        }
+
+        // If the components don't match, reset dir_iter and dir_component
+        dir_iter = starting_dir_iter.clone();
+        dir_component = dir_iter.next().unwrap();
+    }
+
+    // If the loop finishes, the path cannot be found relative to the dir
+    false
+}
+
 pub fn linux_path_str(string: &str) -> String {
     // Convert string to bytes, replacing '\\' with '/' if necessary
     let bytes = string.as_bytes();

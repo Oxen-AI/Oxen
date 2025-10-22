@@ -461,8 +461,6 @@ fn process_remove_file_and_parents(
     Ok(Some(staged_entry))
 }
 
-// WARNING: This logic relies on the paths in `paths` being either full paths or the correct relative paths to each file relative to the repo
-// This is not necessarily a safe assumption, and probably needs to be handled oxen-wide
 fn remove_inner(
     paths: &HashSet<PathBuf>,
     repo: &LocalRepository,
@@ -498,11 +496,8 @@ fn remove_inner(
             return Err(OxenError::basic_str(error));
         };
 
-        log::debug!("Path is: {path:?}");
-
         // Get file name without parent paths for lookup in Merkle Tree
         let relative_path = util::fs::path_relative_to_dir(path.clone(), parent_path)?;
-        log::debug!("Relative path is: {relative_path:?}");
 
         // Lookup node in Merkle Tree
         if let Some(node) = parent_node.get_by_path(relative_path.clone())? {
@@ -515,7 +510,7 @@ fn remove_inner(
                 total += remove_dir_inner(repo, &head_commit, &path, staged_db)?;
                 // Remove dir from working directory
                 let full_path = repo.path.join(path);
-                log::debug!("REMOVING DIR: {full_path:?}");
+                log::debug!("Removing directory: {full_path:?}");
                 if full_path.exists() {
                     // user might have removed dir manually before using `oxen rm`
                     if full_path != repo.path && full_path != repo.path.join(OXEN_HIDDEN_DIR) {
@@ -528,7 +523,7 @@ fn remove_inner(
             } else if let EMerkleTreeNode::File(file_node) = &node.node {
                 total += remove_file_inner(repo, &path, file_node, staged_db)?;
                 let full_path = repo.path.join(path);
-                log::debug!("REMOVING FILE: {full_path:?}");
+                log::debug!("Removing file: {full_path:?}");
                 if full_path.exists() {
                     // user might have removed file manually before using `oxen rm`
                     util::fs::remove_file(&full_path)?;

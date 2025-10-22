@@ -8,18 +8,27 @@ use std::collections::HashSet;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::RmOpts;
+use crate::opts::{GlobOpts, RmOpts};
 use crate::{core, util};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Removes the path from the index
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
 
-    let path: &Path = opts.path.as_ref();
-    let paths = util::glob::parse_glob_path(path, Some(repo), &opts.staged)?;
+    let path = &opts.path;
 
-    p_rm(&paths, repo, opts)?;
+    let glob_opts = GlobOpts {
+        paths: vec![path.to_path_buf()],
+        staged_db: opts.staged,
+        merkle_tree: !opts.staged,
+        working_dir: false,
+        walk_dirs: false,
+    };
+
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+
+    p_rm(&expanded_paths, repo, opts)?;
 
     Ok(())
 }
