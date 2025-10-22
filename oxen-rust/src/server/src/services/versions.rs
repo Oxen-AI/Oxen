@@ -1,5 +1,5 @@
-use actix_web::web;
 use actix_web::Scope;
+use actix_web::{http::Method, web};
 
 use crate::controllers;
 
@@ -14,8 +14,9 @@ pub fn versions() -> Scope {
         )
         .route("", web::post().to(controllers::versions::batch_upload))
         .route(
-            "/fetch",
-            web::post().to(controllers::versions::batch_download),
+            "",
+            web::method(Method::from_bytes(b"QUERY").unwrap())
+                .to(controllers::versions::batch_download),
         )
         .route(
             "/{version_id}/metadata",

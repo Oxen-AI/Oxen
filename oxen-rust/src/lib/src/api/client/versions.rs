@@ -18,6 +18,7 @@ use flate2::Compression;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use http::header::CONTENT_LENGTH;
+use http::Method;
 use rand::{thread_rng, Rng};
 use tokio_tar::Archive;
 use tokio_util::codec::{BytesCodec, FramedRead};
@@ -214,9 +215,10 @@ pub async fn try_download_data_from_version_paths(
     let body = encoder.finish()?;
     log::debug!("download_data_from_version_paths body len: {}", body.len());
 
-    let url = api::endpoint::url_from_repo(remote_repo, "/versions/fetch")?;
+    let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
     let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.post(&url).body(body).send().await {
+    let query_method = Method::from_bytes(b"QUERY").unwrap();
+    if let Ok(res) = client.request(query_method, &url).body(body).send().await {
         if reqwest::StatusCode::UNAUTHORIZED == res.status() {
             let err = "Err: unauthorized request to download data".to_string();
             log::error!("{err}");
