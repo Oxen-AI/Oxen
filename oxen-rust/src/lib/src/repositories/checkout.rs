@@ -38,8 +38,14 @@ pub async fn checkout(
             Some(d) => d,
             None => i32::MAX,
         }; //TODO: make repo depth not an option so that we use depth from the repo consistently.
-        repositories::branches::checkout_subtrees_to_commit(repo, &commit, &subtree_paths, depth, force_checkout)
-            .await?;
+        repositories::branches::checkout_subtrees_to_commit(
+            repo,
+            &commit,
+            &subtree_paths,
+            depth,
+            force_checkout,
+        )
+        .await?;
         repositories::branches::set_head(repo, value)?;
         repositories::branches::get_by_name(repo, value)
     } else {
@@ -48,13 +54,18 @@ pub async fn checkout(
             eprintln!("Commit already checked out {value}");
             return Ok(None);
         }
-        
+
         let commit = repositories::revisions::get(repo, value)?
             .ok_or(OxenError::revision_not_found(value.into()))?;
 
         let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
-        repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit, force_checkout)
-            .await?;
+        repositories::branches::checkout_commit_from_commit(
+            repo,
+            &commit,
+            &previous_head_commit,
+            force_checkout,
+        )
+        .await?;
         repositories::branches::update(repo, value, &commit.id)?;
         repositories::branches::set_head(repo, value)?;
 
