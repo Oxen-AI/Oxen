@@ -86,7 +86,7 @@ impl PyPaginatedCommits {
             .map(|c| PyCommit::from(c.clone()).__repr__())
             .collect::<Vec<String>>()
             .join(",\n");
-        format!("[{}]", commits_str)
+        format!("[{commits_str}]")
     }
 
     fn __str__(&self) -> String {
@@ -97,7 +97,7 @@ impl PyPaginatedCommits {
             .map(|c| PyCommit::from(c.clone()).__str__())
             .collect::<Vec<String>>()
             .join(", ");
-        format!("[{}]", commits_str)
+        format!("[{commits_str}]")
     }
 
     #[getter]

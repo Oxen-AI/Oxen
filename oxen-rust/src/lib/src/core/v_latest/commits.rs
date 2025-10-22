@@ -100,14 +100,12 @@ pub fn head_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
 
 pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     let head_commit_id = head_commit_id(repo)?;
-    log::debug!("head_commit: head_commit_id: {:?}", head_commit_id);
+    log::debug!("head_commit: head_commit_id: {head_commit_id:?}");
 
-    let node = repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(
-        OxenError::basic_str(format!(
-            "Merkle tree node not found for head commit: '{}'",
-            head_commit_id
-        )),
-    )?;
+    let node =
+        repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(OxenError::basic_str(
+            format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
+        ))?;
     let commit = node.commit()?;
     Ok(commit.to_commit())
 }
@@ -412,7 +410,7 @@ pub fn list_between(
     base: &Commit,
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    log::debug!("list_between()\nbase: {}\nhead: {}", base, head);
+    log::debug!("list_between()\nbase: {base}\nhead: {head}");
     let mut results = vec![];
     list_recursive(
         repo,
@@ -476,8 +474,7 @@ fn list_by_path_recursive_impl(
 
         repositories::revisions::get(repo, last_commit_id.to_string())?.ok_or_else(|| {
             OxenError::basic_str(format!(
-                "Commit not found for last_commit_id: {}",
-                last_commit_id
+                "Commit not found for last_commit_id: {last_commit_id}"
             ))
         })?
     } else {
@@ -509,15 +506,14 @@ pub fn list_by_path_from_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     // Check if the path is a directory or file
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
-        OxenError::basic_str(format!("Merkle tree node not found for path: {:?}", path)),
+        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
     )?;
     let last_commit_id = match &node.node {
         EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
         EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),
         _ => {
             return Err(OxenError::basic_str(format!(
-                "Merkle tree node not found for path: {:?}",
-                path
+                "Merkle tree node not found for path: {path:?}"
             )));
         }
     };

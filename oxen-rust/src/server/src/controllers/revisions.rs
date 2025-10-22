@@ -20,7 +20,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         resource,
     };
 
-    log::debug!("Response: {:?}", response);
+    log::debug!("Response: {response:?}");
     Ok(HttpResponse::Ok().json(response))
 }
 

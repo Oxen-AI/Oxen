@@ -17,7 +17,7 @@ impl std::str::FromStr for ContentType {
             "json" => Ok(ContentType::Json),
             "csv" => Ok(ContentType::Csv),
             "text" => Ok(ContentType::Text),
-            _ => Err(format!("Invalid data type: {}", s)),
+            _ => Err(format!("Invalid data type: {s}")),
         }
     }
 }

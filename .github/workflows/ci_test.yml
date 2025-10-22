@@ -20,6 +20,26 @@ jobs:
       fail-fast: false
 
     steps:
+      - name: Free up disk space
+        if: matrix.platform == 'linux'
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+
+          # Remove unnecessary tools and files to free up space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+
+          # Clean apt cache
+          sudo apt-get clean
+
+          # Remove old Docker images
+          docker system prune -af --volumes
+
+          echo "=== After cleanup ==="
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
 

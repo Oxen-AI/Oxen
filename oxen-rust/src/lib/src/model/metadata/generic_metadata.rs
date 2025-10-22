@@ -18,12 +18,12 @@ pub enum GenericMetadata {
 impl std::fmt::Display for GenericMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            GenericMetadata::MetadataDir(metadata) => write!(f, "{}", metadata),
-            GenericMetadata::MetadataText(metadata) => write!(f, "{}", metadata),
-            GenericMetadata::MetadataImage(metadata) => write!(f, "{}", metadata),
-            GenericMetadata::MetadataVideo(metadata) => write!(f, "{}", metadata),
-            GenericMetadata::MetadataAudio(metadata) => write!(f, "{}", metadata),
-            GenericMetadata::MetadataTabular(metadata) => write!(f, "{}", metadata),
+            GenericMetadata::MetadataDir(metadata) => write!(f, "{metadata}"),
+            GenericMetadata::MetadataText(metadata) => write!(f, "{metadata}"),
+            GenericMetadata::MetadataImage(metadata) => write!(f, "{metadata}"),
+            GenericMetadata::MetadataVideo(metadata) => write!(f, "{metadata}"),
+            GenericMetadata::MetadataAudio(metadata) => write!(f, "{metadata}"),
+            GenericMetadata::MetadataTabular(metadata) => write!(f, "{metadata}"),
         }
     }
 }

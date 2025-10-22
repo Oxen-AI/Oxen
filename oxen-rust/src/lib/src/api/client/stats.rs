@@ -17,12 +17,12 @@ pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, 
     match client.get(&url).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("got body: {}", body);
+            log::debug!("got body: {body}");
             let response: Result<RepositoryStatsResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
                 Ok(val) => {
-                    log::debug!("got RepositoryStatsResponse: {:?}", val);
+                    log::debug!("got RepositoryStatsResponse: {val:?}");
                     Ok(val.repository)
                 }
                 Err(err) => Err(OxenError::basic_str(format!(

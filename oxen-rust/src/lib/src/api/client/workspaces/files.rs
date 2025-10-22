@@ -257,7 +257,7 @@ async fn upload_multiple_files(
     // Group files by size
     for path in paths {
         if !path.exists() {
-            log::warn!("File does not exist: {:?}", path);
+            log::warn!("File does not exist: {path:?}");
             continue;
         }
 
@@ -274,7 +274,7 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                log::warn!("Failed to get metadata for file {:?}: {}", path, err);
+                log::warn!("Failed to get metadata for file {path:?}: {err}");
                 continue;
             }
         }
@@ -296,8 +296,8 @@ async fn upload_multiple_files(
         )
         .await
         {
-            Ok(_) => log::debug!("Successfully uploaded large file: {:?}", path),
-            Err(err) => log::error!("Failed to upload large file {:?}: {}", path, err),
+            Ok(_) => log::debug!("Successfully uploaded large file: {path:?}"),
+            Err(err) => log::error!("Failed to upload large file {path:?}: {err}"),
         }
     }
 
@@ -662,7 +662,7 @@ async fn parallel_batched_small_file_upload(
                                 let mut consumer_err_files = consumer_lock.lock();
                                 consumer_err_files.extend(err_files);
                             }
-                            // If staging failed, cancel the peration
+                            // If staging failed, cancel the operation
                             Err(e) => {
                                 log::debug!("Failed to stage files to workspace: {}", e);
                                 return Err(OxenError::basic_str(format!(
@@ -869,7 +869,7 @@ pub async fn stage_files_to_workspace(
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory_str = directory_str.as_ref();
-    let uri = format!("/workspaces/{}/versions/{directory_str}", workspace_id);
+    let uri = format!("/workspaces/{workspace_id}/versions/{directory_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let files_to_send = if !err_files.is_empty() {
@@ -903,7 +903,7 @@ async fn p_upload_single_file(
     let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
     let path = path.as_ref();
-    log::debug!("multipart_file_upload path: {:?}", path);
+    log::debug!("multipart_file_upload path: {path:?}");
     let Ok(file) = std::fs::read(path) else {
         let err = format!("Error reading file at path: {path:?}");
         return Err(OxenError::basic_str(err));
@@ -913,10 +913,7 @@ async fn p_upload_single_file(
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!(
-        "api::client::workspaces::files::add sending file_name: {:?}",
-        file_name
-    );
+    log::info!("api::client::workspaces::files::add sending file_name: {file_name:?}");
 
     let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
     let form = reqwest::multipart::Form::new().part("file", file_part);
@@ -991,7 +988,7 @@ async fn p_upload_bytes_as_file(
     let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
     match result {
         Ok(val) => {
-            log::debug!("File path response: {:?}", val);
+            log::debug!("File path response: {val:?}");
             if let Some(path) = val.paths.first() {
                 Ok(path.clone())
             } else {
@@ -1068,11 +1065,11 @@ pub async fn rm(
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/files/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_file {}", url);
+    log::debug!("rm_file {url}");
     let client = client::new_for_url(&url)?;
     let response = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_file got body: {}", body);
+    log::debug!("rm_file got body: {body}");
     Ok(())
 }
 
@@ -1131,7 +1128,7 @@ pub async fn rm_files(
 
     let uri = format!("/workspaces/{workspace_id}/versions");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_files: {}", url);
+    log::debug!("rm_files: {url}");
     let client = client::new_for_url(&url)?;
     let response = client.delete(&url).json(&expanded_paths).send().await?;
     // TODO: Same issue as with add, will display same message even if rm doesn't stage the files
@@ -1139,12 +1136,9 @@ pub async fn rm_files(
     if response.status().is_success() {
         log::debug!("rm_files successful, status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
-        log::debug!("rm_files got body: {}", body);
+        log::debug!("rm_files got body: {body}");
 
-        println!(
-            "🐂 oxen staged paths {paths:?} as removed for workspace {}",
-            workspace_id
-        );
+        println!("🐂 oxen staged paths {paths:?} as removed for workspace {workspace_id}");
 
         // Remove files locally
         for path in expanded_paths {
@@ -1162,8 +1156,7 @@ pub async fn rm_files(
         let body = client::parse_json_body(&url, response).await?;
 
         return Err(OxenError::basic_str(format!(
-            "Error: Could not remove paths {:?}",
-            body
+            "Error: Could not remove paths {body:?}"
         )));
     }
 
@@ -1226,11 +1219,11 @@ pub async fn rm_files_from_staged(
 
     let uri = format!("/workspaces/{workspace_id}/staged");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_files: {}", url);
+    log::debug!("rm_files: {url}");
     let client = client::new_for_url(&url)?;
     let response = client.delete(&url).json(&expanded_paths).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_files got body: {}", body);
+    log::debug!("rm_files got body: {body}");
     Ok(())
 }
 
@@ -1514,7 +1507,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -1554,7 +1547,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -1579,7 +1572,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             // Upload a new broken data frame
             let workspace =
@@ -1595,7 +1588,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -1620,7 +1613,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             Ok(remote_repo)
         })
@@ -1645,7 +1638,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -1685,7 +1678,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -1710,7 +1703,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             // Upload a new broken data frame
             let workspace =
@@ -1726,7 +1719,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -1751,7 +1744,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             Ok(remote_repo)
         })
@@ -1822,7 +1815,7 @@ mod tests {
                 assert_eq!(local_commit.id, commit.id);
 
                 // The file should exist locally
-                println!("Looking for file at path: {:?}", path);
+                println!("Looking for file at path: {path:?}");
                 assert!(path.exists());
 
                 Ok(())

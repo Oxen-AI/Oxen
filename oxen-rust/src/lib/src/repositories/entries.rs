@@ -516,8 +516,8 @@ mod tests {
             let dir_entries = paginated.entries;
             let size = paginated.total_entries;
 
-            assert_eq!(size, 5);
-            assert_eq!(dir_entries.len(), 5);
+            assert_eq!(size, 7);
+            assert_eq!(dir_entries.len(), 7);
 
             Ok(())
         })
@@ -561,7 +561,7 @@ mod tests {
                 Path::new("train"),
                 &commit.id,
                 &PaginateOpts {
-                    page_num: 2,
+                    page_num: 3,
                     page_size: 3,
                 },
             )?;
@@ -573,8 +573,8 @@ mod tests {
                 println!("{entry:?}");
             }
 
-            assert_eq!(total_entries, 5);
-            assert_eq!(dir_entries.len(), 2);
+            assert_eq!(total_entries, 7);
+            assert_eq!(dir_entries.len(), 1);
 
             Ok(())
         })
@@ -586,12 +586,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 8 directories
             for n in 0..8 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -632,12 +632,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 42 directories
             for n in 0..42 {
-                let dirname = format!("dir_{:0>3}", n);
+                let dirname = format!("dir_{n:0>3}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -678,12 +678,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 101 directories
             for n in 0..101 {
-                let dirname = format!("dir_{:0>3}", n);
+                let dirname = format!("dir_{n:0>3}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -724,12 +724,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 8 directories
             for n in 0..8 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -770,12 +770,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 7 directories
             for n in 0..7 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -816,12 +816,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 9 directories
             for n in 0..9 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -863,20 +863,20 @@ mod tests {
             // Create many directories
             let num_dirs = 32;
             for n in 0..num_dirs {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Create many files
             let num_files = 45;
             for n in 0..num_files {
-                let filename = format!("file_{}.txt", n);
+                let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {}", n))?;
+                util::fs::write(filepath, format!("helloooo {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -917,9 +917,9 @@ mod tests {
             // Create many files
             let num_files = 45;
             for n in 0..num_files {
-                let filename = format!("file_{}.txt", n);
+                let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {}", n))?;
+                util::fs::write(filepath, format!("helloooo {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -954,20 +954,20 @@ mod tests {
             // Create many directories
             let num_dirs = 9;
             for n in 0..num_dirs {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Create many files
             let num_files = 8;
             for n in 0..num_files {
-                let filename = format!("file_{}.txt", n);
+                let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {}", n))?;
+                util::fs::write(filepath, format!("helloooo {n}"))?;
             }
 
             // Add and commit all the dirs and files

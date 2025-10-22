@@ -296,7 +296,7 @@ mod tests {
             let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
             assert_eq!(files.len(), 0);
             for dir in dirs.iter() {
-                println!("dir: {:?}", dir);
+                println!("dir: {dir:?}");
             }
 
             // Should be 0, as list_files_and_dirs explicitly excludes the root dir
@@ -442,7 +442,7 @@ mod tests {
             let dirs = tree.list_dir_paths()?;
             println!("list_dir_paths got {} dirs", dirs.len());
             for dir in dirs.iter() {
-                println!("dir: {:?}", dir);
+                println!("dir: {dir:?}");
             }
 
             // Should be 1, as list_dir_paths explicitly includes the root dir
@@ -514,11 +514,11 @@ mod tests {
             let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
 
             for dir in dirs.iter() {
-                log::debug!("dir: {:?}", dir);
+                log::debug!("dir: {dir:?}");
             }
 
             for file in files.iter() {
-                log::debug!("file: {:?}", file);
+                log::debug!("file: {file:?}");
             }
 
             assert_eq!(files.len(), 7);
@@ -646,7 +646,7 @@ mod tests {
 
             repositories::rm(&repo, &rm_opts)?;
             let status = repositories::status(&repo)?;
-            log::debug!("status: {:?}", status);
+            log::debug!("status: {status:?}");
             status.print();
 
             // Files unstaged, still removed
@@ -673,7 +673,7 @@ mod tests {
             repositories::rm(&repo, &opts)?;
 
             let status = repositories::status(&repo)?;
-            log::debug!("status: {:?}", status);
+            log::debug!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 0);
 
             Ok(())

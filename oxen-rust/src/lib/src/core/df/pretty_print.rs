@@ -28,14 +28,14 @@ use std::env;
 use std::fmt::Write;
 
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    match writeln!(output, "{}", text) {
+    match writeln!(output, "{text}") {
         Ok(_) => Ok(()),
         Err(_) => Err(OxenError::basic_str("Could not write to pager")),
     }
 }
 
 pub fn df_to_str(df: &DataFrame) -> String {
-    let default_fmt = format!("{:?}", df);
+    let default_fmt = format!("{df:?}");
 
     default_fmt
         .replace(['┌', '└', '┬', '┴', '┐', '┘'], "+")
@@ -59,7 +59,7 @@ pub fn df_to_pager(df: &DataFrame, opts: &DFOpts) -> Result<Pager, OxenError> {
         1
     };
 
-    let default_fmt = format!("{:?}", df);
+    let default_fmt = format!("{df:?}");
     let pretty_fmt = default_fmt
         .replace(['┌', '└', '┬', '┴', '┐', '┘'], "+")
         .replace('─', "-")

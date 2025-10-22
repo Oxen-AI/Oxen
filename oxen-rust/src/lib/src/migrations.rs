@@ -25,8 +25,7 @@ pub fn list_unmigrated(
 
     if global_last_migration >= migration_tstamp {
         log::debug!(
-            "Global last migration file indicates all files successfully migrated up to {}",
-            migration_tstamp
+            "Global last migration file indicates all files successfully migrated up to {migration_tstamp}"
         );
         return Ok(result);
     }
@@ -54,7 +53,7 @@ pub fn list_unmigrated(
                 });
             } else if let Ok(repo_last_migration) = std::fs::read_to_string(&repo_last_migration) {
                 if repo_last_migration <= migration_tstamp {
-                    log::debug!("Repo migration file found for {} is out of date", repo_name);
+                    log::debug!("Repo migration file found for {repo_name} is out of date");
                     result.push(RepositoryListView {
                         namespace: namespace.clone(),
                         name: repo_name.to_string(),

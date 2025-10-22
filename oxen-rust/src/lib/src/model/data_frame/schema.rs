@@ -79,7 +79,7 @@ impl Schema {
 
     /// Add metadata to a column
     pub fn add_column_metadata(&mut self, name: &str, metadata: &Value) {
-        log::debug!("add_column_metadata {} {}", name, metadata);
+        log::debug!("add_column_metadata {name} {metadata}");
         if let Some(f) = self.fields.iter_mut().find(|f| f.name == name) {
             f.metadata = Some(metadata.to_owned());
         }
@@ -140,8 +140,8 @@ impl Schema {
             schema.iter_fields().map(|f| f.name().to_string()).collect();
 
         log::debug!("Comparing field names between self and provided schema");
-        log::debug!("self are {:?}", self_field_names);
-        log::debug!("schema are {:?}", schema_field_names);
+        log::debug!("self are {self_field_names:?}");
+        log::debug!("schema are {schema_field_names:?}");
         if self_field_names != schema_field_names {
             return false;
         }
@@ -303,9 +303,9 @@ impl Schema {
             table.add_row(row);
         }
         if let Some(metadata) = &self.metadata {
-            format!("\n{}\n\n{}", metadata, table)
+            format!("\n{metadata}\n\n{table}")
         } else {
-            format!("{}", table)
+            format!("{table}")
         }
     }
 }
@@ -344,7 +344,7 @@ mod tests {
             },
         );
         let table = Schema::schemas_to_string(schemas);
-        println!("{}", table);
+        println!("{table}");
         assert_eq!(
             table,
             r"
@@ -375,7 +375,7 @@ mod tests {
             },
         );
         let table = Schema::schemas_to_string(schemas);
-        println!("{}", table);
+        println!("{table}");
 
         assert_eq!(
             table,
@@ -416,7 +416,7 @@ mod tests {
             },
         );
         let table = Schema::schemas_to_string(schemas);
-        println!("{}", table);
+        println!("{table}");
 
         assert_eq!(
             table,

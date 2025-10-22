@@ -74,7 +74,7 @@ pub async fn get(
     if (img_resize.width.is_some() || img_resize.height.is_some())
         && mime_type.starts_with("image/")
     {
-        log::debug!("img_resize {:?}", img_resize);
+        log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
@@ -83,7 +83,7 @@ pub async fn get(
             &version_path,
             img_resize,
         )?;
-        log::debug!("In the resize cache! {:?}", resized_path);
+        log::debug!("In the resize cache! {resized_path:?}");
 
         // Generate stream for the resized image
         let file = File::open(&resized_path).await?;
@@ -299,7 +299,7 @@ pub async fn rm_files_from_staged(
                     .await?;
             }
             Err(e) => {
-                log::debug!("Failed to stage file {path:?} for removal: {:?}", e);
+                log::debug!("Failed to stage file {path:?} for removal: {e:?}");
                 err_paths.push(path);
             }
         }

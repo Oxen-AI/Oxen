@@ -28,7 +28,7 @@ use tokio::task::JoinSet;
 use tokio_tar::Builder;
 use tokio_util::io::{ReaderStream, StreamReader};
 
-const DOWNLOAD_BUFFER_SIZE: usize = 64 * 1024;
+const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
@@ -89,7 +89,7 @@ pub async fn download(
     if (img_resize.width.is_some() || img_resize.height.is_some())
         && mime_type.starts_with("image/")
     {
-        log::debug!("img_resize {:?}", img_resize);
+        log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
@@ -143,7 +143,7 @@ pub async fn batch_download(
     let mut gz = GzDecoder::new(&bytes[..]);
     let mut line_delimited_files = String::new();
     if let Err(e) = gz.read_to_string(&mut line_delimited_files) {
-        log::error!("Failed to decompress gzip payload: {}", e);
+        log::error!("Failed to decompress gzip payload: {e}");
         return Err(OxenHttpError::from(e));
     }
 
@@ -165,20 +165,21 @@ pub async fn batch_download(
 
     // create an error channel to surface errors
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
-    // stream to the client while reading
-    tokio::spawn(async move {
+    let writer_task = async move {
         let enc = GzipEncoder::new(writer);
         let mut tar = Builder::new(enc);
 
+        let mut had_error = false;
         for file_hash in file_hashes_clone.iter() {
             match version_store_clone.get_version_stream(file_hash).await {
                 Ok(data) => {
                     let metadata = match version_store_clone.get_version_metadata(file_hash).await {
                         Ok(metadata) => metadata,
                         Err(e) => {
-                            log::error!("Failed to get metadata for {}: {}", file_hash, e);
+                            log::error!("Failed to get metadata for {file_hash}: {e}");
                             error_tx.send(e).ok();
-                            return;
+                            had_error = true;
+                            break;
                         }
                     };
                     let file_size = metadata.len();
@@ -186,14 +187,14 @@ pub async fn batch_download(
                     let mut header = tokio_tar::Header::new_gnu();
                     header.set_size(file_size as u64);
                     if let Err(e) = header.set_path(file_hash) {
-                        log::error!("Failed to set path for {}: {}", file_hash, e);
+                        log::error!("Failed to set path for {file_hash}: {e}");
                         error_tx
                             .send(OxenError::basic_str(format!(
-                                "Failed to set path for {}: {}",
-                                file_hash, e
+                                "Failed to set path for {file_hash}: {e}"
                             )))
                             .ok();
-                        return;
+                        had_error = true;
+                        break;
                     }
                     header.set_mode(0o644);
                     header.set_uid(0);
@@ -202,9 +203,10 @@ pub async fn batch_download(
 
                     let mut reader = StreamReader::new(data);
                     if let Err(e) = tar.append(&header, &mut reader).await {
-                        log::error!("Failed to append {} to tar: {}", file_hash, e);
+                        log::error!("Failed to append {file_hash} to tar: {e}");
                         error_tx.send(OxenError::IO(e)).ok();
-                        return;
+                        had_error = true;
+                        break;
                     }
                     log::info!(
                         "Successfully appended data to tarball for hash: {}",
@@ -212,52 +214,55 @@ pub async fn batch_download(
                     );
                 }
                 Err(e) => {
-                    log::error!("Failed to get version {}: {}", file_hash, e);
+                    log::error!("Failed to get version {file_hash}: {e}");
                     error_tx.send(e).ok();
-                    return;
+                    had_error = true;
+                    break;
                 }
             }
         }
 
         if let Err(e) = tar.finish().await {
-            log::error!("Failed to finish tar: {}", e);
+            log::error!("Failed to finish tar: {e}");
             error_tx.send(OxenError::IO(e)).ok();
-            return;
+            had_error = true;
         }
 
         // get encoder
-        let mut enc = match tar.into_inner().await {
-            Ok(enc) => enc,
+        match tar.into_inner().await {
+            Ok(mut enc) => {
+                if let Err(e) = enc.shutdown().await {
+                    log::error!("Failed to shutdown gzip encoder: {}", e);
+                    error_tx.send(OxenError::IO(e)).ok();
+                    had_error = true;
+                }
+                log::info!("Successfully finished tarball");
+            }
             Err(e) => {
-                log::error!("Failed to get encoder: {}", e);
+                log::error!("Failed to get encoder: {e}");
                 error_tx.send(OxenError::IO(e)).ok();
-                return;
+                had_error = true;
             }
         };
 
-        if let Err(e) = enc.flush().await {
-            log::error!("Failed to flush encoder: {}", e);
-            error_tx.send(OxenError::IO(e)).ok();
-            return;
+        if had_error {
+            log::warn!("Tar/Gzip stream closed due to earlier error");
+        } else {
+            log::info!("Tar streaming completed successfully");
         }
+    };
 
-        // shutdown encoder
-        if let Err(e) = enc.shutdown().await {
-            log::error!("Failed to shutdown encoder: {}", e);
-            error_tx.send(OxenError::IO(e)).ok();
-            return;
-        }
-
-        log::info!("Tar streaming completed successfully");
-    });
-
-    if let Ok(error) = error_rx.try_recv() {
-        return Err(OxenHttpError::from(error));
-    }
+    // stream to the client while reading
+    tokio::spawn(writer_task);
 
     // convert reader to stream
-    let stream =
-        tokio_util::io::ReaderStream::new(reader).map(|result| result.map_err(OxenHttpError::from));
+    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
+        if let Ok(err) = error_rx.try_recv() {
+            log::error!("Stream error: {}", err);
+            return Err(OxenHttpError::from(err));
+        }
+        chunk.map_err(OxenHttpError::from)
+    });
 
     Ok(HttpResponse::Ok()
         .content_type("application/gzip")
@@ -289,7 +294,7 @@ pub async fn save_multiparts(
 ) -> Result<Vec<ErrorFileInfo>, Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {:?}", oxen_err);
+        log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();

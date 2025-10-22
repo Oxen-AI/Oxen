@@ -256,7 +256,7 @@ async fn get_commit_missing_hashes(
             &mut unique_hashes_and_type,
         )?
         else {
-            log::error!("push_commits commit node not found for commit: {}", commit);
+            log::error!("push_commits commit node not found for commit: {commit}");
             continue;
         };
 
@@ -697,7 +697,7 @@ async fn bundle_and_send_small_entries(
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
-                        log::error!("Failed to compute entries size: {}", e);
+                        log::error!("Failed to compute entries size: {e}");
                         should_stop.store(true, Ordering::Relaxed);
                         *first_error.lock().await = Some(e.to_string());
                         finished_queue.pop().await;

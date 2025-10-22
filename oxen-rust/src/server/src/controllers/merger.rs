@@ -95,7 +95,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
             )))?
         }
         Err(err) => {
-            log::debug!("Err merging branches {:?}", err);
+            log::debug!("Err merging branches {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
         }
     }

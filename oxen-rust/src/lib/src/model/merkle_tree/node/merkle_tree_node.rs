@@ -77,7 +77,7 @@ impl MerkleTreeNode {
         let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, hash) else {
             // We don't return an error here because there are some situations where we won't have all the node files.
             // For example, when working in a subtree clone.
-            log::warn!("no child node db: {:?}", hash);
+            log::warn!("no child node db: {hash:?}");
             return Ok(Vec::new());
         };
         node_db.map()
@@ -213,8 +213,7 @@ impl MerkleTreeNode {
             return Ok(PathBuf::from(file_node.name()));
         }
         Err(OxenError::basic_str(format!(
-            "MerkleTreeNode::maybe_path called on non-file or non-dir node: {:?}",
-            self
+            "MerkleTreeNode::maybe_path called on non-file or non-dir node: {self:?}"
         )))
     }
 
@@ -509,15 +508,13 @@ impl MerkleTreeNode {
         let path = path.as_ref();
         let Some(node) = self.get_by_path(path)? else {
             return Err(OxenError::basic_str(format!(
-                "Merkle tree directory not found: '{:?}'",
-                path
+                "Merkle tree directory not found: '{path:?}'"
             )));
         };
 
         if MerkleTreeNodeType::Dir != node.node.node_type() {
             return Err(OxenError::basic_str(format!(
-                "get_vnodes_for_dir Merkle tree node is not a directory: '{:?}'",
-                path
+                "get_vnodes_for_dir Merkle tree node is not a directory: '{path:?}'"
             )));
         }
 
@@ -890,7 +887,7 @@ impl MerkleTreeNode {
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for MerkleTreeNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{}\n=============", self)?;
+        writeln!(f, "{self}\n=============")?;
         writeln!(f, "hash: {}", self.hash)?;
         writeln!(f, "node: {:?}", self.node)?;
         writeln!(
@@ -903,7 +900,7 @@ impl fmt::Debug for MerkleTreeNode {
         writeln!(f, "=============")?;
 
         for child in &self.children {
-            writeln!(f, "{}", child)?;
+            writeln!(f, "{child}")?;
         }
         Ok(())
     }

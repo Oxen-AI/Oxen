@@ -24,7 +24,7 @@ pub async fn fetch_remote_branch(
     remote_repo: &RemoteRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<Branch, OxenError> {
-    log::debug!("fetching remote branch with opts {:?}", fetch_opts);
+    log::debug!("fetching remote branch with opts {fetch_opts:?}");
 
     // Start the timer
     let start = std::time::Instant::now();
@@ -42,7 +42,7 @@ pub async fn fetch_remote_branch(
 
     // We may not have a head commit if the repo is empty (initial clone)
     if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
-        log::debug!("Head commit: {}", head_commit);
+        log::debug!("Head commit: {head_commit}");
         log::debug!("Remote branch commit: {}", remote_branch.commit_id);
         // If the head commit is the same as the remote branch commit, we are up to date
         if head_commit.id == remote_branch.commit_id {
@@ -173,12 +173,12 @@ async fn sync_from_head(
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     let repo_hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    log::debug!("sync_from_head head_commit: {}", head_commit);
-    log::debug!("sync_from_head branch: {}", branch);
+    log::debug!("sync_from_head head_commit: {head_commit}");
+    log::debug!("sync_from_head branch: {branch}");
 
     // If HEAD commit IS on the remote server, that means we are behind the remote branch
     if api::client::tree::has_node(remote_repo, head_commit.id.parse()?).await? {
-        log::debug!("sync_from_head has head commit: {}", head_commit);
+        log::debug!("sync_from_head has head commit: {head_commit}");
         pull_progress.set_message(format!(
             "Downloading commits from {} to {}",
             head_commit.id, branch.commit_id
@@ -264,9 +264,7 @@ fn collect_missing_entries(
     for commit in commits {
         if let Some(subtree_paths) = subtree_paths {
             log::debug!(
-                "collect_missing_entries for {:?} subtree paths and depth {:?}",
-                subtree_paths,
-                depth
+                "collect_missing_entries for {subtree_paths:?} subtree paths and depth {depth:?}"
             );
             for subtree_path in subtree_paths {
                 let mut unique_hashes = HashMap::new();
@@ -280,10 +278,7 @@ fn collect_missing_entries(
                     &mut unique_hashes,
                 )?
                 else {
-                    log::warn!(
-                        "get_subtree_by_depth returned None for path: {:?}",
-                        subtree_path
-                    );
+                    log::warn!("get_subtree_by_depth returned None for path: {subtree_path:?}");
                     continue;
                 };
 
@@ -307,10 +302,7 @@ fn collect_missing_entries(
                 &mut unique_hashes,
             )?
             else {
-                log::warn!(
-                    "get_subtree_by_depth returned None for commit: {:?}",
-                    commit
-                );
+                log::warn!("get_subtree_by_depth returned None for commit: {commit:?}");
                 continue;
             };
 
@@ -446,10 +438,7 @@ pub async fn maybe_fetch_missing_entries(
     };
 
     let Some(commit_merkle_tree) = repositories::tree::get_root_with_children(repo, commit)? else {
-        log::warn!(
-            "get_root_with_children returned None for commit: {:?}",
-            commit
-        );
+        log::warn!("get_root_with_children returned None for commit: {commit:?}");
         return Ok(());
     };
 
@@ -460,14 +449,14 @@ pub async fn maybe_fetch_missing_entries(
             return Ok(());
         }
         Err(err) => {
-            log::warn!("Error getting remote repo: {}", err);
+            log::warn!("Error getting remote repo: {err}");
             return Ok(());
         }
     };
 
     // TODO: what should we print here? If there is nothing to pull, we
     // shouldn't show the PullProgress
-    log::debug!("Fetching missing entries for commit {}", commit);
+    log::debug!("Fetching missing entries for commit {commit}");
 
     // Keep track of how many bytes we have downloaded
     let pull_progress = Arc::new(PullProgress::new());
@@ -658,7 +647,7 @@ async fn pull_large_entries(
                     // reached end of queue
                     break;
                 };
-                log::debug!("worker[{}] processing task...", worker);
+                log::debug!("worker[{worker}] processing task...");
 
                 // Chunk and individual files
                 let remote_path = &entry.path();
@@ -673,12 +662,12 @@ async fn pull_large_entries(
                 .await
                 {
                     Ok(_) => {
-                        log::debug!("Pulled large entry {:?} to versions dir", remote_path);
+                        log::debug!("Pulled large entry {remote_path:?} to versions dir");
                         progress_bar.add_bytes(entry.num_bytes());
                         progress_bar.add_files(1);
                     }
                     Err(err) => {
-                        log::error!("Could not download chunk... {}", err)
+                        log::error!("Could not download chunk... {err}")
                     }
                 }
             }
@@ -731,7 +720,6 @@ async fn pull_small_entries(
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            // Create HashMap from hash -> path for this chunk
             let hashes = chunk.iter().map(|entry| entry.hash().to_string()).collect();
             (remote_repo.to_owned(), hashes, repo.to_owned())
         })
@@ -753,7 +741,7 @@ async fn pull_small_entries(
                     // reached end of queue
                     break;
                 };
-                log::debug!("worker[{}] processing task...", worker);
+                log::debug!("worker[{worker}] processing task...");
 
                 match api::client::versions::download_data_from_version_paths(
                     &remote_repo,
@@ -767,7 +755,7 @@ async fn pull_small_entries(
                         progress_bar.add_files(chunk.len() as u64);
                     }
                     Err(err) => {
-                        log::error!("Could not pull entries... {}", err)
+                        log::error!("Could not pull entries... {err}")
                     }
                 }
             }
@@ -902,7 +890,7 @@ async fn download_large_entries(
                     // reached end of queue
                     break;
                 };
-                log::debug!("worker[{}] processing task...", worker);
+                log::debug!("worker[{worker}] processing task...");
 
                 // Chunk and individual files
                 let remote_path = &entry.path();
@@ -923,7 +911,7 @@ async fn download_large_entries(
                         progress_bar.add_files(1);
                     }
                     Err(err) => {
-                        log::error!("Could not download chunk... {}", err)
+                        log::error!("Could not download chunk... {err}")
                     }
                 }
             }
@@ -968,16 +956,16 @@ async fn download_small_entries(
     );
 
     // Split into chunks, zip up, and post to server
-    type PieceOfWork = (RemoteRepository, HashMap<String, PathBuf>, PathBuf);
+    type PieceOfWork = (RemoteRepository, Vec<(String, PathBuf)>, PathBuf);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            let content_ids: HashMap<String, PathBuf> = chunk
-                .iter()
-                .map(|e| (e.hash(), e.path().to_owned()))
-                .collect();
+            let mut content_ids: Vec<(String, PathBuf)> = vec![];
+            for e in chunk {
+                content_ids.push((e.hash(), e.path().to_owned()));
+            }
             (remote_repo.to_owned(), content_ids, dst.as_ref().to_owned())
         })
         .collect();
@@ -998,7 +986,7 @@ async fn download_small_entries(
                     // reached end of queue
                     break;
                 };
-                log::debug!("worker[{}] processing task...", worker);
+                log::debug!("worker[{worker}] processing task...");
 
                 match api::client::entries::download_data_from_version_paths(
                     &remote_repo,
@@ -1012,7 +1000,7 @@ async fn download_small_entries(
                         progress_bar.add_files(chunk.len() as u64);
                     }
                     Err(err) => {
-                        log::error!("Could not download entries... {}", err)
+                        log::error!("Could not download entries... {err}")
                     }
                 }
             }

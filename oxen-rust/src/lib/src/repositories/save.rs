@@ -29,10 +29,7 @@ pub fn save(repo: &LocalRepository, dst_path: &Path) -> Result<(), OxenError> {
     let enc = GzEncoder::new(Vec::new(), Compression::default());
     let mut tar = tar::Builder::new(enc);
 
-    log::debug!(
-        "command::save compressing oxen dir at {:?} into tarball",
-        oxen_dir
-    );
+    log::debug!("command::save compressing oxen dir at {oxen_dir:?} into tarball");
 
     println!("🐂 Compressing oxen repo at {:?}", repo.path);
 
@@ -46,7 +43,7 @@ pub fn save(repo: &LocalRepository, dst_path: &Path) -> Result<(), OxenError> {
     let mut file = File::create(output_path.clone())?;
     file.write_all(&buffer)?;
 
-    println!("\n\n✅ Saved oxen repo to {:?}\n\n", output_path);
+    println!("\n\n✅ Saved oxen repo to {output_path:?}\n\n");
 
     Ok(())
 }

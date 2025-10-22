@@ -526,10 +526,7 @@ mod tests {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);
             }
             Err(e) => {
-                panic!(
-                    "Unexpected error when getting non-existent version: {:?}",
-                    e
-                );
+                panic!("Unexpected error when getting non-existent version: {e:?}");
             }
         }
     }
@@ -577,7 +574,7 @@ mod tests {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);
             }
             Err(e) => {
-                panic!("Unexpected error when getting non-existent chunk: {:?}", e);
+                panic!("Unexpected error when getting non-existent chunk: {e:?}");
             }
         }
     }

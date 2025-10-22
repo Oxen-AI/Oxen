@@ -25,12 +25,12 @@ pub async fn list(
     match client.get(&url).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("got body: {}", body);
+            log::debug!("got body: {body}");
             let response: Result<ListSchemaResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
                 Ok(val) => {
-                    log::debug!("got ListSchemaResponse: {:?}", val);
+                    log::debug!("got ListSchemaResponse: {val:?}");
                     Ok(val.schemas)
                 }
                 Err(err) => Err(OxenError::basic_str(format!(
@@ -60,12 +60,12 @@ pub async fn get(
     match client.get(&url).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("got body: {}", body);
+            log::debug!("got body: {body}");
             let response: Result<ListSchemaResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
                 Ok(val) => {
-                    log::debug!("got SchemaResponse: {:?}", val);
+                    log::debug!("got SchemaResponse: {val:?}");
                     if !val.schemas.is_empty() {
                         Ok(val.schemas.into_iter().next())
                     } else {

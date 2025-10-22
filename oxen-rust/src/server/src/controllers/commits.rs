@@ -87,7 +87,7 @@ pub async fn history(
         )));
     }
 
-    log::debug!("commit_history resource_param: {:?}", resource_param);
+    log::debug!("commit_history resource_param: {resource_param:?}");
 
     // This checks if the parameter received from the client is two commits split by "..", in this case we don't parse the resource
     let (resource, revision, commit) = if resource_param.contains("..") {
@@ -100,7 +100,7 @@ pub async fn history(
 
     match &resource {
         Some(resource) if resource.path != Path::new("") => {
-            log::debug!("commit_history resource_param: {:?}", resource);
+            log::debug!("commit_history resource_param: {resource:?}");
             let commits = repositories::commits::list_by_path_from_paginated(
                 &repo,
                 commit.as_ref().unwrap(), // Safe unwrap: `commit` is Some if `resource` is Some
@@ -112,7 +112,7 @@ pub async fn history(
         }
         _ => {
             // Handling the case where resource is None or its path is empty
-            log::debug!("commit_history revision: {:?}", revision);
+            log::debug!("commit_history revision: {revision:?}");
             let revision_id = revision.as_ref().or_else(|| commit.as_ref().map(|c| &c.id));
             if let Some(revision_id) = revision_id {
                 let commits =
@@ -158,7 +158,7 @@ pub async fn list_missing(
     // Parse commit ids from a body and return the missing ids
     let data: Result<MerkleHashes, serde_json::Error> = serde_json::from_str(&body);
     let Ok(merkle_hashes) = data else {
-        log::error!("list_missing invalid JSON: {:?}", body);
+        log::error!("list_missing invalid JSON: {body:?}");
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
@@ -298,7 +298,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
     // This will be the subdir within the tarball
     let tar_subdir = Path::new(COMMITS_DIR);
 
-    log::debug!("Compressing commit db from dir {:?}", commit_dir);
+    log::debug!("Compressing commit db from dir {commit_dir:?}");
     let enc = GzEncoder::new(Vec::new(), Compression::default());
     let mut tar = tar::Builder::new(enc);
 
@@ -448,7 +448,7 @@ pub async fn create(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    log::debug!("Got commit data: {}", body);
+    log::debug!("Got commit data: {body}");
 
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -458,11 +458,11 @@ pub async fn create(
     let new_commit: Commit = match serde_json::from_str(&body) {
         Ok(commit) => commit,
         Err(_) => {
-            log::error!("commits create got invalid commit data {}", body);
+            log::error!("commits create got invalid commit data {body}");
             return Err(OxenHttpError::BadRequest("Invalid commit data".into()));
         }
     };
-    log::debug!("commits create got new commit: {:?}", new_commit);
+    log::debug!("commits create got new commit: {new_commit:?}");
 
     let bn: BranchName =
         match serde_json::from_str(&body) {
@@ -480,11 +480,11 @@ pub async fn create(
             commit: commit.to_owned(),
         })),
         Err(OxenError::RootCommitDoesNotMatch(commit_id)) => {
-            log::error!("Err create_commit: RootCommitDoesNotMatch {}", commit_id);
+            log::error!("Err create_commit: RootCommitDoesNotMatch {commit_id}");
             Err(OxenHttpError::BadRequest("Remote commit history does not match local commit history. Make sure you are pushing to the correct remote.".into()))
         }
         Err(err) => {
-            log::error!("Err create_commit: {}", err);
+            log::error!("Err create_commit: {err}");
             Err(OxenHttpError::InternalServerError)
         }
     }
@@ -519,10 +519,7 @@ pub async fn upload_chunk(
     // mkdir if !exists
     if !tmp_dir.exists() {
         if let Err(err) = util::fs::create_dir_all(&tmp_dir) {
-            log::error!(
-                "upload_chunk could not complete chunk upload, mkdir failed: {:?}",
-                err
-            );
+            log::error!("upload_chunk could not complete chunk upload, mkdir failed: {err:?}");
             return Ok(
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
             );
@@ -536,7 +533,7 @@ pub async fn upload_chunk(
     }
 
     // Write to tmp file
-    log::debug!("upload_chunk writing file {:?}", chunk_file);
+    log::debug!("upload_chunk writing file {chunk_file:?}");
     match OpenOptions::new()
         .write(true)
         .create(true)
@@ -547,7 +544,7 @@ pub async fn upload_chunk(
             match f.write_all(&bytes) {
                 Ok(_) => {
                     // Successfully wrote chunk
-                    log::debug!("upload_chunk successfully wrote chunk {:?}", chunk_file);
+                    log::debug!("upload_chunk successfully wrote chunk {chunk_file:?}");
 
                     // TODO: there is a race condition here when multiple chunks
                     // are uploaded in parallel Currently doesn't hurt anything,
@@ -568,9 +565,7 @@ pub async fn upload_chunk(
                 }
                 Err(err) => {
                     log::error!(
-                        "upload_chunk could not complete chunk upload, file write_all failed: {:?} -> {:?}",
-                        err,
-                        chunk_file
+                        "upload_chunk could not complete chunk upload, file write_all failed: {err:?} -> {chunk_file:?}"
                     );
                     Ok(HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()))
@@ -579,9 +574,7 @@ pub async fn upload_chunk(
         }
         Err(err) => {
             log::error!(
-                "upload_chunk could not complete chunk upload, file create failed: {:?} -> {:?}",
-                err,
-                chunk_file
+                "upload_chunk could not complete chunk upload, file create failed: {err:?} -> {chunk_file:?}"
             );
             Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
         }
@@ -616,15 +609,13 @@ async fn check_if_upload_complete_and_unpack(
                 uploaded_size += metadata.len();
             }
             Err(err) => {
-                log::warn!("Err getting metadata on {:?}\n{:?}", file, err);
+                log::warn!("Err getting metadata on {file:?}\n{err:?}");
             }
         }
     }
 
     log::debug!(
-        "check_if_upload_complete_and_unpack checking if complete... {} / {}",
-        uploaded_size,
-        total_size
+        "check_if_upload_complete_and_unpack checking if complete... {uploaded_size} / {total_size}"
     );
 
     // I think windows has a larger size than linux...so can't do a simple check here
@@ -651,8 +642,7 @@ async fn check_if_upload_complete_and_unpack(
                 }
                 Err(err) => {
                     log::error!(
-                        "check_if_upload_complete_and_unpack could not unpack compressed data {:?}",
-                        err
+                        "check_if_upload_complete_and_unpack could not unpack compressed data {err:?}"
                     );
                 }
             }
@@ -664,7 +654,7 @@ async fn check_if_upload_complete_and_unpack(
                             log::debug!("check_if_upload_complete_and_unpack unpacked {} files successfully", files.len());
                         }
                         Err(err) => {
-                            log::error!("check_if_upload_complete_and_unpack could not unpack compressed data {:?}", err);
+                            log::error!("check_if_upload_complete_and_unpack could not unpack compressed data {err:?}");
                         }
                     }
                 }
@@ -679,16 +669,11 @@ async fn check_if_upload_complete_and_unpack(
         // Cleanup tmp files
         match util::fs::remove_dir_all(&tmp_dir) {
             Ok(_) => {
-                log::debug!(
-                    "check_if_upload_complete_and_unpack removed tmp dir {:?}",
-                    tmp_dir
-                );
+                log::debug!("check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}");
             }
             Err(err) => {
                 log::error!(
-                    "check_if_upload_complete_and_unpack could not remove tmp dir {:?} {:?}",
-                    tmp_dir,
-                    err
+                    "check_if_upload_complete_and_unpack could not remove tmp dir {tmp_dir:?} {err:?}"
                 );
             }
         }
@@ -755,7 +740,7 @@ async fn unpack_compressed_data(
 ) -> Result<(), OxenError> {
     let mut buffer: Vec<u8> = Vec::new();
     for file in files.iter() {
-        log::debug!("Reading file bytes {:?}", file);
+        log::debug!("Reading file bytes {file:?}");
         let mut f = std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
 
         f.read_to_end(&mut buffer)
@@ -775,17 +760,17 @@ fn unpack_to_file(
 ) -> Result<(), OxenError> {
     // Append each buffer to the end of the large file
     // TODO: better error handling...
-    log::debug!("Got filename {}", filename);
+    log::debug!("Got filename {filename}");
 
     // return path with native slashes
     let os_path = OsPath::from(filename).to_pathbuf();
-    log::debug!("Got native filename {:?}", os_path);
+    log::debug!("Got native filename {os_path:?}");
 
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let mut full_path = hidden_dir.join(os_path);
     full_path =
         util::fs::replace_file_name_keep_extension(&full_path, VERSION_FILE_NAME.to_owned());
-    log::debug!("Unpack to {:?}", full_path);
+    log::debug!("Unpack to {full_path:?}");
     if let Some(parent) = full_path.parent() {
         util::fs::create_dir_all(parent)?;
     }
@@ -794,7 +779,7 @@ fn unpack_to_file(
         .map_err(|e| OxenError::file_create_error(&full_path, e))?;
 
     for file in files.iter() {
-        log::debug!("Reading file bytes {:?}", file);
+        log::debug!("Reading file bytes {file:?}");
         let mut buffer: Vec<u8> = Vec::new();
 
         let mut f = std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
@@ -806,10 +791,10 @@ fn unpack_to_file(
 
         match outf.write_all(&buffer) {
             Ok(_) => {
-                log::debug!("Unpack successful! {:?}", full_path);
+                log::debug!("Unpack successful! {full_path:?}");
             }
             Err(err) => {
-                log::error!("Could not write all data to disk {:?}", err);
+                log::error!("Could not write all data to disk {err:?}");
             }
         }
     }
@@ -876,22 +861,22 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
                     Ok(HttpResponse::Ok().json(response))
                 }
                 Ok(None) => {
-                    log::error!("Could not find commit [{}]", commit_id);
+                    log::error!("Could not find commit [{commit_id}]");
                     Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
                 }
                 Err(err) => {
-                    log::error!("Error finding commit [{}]: {}", commit_id, err);
+                    log::error!("Error finding commit [{commit_id}]: {err}");
                     Ok(HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()))
                 }
             }
         }
         Ok(None) => {
-            log::debug!("404 could not get repo {}", repo_name,);
+            log::debug!("404 could not get repo {repo_name}",);
             Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
         }
         Err(repo_err) => {
-            log::error!("Err get_by_name: {}", repo_err);
+            log::error!("Err get_by_name: {repo_err}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
         }
     }
@@ -907,7 +892,7 @@ async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenErro
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Could not unpack tree database from archive...");
-            log::error!("Err: {:?}", e);
+            log::error!("Err: {e:?}");
             return Err(OxenError::basic_str("Failed to get archive entries"));
         }
     };
@@ -915,12 +900,12 @@ async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenErro
     while let Some(entry) = entries.next().await {
         if let Ok(mut file) = entry {
             let path = file.path().unwrap();
-            log::debug!("unpack_tree_tarball path {:?}", path);
+            log::debug!("unpack_tree_tarball path {path:?}");
             let stripped_path = if path.starts_with(HISTORY_DIR) {
                 match path.strip_prefix(HISTORY_DIR) {
                     Ok(stripped) => stripped,
                     Err(err) => {
-                        log::error!("Could not strip prefix from path {:?}", err);
+                        log::error!("Could not strip prefix from path {err:?}");
                         return Err(OxenError::basic_str("Failed to strip path prefix"));
                     }
                 }
@@ -934,7 +919,7 @@ async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenErro
             if let Some(parent) = new_path.parent() {
                 util::fs::create_dir_all(parent).expect("Could not create parent dir");
             }
-            log::debug!("unpack_tree_tarball new_path {:?}", path);
+            log::debug!("unpack_tree_tarball new_path {path:?}");
             file.unpack(&new_path).await.unwrap();
         } else {
             log::error!("Could not unpack file in archive...");
@@ -963,7 +948,7 @@ async fn unpack_entry_tarball_async(
         let mut file = entry?;
         let path = file
             .path()
-            .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {}", e)))?;
+            .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {e}")))?;
 
         if path.starts_with("versions") && path.to_string_lossy().contains("files") {
             // Handle version files with streaming
@@ -980,7 +965,7 @@ async fn unpack_entry_tarball_async(
             // For non-version files, unpack to hidden dir
             file.unpack_in(&hidden_dir)
                 .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {}", e)))?;
+                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
         }
     }
 
@@ -1011,8 +996,7 @@ fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
     }
 
     Err(OxenError::basic_str(format!(
-        "Could not get hash for file: {:?}",
-        path
+        "Could not get hash for file: {path:?}"
     )))
 }
 
@@ -1216,7 +1200,7 @@ mod tests {
         let payload: Vec<u8> = tar.into_inner()?.finish()?;
         println!("Uploading commit {}... {} bytes", commit.id, payload.len());
 
-        let uri = format!("/oxen/{}/{}/commits/upload", namespace, repo_name);
+        let uri = format!("/oxen/{namespace}/{repo_name}/commits/upload");
         let app = actix_web::test::init_service(
             App::new()
                 .app_data(OxenAppData::new(sync_dir.clone()))
@@ -1235,7 +1219,7 @@ mod tests {
         let resp = actix_web::test::call_service(&app, req).await;
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&bytes).unwrap();
-        println!("Upload response: {}", body);
+        println!("Upload response: {body}");
         let resp: StatusMessage = serde_json::from_str(body)?;
         assert_eq!(resp.status, "success");
 

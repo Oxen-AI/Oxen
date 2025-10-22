@@ -133,7 +133,7 @@ impl CommitNode {
                 // This is a fallback for old versions of the commit node
                 log::debug!("Deserializing old commit node version");
                 let commit: CommitNodeDataV0_19_0 = rmp_serde::from_slice(data)?;
-                log::debug!("Deserialized old commit node version: {:?}", commit);
+                log::debug!("Deserialized old commit node version: {commit:?}");
                 Self {
                     node: ECommitNode::V0_19_0(commit),
                 }
