@@ -6,13 +6,12 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use actix_multipart::Multipart;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
+use async_compression::tokio::write::GzipEncoder;
 use flate2::read::GzDecoder;
-use futures_util::TryStreamExt as _;
-use liboxen::core::node_sync_status;
+use futures_util::{StreamExt, TryStreamExt as _};
 use liboxen::error::OxenError;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
-use liboxen::model::MerkleHash;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::versions::{VersionFile, VersionFileResponse};
@@ -22,8 +21,12 @@ use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tokio_util::io::ReaderStream;
+use tokio_tar::Builder;
+use tokio_util::io::{ReaderStream, StreamReader};
+
+const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
@@ -38,12 +41,15 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Err(OxenHttpError::NotFound);
     }
 
-    let data = repo.version_store()?.get_version(&version_id).await?;
+    let metadata = repo
+        .version_store()?
+        .get_version_metadata(&version_id)
+        .await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
             hash: version_id,
-            size: data.len() as u64,
+            size: metadata.len() as u64,
         },
     }))
 }
@@ -81,7 +87,7 @@ pub async fn download(
     if (img_resize.width.is_some() || img_resize.height.is_some())
         && mime_type.starts_with("image/")
     {
-        log::debug!("img_resize {:?}", img_resize);
+        log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
@@ -111,6 +117,156 @@ pub async fn download(
         .streaming(stream))
 }
 
+pub async fn batch_download(
+    req: HttpRequest,
+    mut body: web::Payload,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let version_store = repo.version_store()?;
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = body.next().await {
+        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+    }
+
+    log::debug!(
+        "batch_download got repo [{}] and content_ids size {}",
+        repo_name,
+        bytes.len()
+    );
+
+    let mut gz = GzDecoder::new(&bytes[..]);
+    let mut line_delimited_files = String::new();
+    if let Err(e) = gz.read_to_string(&mut line_delimited_files) {
+        log::error!("Failed to decompress gzip payload: {e}");
+        return Err(OxenHttpError::from(e));
+    }
+
+    let file_hashes: Vec<String> = line_delimited_files
+        .lines()
+        .map(str::trim)
+        .filter(|hash| !hash.is_empty())
+        .filter(|hash| hash.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|hash| hash.to_string())
+        .collect();
+
+    log::debug!("Got {} file hashes", file_hashes.len());
+
+    // create duplex stream for streaming
+    let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
+
+    let version_store_clone = version_store.clone();
+    let file_hashes_clone = file_hashes.clone();
+
+    // create an error channel to surface errors
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+    let writer_task = async move {
+        let enc = GzipEncoder::new(writer);
+        let mut tar = Builder::new(enc);
+
+        let mut had_error = false;
+        for file_hash in file_hashes_clone.iter() {
+            match version_store_clone.get_version_stream(file_hash).await {
+                Ok(data) => {
+                    let metadata = match version_store_clone.get_version_metadata(file_hash).await {
+                        Ok(metadata) => metadata,
+                        Err(e) => {
+                            log::error!("Failed to get metadata for {file_hash}: {e}");
+                            error_tx.send(e).ok();
+                            had_error = true;
+                            break;
+                        }
+                    };
+                    let file_size = metadata.len();
+
+                    let mut header = tokio_tar::Header::new_gnu();
+                    header.set_size(file_size as u64);
+                    if let Err(e) = header.set_path(file_hash) {
+                        log::error!("Failed to set path for {file_hash}: {e}");
+                        error_tx
+                            .send(OxenError::basic_str(format!(
+                                "Failed to set path for {file_hash}: {e}"
+                            )))
+                            .ok();
+                        had_error = true;
+                        break;
+                    }
+                    header.set_mode(0o644);
+                    header.set_uid(0);
+                    header.set_gid(0);
+                    header.set_cksum();
+
+                    let mut reader = StreamReader::new(data);
+                    if let Err(e) = tar.append(&header, &mut reader).await {
+                        log::error!("Failed to append {file_hash} to tar: {e}");
+                        error_tx.send(OxenError::IO(e)).ok();
+                        had_error = true;
+                        break;
+                    }
+                    log::info!(
+                        "Successfully appended data to tarball for hash: {}",
+                        &file_hash
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to get version {file_hash}: {e}");
+                    error_tx.send(e).ok();
+                    had_error = true;
+                    break;
+                }
+            }
+        }
+
+        if let Err(e) = tar.finish().await {
+            log::error!("Failed to finish tar: {e}");
+            error_tx.send(OxenError::IO(e)).ok();
+            had_error = true;
+        }
+
+        // get encoder
+        match tar.into_inner().await {
+            Ok(mut enc) => {
+                if let Err(e) = enc.shutdown().await {
+                    log::error!("Failed to shutdown gzip encoder: {}", e);
+                    error_tx.send(OxenError::IO(e)).ok();
+                    had_error = true;
+                }
+                log::info!("Successfully finished tarball");
+            }
+            Err(e) => {
+                log::error!("Failed to get encoder: {e}");
+                error_tx.send(OxenError::IO(e)).ok();
+                had_error = true;
+            }
+        };
+
+        if had_error {
+            log::warn!("Tar/Gzip stream closed due to earlier error");
+        } else {
+            log::info!("Tar streaming completed successfully");
+        }
+    };
+
+    // stream to the client while reading
+    tokio::spawn(writer_task);
+
+    // convert reader to stream
+    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
+        if let Ok(err) = error_rx.try_recv() {
+            log::error!("Stream error: {}", err);
+            return Err(OxenHttpError::from(err));
+        }
+        chunk.map_err(OxenHttpError::from)
+    });
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/gzip")
+        .streaming(stream))
+}
+
 pub async fn batch_upload(
     req: HttpRequest,
     payload: Multipart,
@@ -130,20 +286,19 @@ pub async fn batch_upload(
     }))
 }
 
+// Read the payload files into memory and save to version store
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {:?}", oxen_err);
+        log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
-    let json_mime: mime::Mime = "application/json".parse().unwrap();
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
-    // let mut synced_nodes: Option<ReceivedMetadata> = None
 
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
@@ -188,8 +343,7 @@ pub async fn save_multiparts(
                             let mut decompressed_bytes = Vec::new();
                             decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
                                 OxenError::basic_str(format!(
-                                    "Failed to decompress gzipped data: {}",
-                                    e
+                                    "Failed to decompress gzipped data: {e}"
                                 ))
                             })?;
                             Ok(decompressed_bytes)
@@ -211,7 +365,7 @@ pub async fn save_multiparts(
                                 &mut err_files,
                                 upload_filehash.clone(),
                                 None,
-                                format!("Failed to decompress data: {}", e),
+                                format!("Failed to decompress data: {e}"),
                             );
                             continue;
                         }
@@ -225,7 +379,7 @@ pub async fn save_multiparts(
                                 &mut err_files,
                                 upload_filehash.clone(),
                                 None,
-                                format!("Failed to execute blocking decompression: {}", e),
+                                format!("Failed to execute blocking decompression: {e}"),
                             );
                             continue;
                         }
@@ -248,42 +402,9 @@ pub async fn save_multiparts(
                             &mut err_files,
                             upload_filehash.clone(),
                             None,
-                            format!("Failed to store version: {}", e),
+                            format!("Failed to store version: {e}"),
                         );
                         continue;
-                    }
-                }
-            } else if name == "synced_nodes"
-                && field.content_type().is_some_and(|mime| {
-                    mime.type_() == json_mime.type_() && mime.subtype() == json_mime.subtype()
-                })
-            {
-                let mut field_bytes = Vec::new();
-                while let Some(chunk) = field.try_next().await? {
-                    field_bytes.extend_from_slice(&chunk);
-                }
-
-                let json_string = String::from_utf8(field_bytes.to_vec()).map_err(|e| {
-                    actix_web::error::ErrorBadRequest(format!("Invalid UTF-8 in JSON part: {}", e))
-                })?;
-
-                log::debug!("Received synced_nodes JSON: {}", json_string);
-
-                match serde_json::from_str::<Vec<MerkleHash>>(&json_string) {
-                    Ok(synced_nodes) => {
-                        log::debug!("Successfully parsed synced_nodes: {:?}", synced_nodes);
-
-                        for node_hash in synced_nodes {
-                            // TODO: log::error! with the error if this fails
-                            let _ = node_sync_status::mark_node_as_synced(repo, &node_hash);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to parse synced_nodes JSON: {}", e);
-                        return Err(actix_web::error::ErrorBadRequest(format!(
-                            "Invalid JSON for synced_nodes: {}",
-                            e
-                        )));
                     }
                 }
             }

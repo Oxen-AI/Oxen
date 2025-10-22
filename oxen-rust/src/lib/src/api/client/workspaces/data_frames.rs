@@ -76,7 +76,7 @@ pub async fn download(
     let res = client.get(&url).send().await?;
 
     // Create the output file
-    log::debug!("Download creating output file {:?}", output_path);
+    log::debug!("Download creating output file {output_path:?}");
     let mut file = util::fs::file_create(output_path)?;
 
     // Stream the response body to the file
@@ -187,11 +187,11 @@ pub async fn restore(
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("workspaces::data_frames::restore {}", url);
+    log::debug!("workspaces::data_frames::restore {url}");
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("workspaces::data_frames::restore got body: {}", body);
+    log::debug!("workspaces::data_frames::restore got body: {body}");
     Ok(())
 }
 
@@ -203,11 +203,11 @@ pub async fn restore_files(
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("workspaces::data_frames::restore {}", url);
+    log::debug!("workspaces::data_frames::restore {url}");
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("workspaces::data_frames::restore got body: {}", body);
+    log::debug!("workspaces::data_frames::restore got body: {body}");
     Ok(())
 }
 
@@ -227,7 +227,7 @@ pub async fn diff(
     match client.get(&url).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("diff got body: {}", body);
+            log::debug!("diff got body: {body}");
             let response: Result<JsonDataFrameViewResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
@@ -1007,7 +1007,7 @@ mod tests {
                 DEFAULT_PAGE_SIZE
             ).await?;
 
-            log::debug!("Got this diff {:?}", diff);
+            log::debug!("Got this diff {diff:?}");
             assert_eq!(diff.view.size.height, 2);
 
             // Delete result_2

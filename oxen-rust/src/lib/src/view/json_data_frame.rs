@@ -67,7 +67,7 @@ impl JsonDataFrame {
 
         let schema = Schema::from_polars(df.schema());
         let mut opts = DFOpts::empty();
-        opts.slice = Some(format!("{}..{}", start, end));
+        opts.slice = Some(format!("{start}..{end}"));
         let mut view_df = tabular::transform(df, opts).await.unwrap();
         let view_schema = Schema::from_polars(view_df.schema());
 
@@ -115,14 +115,14 @@ impl JsonDataFrame {
         } else {
             // The fields were coming out of order, so we need to reorder them
             let columns = self.schema.fields_names();
-            log::debug!("Got columns: {:?}", columns);
+            log::debug!("Got columns: {columns:?}");
 
             match &self.data {
                 serde_json::Value::Array(arr) => {
                     if !arr.is_empty() {
                         let data = self.data.to_string();
                         let content = Cursor::new(data.as_bytes());
-                        log::debug!("Deserializing df: [{}]", data);
+                        log::debug!("Deserializing df: [{data}]");
                         let df = JsonReader::new(content).finish().unwrap();
 
                         let opts = DFOpts::from_column_names(columns);
@@ -167,7 +167,7 @@ impl JsonDataFrame {
     }
 
     fn json_data(df: &mut DataFrame) -> serde_json::Value {
-        log::debug!("Serializing df: [{}]", df);
+        log::debug!("Serializing df: [{df}]");
 
         // TODO: serialize to json
         let data: Vec<u8> = Vec::new();

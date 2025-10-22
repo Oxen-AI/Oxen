@@ -49,7 +49,7 @@ impl RunCmd for SchemasAddCmd {
             .get_one::<String>("PATH")
             .map(|p| -> Result<PathBuf, OxenError> {
                 let current_dir = std::env::current_dir().map_err(|e| {
-                    OxenError::basic_str(format!("Failed to get current directory: {}", e))
+                    OxenError::basic_str(format!("Failed to get current directory: {e}"))
                 })?;
                 let path = current_dir.join(p);
                 util::fs::canonicalize(&path).or_else(|_| Ok(path))
@@ -176,8 +176,7 @@ impl SchemasAddCmd {
             Ok(serde_json::to_string(&json)?)
         } else {
             Err(OxenError::basic_str(format!(
-                "Invalid render type: {}",
-                render_type
+                "Invalid render type: {render_type}"
             )))
         }
     }

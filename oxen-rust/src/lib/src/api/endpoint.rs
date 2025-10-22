@@ -58,7 +58,7 @@ pub fn url_from_remote_url(url: &str) -> Result<String, OxenError> {
             Ok(parsed_url.to_string())
         }
         Err(e) => {
-            log::warn!("Invalid remote url: {:?}\n{:?}", url, e);
+            log::warn!("Invalid remote url: {url:?}\n{e:?}");
             Err(OxenError::invalid_set_remote_url(url))
         }
     }

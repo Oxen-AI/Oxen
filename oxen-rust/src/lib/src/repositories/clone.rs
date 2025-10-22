@@ -143,6 +143,7 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::model::RepoNew;
+    use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -388,7 +389,7 @@ mod tests {
                 // We remove the test/ directory in one of the commits, so make sure we can go
                 // back in the history to that commit
                 let test_dir_path = cloned_repo.path.join("test");
-                println!("test_clone_dash_all test_dir_path: {:?}", test_dir_path);
+                println!("test_clone_dash_all test_dir_path: {test_dir_path:?}");
                 let commit = repositories::commits::first_by_message(&cloned_repo, "Adding test/")?;
                 assert!(commit.is_some());
                 assert!(!test_dir_path.exists());
@@ -402,12 +403,14 @@ mod tests {
                 let test_dir_files = util::fs::list_files_in_dir(&test_dir_path);
                 println!("test_dir_files: {:?}", test_dir_files.len());
                 for file in test_dir_files.iter() {
-                    println!("file: {:?}", file);
+                    println!("file: {file:?}");
                 }
-                assert_eq!(test_dir_files.len(), 2);
+                assert_eq!(test_dir_files.len(), 4);
 
                 assert!(test_dir_path.join("1.jpg").exists());
                 assert!(test_dir_path.join("2.jpg").exists());
+                assert!(test_dir_path.join("3.jpg").exists());
+                assert!(test_dir_path.join("4.jpg").exists());
 
                 Ok(())
             })
@@ -444,8 +447,14 @@ mod tests {
 
                 command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
 
+                let opts = PushOpts {
+                    remote: remote_name.to_string(),
+                    branch: "main".to_string(),
+                    ..Default::default()
+                };
+
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 Ok(())
             })
@@ -486,13 +495,13 @@ mod tests {
             test::write_txt_file_to_path(&filepath, "Adding back new")?;
             repositories::add(&local_repo, &filepath).await?;
             repositories::commit(&local_repo, "Adding back file_to_modify.txt")?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: DEFAULT_BRANCH_NAME.to_string(),
+                ..Default::default()
+            };
 
-            repositories::push::push_remote_branch(
-                &local_repo,
-                DEFAULT_REMOTE_NAME,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Clone with the --all flag
             test::run_empty_dir_test_async(|new_repo_dir| async move {
@@ -514,8 +523,14 @@ mod tests {
 
                 command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
 
+                let opts = PushOpts {
+                    remote: remote_name.to_string(),
+                    branch: "main".to_string(),
+                    ..Default::default()
+                };
+
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 Ok(())
             })
@@ -561,8 +576,8 @@ mod tests {
                 )
                 .await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // 2 test, 5 train, 1 labels
-                assert_eq!(8, cloned_num_files);
+                // 4 test, 7 train, 1 labels
+                assert_eq!(12, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 
@@ -690,12 +705,13 @@ mod tests {
             )?;
             repositories::add(&local_repo, &new_file_full_path).await?;
             repositories::commit(&local_repo, "Added new_on_feature.txt to annotations/test")?;
-            repositories::push::push_remote_branch(
-                &local_repo,
-                DEFAULT_REMOTE_NAME,
-                feature_branch_name,
-            )
-            .await?;
+
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: feature_branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Switch original_local_repo back to main for good measure, though not strictly necessary for this test's focus
             repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;

@@ -103,11 +103,9 @@ fn perform_indexing(
             conn.execute("SET hnsw_enable_experimental_persistence = true;", [])?;
 
             // Convert column type
-            let sql = format!(
-                "ALTER TABLE df ALTER COLUMN {} TYPE FLOAT[{}];",
-                column_name, vector_length
-            );
-            log::debug!("Updating column type: {}", sql);
+            let sql =
+                format!("ALTER TABLE df ALTER COLUMN {column_name} TYPE FLOAT[{vector_length}];");
+            log::debug!("Updating column type: {sql}");
             conn.execute(&sql, [])?;
             Ok(())
         })
@@ -134,9 +132,7 @@ pub fn index(
 
     let column_name = column.to_string();
     log::debug!(
-        "Indexing embeddings for column: {} using background thread: {}",
-        column_name,
-        use_background_thread
+        "Indexing embeddings for column: {column_name} using background thread: {use_background_thread}"
     );
 
     let vector_length = get_embedding_length(workspace, &path, column)?;
@@ -150,7 +146,7 @@ pub fn index(
         // Spawn background thread for VSS setup
         std::thread::spawn(move || {
             if let Err(e) = perform_indexing(&workspace, path, column_name, vector_length) {
-                log::error!("Error in background indexing thread: {}", e);
+                log::error!("Error in background indexing thread: {e}");
             }
         });
     } else {
@@ -168,11 +164,11 @@ fn get_embedding_length(
     let path = path.as_ref();
     let column = column.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("Embedding index DB Path: {:?}", db_path);
+    log::debug!("Embedding index DB Path: {db_path:?}");
     let result_set = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             // Make sure the existing column is a float vector
-            let sql = format!("SELECT {} FROM df LIMIT 1;", column);
+            let sql = format!("SELECT {column} FROM df LIMIT 1;");
             let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
             Ok(result_set)
         })
@@ -181,7 +177,7 @@ fn get_embedding_length(
         return Err(OxenError::basic_str("No items found"));
     };
     let first_column = item.column(0);
-    log::debug!("First column: {:?}", first_column);
+    log::debug!("First column: {first_column:?}");
 
     // Check if the column is a list of floats/doubles
     let vector_length = match first_column.data_type() {
@@ -229,7 +225,7 @@ fn get_embedding_length(
         _ => return Err(OxenError::basic_str("Column must be a list type")),
     };
 
-    log::debug!("Vector length: {}", vector_length);
+    log::debug!("Vector length: {vector_length}");
     // Write the vector length to a file we can use in the query
     write_embedding_size_to_config(workspace, path, column, vector_length)?;
     Ok(vector_length)
@@ -244,8 +240,8 @@ pub fn embedding_from_query(
     let path = path.as_ref();
     let column = query.column.clone();
     let query = query.query.clone();
-    let sql = format!("SELECT {} FROM df WHERE {};", column, query);
-    log::debug!("Executing: {}", sql);
+    let sql = format!("SELECT {column} FROM df WHERE {query};");
+    log::debug!("Executing: {sql}");
     let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
     // log::debug!("Result set: {:?}", result_set);
 
@@ -302,7 +298,7 @@ pub fn similarity_query(
     let similarity_column = opts.name.clone();
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
-    log::debug!("Embedding query DB Path: {:?}", db_path);
+    log::debug!("Embedding query DB Path: {db_path:?}");
     let (avg_embedding, vector_length) = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| embedding_from_query(conn, workspace, path.clone(), opts))
     })?;
@@ -382,7 +378,7 @@ pub fn nearest_neighbors(
                 1
             };
             let offset = (page_num - 1) * limit;
-            let sql = format!("{} LIMIT {} OFFSET {}", base_sql, limit, offset);
+            let sql = format!("{base_sql} LIMIT {limit} OFFSET {offset}");
 
             // Print just the first 50 characters of the query
             log::debug!("Executing similarity query: {}", &sql);
@@ -436,7 +432,7 @@ pub fn query_with_conn(
         1
     };
     let offset = (page_num - 1) * limit;
-    sql = format!("{} LIMIT {} OFFSET {}", sql, limit, offset);
+    sql = format!("{sql} LIMIT {limit} OFFSET {offset}");
 
     // Print just the first 50 characters of the query
     log::debug!("Executing similarity query: {}", &sql[..50]);
@@ -473,7 +469,7 @@ pub fn query(workspace: &Workspace, opts: &EmbeddingQueryOpts) -> Result<DataFra
         1
     };
     let offset = (page_num - 1) * limit;
-    sql = format!("{} LIMIT {} OFFSET {}", sql, limit, offset);
+    sql = format!("{sql} LIMIT {limit} OFFSET {offset}");
 
     // Print just the first 50 characters of the query
     log::debug!("Executing similarity query: {}", &sql[..50]);

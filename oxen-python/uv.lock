@@ -301,8 +301,8 @@ wheels = [
 
 [[package]]
 name = "oxenai"
-version = "0.37.0"
-source = { virtual = "." }
+version = "0.38.4"
+source = { editable = "." }
 dependencies = [
     { name = "fsspec" },
     { name = "maturin" },
@@ -319,7 +319,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fsspec", specifier = ">=2025.7.0" },
+    { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "maturin", specifier = ">=1.9.3" },
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "polars", specifier = ">=1.32.0" },

@@ -5,6 +5,7 @@ use liboxen::error::OxenError;
 use liboxen::model::Branch;
 use liboxen::model::LocalRepository;
 use liboxen::opts::CloneOpts;
+use liboxen::opts::PushOpts;
 use liboxen::opts::RmOpts;
 use pyo3::prelude::*;
 
@@ -98,9 +99,8 @@ impl PyRepo {
         // make sure metadata is valid json, return oxen error if not
         let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
             OxenError::basic_str(format!(
-                "Metadata must be valid JSON: ''\n{}",
+                "Metadata must be valid JSON: ''\n{e}",
                 // metadata.as_ref(),
-                e
             ))
         })?;
 
@@ -202,8 +202,15 @@ impl PyRepo {
                     // Delete the remote branch
                     api::client::branches::delete_remote(&repo, remote, branch).await
                 } else {
+                    let opts = PushOpts {
+                        remote: remote.to_string(),
+                        branch: branch.to_string(),
+                        delete,
+                        missing_files_commit_id: None,
+                        missing_files: false,
+                    };
                     // Push to the remote branch
-                    repositories::push::push_remote_branch(&repo, remote, branch).await
+                    repositories::push::push_remote_branch(&repo, &opts).await
                 }
             });
 

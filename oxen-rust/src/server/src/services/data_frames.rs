@@ -10,6 +10,10 @@ pub fn data_frames() -> Scope {
             web::post().to(controllers::data_frames::index),
         )
         .route(
+            "/from_directory/{resource:.*}",
+            web::post().to(controllers::data_frames::from_directory),
+        )
+        .route(
             "/{resource:.*}",
             web::get().to(controllers::data_frames::get),
         )

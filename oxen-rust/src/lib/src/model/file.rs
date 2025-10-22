@@ -69,6 +69,12 @@ pub struct TempFileNew {
     pub contents: FileContents,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct TempFilePathNew {
+    pub path: PathBuf,
+    pub temp_file_path: PathBuf,
+}
+
 impl FileNew {
     pub fn new_text(path: impl AsRef<Path>, contents: impl AsRef<str>, user: User) -> FileNew {
         FileNew {

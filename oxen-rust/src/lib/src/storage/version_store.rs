@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fs::Metadata;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncSeek};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 use tokio_stream::Stream;
 
 use crate::constants;
@@ -31,6 +32,12 @@ pub trait AsyncReadSeek: AsyncRead + AsyncSeek + Send + Sync + Unpin {}
 
 /// Implement AsyncReadSeek for any type that implements both AsyncRead and AsyncSeek
 impl<T: AsyncRead + AsyncSeek + Send + Sync + Unpin> AsyncReadSeek for T {}
+
+/// Trait for async write operations
+pub trait AsyncWriteSeek: AsyncWrite + AsyncSeek + Send + Sync + Unpin {}
+
+/// Implement AsyncWriteSeek for any type that implements both AsyncWrite and AsyncSeek
+impl<T: AsyncWrite + AsyncSeek + Send + Sync + Unpin> AsyncWriteSeek for T {}
 
 /// Trait for sync read and seek operations
 pub trait ReadSeek: Read + Seek + Send + Sync {}
@@ -73,14 +80,25 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `chunk_number` - The chunk number to store
+    /// * `offset` - The starting byte position of the chunk
     /// * `data` - The raw bytes to store
     async fn store_version_chunk(
         &self,
         hash: &str,
-        chunk_number: u32,
+        offset: u64,
         data: &[u8],
     ) -> Result<(), OxenError>;
+
+    /// Get a writer for a chunk of a version file
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `offset` - The starting byte position of the chunk
+    async fn get_version_chunk_writer(
+        &self,
+        hash: &str,
+        offset: u64,
+    ) -> Result<Box<dyn AsyncWrite + Send + Unpin>, OxenError>;
 
     /// Retrieve a chunk of a version file
     ///
@@ -112,7 +130,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u32>, OxenError>;
+    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
 
     /// Combine all the chunks for a version file into a single file
     ///
@@ -128,6 +146,12 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     fn open_version(&self, hash: &str) -> Result<Box<dyn ReadSeek + Send + Sync>, OxenError>;
+
+    /// Get metadata of a version file
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    async fn get_version_metadata(&self, hash: &str) -> Result<Metadata, OxenError>;
 
     /// Retrieve a version file's contents as bytes (less efficient for large files)
     ///

@@ -179,35 +179,35 @@ pub fn get_file_metadata_with_extension(
         EntryDataType::Text => match text::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataText(metadata))),
             Err(err) => {
-                log::warn!("could not compute text metadata: {}", err);
+                log::warn!("could not compute text metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Image => match image::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataImage(metadata))),
             Err(err) => {
-                log::warn!("could not compute image metadata: {}", err);
+                log::warn!("could not compute image metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Video => match video::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataVideo(metadata))),
             Err(err) => {
-                log::warn!("could not compute video metadata: {}", err);
+                log::warn!("could not compute video metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Audio => match audio::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataAudio(metadata))),
             Err(err) => {
-                log::warn!("could not compute audio metadata: {}", err);
+                log::warn!("could not compute audio metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Tabular => match tabular::get_metadata_with_extension(path, extension) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
             Err(err) => {
-                log::warn!("could not compute tabular metadata: {}", err);
+                log::warn!("could not compute tabular metadata: {err}");
                 Ok(None)
             }
         },
@@ -235,7 +235,7 @@ mod tests {
         let file = test::test_audio_file_with_name("121-121726-0005.flac");
         let metadata = repositories::metadata::get(file).unwrap();
 
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 37096);
         assert_eq!(metadata.data_type, EntryDataType::Audio);

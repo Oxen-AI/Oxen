@@ -16,6 +16,10 @@ pub fn commits() -> Scope {
             web::post().to(controllers::commits::upload_chunk),
         )
         .route(
+            "/missing_files",
+            web::get().to(controllers::commits::list_missing_files),
+        )
+        .route(
             "/missing",
             web::post().to(controllers::commits::list_missing),
         )

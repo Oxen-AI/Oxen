@@ -158,6 +158,22 @@ class Workspace:
             # Add a single file
             self._workspace.add(src, dst)
 
+
+    def add_bytes(self, src: str, buf: bytes, dst: str = ""):
+        """
+        Adds from a memory buffer to the workspace
+
+        Args:
+            src: `str`
+                The relative path to be used as the entry's name in the workspace
+            buf: `bytes`
+                The memory buffer to be read from for this entry
+            dst: `str`
+                The path in the remote repo where the file will be added
+        """
+
+        self._workspace.add_bytes(src, buf, dst)
+
     def rm(self, path: str):
         """
         Remove a file from the workspace

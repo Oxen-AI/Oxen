@@ -83,14 +83,15 @@ You can install through homebrew or pip or from our [releases page](https://gith
 
 ### 🐂 Install Command Line Tool
 
-```bash CLI
-brew tap Oxen-AI/oxen
+Install via [Homebrew](https://brew.sh/):
+
+```bash
 brew install oxen
 ```
 
 ### 🐍 Install Python Library
 
-```bash Python
+```bash
 pip install oxenai
 ```
 
@@ -100,7 +101,7 @@ Clone your first Oxen repository from the [OxenHub](https://oxen.ai/explore).
 
 <CodeGroup>
 
-```bash CLI
+```bash
 oxen clone https://hub.oxen.ai/ox/CatDogBBox
 ```
 
@@ -124,14 +125,14 @@ If you are building anything with Oxen.ai or have any questions we would love to
 
 Set up virtual environment:
 
-```Bash
+```bash
 # Set up your python virtual environment
 $ python -m venv ~/.venv_oxen # could be python3
 $ source ~/.venv_oxen/bin/activate
 $ pip install -r requirements.txt
 ```
 
-```Bash
+```bash
 # Install rust
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
@@ -142,7 +143,7 @@ $ maturin develop
 
 ## Test
 
-```Bash
+```bash
 $ pytest -s tests/
 ```
 
@@ -165,4 +166,3 @@ We built Oxen to be the tool we wish we had.
 <!---------------------------------------------------------------------------->
 
 [Learn The Basics]: https://img.shields.io/badge/Learn_The_Basics-37a779?style=for-the-badge
-

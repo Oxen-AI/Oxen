@@ -1,5 +1,5 @@
-use actix_web::web;
 use actix_web::Scope;
+use actix_web::{http::Method, web};
 
 use crate::controllers;
 
@@ -8,16 +8,22 @@ pub mod chunks;
 pub fn versions() -> Scope {
     web::scope("/versions")
         .route(
+            // Deprecated. Only kept to support older clients before v0.37.2
             "",
             web::get().to(controllers::entries::download_data_from_version_paths),
         )
         .route("", web::post().to(controllers::versions::batch_upload))
         .route(
+            "",
+            web::method(Method::from_bytes(b"QUERY").unwrap())
+                .to(controllers::versions::batch_download),
+        )
+        .route(
             "/{version_id}/metadata",
             web::get().to(controllers::versions::metadata),
         )
         .route(
-            "/{version_id}/chunks/{chunk_number}",
+            "/{version_id}/chunks",
             web::put().to(controllers::versions::chunks::upload),
         )
         .route(

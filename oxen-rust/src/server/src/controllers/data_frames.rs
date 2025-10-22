@@ -5,15 +5,17 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::constants;
 use liboxen::error::PathBufError;
-use liboxen::model::DataFrameSize;
+use liboxen::model::{DataFrameSize, NewCommitBody};
 use liboxen::opts::df_opts::DFOptsView;
 use liboxen::repositories;
+use liboxen::view::data_frames::FromDirectoryRequest;
 use liboxen::view::entries::ResourceVersion;
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use liboxen::opts::{DFOpts, PaginateOpts};
 use liboxen::view::{
-    JsonDataFrameView, JsonDataFrameViewResponse, JsonDataFrameViews, Pagination, StatusMessage,
+    CommitResponse, JsonDataFrameView, JsonDataFrameViewResponse, JsonDataFrameViews, Pagination,
+    StatusMessage,
 };
 
 use uuid::Uuid;
@@ -38,11 +40,7 @@ pub async fn get(
     };
 
     if let Some((start, end)) = opts.slice_indices() {
-        log::debug!(
-            "controllers::data_frames Got slice params {}..{}",
-            start,
-            end
-        );
+        log::debug!("controllers::data_frames Got slice params {start}..{end}");
     } else {
         let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
         let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
@@ -52,7 +50,7 @@ pub async fn get(
 
         let start = if page == 0 { 0 } else { page_size * (page - 1) };
         let end = page_size * page;
-        opts.slice = Some(format!("{}..{}", start, end));
+        opts.slice = Some(format!("{start}..{end}"));
     }
 
     let resource_version = ResourceVersion {
@@ -135,4 +133,54 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     }
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
+}
+
+pub async fn from_directory(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let resource = parse_resource(&req, &repo)?;
+    let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+    let branch = resource.clone().branch.ok_or(OxenHttpError::NotFound)?;
+    let path = resource.path.clone();
+    let data: Result<FromDirectoryRequest, serde_json::Error> = serde_json::from_str(&body);
+    let data = match data {
+        Ok(data) => data,
+        Err(err) => {
+            log::error!("Unable to parse body. Err: {err}\n{body}");
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+        }
+    };
+
+    let output_path = data.output_path.unwrap_or("".to_string());
+    let extra_columns = data.extra_columns.unwrap_or(vec![]);
+    let commit_message = data.commit_message.unwrap_or("".to_string());
+    let user_email = data.user_email.unwrap_or("".to_string());
+    let recursive = data.recursive.unwrap_or(false);
+    let temp_workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let user_name = data.user_name.unwrap_or("".to_string());
+    let new_commit = NewCommitBody {
+        author: user_name,
+        email: user_email,
+        message: commit_message,
+    };
+    let commit = repositories::workspaces::data_frames::from_directory(
+        &repo,
+        &temp_workspace,
+        &path,
+        &output_path,
+        &extra_columns,
+        recursive,
+        &new_commit,
+        &branch,
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
 }

@@ -32,13 +32,13 @@ pub async fn commit(
 ) -> Result<Commit, OxenError> {
     let uri = format!("/workspaces/{workspace_id}/commit/{branch_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("commit_staged {}\n{:?}", url, commit);
+    log::debug!("commit_staged {url}\n{commit:?}");
 
     let client = client::new_for_url(&url)?;
     let res = client.post(&url).json(&commit).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("commit_staged got body: {}", body);
+    log::debug!("commit_staged got body: {body}");
     let response: Result<CommitResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => {
@@ -51,7 +51,7 @@ pub async fn commit(
             api::client::commits::post_push_complete(remote_repo, &branch, &commit.id).await?;
             api::client::repositories::post_push(remote_repo, &branch, &commit.id).await?;
 
-            println!("🐂 commit {} complete!", commit);
+            println!("🐂 commit {commit} complete!");
             Ok(commit)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -212,7 +212,7 @@ mod tests {
                 workspace_2_id,
             )
             .await?;
-            println!("mergeable: {:?}", mergeable);
+            println!("mergeable: {mergeable:?}");
             assert!(mergeable.is_mergeable);
             assert_eq!(mergeable.conflicts.len(), 0);
             assert_eq!(mergeable.commits.len(), 2);
@@ -354,7 +354,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let column_name = "my_new_column";
-            let data = format!(r#"{{"name":"{}", "data_type": "str"}}"#, column_name);
+            let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
 
             api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
             let result = api::client::workspaces::data_frames::columns::create(
@@ -396,7 +396,7 @@ mod tests {
                 .iter()
                 .any(|field| field.name == column_name)
             {
-                panic!("Column `{}` does not exist in the data frame", column_name);
+                panic!("Column `{column_name}` does not exist in the data frame");
             }
 
             Ok(remote_repo)

@@ -120,6 +120,9 @@ pub use upload::UploadCmd;
 pub mod workspace;
 pub use workspace::WorkspaceCmd;
 
+pub mod prune;
+pub use prune::PruneCmd;
+
 #[async_trait]
 pub trait RunCmd {
     fn name(&self) -> &str;

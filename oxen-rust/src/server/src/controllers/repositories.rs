@@ -1,7 +1,7 @@
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param};
+use crate::params::{app_data, path_param};
 
 use futures_util::stream::StreamExt; // Import StreamExt for the next() method
 use futures_util::TryStreamExt;
@@ -9,7 +9,6 @@ use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::repositories;
-use liboxen::util;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
     DataTypeView, RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
@@ -23,7 +22,6 @@ use liboxen::view::{
 use actix_multipart::Multipart; // Gives us Multipart
 use liboxen::model::{RepoNew, User};
 
-use actix_files::NamedFile;
 use actix_web::{web, HttpRequest, HttpResponse, Result};
 use serde_json::from_slice;
 use std::path::PathBuf;
@@ -119,11 +117,11 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
                 }))
             }
             Ok(None) => {
-                log::debug!("404 Could not find repo: {}", name);
+                log::debug!("404 Could not find repo: {name}");
                 Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
             }
             Err(err) => {
-                log::debug!("Err finding repo: {} => {:?}", name, err);
+                log::debug!("Err finding repo: {name} => {err:?}");
                 Ok(
                     HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()),
@@ -168,13 +166,13 @@ pub async fn create(
             let mut body_bytes = Vec::new();
             while let Some(chunk) = payload.next().await {
                 let chunk = chunk.map_err(|e| {
-                    println!("Failed to read payload: {:?}", e);
+                    println!("Failed to read payload: {e:?}");
                     OxenHttpError::BadRequest("Failed to read payload".into())
                 })?;
                 body_bytes.extend_from_slice(&chunk);
             }
             let json_data: RepoNew = from_slice(&body_bytes).map_err(|e| {
-                println!("Failed to parse JSON: {:?}", e);
+                println!("Failed to parse JSON: {e:?}");
                 OxenHttpError::BadRequest("Invalid JSON".into())
             })?;
             return handle_json_creation(app_data, json_data).await;
@@ -225,18 +223,18 @@ async fn handle_json_creation(
             }
             Err(err) => {
                 println!("Err repositories::create: {err:?}");
-                log::error!("Err repositories::commits::latest_commit: {:?}", err);
+                log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
         Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
         Err(err) => {
             println!("Err repositories::create: {err:?}");
-            log::error!("Err repositories::create: {:?}", err);
+            log::error!("Err repositories::create: {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
@@ -364,17 +362,17 @@ async fn handle_multipart_creation(
                 }))
             }
             Err(err) => {
-                log::error!("Err repositories::commits::latest_commit: {:?}", err);
+                log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
         Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
         Err(err) => {
-            log::error!("Err repositories::create: {:?}", err);
+            log::error!("Err repositories::create: {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
@@ -391,8 +389,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 
     // Delete in a background thread because it could take awhile
     std::thread::spawn(move || match repositories::delete(&repository) {
-        Ok(_) => log::info!("Deleted repo: {}/{}", namespace, name),
-        Err(err) => log::error!("Err deleting repo: {}", err),
+        Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
+        Err(err) => log::error!("Err deleting repo: {err}"),
     });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
@@ -409,11 +407,7 @@ pub async fn transfer_namespace(
     let data: NamespaceView = serde_json::from_str(&body)?;
     let to_namespace = data.namespace;
 
-    log::debug!(
-        "transfer_namespace from: {} to: {}",
-        from_namespace,
-        to_namespace
-    );
+    log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
     repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
     let repo =
@@ -430,47 +424,6 @@ pub async fn transfer_namespace(
             is_empty: repositories::is_empty(&repo)?,
         },
     }))
-}
-
-pub async fn get_file_for_branch(req: HttpRequest) -> Result<NamedFile, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let filepath: PathBuf = req.match_info().query("filename").parse().unwrap();
-    let branch_name: &str = req.match_info().get("branch_name").unwrap();
-
-    let branch = repositories::branches::get_by_name(&repo, branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(branch_name))?;
-    let version_path = util::fs::version_path_for_commit_id(&repo, &branch.commit_id, &filepath)?;
-    log::debug!(
-        "get_file_for_branch looking for {:?} -> {:?}",
-        filepath,
-        version_path
-    );
-    Ok(NamedFile::open(version_path)?)
-}
-
-pub async fn get_file_for_commit_id(req: HttpRequest) -> Result<NamedFile, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let resource = parse_resource(&req, &repo)?;
-    let commit = resource
-        .clone()
-        .commit
-        .ok_or(OxenError::resource_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
-
-    let version_path = util::fs::version_path_for_commit_id(&repo, &commit.id, &resource.path)?;
-    log::debug!(
-        "get_file_for_commit_id looking for {:?} -> {:?}",
-        resource.path,
-        version_path
-    );
-    Ok(NamedFile::open(version_path)?)
 }
 
 #[cfg(test)]
@@ -539,7 +492,7 @@ mod tests {
         let namespace = "Test-Namespace";
         let name = "Testing-Name";
         test::create_local_repo(&sync_dir, namespace, name)?;
-        log::info!("test created local repo: {}", name);
+        log::info!("test created local repo: {name}");
 
         let uri = format!("/api/repos/{namespace}/{name}");
         let req = test::repo_request(&sync_dir, &uri, namespace, name);

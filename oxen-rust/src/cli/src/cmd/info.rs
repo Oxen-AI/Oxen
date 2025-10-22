@@ -63,7 +63,7 @@ impl RunCmd for InfoCmd {
 
         if opts.output_as_json {
             let json = serde_json::to_string(&metadata)?;
-            println!("{}", json);
+            println!("{json}");
         } else {
             // hash size data_type mime_type extension last_updated_commit_id
             if opts.verbose {

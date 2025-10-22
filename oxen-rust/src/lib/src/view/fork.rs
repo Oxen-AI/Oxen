@@ -92,7 +92,7 @@ impl FromStr for ForkStatus {
             "complete" => Ok(ForkStatus::Complete),
             "failed" => Ok(ForkStatus::Failed(String::new())),
             "started" => Ok(ForkStatus::Started),
-            _ => Err(format!("Invalid status: {}", s)),
+            _ => Err(format!("Invalid status: {s}")),
         }
     }
 }

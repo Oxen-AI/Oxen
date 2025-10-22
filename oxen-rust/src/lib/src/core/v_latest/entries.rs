@@ -55,29 +55,25 @@ pub fn list_directory(
         version: revision.clone(),
     });
 
-    log::debug!(
-        "list_directory directory {:?} revision {:?}",
-        directory,
-        revision
-    );
+    log::debug!("list_directory directory {directory:?} revision {revision:?}");
 
     let commit = parsed_resource
         .commit
         .clone()
         .ok_or(OxenError::revision_not_found(revision.into()))?;
 
-    log::debug!("list_directory commit {}", commit);
+    log::debug!("list_directory commit {commit}");
 
     let dir = repositories::tree::get_dir_with_children(repo, &commit, directory)?
         .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
 
-    log::debug!("list_directory dir {}", dir);
+    log::debug!("list_directory dir {dir}");
 
     let EMerkleTreeNode::Directory(dir_node) = &dir.node else {
         return Err(OxenError::resource_not_found(directory.to_str().unwrap()));
     };
 
-    log::debug!("list_directory dir_node {}", dir_node);
+    log::debug!("list_directory dir_node {dir_node}");
 
     // Found commits is used to cache the commits so that we don't have
     // to read them from disk again while looping over entries
@@ -89,7 +85,7 @@ pub fn list_directory(
             dir_entry,
         ))
     });
-    log::debug!("list_directory dir_entry {:?}", dir_entry);
+    log::debug!("list_directory dir_entry {dir_entry:?}");
     let entries: Vec<MetadataEntry> =
         dir_entries(repo, &dir, directory, parsed_resource, &mut found_commits)?;
     log::debug!("list_directory got {} entries", entries.len());
@@ -99,6 +95,7 @@ pub fn list_directory(
 
     let entries: Vec<EMetadataEntry> = if parsed_resource.workspace.is_some() {
         repositories::workspaces::populate_entries_with_workspace_data(
+            repo,
             directory,
             parsed_resource.workspace.as_ref().unwrap(),
             &entries,
@@ -133,9 +130,9 @@ pub fn get_meta_entry(
         .ok_or(OxenError::parsed_resource_not_found(
             parsed_resource.clone(),
         ))?;
-    log::debug!("get_meta_entry path: {:?} commit: {}", path, commit);
+    log::debug!("get_meta_entry path: {path:?} commit: {commit}");
     let node = repositories::tree::get_dir_without_children(repo, &commit, path)?;
-    log::debug!("get_meta_entry node: {:?}", node);
+    log::debug!("get_meta_entry node: {node:?}");
 
     if let Some(node) = node {
         log::debug!(
@@ -463,7 +460,7 @@ fn traverse_and_update_sizes_and_counts(
 
     match &mut node.node {
         EMerkleTreeNode::Commit(commit_node) => {
-            log::debug!("Traversing node {:?}", commit_node);
+            log::debug!("Traversing node {commit_node:?}");
             process_children(
                 repo,
                 children,
@@ -475,7 +472,7 @@ fn traverse_and_update_sizes_and_counts(
             add_children_to_db(&mut dir_db, &node.children)?;
         }
         EMerkleTreeNode::VNode(vnode) => {
-            log::debug!("Traversing vnode {:?}", vnode);
+            log::debug!("Traversing vnode {vnode:?}");
             process_children(
                 repo,
                 children,

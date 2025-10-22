@@ -16,16 +16,18 @@ use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager,
+    process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
 use crate::error::OxenError;
+use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::LocalRepository;
-use crate::model::{Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
 use crate::view::{ErrorFileInfo, FileWithHash};
@@ -90,6 +92,33 @@ pub fn add_version_file(
     Ok(dst_path.to_path_buf())
 }
 
+// Skips re-computing the hash in the add logic
+pub fn add_version_file_with_hash(
+    workspace: &Workspace,
+    version_path: impl AsRef<Path>,
+    dst_path: impl AsRef<Path>,
+    file_hash: &str,
+) -> Result<PathBuf, OxenError> {
+    // version_path is where the file is stored, dst_path is the relative path to the repo
+    let version_path = version_path.as_ref();
+    let dst_path = dst_path.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+
+    with_staged_db_manager(workspace_repo, |staged_db_manager| {
+        stage_file_with_hash(
+            workspace,
+            version_path,
+            dst_path,
+            file_hash,
+            staged_db_manager,
+            &seen_dirs,
+        )
+    })?;
+
+    Ok(dst_path.to_path_buf())
+}
+
 pub fn add_version_files(
     repo: &LocalRepository,
     workspace: &Workspace,
@@ -123,7 +152,7 @@ pub fn add_version_files(
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
-                        error: format!("Failed to add file to staged db: {}", e),
+                        error: format!("Failed to add file to staged db: {e}"),
                     });
                     continue;
                 }
@@ -160,7 +189,7 @@ pub async fn remove_files_from_staged_db(
         match delete(workspace, &path) {
             Ok(_) => {}
             Err(e) => {
-                log::debug!("Error removing file path {path:?}: {:?}", e);
+                log::debug!("Error removing file path {path:?}: {e:?}");
                 err_files.push(path);
             }
         }
@@ -210,20 +239,66 @@ pub async fn import(
 
     if filename.is_empty() {
         return Err(OxenError::file_import_error(format!(
-            "URL has an invalid filename {}",
-            url
+            "URL has an invalid filename {url}"
         )));
     }
 
-    log::debug!("files::import_file Got uploaded file name: {}", filename);
+    log::debug!("files::import_file Got uploaded file name: {filename}");
 
-    let auth_header_value = HeaderValue::from_str(auth).map_err(|_e| {
-        OxenError::file_import_error(format!("Invalid header auth value {}", auth))
-    })?;
+    let auth_header_value = HeaderValue::from_str(auth)
+        .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
     fetch_file(url, auth_header_value, directory, filename, workspace).await?;
 
     Ok(())
+}
+
+pub async fn upload_zip(
+    commit_message: &str,
+    user: &User,
+    temp_files: Vec<TempFilePathNew>,
+    workspace: &Workspace,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    for temp_file in temp_files {
+        let files = decompress_zip(&temp_file.temp_file_path).await?;
+
+        for file in files.iter() {
+            // Skip files in __MACOSX directories
+            if file
+                .components()
+                .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
+            {
+                log::debug!("Skipping __MACOSX file: {:?}", file);
+                continue;
+            }
+
+            repositories::workspaces::files::add(workspace, file).await?;
+        }
+    }
+    let data = NewCommitBody {
+        message: commit_message.to_string(),
+        author: user.name.clone(),
+        email: user.email.clone(),
+    };
+    let res = repositories::workspaces::commit(workspace, &data, &branch.name);
+    match res {
+        Ok(commit) => {
+            log::debug!("workspace::commit ✅ success! commit {commit:?}");
+            Ok(commit)
+        }
+        Err(OxenError::WorkspaceBehind(workspace)) => {
+            log::error!(
+                "unable to commit branch {:?}. Workspace behind",
+                branch.name
+            );
+            Err(OxenError::WorkspaceBehind(workspace))
+        }
+        Err(err) => {
+            log::error!("unable to commit branch {:?}. Err: {}", branch.name, err);
+            Err(err)
+        }
+    }
 }
 
 async fn fetch_file(
@@ -238,7 +313,7 @@ async fn fetch_file(
         .header("Authorization", auth_header_value)
         .send()
         .await
-        .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {}", e)))?;
+        .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
 
     let resp_headers = response.headers();
 
@@ -247,40 +322,45 @@ async fn fetch_file(
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
 
-    let content_length = response.content_length().ok_or_else(|| {
-        OxenError::file_import_error("Fetch file response missing content length")
-    })?;
-
-    if content_length > MAX_CONTENT_LENGTH {
-        return Err(OxenError::file_import_error(format!(
-            "Content length {} exceeds maximum allowed size of 1GB",
-            content_length
-        )));
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length {
+        if content_length > MAX_CONTENT_LENGTH {
+            return Err(OxenError::file_import_error(format!(
+                "Content length {content_length} exceeds maximum allowed size of 1GB"
+            )));
+        }
     }
     let is_zip = content_type.contains("zip");
 
     log::debug!("files::import_file Got filename : {filename:?}");
 
     let filepath = directory.join(filename);
-    log::debug!("files::import_file got download filepath: {:?}", filepath);
+    log::debug!("files::import_file got download filepath: {filepath:?}");
 
     // handle download stream
     let mut stream = response.bytes_stream();
     let mut buffer = web::BytesMut::new();
     let mut save_path = PathBuf::new();
+    let mut bytes_downloaded: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| OxenError::file_import_error("Error reading file stream"))?;
         let processed_chunk = chunk.to_vec();
         buffer.extend_from_slice(&processed_chunk);
+        bytes_downloaded += processed_chunk.len() as u64;
 
+        if bytes_downloaded > MAX_CONTENT_LENGTH {
+            delete_file(workspace, &filepath)?;
+            return Err(OxenError::file_import_error(
+                "Content length exceeds maximum allowed size of 1GB",
+            ));
+        }
         if buffer.len() > BUFFER_SIZE_THRESHOLD {
             save_path = save_stream(workspace, &filepath, buffer.split().freeze().to_vec())
                 .await
                 .map_err(|e| {
                     OxenError::file_import_error(format!(
-                        "Error occurred when saving file stream: {}",
-                        e
+                        "Error occurred when saving file stream: {e}"
                     ))
                 })?;
         }
@@ -290,31 +370,28 @@ async fn fetch_file(
         save_path = save_stream(workspace, &filepath, buffer.freeze().to_vec())
             .await
             .map_err(|e| {
-                OxenError::file_import_error(format!(
-                    "Error occurred when saving file stream: {}",
-                    e
-                ))
+                OxenError::file_import_error(format!("Error occurred when saving file stream: {e}"))
             })?;
     }
-    log::debug!("workspace::files::import_file save_path is {:?}", save_path);
+    log::debug!("workspace::files::import_file save_path is {save_path:?}");
 
     // check if the file size matches
-    let bytes_written = if save_path.exists() {
-        util::fs::metadata(&save_path)?.len()
-    } else {
-        0
-    };
+    if let Some(content_length) = content_length {
+        let bytes_written = if save_path.exists() {
+            util::fs::metadata(&save_path)?.len()
+        } else {
+            0
+        };
 
-    log::debug!(
-        "workspace::files::import_file has written {:?} bytes. It's expecting {:?} bytes",
-        bytes_written,
-        content_length
-    );
+        log::debug!(
+            "workspace::files::import_file has written {bytes_written:?} bytes. It's expecting {content_length:?} bytes"
+        );
 
-    if bytes_written != content_length {
-        return Err(OxenError::file_import_error(
-            "Content length does not match. File incomplete.",
-        ));
+        if bytes_written != content_length {
+            return Err(OxenError::file_import_error(
+                "Content length does not match. File incomplete.",
+            ));
+        }
     }
 
     // decompress and stage file
@@ -323,16 +400,34 @@ async fn fetch_file(
         log::debug!("workspace::files::import_file unzipped file");
 
         for file in files.iter() {
-            log::debug!("file::import add file {:?}", file);
+            log::debug!("file::import add file {file:?}");
             let path = repositories::workspaces::files::add(workspace, file).await?;
-            log::debug!("file::import add file ✅ success! staged file {:?}", path);
+            log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
         log::debug!("file::import add file {:?}", &filepath);
         let path = repositories::workspaces::files::add(workspace, &save_path).await?;
-        log::debug!("file::import add file ✅ success! staged file {:?}", path);
+        log::debug!("file::import add file ✅ success! staged file {path:?}");
     }
 
+    Ok(())
+}
+
+fn delete_file(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+    let path = path.as_ref();
+    let workspace_repo = &workspace.workspace_repo;
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let full_path = workspace_repo.path.join(&relative_path);
+
+    if full_path.exists() {
+        std::fs::remove_file(&full_path).map_err(|e| {
+            OxenError::file_import_error(format!(
+                "Failed to remove file {}: {}",
+                full_path.display(),
+                e
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -385,26 +480,33 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|e| OxenError::basic_str(format!("Failed to access zip file: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to access zip file: {e}")))?;
 
     // Calculate total uncompressed size
     let mut total_size: u64 = 0;
     for i in 0..archive.len() {
         let zip_file = archive.by_index(i).map_err(|e| {
-            OxenError::basic_str(format!("Failed to access zip file at index {}: {}", i, e))
+            OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
 
         let uncompressed_size = zip_file.size();
         let compressed_size = zip_file.compressed_size();
 
         // Check individual file compression ratio
-        let compression_ratio = uncompressed_size / compressed_size;
-        if compressed_size > 0 && (compression_ratio) > MAX_COMPRESSION_RATIO {
-            return Err(OxenError::basic_str(format!(
-                "Suspicious zip compression ratio: {} detected",
-                compression_ratio
-            )));
+        if compressed_size > 0 {
+            let compression_ratio = uncompressed_size / compressed_size;
+            if compression_ratio > MAX_COMPRESSION_RATIO {
+                return Err(OxenError::basic_str(format!(
+                    "Suspicious zip compression ratio: {compression_ratio} detected"
+                )));
+            }
+        } else if uncompressed_size > 0 {
+            // If compressed size is 0 but uncompressed isn't, that's suspicious
+            return Err(OxenError::basic_str(
+                "Suspicious zip file: compressed size is 0 but uncompressed size is not",
+            ));
         }
+        // If both are 0, it's likely a directory entry, which is fine
 
         total_size += uncompressed_size;
 
@@ -416,10 +518,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         }
     }
 
-    log::debug!(
-        "liboxen::files::decompress_zip zip filepath is {:?}",
-        zip_filepath
-    );
+    log::debug!("liboxen::files::decompress_zip zip filepath is {zip_filepath:?}");
 
     // Get the canonical (absolute) path of the parent directory
     let parent = match zip_filepath.parent() {
@@ -430,7 +529,7 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
     // iterate thru zip archive and save the decompressed file
     for i in 0..archive.len() {
         let mut zip_file = archive.by_index(i).map_err(|e| {
-            OxenError::basic_str(format!("Failed to access zip file at index {}: {}", i, e))
+            OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
 
         let mut zipfile_name = zip_file.mangled_name();
@@ -453,12 +552,11 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
         // Verify the final path is within the parent directory
         if !outpath.starts_with(&parent) {
             return Err(OxenError::basic_str(format!(
-                "Attempted path traversal detected: {:?}",
-                outpath
+                "Attempted path traversal detected: {outpath:?}"
             )));
         }
 
-        log::debug!("files::decompress_zip unzipping file to: {:?}", outpath);
+        log::debug!("files::decompress_zip unzipping file to: {outpath:?}");
 
         if let Some(outdir) = outpath.parent() {
             util::fs::create_dir_all(outdir)?;
@@ -479,13 +577,10 @@ async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenErro
             }
         }
 
-        files.push(outpath);
+        files.push(outpath.clone());
     }
 
-    log::debug!(
-        "files::decompress_zip removing zip file: {:?}",
-        zip_filepath
-    );
+    log::debug!("files::decompress_zip removing zip file: {zip_filepath:?}");
 
     // remove the zip file after decompress
     std::fs::remove_file(zip_filepath)?;
@@ -503,8 +598,7 @@ fn sanitize_path(path: &PathBuf) -> Result<PathBuf, OxenError> {
             Component::CurDir => {} // Skip current directory components (.)
             Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
                 return Err(OxenError::basic_str(format!(
-                    "Invalid path component in zip file: {:?}",
-                    path
+                    "Invalid path component in zip file: {path:?}"
                 )));
             }
         }
@@ -533,20 +627,19 @@ async fn p_add_file(
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
     let full_path = workspace_repo.path.join(&relative_path);
     if !full_path.is_file() {
-        log::debug!("is not a file - skipping add on {:?}", full_path);
+        log::debug!("is not a file - skipping add on {full_path:?}");
         return Ok(());
     }
 
     // See if this is a new file or a modified file
     let file_status =
         core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, &full_path)?;
-    log::debug!("File status: {file_status:?}");
+
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();
     version_store
         .store_version_from_path(&hash_str, &full_path)
         .await?;
-
     let conflicts: HashSet<PathBuf> = repositories::merge::list_conflicts(workspace_repo)?
         .into_iter()
         .map(|conflict| conflict.merge_entry.path)
@@ -624,7 +717,7 @@ fn p_modify_file(
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     if let Some(mut file_node) = maybe_file_node {
         file_node.set_name(path.to_str().unwrap());
-        log::debug!("p_modify_file file_node: {}", file_node);
+        log::debug!("p_modify_file file_node: {file_node}");
         add_file_node_to_staged_db(
             workspace_repo,
             path,
