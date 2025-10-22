@@ -273,7 +273,7 @@ fn expand_glob_pattern(
 
 fn search_working_dir(
     paths: &mut HashSet<PathBuf>,
-    repo_path: &PathBuf,
+    repo_path: &Path,
     glob_path: &PathBuf,
     oxenignore: Option<Gitignore>,
 ) -> Result<(), OxenError> {
