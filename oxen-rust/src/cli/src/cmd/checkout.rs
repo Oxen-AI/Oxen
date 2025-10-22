@@ -81,7 +81,12 @@ impl RunCmd for CheckoutCmd {
 }
 
 impl CheckoutCmd {
-    pub async fn checkout(&self, repo: &LocalRepository, name: &str, force: bool) -> Result<(), OxenError> {
+    pub async fn checkout(
+        &self,
+        repo: &LocalRepository,
+        name: &str,
+        force: bool,
+    ) -> Result<(), OxenError> {
         match repositories::checkout(repo, name, force).await {
             Ok(Some(branch)) => {
                 println!("Checked out branch: {}", branch.name);

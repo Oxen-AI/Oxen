@@ -9,7 +9,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-pub async fn checkout(repo: &mut LocalRepository, name: &str, force_checkout: bool) -> Result<(), OxenError> {
+pub async fn checkout(
+    repo: &mut LocalRepository,
+    name: &str,
+    force_checkout: bool,
+) -> Result<(), OxenError> {
     match repositories::checkout(repo, name, force_checkout).await {
         Ok(Some(branch)) => {
             // Change current workspace name
@@ -210,7 +214,8 @@ mod tests {
                 assert_ne!(orig_workspace_name, new_workspace_name);
 
                 // Checkout the original branch
-                repositories::remote_mode::checkout(&mut cloned_repo, &orig_branch_name, false).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &orig_branch_name, false)
+                    .await?;
 
                 // Verify the workspace name has reverted to the original
                 assert_eq!(
@@ -256,7 +261,8 @@ mod tests {
                 assert_ne!(current_branch.name, orig_branch_name);
 
                 // Checkout the original branch
-                repositories::remote_mode::checkout(&mut cloned_repo, &orig_branch_name, false).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &orig_branch_name, false)
+                    .await?;
 
                 // Verify the branch has been reverted to the original
                 let current_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
@@ -329,7 +335,8 @@ mod tests {
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
 
                 // Go back to the main branch
-                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name, false).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name, false)
+                    .await?;
 
                 // Assert the workspace name changed
                 assert_ne!(cloned_repo.workspace_name, branch_workspace);
@@ -414,7 +421,8 @@ mod tests {
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
 
                 // Go back to the main branch
-                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name, false).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name, false)
+                    .await?;
 
                 // Assert that the untracked file still exists
                 assert!(keep_file.exists());
@@ -497,7 +505,8 @@ mod tests {
                 assert_eq!(util::fs::read_from_path(&hello_file)?, modified_content);
 
                 // Go back to the main branch
-                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name, false).await?;
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name, false)
+                    .await?;
                 assert_eq!(util::fs::read_from_path(&hello_file)?, initial_content);
 
                 // Checkout the new branch

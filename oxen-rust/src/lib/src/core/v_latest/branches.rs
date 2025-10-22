@@ -235,7 +235,7 @@ pub async fn checkout_subtrees(
             &force_checkout,
         )?;
 
-        // If there are conflicts, return an error without restoring anything unless '-f' flag set   
+        // If there are conflicts, return an error without restoring anything unless '-f' flag set
         if !results.cannot_overwrite_entries.is_empty() {
             return Err(OxenError::cannot_overwrite_files(
                 &results.cannot_overwrite_entries,
@@ -244,7 +244,14 @@ pub async fn checkout_subtrees(
 
         if from_root.is_some() {
             log::debug!("🔥 from node: {:?}", from_root);
-            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes, &force_checkout).await?;
+            cleanup_removed_files(
+                repo,
+                &from_root.unwrap(),
+                &mut progress,
+                &mut hashes,
+                &force_checkout,
+            )
+            .await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
@@ -377,7 +384,14 @@ pub async fn set_working_repo_to_commit(
     // Cleanup files if checking out from another commit
     if maybe_from_commit.is_some() {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes, &force_checkout).await?;
+        cleanup_removed_files(
+            repo,
+            &from_tree.unwrap(),
+            &mut progress,
+            &mut hashes,
+            &force_checkout,
+        )
+        .await?;
     }
 
     for file_to_restore in results.files_to_restore {
@@ -642,7 +656,7 @@ fn r_restore_missing_or_modified_files(
                     return Ok(());
                 }
 
-                // If neither hash matches, the file is modified in the working directory 
+                // If neither hash matches, the file is modified in the working directory
                 // If force flag set, restore from target
                 // Otherwise, it cannot be overwritten
                 if *force_checkout {
