@@ -33,7 +33,7 @@ pub struct ErrorFilesResponse {
     pub err_files: Vec<ErrorFileInfo>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ErrorFileInfo {
     pub hash: String,
     pub path: Option<PathBuf>,

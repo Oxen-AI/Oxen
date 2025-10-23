@@ -1,7 +1,6 @@
 use crate::api;
 use crate::api::client;
-use crate::constants::{AVG_CHUNK_SIZE, NUM_HTTP_RETRIES};
-use crate::core::progress::push_progress::PushProgress;
+use crate::constants::{AVG_CHUNK_SIZE, MAX_RETRIES as DEFAULT_MAX_RETRIES, NUM_HTTP_RETRIES};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
@@ -12,6 +11,7 @@ use crate::view::versions::{
 };
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
 
+use crate::core::progress::push_progress::PushProgress;
 use async_compression::tokio::bufread::GzipDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -41,7 +41,6 @@ use crate::repositories;
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
 const PARALLEL_FAILURES: usize = 63;
-const MAX_RETRIES: usize = 5;
 
 #[derive(Debug, Default)]
 pub struct UploadResult {
@@ -98,12 +97,14 @@ pub async fn parallel_large_file_upload(
         create_multipart_large_file_upload(remote_repo, file_path, dst_dir, entry).await?;
 
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
+
+    let max_retries = max_retries();
     let results = upload_chunks(
         remote_repo,
         &mut upload,
         AVG_CHUNK_SIZE,
         PARALLEL_FAILURES,
-        MAX_RETRIES,
+        max_retries,
         progress,
     )
     .await?;
@@ -462,25 +463,18 @@ pub async fn multipart_batch_upload_with_retry(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
-    synced_nodes: &HashSet<MerkleHash>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
+    let max_retries = max_retries();
 
-    while (first_try || !files_to_retry.is_empty()) && retry_count < MAX_RETRIES {
+    while (first_try || !files_to_retry.is_empty()) && retry_count < max_retries {
         first_try = false;
         retry_count += 1;
 
-        files_to_retry = multipart_batch_upload(
-            local_repo,
-            remote_repo,
-            chunk,
-            client,
-            files_to_retry,
-            synced_nodes,
-        )
-        .await?;
+        files_to_retry =
+            multipart_batch_upload(local_repo, remote_repo, chunk, client, files_to_retry).await?;
 
         if !files_to_retry.is_empty() {
             let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
@@ -496,7 +490,6 @@ pub async fn multipart_batch_upload(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
-    synced_nodes: &HashSet<MerkleHash>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = local_repo.version_store()?;
     let mut form = reqwest::multipart::Form::new();
@@ -508,18 +501,6 @@ pub async fn multipart_batch_upload(
     } else {
         files_to_retry.iter().map(|f| f.hash.clone()).collect()
     };
-
-    // If there are nodes to mark as synced, add them to the form first
-    if !synced_nodes.is_empty() {
-        let synced_nodes: Vec<MerkleHash> = synced_nodes.iter().cloned().collect();
-        let json_string = serde_json::to_string(&synced_nodes)?;
-
-        let node_sync_multipart = reqwest::multipart::Part::text(json_string)
-            .file_name("synced_nodes.json")
-            .mime_str("application/json")?;
-
-        form = form.part("synced_nodes", node_sync_multipart);
-    }
 
     for entry in chunk {
         let file_hash = entry.hash();
@@ -579,8 +560,9 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
     };
     let mut first_try = true;
     let mut retry_count: usize = 0;
+    let max_retries = max_retries();
 
-    while (first_try || !result.err_files.is_empty()) && retry_count < MAX_RETRIES {
+    while (first_try || !result.err_files.is_empty()) && retry_count < max_retries {
         first_try = false;
         retry_count += 1;
 
@@ -731,6 +713,87 @@ pub async fn workspace_multipart_batch_upload_versions(
         err_files,
     };
     Ok(result)
+}
+
+// TODO: How can we implement retry when multiparts can't be cloned?
+// It may be possible to offload the creation of the multiparts from the compressed bytes into a separate blocking pool in the receiver?
+
+// /// Multipart batch upload pre-computed multiparts with retry
+// /// Posts a multipart to the server in parallel and retries on failure
+// /// Returns a list of files that failed to upload
+/*pub async fn workspace_multipart_batch_upload_parts_with_retry(
+    remote_repo: &RemoteRepository,
+    client: Arc<reqwest::Client>,
+    multiparts: Vec<(Vec<u8>, MerkleHash)>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+
+    let mut retry_count: usize = 0;
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    let max_retries = max_retries();
+
+
+    while retry_count < max_retries {
+        retry_count += 1;
+
+        let mut form = reqwest::multipart::Form::new();
+        for part in multiparts {
+            form = form.part("file", part);
+        }
+
+        // Upload multiparts, returning any that failed for retry
+        match workspace_multipart_batch_upload_parts(
+            remote_repo,
+            client.clone(),
+            form,
+        ).await {
+            Ok(err_files) => {
+                return Ok(err_files);
+            }
+            Err(e) => {
+                log::error!("Error uploading version files: {:?}", e);
+                if retry_count == max_retries {
+                    return Err(OxenError::basic_str(format!("failed to upload version files to workspace after retries: {:?}", e)));
+                }
+            }
+        }
+
+        let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+        sleep(Duration::from_millis(wait_time as u64)).await;
+    }
+
+    Err(OxenError::basic_str("failed to upload version files to workspace after retries"))
+}*/
+
+pub async fn workspace_multipart_batch_upload_parts(
+    remote_repo: &RemoteRepository,
+    client: Arc<reqwest::Client>,
+    form: reqwest::multipart::Form,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    let uri = ("/versions").to_string();
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let response = client.post(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, response).await?;
+    let result: ErrorFilesResponse = serde_json::from_str(&body)?;
+
+    Ok(result.err_files)
+}
+
+// Parse the maximum number of retries allowed on upload from environment variable
+// TODO: Should we enforce a limit on this?
+fn max_retries() -> usize {
+    if let Ok(max_retries) = std::env::var("OXEN_MAX_RETRIES") {
+        // If the environment variable is set, use that
+        if let Ok(max_retries) = max_retries.parse::<usize>() {
+            max_retries
+        } else {
+            // If parsing failed, fall back to default
+            DEFAULT_MAX_RETRIES
+        }
+    } else {
+        // Environment variable not set, use default
+        DEFAULT_MAX_RETRIES
+    }
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
