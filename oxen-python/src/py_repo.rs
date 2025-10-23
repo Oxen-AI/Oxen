@@ -160,7 +160,7 @@ impl PyRepo {
             repositories::branches::create_checkout(&repo, revision)?
         } else {
             pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-                repositories::checkout(&repo, revision)
+                repositories::checkout(&repo, revision, false)
                     .await?
                     .ok_or(OxenError::local_branch_not_found(revision))
             })?
