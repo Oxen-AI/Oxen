@@ -24,17 +24,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Cache based on dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            oxen-rust/target/
-            oxen-python/target/
-          key: ${{ runner.os }}-cargo-dependencies-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            oxen-rust
+            oxen-python
 
       - name: Cargo Check
         run: |
