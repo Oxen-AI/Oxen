@@ -170,6 +170,7 @@ jobs:
           ${{ github.workspace }}\oxen.exe config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          .venv/bin/activate.bat
+          dir .venv
+          .venv\Scripts\Activate.ps1
           maturin develop
           uv run pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
