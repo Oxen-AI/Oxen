@@ -158,7 +158,8 @@ jobs:
           ~/oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          uv run maturin develop --uv
+          source .venv/bin/activate
+          maturin develop
           uv run pytest -s tests
 
       - name: Run oxen-python tests (Windows)
@@ -169,5 +170,6 @@ jobs:
           ${{ github.workspace }}\oxen.exe config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          uv run maturin develop --uv
+          .venv/bin/activate.bat
+          maturin develop
           uv run pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py

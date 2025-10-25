@@ -34,8 +34,8 @@ jobs:
       - name: Cargo Check
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          cargo build
-          # cargo check --all-targets --all-features
+          # cargo build
+          cargo check --all-features
 
           cd ${{ github.workspace }}/oxen-python
           cargo build
