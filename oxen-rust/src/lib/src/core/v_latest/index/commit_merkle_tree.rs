@@ -1392,7 +1392,7 @@ impl CommitMerkleTree {
             && dtype != MerkleTreeNodeType::VNode
         {
             return Ok(());
-        } 
+        }
 
         // Don't continue loading if encountering a shared hash (Right now, the common hashes are the 'base' hashes. These are all the hashes that have been seen previously)
         if shared_hashes.contains(&node.hash) {
