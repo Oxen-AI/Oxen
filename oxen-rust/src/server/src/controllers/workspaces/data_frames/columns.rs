@@ -46,11 +46,9 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let new_column: NewColumn = serde_json::from_value(body_json)?;
 
     log::info!(
-        "create column {namespace}/{repo_name} for file {:?} on in workspace id {}",
-        file_path,
-        workspace_id
+        "create column {namespace}/{repo_name} for file {file_path:?} on in workspace id {workspace_id}"
     );
-    log::debug!("create column with data {:?}", new_column);
+    log::debug!("create column with data {new_column:?}");
 
     // Get the workspace
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -116,11 +114,9 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let column_to_delete: ColumnToDelete = ColumnToDelete { name: column_name };
 
     log::info!(
-        "Delete column {namespace}/{repo_name} for file {:?} on in workspace id {}",
-        file_path,
-        workspace_id
+        "Delete column {namespace}/{repo_name} for file {file_path:?} on in workspace id {workspace_id}"
     );
-    log::debug!("create column with data {:?}", column_to_delete);
+    log::debug!("create column with data {column_to_delete:?}");
 
     // Get the workspace
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -143,7 +139,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     ) {
         Ok(df) => df,
         Err(e) => {
-            log::error!("Error deleting column: {:?}", e);
+            log::error!("Error deleting column: {e:?}");
             return Err(OxenHttpError::BasicError(StringError::from(e.to_string())));
         }
     };
@@ -222,11 +218,9 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     })?;
 
     log::info!(
-        "Update column {namespace}/{repo_name} for file {:?} on in workspace id {}",
-        file_path,
-        workspace_id
+        "Update column {namespace}/{repo_name} for file {file_path:?} on in workspace id {workspace_id}"
     );
-    log::debug!("update column with data {:?}", column_to_update);
+    log::debug!("update column with data {column_to_update:?}");
 
     // Get the workspace
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -371,7 +365,7 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     {
         Ok(df) => df,
         Err(e) => {
-            log::error!("Error restoring column: {:?}", e);
+            log::error!("Error restoring column: {e:?}");
             return Err(OxenHttpError::BasicError(StringError::from(e.to_string())));
         }
     };
@@ -380,7 +374,7 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         repositories::workspaces::data_frames::columns::get_column_diff(&workspace, &file_path)?;
 
     let schema = Schema::from_polars(restored_column.schema());
-    log::debug!("Restored column in controller is {:?}", restored_column);
+    log::debug!("Restored column in controller is {restored_column:?}");
 
     let mut df_views = JsonDataFrameViews {
         source: DataFrameSchemaSize::from_df(&restored_column, &schema),

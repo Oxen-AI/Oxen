@@ -51,8 +51,7 @@ impl PyRemoteRepo {
             Some((namespace, repo_name)) => (namespace.to_string(), repo_name.to_string()),
             None => {
                 return Err(OxenError::basic_str(format!(
-                    "Invalid repo name, must be in format namespace/repo_name. Got {}",
-                    repo
+                    "Invalid repo name, must be in format namespace/repo_name. Got {repo}"
                 ))
                 .into())
             }
@@ -321,10 +320,8 @@ impl PyRemoteRepo {
         }) {
             Ok(Some(remote_metadata)) => {
                 let remote_hash = remote_metadata.entry.hash();
-                let local_hash =
-                    liboxen::util::hasher::hash_file_contents(&local_path).map_err(|e| {
-                        PyValueError::new_err(format!("Error hashing local file: {}", e))
-                    })?;
+                let local_hash = liboxen::util::hasher::hash_file_contents(&local_path)
+                    .map_err(|e| PyValueError::new_err(format!("Error hashing local file: {e}")))?;
                 Ok(remote_hash != local_hash)
             }
             Ok(None) => Err(PyValueError::new_err(format!(
@@ -332,8 +329,7 @@ impl PyRemoteRepo {
                 remote_path.display()
             ))),
             Err(e) => Err(PyValueError::new_err(format!(
-                "Error getting file metadata: {}",
-                e
+                "Error getting file metadata: {e}",
             ))),
         }
     }
@@ -371,10 +367,7 @@ impl PyRemoteRepo {
         match branch {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
-            Err(e) => Err(PyValueError::new_err(format!(
-                "Error getting branch: {}",
-                e
-            ))),
+            Err(e) => Err(PyValueError::new_err(format!("Error getting branch: {e}"))),
         }
     }
 
@@ -411,8 +404,7 @@ impl PyRemoteRepo {
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(PyValueError::new_err(format!(
-                "Could not delete branch: {}",
-                e
+                "Could not delete branch: {e}"
             ))),
         }
     }
@@ -458,7 +450,7 @@ impl PyRemoteRepo {
                 self.commit_id = Some(commit_id.clone());
                 Ok(commit_id)
             },
-            _ => Err(PyValueError::new_err(format!("{} is not a valid branch name or commit id. Consider creating it with `create_branch`", revision)))
+            _ => Err(PyValueError::new_err(format!("{revision} is not a valid branch name or commit id. Consider creating it with `create_branch`")))
         }
     }
 

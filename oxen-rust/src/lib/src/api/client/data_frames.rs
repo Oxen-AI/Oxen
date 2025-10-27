@@ -24,12 +24,12 @@ pub async fn get(
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("got body: {}", body);
+    log::debug!("got body: {body}");
     let response: Result<JsonDataFrameViewResponse, serde_json::Error> =
         serde_json::from_str(&body);
     match response {
         Ok(val) => {
-            log::debug!("got JsonDataFrameViewResponse: {:?}", val);
+            log::debug!("got JsonDataFrameViewResponse: {val:?}");
             Ok(val)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -55,7 +55,7 @@ pub async fn index(
 
     match response {
         Ok(val) => {
-            log::debug!("got StatusMessage: {:?}", val);
+            log::debug!("got StatusMessage: {val:?}");
             Ok(val)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -85,12 +85,12 @@ pub async fn from_directory(
         .await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("got body: {}", body);
+    log::debug!("got body: {body}");
 
     let response: Result<CommitResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => {
-            log::debug!("got CommitResponse: {:?}", val);
+            log::debug!("got CommitResponse: {val:?}");
             Ok(val)
         }
         Err(err) => Err(OxenError::basic_str(format!(
@@ -574,7 +574,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
-            println!("{:?}", p_df);
+            println!("{p_df:?}");
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);
@@ -642,7 +642,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
-            println!("{:?}", p_df);
+            println!("{p_df:?}");
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);
@@ -704,7 +704,7 @@ mod tests {
             .await?;
 
             let p_df = df.data_frame.view.to_df().await;
-            println!("{:?}", p_df);
+            println!("{p_df:?}");
 
             // Original DF
             assert_eq!(df.data_frame.source.size.height, 1024);
@@ -801,9 +801,26 @@ mod tests {
 
             let file_path_col = p_df.column("file_path").unwrap();
             let file_paths: Vec<&str> = file_path_col.str().unwrap().into_no_null_iter().collect();
-            assert!(file_paths.contains(&"test_files/file1.txt"));
-            assert!(file_paths.contains(&"test_files/subdir/file3.txt"));
-            assert!(file_paths.contains(&"test_files/file2.txt"));
+            let file_1_str = PathBuf::from("test_files")
+                .join("file1.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let file_2_str = PathBuf::from("test_files")
+                .join("file2.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let file_3_str = PathBuf::from("test_files")
+                .join("subdir")
+                .join("file3.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            assert!(file_paths.contains(&file_1_str.as_str()));
+            assert!(file_paths.contains(&file_2_str.as_str()));
+            assert!(file_paths.contains(&file_3_str.as_str()));
 
             // Verify response
             assert!(response.status.status_message == "resource_created");

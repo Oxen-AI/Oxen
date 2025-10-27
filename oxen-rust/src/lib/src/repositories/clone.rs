@@ -389,7 +389,7 @@ mod tests {
                 // We remove the test/ directory in one of the commits, so make sure we can go
                 // back in the history to that commit
                 let test_dir_path = cloned_repo.path.join("test");
-                println!("test_clone_dash_all test_dir_path: {:?}", test_dir_path);
+                println!("test_clone_dash_all test_dir_path: {test_dir_path:?}");
                 let commit = repositories::commits::first_by_message(&cloned_repo, "Adding test/")?;
                 assert!(commit.is_some());
                 assert!(!test_dir_path.exists());
@@ -403,12 +403,14 @@ mod tests {
                 let test_dir_files = util::fs::list_files_in_dir(&test_dir_path);
                 println!("test_dir_files: {:?}", test_dir_files.len());
                 for file in test_dir_files.iter() {
-                    println!("file: {:?}", file);
+                    println!("file: {file:?}");
                 }
-                assert_eq!(test_dir_files.len(), 2);
+                assert_eq!(test_dir_files.len(), 4);
 
                 assert!(test_dir_path.join("1.jpg").exists());
                 assert!(test_dir_path.join("2.jpg").exists());
+                assert!(test_dir_path.join("3.jpg").exists());
+                assert!(test_dir_path.join("4.jpg").exists());
 
                 Ok(())
             })
@@ -574,8 +576,8 @@ mod tests {
                 )
                 .await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // 2 test, 5 train, 1 labels
-                assert_eq!(8, cloned_num_files);
+                // 4 test, 7 train, 1 labels
+                assert_eq!(12, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 

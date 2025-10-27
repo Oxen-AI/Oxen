@@ -114,7 +114,7 @@ pub async fn create_with_path(
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
-    log::debug!("create workspace {}\n", url);
+    log::debug!("create workspace {url}\n");
 
     let body = NewWorkspace {
         branch_name: branch_name.to_string(),
@@ -130,7 +130,7 @@ pub async fn create_with_path(
     let res = client.put(&url).json(&body).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("create workspace got body: {}", body);
+    log::debug!("create workspace got body: {body}");
     let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(WorkspaceResponseWithStatus {
@@ -157,8 +157,8 @@ pub async fn create_with_new_branch(
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let url =
-        api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{}/new", workspace_id))?;
-    log::debug!("create workspace {} with new branch {}\n", url, branch_name);
+        api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}/new"))?;
+    log::debug!("create workspace {url} with new branch {branch_name}\n");
 
     let body = NewWorkspace {
         branch_name: branch_name.to_string(),
@@ -174,7 +174,7 @@ pub async fn create_with_new_branch(
     let res = client.put(&url).json(&body).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("create_workspace_with_new_branch got body: {}", body);
+    log::debug!("create_workspace_with_new_branch got body: {body}");
     let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(WorkspaceResponseWithStatus {
@@ -195,13 +195,13 @@ pub async fn delete(
 ) -> Result<WorkspaceResponse, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}"))?;
-    log::debug!("delete workspace {}\n", url);
+    log::debug!("delete workspace {url}\n");
 
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("delete workspace got body: {}", body);
+    log::debug!("delete workspace got body: {body}");
     let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.workspace),
@@ -213,13 +213,13 @@ pub async fn delete(
 
 pub async fn clear(remote_repo: &RemoteRepository) -> Result<(), OxenError> {
     let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
-    log::debug!("clear workspaces {}\n", url);
+    log::debug!("clear workspaces {url}\n");
 
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("delete workspace got body: {}", body);
+    log::debug!("delete workspace got body: {body}");
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_) => Ok(()),
@@ -445,7 +445,7 @@ mod tests {
                 // Index the dataset
                 repositories::workspaces::df::index(&cloned_repo, workspace_id, &path).await?;
 
-                log::debug!("the path in question is {:?}", path);
+                log::debug!("the path in question is {path:?}");
                 let mut opts = DFOpts::empty();
 
                 opts.add_row =

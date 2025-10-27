@@ -65,8 +65,8 @@ pub async fn get_file(
     let mut stream = res.bytes_stream();
     let mut buffer = BytesMut::new();
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result
-            .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {}", e)))?;
+        let chunk =
+            chunk_result.map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
         buffer.extend_from_slice(&chunk);
     }
 
@@ -119,7 +119,7 @@ pub async fn upload_zip(
 
     // Parse the response
     let response: crate::view::CommitResponse = serde_json::from_str(&body)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
 
     Ok(response.commit)
 }
@@ -133,6 +133,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::{api, repositories, test, util};
+    use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_update_file() -> Result<(), OxenError> {
@@ -224,16 +225,28 @@ mod tests {
     #[tokio::test]
     async fn test_get_file_with_workspace() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let file_path = "annotations/train/file.txt";
+            let base_dir = "annotations";
+            let data_set = "train";
+            let file_name = "file.txt";
             let workspace_id = "test_workspace_id";
-            let directory_name = "annotations/train";
+
+            let file_path = PathBuf::from(base_dir)
+                .join(data_set)
+                .join(file_name)
+                .to_string_lossy()
+                .into_owned();
+
+            let directory_name = PathBuf::from(base_dir)
+                .join(data_set)
+                .to_string_lossy()
+                .into_owned();
 
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
 
-            let full_path = local_repo.path.join(file_path);
+            let full_path = local_repo.path.join(&file_path);
             util::fs::file_create(&full_path)?;
             util::fs::write(&full_path, b"test content")?;
 

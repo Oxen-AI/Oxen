@@ -11,10 +11,7 @@ pub async fn load(
     dest_path: &Path,
     no_working_dir: bool,
 ) -> Result<(), OxenError> {
-    let done_msg: String = format!(
-        "✅ Loaded {:?} to an oxen repo at {:?}",
-        src_path, dest_path
-    );
+    let done_msg: String = format!("✅ Loaded {src_path:?} to an oxen repo at {dest_path:?}");
 
     let dest_path = if dest_path.exists() {
         if dest_path.is_file() {
@@ -30,7 +27,7 @@ pub async fn load(
 
     let file = File::open(src_path)?;
     let tar = GzDecoder::new(file);
-    println!("🐂 Decompressing oxen repo into {:?}", dest_path);
+    println!("🐂 Decompressing oxen repo into {dest_path:?}");
     let mut archive = Archive::new(tar);
     archive.unpack(&dest_path)?;
 
@@ -43,7 +40,7 @@ pub async fn load(
     // Client repos - need to hydrate working dir from versions files
     let repo = LocalRepository::from_dir(&dest_path)?;
 
-    println!("🐂 Unpacking files to working directory {:?}", dest_path);
+    println!("🐂 Unpacking files to working directory {dest_path:?}");
     let branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?
         .ok_or(OxenError::local_branch_not_found(DEFAULT_BRANCH_NAME))?;
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
@@ -204,7 +201,7 @@ mod tests {
 
                 // List files in repo
                 let files = util::fs::rlist_files_in_dir(&hydrated_repo.path);
-                println!("Files in hydrated repo: {:?}", files);
+                println!("Files in hydrated repo: {files:?}");
 
                 assert!(hydrated_repo.path.join("third.txt").exists());
                 assert!(hydrated_repo.path.join("hello_dir/hello.txt").exists());

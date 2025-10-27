@@ -108,12 +108,12 @@ where
                         values.push(entry);
                     }
                     Err(err) => {
-                        log::error!("Could not decode value: {}", err);
+                        log::error!("Could not decode value: {err}");
                     }
                 }
             }
             Err(err) => {
-                log::error!("error iterating over db values is: {}", err);
+                log::error!("error iterating over db values is: {err}");
                 return Err(OxenError::basic_str(
                     "Could not read iterate over db values",
                 ));
@@ -141,15 +141,15 @@ where
                             results.push((key, entry));
                         }
                         Err(err) => {
-                            log::warn!("str_json_db::list() Could not deserialize entry '{}' -> '{}'\n{:?}", key, value, err);
+                            log::warn!("str_json_db::list() Could not deserialize entry '{key}' -> '{value}'\n{err:?}");
                         }
                     }
                 }
                 (Ok(key), _) => {
-                    log::error!("str_json_db::list() Could not values for key {}.", key)
+                    log::error!("str_json_db::list() Could not values for key {key}.")
                 }
                 (_, Ok(val)) => {
-                    log::error!("str_json_db::list() Could not key for value {}.", val)
+                    log::error!("str_json_db::list() Could not key for value {val}.")
                 }
                 _ => {
                     log::error!("str_json_db::list() Could not decoded keys and values.")
@@ -184,10 +184,10 @@ where
                     }
                 }
                 (Ok(key), _) => {
-                    log::error!("str_json_db::hash_map() Could not values for key {}.", key)
+                    log::error!("str_json_db::hash_map() Could not values for key {key}.")
                 }
                 (_, Ok(val)) => {
-                    log::error!("str_json_db::hash_map() Could not key for value {}.", val)
+                    log::error!("str_json_db::hash_map() Could not key for value {val}.")
                 }
                 _ => {
                     log::error!("str_json_db::hash_map() Could not decoded keys and values.")

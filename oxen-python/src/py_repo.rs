@@ -99,9 +99,8 @@ impl PyRepo {
         // make sure metadata is valid json, return oxen error if not
         let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
             OxenError::basic_str(format!(
-                "Metadata must be valid JSON: ''\n{}",
+                "Metadata must be valid JSON: ''\n{e}",
                 // metadata.as_ref(),
-                e
             ))
         })?;
 

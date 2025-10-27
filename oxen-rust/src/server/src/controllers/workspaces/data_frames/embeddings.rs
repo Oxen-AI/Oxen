@@ -55,7 +55,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     };
 
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
-    log::debug!("neighbors is_indexed: {}", is_indexed);
+    log::debug!("neighbors is_indexed: {is_indexed}");
     if !is_indexed {
         let response = WorkspaceJsonDataFrameViewResponse {
             status: StatusMessage::resource_found(),
@@ -69,7 +69,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
         return Ok(HttpResponse::Ok().json(response));
     }
 
-    log::debug!("neighbors: Embedding query: {:?}", body);
+    log::debug!("neighbors: Embedding query: {body:?}");
     let request: EmbeddingQuery = serde_json::from_str(&body)?;
     let count = repositories::workspaces::data_frames::count(&workspace, &file_path)?;
 
@@ -92,7 +92,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     let Some(mut df_schema) =
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
     else {
-        log::error!("Failed to get schema for data frame {:?}", file_path);
+        log::error!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
 

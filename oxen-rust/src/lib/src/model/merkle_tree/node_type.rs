@@ -10,7 +10,10 @@
 use crate::model::merkle_tree::merkle_hash::MerkleHash;
 
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    hash::{Hash, Hasher},
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Copy)]
 pub enum MerkleTreeNodeType {
@@ -19,6 +22,12 @@ pub enum MerkleTreeNodeType {
     Dir,
     VNode,
     FileChunk,
+}
+
+impl Hash for MerkleTreeNodeType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u8(self.to_u8());
+    }
 }
 
 impl MerkleTreeNodeType {
@@ -39,7 +48,7 @@ impl MerkleTreeNodeType {
             2u8 => MerkleTreeNodeType::VNode,
             3u8 => MerkleTreeNodeType::File,
             4u8 => MerkleTreeNodeType::FileChunk,
-            _ => panic!("Invalid MerkleTreeNodeType: {}", val),
+            _ => panic!("Invalid MerkleTreeNodeType: {val}"),
         }
     }
 }

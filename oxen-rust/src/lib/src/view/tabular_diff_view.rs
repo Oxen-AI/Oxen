@@ -134,7 +134,7 @@ impl TabularDiffView {
                     .iter()
                     .map(|field| field.name.clone())
                     .collect::<Vec<String>>();
-                log::debug!("COMMON FIELDS: {:?}", column_names);
+                log::debug!("COMMON FIELDS: {column_names:?}");
 
                 // Lol this is insanity, but pretty cool..., clean up later
                 let (added_rows_view, removed_rows_view) = if column_names.is_empty() {
@@ -145,8 +145,8 @@ impl TabularDiffView {
                     let common_base_df = base_df.clone().lazy().select(&cols).collect().unwrap();
                     let common_head_df = head_df.clone().lazy().select(&cols).collect().unwrap();
 
-                    log::debug!("common_base_df: {:?}", common_base_df);
-                    log::debug!("common_head_df: {:?}", common_head_df);
+                    log::debug!("common_base_df: {common_base_df:?}");
+                    log::debug!("common_head_df: {common_head_df:?}");
 
                     let df_diff = repositories::diffs::compute_new_rows_proj(
                         &common_base_df,
@@ -200,7 +200,7 @@ impl TabularDiffView {
                     },
                 };
 
-                log::debug!("summary: {:?}", summary);
+                log::debug!("summary: {summary:?}");
 
                 return TabularDiffView {
                     tabular: TabularDiffViewImpl {

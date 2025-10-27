@@ -107,9 +107,7 @@ pub fn parse_resource(
 
     let decoded_resource = PathBuf::from(decoded_path);
     log::debug!(
-        "parse_resource_from_path looking for resource: {:?} decoded_resource: {:?}",
-        resource,
-        decoded_resource
+        "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
     );
     parse_resource_from_path(repo, &decoded_resource)?
         .ok_or(OxenError::path_does_not_exist(resource).into())

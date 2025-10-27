@@ -2,10 +2,8 @@ use async_trait::async_trait;
 use clap::{Arg, Command};
 use liboxen::core::v_latest::index::CommitMerkleTree;
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, MerkleHash};
+use liboxen::model::LocalRepository;
 use liboxen::repositories;
-
-use std::str::FromStr;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "node";
@@ -64,13 +62,13 @@ impl RunCmd for NodeCmd {
                 repositories::commits::head_commit(&repository)?
             };
             let node = repositories::entries::get_file(&repository, &commit, file)?;
-            println!("{:?}", node);
+            println!("{node:?}");
             return Ok(());
         }
 
         // otherwise, get the node based on the node hash
         let node_hash = args.get_one::<String>("node").expect("Must supply node");
-        let node_hash = MerkleHash::from_str(node_hash)?;
+        let node_hash = node_hash.parse()?;
         let node = CommitMerkleTree::read_node(&repository, &node_hash, false)?;
 
         println!("{:?}", node);
@@ -78,7 +76,7 @@ impl RunCmd for NodeCmd {
             if let Some(node) = node {
                 println!("{} children", node.children.len());
                 for child in node.children {
-                    println!("{:?}", child);
+                    println!("{child:?}");
                 }
             }
         }

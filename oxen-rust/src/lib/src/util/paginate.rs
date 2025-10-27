@@ -16,11 +16,7 @@ pub fn paginate_with_total<T: Clone>(
 ) -> (Vec<T>, Pagination) {
     let total_pages = (total_entries as f64 / page_size as f64).ceil() as usize;
     log::debug!(
-        "paginate entries page: {} size: {} total: {} total_pages: {}",
-        page_number,
-        page_size,
-        total_entries,
-        total_pages,
+        "paginate entries page: {page_number} size: {page_size} total: {total_entries} total_pages: {total_pages}",
     );
 
     let start = if page_number == 0 {

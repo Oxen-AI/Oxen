@@ -61,6 +61,12 @@ impl VersionStore for S3VersionStore {
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }
 
+    fn store_version_blocking(&self, _hash: &str, _data: &[u8]) -> Result<(), OxenError> {
+        // TODO: Implement S3 version storage
+        // This method may not be necessary for S3
+        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    }
+
     fn open_version(
         &self,
         _hash: &str,
@@ -105,6 +111,15 @@ impl VersionStore for S3VersionStore {
         _data: &[u8],
     ) -> Result<(), OxenError> {
         // TODO: Implement S3 version chunk storage
+        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    }
+
+    async fn get_version_chunk_writer(
+        &self,
+        _hash: &str,
+        _offset: u64,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
+        // TODO: Implement S3 version chunk stream storage
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }
 

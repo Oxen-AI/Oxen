@@ -1,21 +1,20 @@
 use futures::prelude::*;
-use std::collections::HashSet;
-use std::io::{BufReader, Read};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-use crate::api::client::commits::ChunkParams;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{
+    Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
+};
 use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
@@ -112,41 +111,11 @@ async fn push_to_new_branch(
     let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
 
     // Push the commits
-    push_commits(repo, remote_repo, latest_remote_commit, &history, opts).await?;
+    push_commits(repo, remote_repo, latest_remote_commit, history, opts).await?;
 
     // Create the remote branch from the commit
     api::client::branches::create_from_commit(remote_repo, &branch.name, commit).await?;
 
-    Ok(())
-}
-
-fn collect_missing_files(
-    node: &MerkleTreeNode,
-    hashes: &HashSet<MerkleHash>,
-    entries: &mut HashSet<Entry>,
-    total_bytes: &mut u64,
-) -> Result<(), OxenError> {
-    log::debug!(
-        "collect_missing_files node: {} children: {}",
-        node,
-        node.children.len()
-    );
-    for child in &node.children {
-        if let EMerkleTreeNode::File(file_node) = &child.node {
-            if !hashes.contains(&child.hash) {
-                continue;
-            }
-            *total_bytes += file_node.num_bytes();
-            entries.insert(Entry::CommitEntry(CommitEntry {
-                commit_id: file_node.last_commit_id().to_string(),
-                path: PathBuf::from(file_node.name()),
-                hash: child.hash.to_string(),
-                num_bytes: file_node.num_bytes(),
-                last_modified_seconds: file_node.last_modified_seconds(),
-                last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
-            }));
-        }
-    }
     Ok(())
 }
 
@@ -177,14 +146,7 @@ async fn push_to_existing_branch(
                     repositories::commits::list_between(repo, &latest_remote_commit, commit)?;
                 commits.reverse();
 
-                push_commits(
-                    repo,
-                    remote_repo,
-                    Some(latest_remote_commit),
-                    &commits,
-                    opts,
-                )
-                .await?;
+                push_commits(repo, remote_repo, Some(latest_remote_commit), commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
                 //we're behind
@@ -243,8 +205,11 @@ async fn list_and_push_missing_files(
     head_commit: &Commit,
 ) -> Result<(), OxenError> {
     let missing_files =
-        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
-    let missing_files: Vec<Entry> = missing_files.into_iter().map(Entry::CommitEntry).collect();
+        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id)
+            .await?
+            .iter()
+            .map(|e| Entry::CommitEntry(e.clone()))
+            .collect::<Vec<Entry>>();
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
 
@@ -256,48 +221,20 @@ async fn list_and_push_missing_files(
     push_entries(repo, remote_repo, &missing_files, head_commit, &progress).await?;
     Ok(())
 }
-async fn push_commits(
+
+async fn get_commit_missing_hashes(
     repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
     latest_remote_commit: Option<Commit>,
     commits: &[Commit],
-    opts: &PushOpts,
-) -> Result<(), OxenError> {
-    // We need to find all the commits that need to be pushed
-    let node_hashes = commits
-        .iter()
-        .map(|c| c.hash().unwrap())
-        .collect::<HashSet<MerkleHash>>();
-
-    if opts.missing_files {
-        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, commits).await;
-    }
-    // Given the missing commits on the server, filter the history
-    let missing_commit_hashes =
-        api::client::commits::list_missing_hashes(remote_repo, node_hashes).await?;
-    log::debug!(
-        "push_commits missing_commit_hashes count: {}",
-        missing_commit_hashes.len()
-    );
-
-    let missing_commits: Vec<Commit> = commits
-        .iter()
-        .filter(|c| missing_commit_hashes.contains(&c.hash().unwrap()))
-        .map(|c| c.to_owned())
-        .collect();
-
-    // Collect all the nodes that could be missing from the server
-    let progress = Arc::new(PushProgress::new());
-    progress.set_message("Collecting candidate nodes...");
-
-    // Get the node hashes for the starting commit (if we have one)
-    let mut starting_node_hashes = HashSet::new();
+) -> Result<HashMap<MerkleHash, PushCommitInfo>, OxenError> {
+    let mut starting_node_hashes = HashMap::new();
+    let mut shared_hashes = HashMap::new();
     if let Some(ref commit) = latest_remote_commit {
-        repositories::tree::populate_starting_hashes(
+        CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
-            &None,
-            &None,
+            &repo.subtree_paths().unwrap_or(vec![PathBuf::from("")]), //Should we default to root?
+            &mut shared_hashes,
             &mut starting_node_hashes,
         )?;
     }
@@ -305,122 +242,179 @@ async fn push_commits(
     log::debug!("starting hashes: {:?}", starting_node_hashes.len());
 
     let mut shared_hashes = starting_node_hashes.clone();
-    let mut unique_hashes = HashSet::new();
 
-    let mut candidate_nodes: HashSet<MerkleTreeNode> = HashSet::new();
-    for commit in &missing_commits {
+    let mut result = HashMap::new();
+
+    for commit in commits.iter().rev() {
+        let mut unique_hashes_and_type = HashMap::new();
         log::debug!("push_commits adding candidate nodes for commit: {}", commit);
-        let Some(commit_node) = CommitMerkleTree::get_unique_children_for_commit(
+        let Some(_) = CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
+            &repo.subtree_paths().unwrap_or(vec![PathBuf::from("")]), //Should we default to root?
             &mut shared_hashes,
-            &mut unique_hashes,
+            &mut unique_hashes_and_type,
         )?
         else {
-            log::error!("push_commits commit node not found for commit: {}", commit);
+            log::error!("push_commits commit node not found for commit: {commit}");
             continue;
         };
 
-        shared_hashes.extend(&unique_hashes);
-        unique_hashes.clear();
-        candidate_nodes.insert(commit_node.clone());
+        log::debug!(
+            "push_commits unique hashes and type: {:?}",
+            unique_hashes_and_type
+        );
 
-        commit_node.walk_tree_without_leaves(|node| {
-            if !starting_node_hashes.contains(&node.hash) {
-                candidate_nodes.insert(node.clone());
-                progress.set_message(format!(
-                    "Collecting candidate nodes... {}",
-                    candidate_nodes.len()
-                ));
-            }
-        });
-    }
-    log::debug!(
-        "push_commits candidate_nodes count: {}",
-        candidate_nodes.len()
-    );
+        // let (files, dir_nodes) = repositories::tree::list_files_and_dirs(&commit_node)?;
+        let files = unique_hashes_and_type
+            .iter()
+            .filter(|((_, t), _)| {
+                let t = t.node.node_type();
+                t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk
+            })
+            .map(|((_, node), _)| Entry::CommitEntry(CommitEntry::from_node(&node.node)))
+            .collect::<Vec<Entry>>();
 
-    // Check which of the candidate nodes are missing from the server (just use the hashes)
-    let candidate_node_hashes = candidate_nodes
-        .iter()
-        .map(|n| n.hash)
-        .collect::<HashSet<MerkleHash>>();
-    progress.set_message(format!(
-        "Considering {} nodes...",
-        candidate_node_hashes.len()
-    ));
+        let mut dir_nodes = unique_hashes_and_type
+            .iter()
+            .filter(|((h, t), _)| {
+                let t = t.node.node_type();
+                log::debug!("push_commits dir node: {} | type: {:?}", h, t);
+                log::debug!(
+                    "push_commits dir node bool: {:?}",
+                    !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
+                );
+                !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
+            })
+            .map(|((h, _), _)| *h)
+            .collect::<HashSet<MerkleHash>>();
 
-    log::debug!("Candidate Hashes: {candidate_node_hashes:?}");
-    let missing_node_hashes =
-        api::client::tree::list_missing_node_hashes(remote_repo, candidate_node_hashes).await?;
-    log::debug!(
-        "push_commits missing_node_hashes count: {:?}",
-        missing_node_hashes.len()
-    );
+        shared_hashes.extend(unique_hashes_and_type);
+        dir_nodes.insert(commit.hash()?);
+        log::debug!("push_commits dir nodes: {:?}", dir_nodes);
+        let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
 
-    // Separate the candidate nodes into present and missing nodes
-    let mut missing_nodes: HashSet<MerkleTreeNode> = HashSet::new();
-    let mut present_node_hashes: HashSet<MerkleHash> = HashSet::new();
-
-    for node in candidate_nodes.into_iter() {
-        if missing_node_hashes.contains(&node.hash) {
-            missing_nodes.insert(node);
-        } else {
-            present_node_hashes.insert(node.hash);
-        }
+        let push_commit_info = PushCommitInfo {
+            unique_dir_nodes: dir_nodes,
+            unique_file_hashes: files,
+            total_bytes,
+        };
+        result.insert(commit.hash()?, push_commit_info);
     }
 
-    // As well, don't collect anything in the
-    log::debug!(
-        "push_commits missing_nodes count: {:?}",
-        missing_nodes.len()
-    );
-    progress.set_message(format!("Pushing {} nodes...", missing_nodes.len()));
-    api::client::tree::create_nodes(repo, remote_repo, missing_nodes.clone(), &progress).await?;
+    Ok(result)
+}
+
+#[derive(Debug, Clone)]
+struct PushCommitInfo {
+    unique_dir_nodes: HashSet<MerkleHash>,
+    unique_file_hashes: Vec<Entry>,
+    total_bytes: u64,
+}
+
+async fn push_commits(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: Option<Commit>,
+    commits: Vec<Commit>,
+    opts: &PushOpts,
+) -> Result<(), OxenError> {
+    if opts.missing_files {
+        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
+    }
+
+    // We need to find all the commits that need to be pushed
+
+    let commit_info = get_commit_missing_hashes(repo, latest_remote_commit, &commits).await?;
+    log::debug!("got commit info {}", commit_info.len());
+
+    let missing_commits = api::client::commits::list_missing_hashes(remote_repo, commits).await?;
+    log::debug!("got missing commits {}", missing_commits.len());
 
     // Create the dir hashes for the missing commits
-    api::client::commits::post_commits_dir_hashes_to_server(repo, remote_repo, &missing_commits)
-        .await?;
+    let commits_with_info = missing_commits
+        .into_iter()
+        .map(|commit| {
+            let commit_hash = commit.hash()?;
+            let info = commit_info.get(&commit_hash).cloned().ok_or_else(|| {
+                OxenError::basic_str(format!("Commit info not found for commit {}", commit_hash))
+            })?;
+            Ok((commit, info))
+        })
+        .collect::<Result<Vec<(Commit, PushCommitInfo)>, OxenError>>()?;
 
-    progress.set_message("Checking for missing files...".to_string());
+    let total_bytes = commits_with_info
+        .iter()
+        .map(|(_, info)| info.total_bytes)
+        .sum();
+    let num_files: usize = commits_with_info
+        .iter()
+        .map(|(_, info)| info.unique_file_hashes.len())
+        .sum();
+    log::debug!("got commits with info {:?}", commits_with_info);
+    let num_commits = commits_with_info.len();
+    log::debug!("got commit info {}", num_commits);
+    let errors = Arc::new(Mutex::new(Vec::new()));
 
-    starting_node_hashes.extend(present_node_hashes);
-    let missing_file_hashes = api::client::tree::list_missing_file_hashes_from_nodes(
-        repo,
-        remote_repo,
-        missing_commit_hashes.clone(),
-        starting_node_hashes,
-    )
-    .await?;
-    progress.set_message(format!("Pushing {} files...", missing_file_hashes.len()));
-    let mut missing_files: HashSet<Entry> = HashSet::new();
-    let mut total_bytes = 0;
-    for node in missing_nodes {
-        collect_missing_files(
-            &node,
-            &missing_file_hashes,
-            &mut missing_files,
-            &mut total_bytes,
-        )?;
-    }
+    let progress = Arc::new(PushProgress::new_with_totals(num_files as u64, total_bytes));
 
-    let missing_files: Vec<Entry> = missing_files.into_iter().collect();
-    progress.finish();
-    let progress = Arc::new(PushProgress::new_with_totals(
-        missing_files.len() as u64,
-        total_bytes,
-    ));
-    log::debug!("pushing {} entries", missing_files.len());
-    let commit = &commits.last().unwrap();
-    push_entries(repo, remote_repo, &missing_files, commit, &progress).await?;
+    stream::iter(commits_with_info)
+        .for_each_concurrent(
+            concurrency::num_threads_for_items(num_commits),
+            |(commit, commit_info)| {
+                let id = commit.id.clone();
+                log::debug!("Pushing commit {:?}", commit);
+                let progress = progress.clone();
+                let errors = errors.clone();
+                async move {
+                    let result = async {
+                        let commit_hash = commit.hash()?;
+                        log::debug!("Pushing commit {}", commit_hash);
 
-    // Mark commits as synced on the server
-    api::client::commits::mark_commits_as_synced(remote_repo, missing_commit_hashes).await?;
+                        log::debug!("missing files {}", commit_info.unique_file_hashes.len());
 
-    // Mark dirs/vnodes as synced on the server
-    // TODO
+                        push_entries(
+                            repo,
+                            remote_repo,
+                            &commit_info.unique_file_hashes,
+                            &commit,
+                            &progress,
+                        )
+                        .await?;
+                        log::debug!("pushed entries missing files");
+                        let mut nodes = commit_info.unique_dir_nodes;
+                        nodes.insert(commit_hash);
 
-    progress.finish();
+                        api::client::tree::create_nodes(repo, remote_repo, nodes, &progress)
+                            .await?;
+                        log::debug!("created nodes");
+
+                        api::client::commits::post_commits_dir_hashes_to_server(
+                            repo,
+                            remote_repo,
+                            &vec![commit],
+                        )
+                        .await?;
+
+                        // TODO: we might not need this syncing mechanism
+                        api::client::commits::mark_commits_as_synced(
+                            remote_repo,
+                            HashSet::from([commit_hash]),
+                        )
+                        .await?;
+                        log::debug!("marked commits as synced {}", commit_hash);
+                        Ok::<(), OxenError>(())
+                    }
+                    .await;
+
+                    if let Err(err) = result {
+                        let err_str = format!("Error pushing commit {:?}: {}", id, err);
+                        errors.lock().await.push(OxenError::basic_str(err_str));
+                    }
+                }
+            },
+        )
+        .await;
 
     Ok(())
 }
@@ -455,14 +449,8 @@ pub async fn push_entries(
         .map(|e| e.to_owned())
         .collect();
 
-    let large_entries_sync = chunk_and_send_large_entries(
-        local_repo,
-        remote_repo,
-        larger_entries,
-        commit,
-        AVG_CHUNK_SIZE,
-        progress,
-    );
+    let large_entries_sync =
+        chunk_and_send_large_entries(local_repo, remote_repo, larger_entries, progress);
     let small_entries_sync = bundle_and_send_small_entries(
         local_repo,
         remote_repo,
@@ -493,8 +481,6 @@ async fn chunk_and_send_large_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entries: Vec<Entry>,
-    commit: &Commit,
-    chunk_size: u64,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
@@ -502,7 +488,7 @@ async fn chunk_and_send_large_entries(
     }
 
     use tokio::time::sleep;
-    type PieceOfWork = (Entry, LocalRepository, Commit, RemoteRepository);
+    type PieceOfWork = (Entry, PathBuf, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
@@ -511,8 +497,7 @@ async fn chunk_and_send_large_entries(
         .map(|e| {
             (
                 e.to_owned(),
-                local_repo.to_owned(),
-                commit.to_owned(),
+                local_repo.path.clone(),
                 remote_repo.to_owned(),
             )
         })
@@ -522,6 +507,7 @@ async fn chunk_and_send_large_entries(
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
     }
+    let version_store = local_repo.version_store()?;
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     log::debug!(
@@ -538,6 +524,7 @@ async fn chunk_and_send_large_entries(
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
+        let version_store = Arc::clone(&version_store);
 
         let handle = tokio::spawn(async move {
             loop {
@@ -545,18 +532,39 @@ async fn chunk_and_send_large_entries(
                     break;
                 }
 
-                let Some((entry, repo, commit, remote_repo)) = queue.try_pop() else {
+                let Some((entry, repo_path, remote_repo)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
 
-                match upload_large_file_chunks(
-                    entry.clone(),
-                    repo,
-                    commit,
-                    remote_repo,
-                    chunk_size,
-                    &bar,
+                let version_path = match version_store.get_version_path(&entry.hash()) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        log::error!("Failed to get version path: {}", e);
+                        should_stop.store(true, Ordering::Relaxed);
+                        *first_error.lock().await = Some(e.to_string());
+                        break;
+                    }
+                };
+                let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
+                    .unwrap_or_else(|e| {
+                        log::error!("Failed to get relative path: {}", e);
+                        entry.path()
+                    });
+                let path = if relative_path.exists() {
+                    relative_path
+                } else {
+                    // for test environment
+                    repo_path.join(relative_path)
+                };
+
+                match api::client::versions::parallel_large_file_upload(
+                    &remote_repo,
+                    path,
+                    None::<PathBuf>,
+                    None,
+                    Some(entry.clone()),
+                    Some(&bar),
                 )
                 .await
                 {
@@ -600,216 +608,6 @@ async fn chunk_and_send_large_entries(
     // Sleep again to let things sync...
     sleep(Duration::from_millis(100)).await;
 
-    Ok(())
-}
-
-/// Chunk and send large file in parallel
-async fn upload_large_file_chunks(
-    entry: Entry,
-    repo: LocalRepository,
-    commit: Commit,
-    remote_repo: RemoteRepository,
-    chunk_size: u64,
-    progress: &Arc<PushProgress>,
-) -> Result<(), OxenError> {
-    // Open versioned file
-    let version_store = repo.version_store().unwrap();
-    let file = version_store.open_version(&entry.hash()).unwrap();
-    let mut reader = BufReader::new(file);
-    // The version path is just being used for compatibility with the server endpoint,
-    // we aren't using it to read the file.
-    // TODO: This should be migrated to use the new versions API
-    let version_path = util::fs::version_path_for_entry(&repo, &entry);
-
-    // These variables are the same for every chunk
-    // let is_compressed = false;
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let path = util::fs::path_relative_to_dir(&version_path, &hidden_dir).unwrap();
-    let file_name = Some(String::from(path.to_str().unwrap()));
-
-    // Calculate chunk sizes
-    let total_bytes = entry.num_bytes();
-    let total_chunks = ((total_bytes / chunk_size) + 1) as usize;
-    let mut total_bytes_read = 0;
-    let mut chunk_size = chunk_size;
-
-    // Create a client for uploading chunks
-    let client = Arc::new(
-        api::client::builder_for_remote_repo(&remote_repo)
-            .unwrap()
-            .build()
-            .unwrap(),
-    );
-
-    // Create queues for sending data to workers
-    type PieceOfWork = (
-        Vec<u8>,
-        u64,   // chunk size
-        usize, // chunk num
-        usize, // total chunks
-        u64,   // total size
-        Arc<reqwest::Client>,
-        RemoteRepository,
-        String, // entry hash
-        Commit,
-        Option<String>, // filename
-    );
-
-    // In order to upload chunks in parallel
-    // We should only read N chunks at a time so that
-    // the whole file does not get read into memory
-    let sub_chunk_size = concurrency::num_threads_for_items(total_chunks);
-
-    let mut total_chunk_idx = 0;
-    let mut processed_chunk_idx = 0;
-    let num_sub_chunks = (total_chunks / sub_chunk_size) + 1;
-    log::debug!(
-        "upload_large_file_chunks {:?} processing file in {} subchunks of size {} from total {} chunk size {} file size {}",
-        entry.path(),
-        num_sub_chunks,
-        sub_chunk_size,
-        total_chunks,
-        chunk_size,
-        total_bytes
-    );
-    for i in 0..num_sub_chunks {
-        log::debug!(
-            "upload_large_file_chunks Start reading subchunk {i}/{num_sub_chunks} of size {sub_chunk_size} from total {total_chunks} chunk size {chunk_size} file size {total_bytes_read}/{total_bytes}"
-        );
-        // Read and send the subset of buffers sequentially
-        let mut sub_buffers: Vec<Vec<u8>> = Vec::new();
-        for _ in 0..sub_chunk_size {
-            // If we have read all the bytes, break
-            if total_bytes_read >= total_bytes {
-                break;
-            }
-
-            // Make sure we read the last size correctly
-            if (total_bytes_read + chunk_size) > total_bytes {
-                chunk_size = total_bytes % chunk_size;
-            }
-
-            let percent_read = (total_bytes_read as f64 / total_bytes as f64) * 100.0;
-            log::debug!("upload_large_file_chunks has read {total_bytes_read}/{total_bytes} = {percent_read}% about to read {chunk_size}");
-
-            // Only read as much as you need to send so we don't blow up memory on large files
-            let mut buffer = vec![0u8; chunk_size as usize];
-            match reader.read_exact(&mut buffer) {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!("upload_large_file_chunks Error reading file {:?} chunk {total_chunk_idx}/{total_chunks} chunk size {chunk_size} total_bytes_read: {total_bytes_read} total_bytes: {total_bytes} {:?}", entry.path(), err);
-                    return Err(OxenError::from(err));
-                }
-            }
-            total_bytes_read += chunk_size;
-            total_chunk_idx += 1;
-
-            sub_buffers.push(buffer);
-        }
-        log::debug!(
-            "upload_large_file_chunks Done, have read subchunk {}/{} subchunk {}/{} of size {}",
-            processed_chunk_idx,
-            total_chunks,
-            i,
-            num_sub_chunks,
-            sub_chunk_size
-        );
-
-        // Then send sub_buffers over network in parallel
-        // let queue = Arc::new(TaskQueue::new(sub_buffers.len()));
-        // let finished_queue = Arc::new(FinishedTaskQueue::new(sub_buffers.len()));
-        let mut tasks: Vec<PieceOfWork> = Vec::new();
-        for buffer in sub_buffers.iter() {
-            tasks.push((
-                buffer.to_owned(),
-                chunk_size,
-                processed_chunk_idx, // Needs to be the overall chunk num
-                total_chunks,
-                total_bytes,
-                client.clone(),
-                remote_repo.to_owned(),
-                entry.hash().to_owned(),
-                commit.to_owned(),
-                file_name.to_owned(),
-            ));
-            // finished_queue.try_push(false).unwrap();
-            processed_chunk_idx += 1;
-        }
-
-        // Setup the stream chunks in parallel
-        let bodies = stream::iter(tasks)
-            .map(|item| async move {
-                let (
-                    buffer,
-                    chunk_size,
-                    chunk_num,
-                    total_chunks,
-                    total_size,
-                    client,
-                    remote_repo,
-                    entry_hash,
-                    _commit,
-                    file_name,
-                ) = item;
-                let size = buffer.len() as u64;
-                log::debug!(
-                    "upload_large_file_chunks Streaming entry buffer {}/{} of size {}",
-                    chunk_num,
-                    total_chunks,
-                    size
-                );
-
-                let params = ChunkParams {
-                    chunk_num,
-                    total_chunks,
-                    total_size: total_size as usize,
-                };
-
-                let is_compressed = false;
-                match api::client::commits::upload_data_chunk_to_server_with_retry(
-                    &client,
-                    &remote_repo,
-                    &buffer,
-                    &entry_hash,
-                    &params,
-                    is_compressed,
-                    &file_name,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        log::debug!(
-                            "upload_large_file_chunks Successfully uploaded subchunk overall chunk {}/{}",
-                            chunk_num,
-                            total_chunks
-                        );
-                        Ok(chunk_size)
-                    }
-                    Err(err) => {
-                        log::error!("Error uploading chunk: {err}");
-                        Err(err)
-                    }
-                }
-            })
-            .buffer_unordered(sub_chunk_size);
-
-        // Wait for all requests to finish
-        bodies
-            .for_each(|b| async {
-                match b {
-                    Ok(_) => {
-                        progress.add_bytes(chunk_size);
-                    }
-                    Err(err) => {
-                        log::error!("Error uploading chunk: {err}")
-                    }
-                }
-            })
-            .await;
-
-        log::debug!("upload_large_file_chunks Subchunk {i}/{num_sub_chunks} tasks done. :-)");
-    }
-    progress.add_files(1);
     Ok(())
 }
 
@@ -899,7 +697,7 @@ async fn bundle_and_send_small_entries(
                 let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
-                        log::error!("Failed to compute entries size: {}", e);
+                        log::error!("Failed to compute entries size: {e}");
                         should_stop.store(true, Ordering::Relaxed);
                         *first_error.lock().await = Some(e.to_string());
                         finished_queue.pop().await;
@@ -907,13 +705,11 @@ async fn bundle_and_send_small_entries(
                     }
                 };
 
-                let _synced_nodes = HashSet::new();
                 match api::client::versions::multipart_batch_upload_with_retry(
                     &repo,
                     &remote_repo,
                     &chunk,
                     &client,
-                    &_synced_nodes,
                 )
                 .await
                 {

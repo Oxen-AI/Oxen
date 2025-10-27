@@ -1,3 +1,4 @@
+use std;
 use std::collections::HashMap;
 use std::fs::Metadata;
 use std::io::{self};
@@ -11,7 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
-use tokio::io::BufReader;
+use tokio::io::{BufReader, BufWriter};
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
@@ -109,6 +110,20 @@ impl VersionStore for LocalVersionStore {
 
         if !version_path.exists() {
             fs::write(&version_path, data).await?;
+        }
+
+        Ok(())
+    }
+
+    // Synchronous method to write to version store, for use in tokio::spawn_blocking threads
+    fn store_version_blocking(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash);
+        std::fs::create_dir_all(&version_dir)?;
+
+        let version_path = self.version_path(hash);
+
+        if !version_path.exists() {
+            std::fs::write(&version_path, data)?;
         }
 
         Ok(())
@@ -218,6 +233,21 @@ impl VersionStore for LocalVersionStore {
         }
 
         Ok(())
+    }
+
+    async fn get_version_chunk_writer(
+        &self,
+        hash: &str,
+        offset: u64,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
+        let chunk_dir = self.version_chunk_dir(hash, offset);
+        fs::create_dir_all(&chunk_dir).await?;
+
+        let chunk_path = self.version_chunk_file(hash, offset);
+        let file = File::create(&chunk_path).await?;
+        let writer = BufWriter::new(file);
+
+        Ok(Box::new(writer))
     }
 
     async fn get_version_chunk(
@@ -496,10 +526,7 @@ mod tests {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);
             }
             Err(e) => {
-                panic!(
-                    "Unexpected error when getting non-existent version: {:?}",
-                    e
-                );
+                panic!("Unexpected error when getting non-existent version: {e:?}");
             }
         }
     }
@@ -547,7 +574,7 @@ mod tests {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);
             }
             Err(e) => {
-                panic!("Unexpected error when getting non-existent chunk: {:?}", e);
+                panic!("Unexpected error when getting non-existent chunk: {e:?}");
             }
         }
     }

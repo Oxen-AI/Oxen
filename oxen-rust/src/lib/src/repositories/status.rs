@@ -592,16 +592,16 @@ mod tests {
             // repositories::add(&repo, &new_dir)?;
 
             let status = repositories::status(&repo)?;
-            // No moved files, 5 staged (the removals)
+            // No moved files, 7 staged (the removals)
             assert_eq!(status.moved_files.len(), 0);
-            assert_eq!(status.staged_files.len(), 5);
+            assert_eq!(status.staged_files.len(), 7);
             assert_eq!(status.staged_dirs.len(), 1);
 
             // Complete the pairs
             repositories::add(&repo, &new_dir).await?;
             let status = repositories::status(&repo)?;
-            assert_eq!(status.moved_files.len(), 5);
-            assert_eq!(status.staged_files.len(), 10);
+            assert_eq!(status.moved_files.len(), 7);
+            assert_eq!(status.staged_files.len(), 14);
             assert_eq!(status.staged_dirs.len(), 2);
             Ok(())
         })

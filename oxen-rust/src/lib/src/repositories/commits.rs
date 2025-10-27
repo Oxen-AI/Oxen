@@ -12,7 +12,6 @@ use crate::util;
 use crate::view::{PaginatedCommits, StatusMessage};
 use crate::{core, resource};
 
-use derive_more::FromStr;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -294,7 +293,7 @@ pub fn list_by_path_from_paginated(
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
-    log::info!("list_by_path_from_paginated: {:?} {:?}", commit, path);
+    log::info!("list_by_path_from_paginated: {commit:?} {path:?}");
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list_by_path_from_paginated(repo, commit, path, pagination),
@@ -313,8 +312,7 @@ pub fn commit_history_is_complete(
     if !maybe_initial_commit.parent_ids.is_empty() {
         // If it has parents, it isn't an initial commit
         log::debug!(
-            "commit_history_is_complete ❌ last commit has parents: {}",
-            maybe_initial_commit
+            "commit_history_is_complete ❌ last commit has parents: {maybe_initial_commit}"
         );
         return Ok(false);
     }
@@ -322,16 +320,13 @@ pub fn commit_history_is_complete(
     // Ensure all commits and their parents are synced
     // Initialize commit reader
     for c in &history {
-        log::debug!(
-            "commit_history_is_complete checking if commit is synced: {}",
-            c
-        );
+        log::debug!("commit_history_is_complete checking if commit is synced: {c}");
 
-        if !core::commit_sync_status::commit_is_synced(repo, &MerkleHash::from_str(&c.id)?) {
-            log::debug!("commit_history_is_complete ❌ commit is not synced: {}", c);
+        if !core::commit_sync_status::commit_is_synced(repo, &c.id.parse()?) {
+            log::debug!("commit_history_is_complete ❌ commit is not synced: {c}");
             return Ok(false);
         } else {
-            log::debug!("commit_history_is_complete ✅ commit is synced: {}", c);
+            log::debug!("commit_history_is_complete ✅ commit is synced: {c}");
         }
     }
     Ok(true)
@@ -340,11 +335,9 @@ pub fn commit_history_is_complete(
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::str::FromStr;
 
     use crate::error::OxenError;
     use crate::model::EntryDataType;
-    use crate::model::MerkleHash;
     use crate::model::StagedEntryStatus;
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
@@ -634,7 +627,7 @@ mod tests {
 
             // Get the hash of the file at this timestamp
             let hash_when_add =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
+                util::hasher::hash_file_contents(&text_path)?.parse::<MerkleHash>()?;
             repositories::add(&repo, &text_path).await?;
 
             let status = repositories::status(&repo)?;
@@ -647,8 +640,7 @@ mod tests {
             util::fs::write_to_path(&text_path, "Goodbye, world!")?;
 
             // Get the new hash
-            let hash_after_modification =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
+            let hash_after_modification = util::hasher::hash_file_contents(&text_path)?.parse()?;
 
             // Add and commit the file
             repositories::add(&repo, &text_path).await?;
@@ -877,7 +869,7 @@ mod tests {
             util::fs::create_dir_all(&dir_repo_path)?;
 
             for i in 0..10000 {
-                let file_path = dir_path.join(format!("file_{}.txt", i));
+                let file_path = dir_path.join(format!("file_{i}.txt"));
                 let file_repo_path = repo.path.join(&file_path);
                 util::fs::write_to_path(&file_repo_path, "test")?;
             }
@@ -1105,8 +1097,7 @@ A: Oxen.ai
             for (i, commit) in paginated_result.commits.iter().enumerate() {
                 assert_eq!(
                     commit.id, expected_commits[i].id,
-                    "Commits should match expected list at index {}",
-                    i
+                    "Commits should match expected list at index {i}"
                 );
             }
 

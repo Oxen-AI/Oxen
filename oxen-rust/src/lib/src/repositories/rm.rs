@@ -9,21 +9,16 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::RmOpts;
-use crate::{core, repositories};
+use crate::{core, util};
 use std::path::{Path, PathBuf};
-
-use glob::glob;
-
-use crate::util;
 
 /// Removes the path from the index
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
+
     let path: &Path = opts.path.as_ref();
+    let paths = util::fs::parse_glob_path(path, repo, &opts.staged)?;
 
-    let paths: HashSet<PathBuf> = parse_glob_path(path, repo)?;
-
-    log::debug!("paths: {paths:?}");
     p_rm(&paths, repo, opts)?;
 
     Ok(())
@@ -38,34 +33,6 @@ fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Resu
         }
     }
     Ok(())
-}
-
-fn parse_glob_path(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
-    let mut paths: HashSet<PathBuf> = HashSet::new();
-    log::debug!("Parsing paths: {path:?}");
-
-    if let Some(path_str) = path.to_str() {
-        if util::fs::is_glob_path(path_str) {
-            // Match against any untracked entries in the current dir
-
-            for entry in glob(path_str)? {
-                paths.insert(entry?.to_path_buf());
-            }
-
-            if let Some(commit) = repositories::commits::head_commit_maybe(repo)? {
-                let pattern_entries =
-                    repositories::commits::search_entries(repo, &commit, path_str)?;
-                log::debug!("pattern entries: {:?}", pattern_entries);
-                paths.extend(pattern_entries);
-            }
-        } else {
-            // Non-glob path
-            paths.insert(path.to_path_buf());
-        }
-    }
-
-    log::debug!("parse_glob_paths: {paths:?}");
-    Ok(paths)
 }
 
 #[cfg(test)]
@@ -277,10 +244,6 @@ mod tests {
                     api::client::dir::list(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(""), 1, 10)
                         .await?;
 
-                for entry in root_entries.entries.iter() {
-                    println!("entry: {:?}", entry);
-                }
-
                 assert_eq!(root_entries.entries.len(), 4);
 
                 Ok(())
@@ -333,7 +296,7 @@ mod tests {
             let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
             assert_eq!(files.len(), 0);
             for dir in dirs.iter() {
-                println!("dir: {:?}", dir);
+                println!("dir: {dir:?}");
             }
 
             // Should be 0, as list_files_and_dirs explicitly excludes the root dir
@@ -479,7 +442,7 @@ mod tests {
             let dirs = tree.list_dir_paths()?;
             println!("list_dir_paths got {} dirs", dirs.len());
             for dir in dirs.iter() {
-                println!("dir: {:?}", dir);
+                println!("dir: {dir:?}");
             }
 
             // Should be 1, as list_dir_paths explicitly includes the root dir
@@ -551,11 +514,11 @@ mod tests {
             let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
 
             for dir in dirs.iter() {
-                log::debug!("dir: {:?}", dir);
+                log::debug!("dir: {dir:?}");
             }
 
             for file in files.iter() {
-                log::debug!("file: {:?}", file);
+                log::debug!("file: {file:?}");
             }
 
             assert_eq!(files.len(), 7);
@@ -683,7 +646,7 @@ mod tests {
 
             repositories::rm(&repo, &rm_opts)?;
             let status = repositories::status(&repo)?;
-            log::debug!("status: {:?}", status);
+            log::debug!("status: {status:?}");
             status.print();
 
             // Files unstaged, still removed
@@ -710,7 +673,7 @@ mod tests {
             repositories::rm(&repo, &opts)?;
 
             let status = repositories::status(&repo)?;
-            log::debug!("status: {:?}", status);
+            log::debug!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 0);
 
             Ok(())

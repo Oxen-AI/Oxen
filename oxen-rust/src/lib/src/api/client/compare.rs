@@ -111,7 +111,7 @@ pub async fn get_derived_compare_df(
     compare_id: &str,
 ) -> Result<JsonDataFrameView, OxenError> {
     // TODO: Factor out this basehead - not actually using it but needs to sync w/ routes on server
-    let uri = format!("/compare/data_frames/{}/diff/main..main", compare_id);
+    let uri = format!("/compare/data_frames/{compare_id}/diff/main..main");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -202,7 +202,6 @@ mod tests {
     use crate::constants::DIFF_STATUS_COL;
     use crate::error::OxenError;
     use crate::model::diff::diff_entry_status::DiffEntryStatus;
-    use crate::model::MerkleHash;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -212,7 +211,6 @@ mod tests {
     use polars::lazy::frame::IntoLazy;
 
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_compare_commits() -> Result<(), OxenError> {
@@ -226,11 +224,11 @@ mod tests {
                 let file_path = format!("file_{i}.txt");
                 test::write_txt_file_to_path(
                     local_repo.path.join(file_path),
-                    format!("File content {}", i),
+                    format!("File content {i}"),
                 )?;
                 repositories::add(&local_repo, &local_repo.path).await?;
 
-                let commit_message = format!("Commit {}", i);
+                let commit_message = format!("Commit {i}");
                 let commit = repositories::commit(&local_repo, &commit_message)?;
                 commit_ids.push(commit.id);
             }
@@ -245,8 +243,8 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&commit_ids[3])?;
-            let head_commit_id = MerkleHash::from_str(&commit_ids[1])?;
+            let base_commit_id = commit_ids[3].parse()?;
+            let head_commit_id = commit_ids[1].parse()?;
             let commits =
                 api::client::compare::commits(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
@@ -281,8 +279,8 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&og_commit.id)?;
-            let head_commit_id = MerkleHash::from_str(&new_commit.id)?;
+            let base_commit_id = og_commit.id.parse()?;
+            let head_commit_id = new_commit.id.parse()?;
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
@@ -333,12 +331,12 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&og_commit.id)?;
-            let head_commit_id = MerkleHash::from_str(&new_commit.id)?;
+            let base_commit_id = og_commit.id.parse()?;
+            let head_commit_id = new_commit.id.parse()?;
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            println!("results: {:?}", results);
+            println!("results: {results:?}");
             assert_eq!(results.len(), 1);
             let first = results.first().unwrap();
             assert_eq!(first.name, PathBuf::from(""));
@@ -348,7 +346,7 @@ mod tests {
             let results =
                 api::client::compare::entries(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            println!("results: {:?}", results);
+            println!("results: {results:?}");
             assert_eq!(results.entries.len(), 1);
             let first = results.entries.first().unwrap();
             assert_eq!(first.filename, "test_me_out.csv");
@@ -408,10 +406,10 @@ mod tests {
                 // Create the directory
                 util::fs::create_dir_all(full_path.parent().unwrap())?;
 
-                test::write_txt_file_to_path(full_path, format!("File content {}", i))?;
+                test::write_txt_file_to_path(full_path, format!("File content {i}"))?;
                 repositories::add(&local_repo, &local_repo.path).await?;
 
-                let commit_message = format!("Commit {}", i);
+                let commit_message = format!("Commit {i}");
                 let commit = repositories::commit(&local_repo, &commit_message)?;
                 commit_ids.push(commit.id);
             }
@@ -426,12 +424,12 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = MerkleHash::from_str(&commit_ids[1])?;
-            let head_commit_id = MerkleHash::from_str(&commit_ids[3])?;
+            let base_commit_id = commit_ids[1].parse()?;
+            let head_commit_id = commit_ids[3].parse()?;
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            println!("results: {:?}", results);
+            println!("results: {results:?}");
             assert_eq!(results.len(), 1);
             let first = results.first().unwrap();
             assert_eq!(first.name, PathBuf::from(""));
@@ -512,7 +510,7 @@ mod tests {
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
             let df = derived_df.to_df().await;
-            println!("df: {:?}", df);
+            println!("df: {df:?}");
 
             assert_eq!(df.height(), 3);
 

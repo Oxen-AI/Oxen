@@ -16,7 +16,6 @@ use crate::{repositories, util};
 
 use std::path::PathBuf;
 use std::str;
-use std::str::FromStr;
 
 use crate::core::db::merkle_node::MerkleNodeDB;
 
@@ -83,7 +82,7 @@ pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
 fn head_commit_id(repo: &LocalRepository) -> Result<MerkleHash, OxenError> {
     let commit_id = with_ref_manager(repo, |manager| manager.head_commit_id())?;
     match commit_id {
-        Some(commit_id) => MerkleHash::from_str(&commit_id),
+        Some(commit_id) => Ok(commit_id.parse()?),
         None => Err(OxenError::head_not_found()),
     }
 }
@@ -92,7 +91,7 @@ pub fn head_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
     let commit_id = with_ref_manager(repo, |manager| manager.head_commit_id())?;
     match commit_id {
         Some(commit_id) => {
-            let commit_id = MerkleHash::from_str(&commit_id)?;
+            let commit_id = commit_id.parse()?;
             get_by_hash(repo, &commit_id)
         }
         None => Ok(None),
@@ -101,14 +100,12 @@ pub fn head_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
 
 pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     let head_commit_id = head_commit_id(repo)?;
-    log::debug!("head_commit: head_commit_id: {:?}", head_commit_id);
+    log::debug!("head_commit: head_commit_id: {head_commit_id:?}");
 
-    let node = repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(
-        OxenError::basic_str(format!(
-            "Merkle tree node not found for head commit: '{}'",
-            head_commit_id
-        )),
-    )?;
+    let node =
+        repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(OxenError::basic_str(
+            format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
+        ))?;
     let commit = node.commit()?;
     Ok(commit.to_commit())
 }
@@ -122,8 +119,7 @@ pub fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
     if let Some(branch) = branches.first() {
         if let Some(commit) = get_by_id(repo, &branch.commit_id)? {
             let mut seen = HashSet::new();
-            let root_commit =
-                root_commit_recursive(repo, MerkleHash::from_str(&commit.id)?, &mut seen)?;
+            let root_commit = root_commit_recursive(repo, commit.id.parse()?, &mut seen)?;
             return Ok(Some(root_commit));
         }
     }
@@ -148,7 +144,7 @@ fn root_commit_recursive(
 
         // Only need to check the first parent, as all paths lead to the root
         if let Some(parent_id) = commit.parent_ids.first() {
-            let parent_id = MerkleHash::from_str(parent_id)?;
+            let parent_id = parent_id.parse()?;
             return root_commit_recursive(repo, parent_id, seen);
         }
     }
@@ -160,7 +156,7 @@ pub fn get_by_id(
     commit_id_str: impl AsRef<str>,
 ) -> Result<Option<Commit>, OxenError> {
     let commit_id_str = commit_id_str.as_ref();
-    let Ok(commit_id) = MerkleHash::from_str(commit_id_str) else {
+    let Ok(commit_id) = commit_id_str.parse() else {
         // log::debug!(
         //     "get_by_id could not create commit_id from [{}]",
         //     commit_id_str
@@ -187,7 +183,7 @@ pub fn create_empty_commit(
     let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
         return Err(OxenError::revision_not_found(branch_name.into()));
     };
-    let existing_commit_id = MerkleHash::from_str(&existing_commit.id)?;
+    let existing_commit_id = existing_commit.id.parse()?;
     let existing_node =
         repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
             OxenError::basic_str(format!(
@@ -199,7 +195,7 @@ pub fn create_empty_commit(
     let commit_node = CommitNode::new(
         repo,
         CommitNodeOpts {
-            hash: MerkleHash::from_str(&new_commit.id)?,
+            hash: new_commit.id.parse()?,
             parent_ids: vec![existing_commit_id],
             email: new_commit.email.clone(),
             author: new_commit.author.clone(),
@@ -272,7 +268,7 @@ fn recurse_commit(
 
     let mut parent_commits: Vec<Commit> = Vec::new();
     for parent_id in head_commit.parent_ids.clone() {
-        let parent_id = MerkleHash::from_str(&parent_id)?;
+        let parent_id = parent_id.parse()?;
         if let Some(c) = get_by_hash(repo, &parent_id)? {
             parent_commits.push(c);
         }
@@ -321,7 +317,7 @@ fn filter_unsynced(
     log::debug!("filter_unsynced filtering down from {}", commits.len());
     let mut unsynced_commits = HashSet::new();
     for commit in commits {
-        if !core::commit_sync_status::commit_is_synced(repo, &MerkleHash::from_str(&commit.id)?) {
+        if !core::commit_sync_status::commit_is_synced(repo, &commit.id.parse()?) {
             unsynced_commits.insert(commit);
         }
     }
@@ -336,7 +332,7 @@ fn list_all_recursive(
 ) -> Result<(), OxenError> {
     commits.insert(commit.clone());
     for parent_id in commit.parent_ids {
-        let parent_id = MerkleHash::from_str(&parent_id)?;
+        let parent_id = parent_id.parse()?;
         if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
             list_all_recursive(repo, parent_commit, commits)?;
         }
@@ -400,7 +396,7 @@ fn list_recursive_with_depth(
     results.insert(commit.clone(), depth);
 
     for parent_id in commit.parent_ids {
-        let parent_id = MerkleHash::from_str(&parent_id)?;
+        let parent_id = parent_id.parse()?;
         if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
             list_recursive_with_depth(repo, parent_commit, results, depth + 1)?;
         }
@@ -414,7 +410,7 @@ pub fn list_between(
     base: &Commit,
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    log::debug!("list_between()\nbase: {}\nhead: {}", base, head);
+    log::debug!("list_between()\nbase: {base}\nhead: {head}");
     let mut results = vec![];
     list_recursive(
         repo,
@@ -478,8 +474,7 @@ fn list_by_path_recursive_impl(
 
         repositories::revisions::get(repo, last_commit_id.to_string())?.ok_or_else(|| {
             OxenError::basic_str(format!(
-                "Commit not found for last_commit_id: {}",
-                last_commit_id
+                "Commit not found for last_commit_id: {last_commit_id}"
             ))
         })?
     } else {
@@ -511,15 +506,14 @@ pub fn list_by_path_from_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     // Check if the path is a directory or file
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
-        OxenError::basic_str(format!("Merkle tree node not found for path: {:?}", path)),
+        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
     )?;
     let last_commit_id = match &node.node {
         EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
         EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),
         _ => {
             return Err(OxenError::basic_str(format!(
-                "Merkle tree node not found for path: {:?}",
-                path
+                "Merkle tree node not found for path: {path:?}"
             )));
         }
     };

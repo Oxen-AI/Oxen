@@ -9,7 +9,7 @@ pub fn has_key<T: ThreadMode>(db: &DBWithThreadMode<T>, key: u128) -> bool {
         Ok(Some(_value)) => true,
         Ok(None) => false,
         Err(err) => {
-            log::error!("Error checking for entry: {}", err);
+            log::error!("Error checking for entry: {err}");
             false
         }
     }
@@ -28,8 +28,7 @@ where
                 Ok(Some(entry))
             } else {
                 Err(OxenError::basic_str(format!(
-                    "Could not decode value {:?}",
-                    value
+                    "Could not decode value {value:?}"
                 )))
             }
         }
@@ -66,7 +65,7 @@ where
             Ok(())
         }
         Err(err) => {
-            log::error!("Err: Could not encode value {}", err);
+            log::error!("Err: Could not encode value {err}");
             Err(OxenError::basic_str("Could not encode value..."))
         }
     }

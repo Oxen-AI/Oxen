@@ -133,7 +133,7 @@ pub async fn add_n_files_m_dirs(
     */
 
     let readme_file = repo.path.join("README.md");
-    util::fs::write_to_path(&readme_file, format!("Repo with {} files", num_files))?;
+    util::fs::write_to_path(&readme_file, format!("Repo with {num_files} files"))?;
 
     repositories::add(repo, &readme_file).await?;
 
@@ -143,7 +143,7 @@ pub async fn add_n_files_m_dirs(
     file.write_all(b"file,label\n")?;
     for i in 0..num_files {
         let label = if i % 2 == 0 { "cat" } else { "dog" };
-        file.write_all(format!("file{}.txt,{}\n", i, label).as_bytes())?;
+        file.write_all(format!("file{i}.txt,{label}\n").as_bytes())?;
     }
     file.flush()?;
 
@@ -153,11 +153,11 @@ pub async fn add_n_files_m_dirs(
     for i in 0..num_files {
         // Create num_dirs directories
         let dir_num = i % num_dirs;
-        let dir_path = files_dir.join(format!("dir_{}", dir_num));
+        let dir_path = files_dir.join(format!("dir_{dir_num}"));
         util::fs::create_dir_all(&dir_path)?;
 
-        let file_file = dir_path.join(format!("file{}.txt", i));
-        util::fs::write_to_path(&file_file, format!("File {}", i))?;
+        let file_file = dir_path.join(format!("file{i}.txt"));
+        util::fs::write_to_path(&file_file, format!("File {i}"))?;
     }
 
     repositories::add(repo, &files_csv).await?;
@@ -192,7 +192,7 @@ where
     let result = std::panic::catch_unwind(|| match test(&repo_dir) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     });
 
@@ -228,7 +228,7 @@ where
     };
 
     // Remove repo dir
-    maybe_cleanup_repo(&repo_dir)?;
+    // maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);
@@ -249,7 +249,7 @@ where
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     }));
 
@@ -277,7 +277,7 @@ where
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     }));
 
@@ -334,7 +334,7 @@ where
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     }));
 
@@ -451,7 +451,7 @@ where
         let txt = generate_random_string(20);
         let file_path = add_txt_file_to_dir(&local_repo_dir, &txt)?;
         repositories::add(&local_repo, &file_path).await?;
-        repositories::commit(&local_repo, &format!("Adding file_{}", i))?;
+        repositories::commit(&local_repo, &format!("Adding file_{i}"))?;
     }
 
     // Run test to see if it panic'd
@@ -559,7 +559,7 @@ where
         Err(err) => {
             // Remove repo dir before panicking
             maybe_cleanup_repo(&repo_dir)?;
-            panic!("Error running async test. Err: {}", err);
+            panic!("Error running async test. Err: {err}");
         }
     }
 
@@ -606,7 +606,7 @@ where
     };
 
     // Cleanup local repo
-    maybe_cleanup_repo_with_remote(&repo_dir, &remote_repo).await?;
+    // maybe_cleanup_repo_with_remote(&repo_dir, &remote_repo).await?;
 
     // Assert everything okay after we cleanup the repo dir
     assert!(result);
@@ -1245,7 +1245,7 @@ where
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     }));
 
@@ -1256,7 +1256,7 @@ where
     match result {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {:?}", err);
+            panic!("Error running test. Err: {err:?}");
         }
     }
     Ok(())
@@ -1279,7 +1279,7 @@ where
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     }));
 
@@ -1397,7 +1397,7 @@ fn create_embeddings_jsonl(repo_path: &Path) -> Result<(), OxenError> {
     // Make a jsonl file with 10k embeddings
     let mut embeddings = Vec::new();
     for i in 0..10000 {
-        embeddings.push(format!(r#"{{"prompt": "What is great way to version {0} images?", "response": "Checkout Oxen.ai", "embedding": [{0}.0, {0}.1, {0}.2]}}"#, i));
+        embeddings.push(format!(r#"{{"prompt": "What is great way to version {i} images?", "response": "Checkout Oxen.ai", "embedding": [{i}.0, {i}.1, {i}.2]}}"#));
     }
 
     // Write all the files
@@ -1570,7 +1570,7 @@ where
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
         Ok(_) => {}
         Err(err) => {
-            panic!("Error running test. Err: {}", err);
+            panic!("Error running test. Err: {err}");
         }
     }));
 
@@ -1607,10 +1607,10 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     core::refs::ref_manager::remove_from_cache_with_children(repo_dir)?;
 
     if should_cleanup() {
-        log::debug!("maybe_cleanup_repo: cleaning up repo: {:?}", repo_dir);
+        log::debug!("maybe_cleanup_repo: cleaning up repo: {repo_dir:?}");
         util::fs::remove_dir_all(repo_dir)?;
     } else {
-        log::debug!("maybe_cleanup_repo: *NOT* cleaning up repo: {:?}", repo_dir);
+        log::debug!("maybe_cleanup_repo: *NOT* cleaning up repo: {repo_dir:?}");
     }
     Ok(())
 }
@@ -1828,6 +1828,14 @@ pub fn populate_train_dir(repo_dir: &Path) -> Result<(), OxenError> {
             .join("dog_3.jpg"),
         train_dir.join("dog_3.jpg"),
     )?;
+    // Add file with same content and different names to test edge cases
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("dog_3.jpg"),
+        train_dir.join("dog_4.jpg"),
+    )?;
     util::fs::copy(
         Path::new("data")
             .join("test")
@@ -1841,6 +1849,13 @@ pub fn populate_train_dir(repo_dir: &Path) -> Result<(), OxenError> {
             .join("images")
             .join("cat_2.jpg"),
         train_dir.join("cat_2.jpg"),
+    )?;
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("cat_2.jpg"),
+        train_dir.join("cat_3.jpg"),
     )?;
 
     Ok(())
@@ -1862,6 +1877,20 @@ pub fn populate_test_dir(repo_dir: &Path) -> Result<(), OxenError> {
             .join("images")
             .join("cat_3.jpg"),
         test_dir.join("2.jpg"),
+    )?;
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("dog_4.jpg"),
+        test_dir.join("3.jpg"),
+    )?;
+    util::fs::copy(
+        Path::new("data")
+            .join("test")
+            .join("images")
+            .join("cat_3.jpg"),
+        test_dir.join("4.jpg"),
     )?;
 
     Ok(())
