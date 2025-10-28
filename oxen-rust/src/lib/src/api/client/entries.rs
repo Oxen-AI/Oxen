@@ -134,8 +134,6 @@ pub async fn download_entry(
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
     let download_path = util::fs::remove_leading_slash(remote_path);
-    // TODO: Normalize path; get rid of leading '/'
-    // Need util::fs function that does that
 
     let entry = get_entry(remote_repo, download_path.clone(), &revision).await?;
 
