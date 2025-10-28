@@ -133,7 +133,9 @@ pub async fn download_entry(
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
-    let entry = get_entry(remote_repo, remote_path, &revision).await?;
+    let download_path = util::fs::remove_leading_slash(remote_path);
+
+    let entry = get_entry(remote_repo, download_path.clone(), &revision).await?;
 
     let entry = match entry {
         Some(EMetadataEntry::MetadataEntry(entry)) => entry,
@@ -143,11 +145,11 @@ pub async fn download_entry(
             ))
         }
         None => {
-            return Err(OxenError::path_does_not_exist(remote_path));
+            return Err(OxenError::path_does_not_exist(download_path));
         }
     };
 
-    let remote_file_name = remote_path.file_name();
+    let remote_file_name = download_path.file_name();
     let mut local_path = local_path.as_ref().to_path_buf();
 
     // Following the similar logic as cp or scp
@@ -178,9 +180,9 @@ pub async fn download_entry(
     }
 
     if entry.is_dir {
-        repositories::download::download_dir(remote_repo, &entry, remote_path, &local_path).await
+        repositories::download::download_dir(remote_repo, &entry, download_path, &local_path).await
     } else {
-        download_file(remote_repo, &entry, remote_path, local_path, revision).await
+        download_file(remote_repo, &entry, download_path, local_path, revision).await
     }
 }
 
