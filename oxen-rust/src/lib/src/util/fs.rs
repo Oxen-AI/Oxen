@@ -1601,9 +1601,9 @@ pub fn linux_path(path: &Path) -> PathBuf {
 
 pub fn remove_leading_slash(path: &Path) -> PathBuf {
     let mut components = path.components();
-    
+
     // If the first component of the path is '/', skip it and reconstruct the path
-    if components.next() == Some(std::path::Component::RootDir) {        
+    if components.next() == Some(std::path::Component::RootDir) {
         components.collect()
     } else {
         path.to_path_buf()
