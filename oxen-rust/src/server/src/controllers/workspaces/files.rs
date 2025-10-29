@@ -63,7 +63,7 @@ pub async fn get(
                 Ok(file_node)
             }
             None => {
-                // If the file isn't in the workspace staged_db, look for it in the base repo merkle tree
+                // If the file isn't in the workspace staged_db, look for it in the base repo
                 if let Some(file_node) = repositories::tree::get_file_by_path(
                     &workspace.base_repo,
                     &workspace.commit,
