@@ -237,7 +237,9 @@ impl DiffEntry {
                 repo,
                 base_entry.as_ref(),
                 head_entry.as_ref(),
-            ) {
+            )
+            .await
+            {
                 Ok(text_diff) => Some(GenericDiff::TextDiff(text_diff)),
                 Err(_) => None,
             }
