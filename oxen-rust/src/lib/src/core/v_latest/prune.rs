@@ -341,7 +341,7 @@ mod tests {
             // Create a new branch and add a commit
             let branch_1_name = "branch-1";
             repositories::branches::create(&repo, branch_1_name, &initial_commit.id)?;
-            repositories::checkout(&repo, branch_1_name).await?;
+            repositories::checkout(&repo, branch_1_name, false).await?;
             let branch_1_file = test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
             repositories::add(&repo, &branch_1_file).await?;
             let branch_1_commit = repositories::commit(&repo, "Commit on branch 1")?;
@@ -349,13 +349,13 @@ mod tests {
             // Create a second branch and add another commit
             let branch_2_name = "branch-2";
             repositories::branches::create(&repo, branch_2_name, &branch_1_commit.id)?;
-            repositories::checkout(&repo, branch_2_name).await?;
+            repositories::checkout(&repo, branch_2_name, false).await?;
             let branch_2_file = test::add_txt_file_to_dir(&train_dir, "file3.txt")?;
             repositories::add(&repo, &branch_2_file).await?;
             let branch_2_commit = repositories::commit(&repo, "Commit on branch 2")?;
 
             // Checkout main and delete the branches
-            repositories::checkout(&repo, "main").await?;
+            repositories::checkout(&repo, "main", false).await?;
             repositories::branches::force_delete(&repo, branch_1_name)?;
             repositories::branches::force_delete(&repo, branch_2_name)?;
 
@@ -387,14 +387,14 @@ mod tests {
             let branch_name = "feature";
             repositories::branches::create(&repo, branch_name, &initial_commit.id)?;
 
-            repositories::checkout(&repo, branch_name).await?;
+            repositories::checkout(&repo, branch_name, false).await?;
             let file2 = repo.path.join("file2.txt");
             tokio::fs::write(&file2, "file2").await?;
             repositories::add(&repo, &file2).await?;
             repositories::commit(&repo, "Add file2")?;
 
             // Checkout main and merge the feature branch
-            repositories::checkout(&repo, "main").await?;
+            repositories::checkout(&repo, "main", false).await?;
             repositories::merge::merge(&repo, branch_name).await?;
 
             // Delete the feature branch
