@@ -47,19 +47,36 @@ pub async fn get(
     let path = path_param(&req, "path")?;
     log::debug!("got workspace file path {:?}", &path);
 
-    // Get the file from the version store
+    // First, look for the file in the workspace staged_db
     let file_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-        let staged_node = staged_db_manager
-            .read_from_staged_db(&path)?
-            .ok_or_else(|| OxenError::basic_str("File not found in staged DB"))?;
+        let staged_node = staged_db_manager.read_from_staged_db(&path)?;
 
-        let file_node = match staged_node.node.node {
-            EMerkleTreeNode::File(f) => Ok(f),
-            _ => Err(OxenError::basic_str(
-                "Only single file download is supported",
-            )),
-        }?;
-        Ok(file_node)
+        match staged_node {
+            Some(staged_node) => {
+                let file_node = match staged_node.node.node {
+                    EMerkleTreeNode::File(f) => Ok(f),
+                    _ => Err(OxenError::basic_str(
+                        "Only single file download is supported",
+                    )),
+                }?;
+
+                Ok(file_node)
+            }
+            None => {
+                // If the file isn't in the workspace staged_db, look for it in the base repo
+                if let Some(file_node) = repositories::tree::get_file_by_path(
+                    &workspace.base_repo,
+                    &workspace.commit,
+                    &path,
+                )? {
+                    Ok(file_node)
+                } else {
+                    Err(OxenError::basic_str(
+                        "File not found in workspace staged DB or base repo",
+                    ))
+                }
+            }
+        }
     })?;
 
     let file_hash = file_node.hash();
