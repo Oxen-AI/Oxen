@@ -3,7 +3,6 @@ use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::{
     MAX_CONCURRENT_UPLOADS as DEFAULT_MAX_CONCURRENT_UPLOADS, MAX_RETRIES as DEFAULT_MAX_RETRIES,
 };
-use crate::core::oxenignore;
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};

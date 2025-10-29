@@ -45,7 +45,7 @@ pub async fn get(
         &repo
     };
 
-    println!(
+    log::debug!(
         "{} resource {namespace}/{repo_name}/{resource}",
         liboxen::current_function!()
     );
