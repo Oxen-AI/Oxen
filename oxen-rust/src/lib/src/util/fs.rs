@@ -1596,6 +1596,17 @@ pub fn linux_path(path: &Path) -> PathBuf {
     Path::new(&linux_path_str(string)).to_path_buf()
 }
 
+pub fn remove_leading_slash(path: &Path) -> PathBuf {
+    let mut components = path.components();
+
+    // If the first component of the path is '/', skip it and reconstruct the path
+    if components.next() == Some(std::path::Component::RootDir) {
+        components.collect()
+    } else {
+        path.to_path_buf()
+    }
+}
+
 pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
     log::debug!("disk_usage_for_path: {path:?}");
     let disks = sysinfo::Disks::new_with_refreshed_list();

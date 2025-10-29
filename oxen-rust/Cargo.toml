@@ -45,6 +45,7 @@ bytecount = "0.6.3"
 bytes = "1.5.0"
 bytesize = "1.3.0"
 bytevec = "0.2.0"
+console-subscriber = "0.4.1"
 chrono = "0.4.30"
 clap = { version = "4.4.2", features = ["cargo", "derive"] }
 colored = "2.0.4"
@@ -133,9 +134,10 @@ sysinfo = "0.33.0"
 tar = "0.4.44"
 tempfile = "3.8.0"
 time = { version = "0.3.28", features = ["serde"] }
-tokio = { version = "1.32.0", features = ["full"] }
+tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-stream = "0.1.17"
 tokio-util = "0.7.8"
+tokio-console = "0.1.13"
 toml = "0.8.19"
 url = "2.4.1"
 urlencoding = "2.1.3"

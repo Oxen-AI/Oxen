@@ -34,9 +34,6 @@ jobs:
           # Clean apt cache
           sudo apt-get clean
 
-          # Remove old Docker images
-          docker system prune -af --volumes
-
           echo "=== After cleanup ==="
           df -h
 
@@ -61,17 +58,15 @@ jobs:
         with:
           python-version: "3.10" # Test against the earliest supported Python version
 
-      - name: Cache based on dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            oxen-rust/target/
-            oxen-python/target/
-          key: ${{ matrix.os }}-cargo-dependencies-${{ hashFiles('**/Cargo.lock') }}
+          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
+          # Other branches will still use the cache but won't save it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            oxen-rust
+            oxen-python
 
       - name: Install dependencies (macOS)
         if: matrix.platform == 'macos'
@@ -125,7 +120,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}\oxen-rust
           Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo test -- --test-threads=1
+          cargo test -- --test-threads=3
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)
@@ -166,8 +161,9 @@ jobs:
           ~/oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          uv run maturin develop --uv
-          uv run pytest -s tests
+          source .venv/bin/activate
+          maturin develop
+          pytest -s tests
 
       - name: Run oxen-python tests (Windows)
         if: matrix.platform == 'windows'
@@ -177,5 +173,7 @@ jobs:
           ${{ github.workspace }}\oxen.exe config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          uv run maturin develop --uv
-          uv run pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
+          dir .venv
+          .venv\Scripts\Activate.ps1
+          maturin develop
+          pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
