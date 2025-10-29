@@ -122,7 +122,6 @@ pub async fn add<T: AsRef<Path>>(
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
     let db_path = repo_path.join(OXEN_HIDDEN_DIR).join(STAGED_DIR);
-    log::debug!("staged_db path: {db_path:?}");
 
     let staged_db: Arc<DBWithThreadMode<MultiThreaded>> =
         Arc::new(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?);
@@ -139,7 +138,7 @@ pub async fn add_files(
     staged_db: Arc<DBWithThreadMode<MultiThreaded>>,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<CumulativeStats, OxenError> {
-    log::debug!("add files: {paths:?}");
+    log::debug!("add files got paths: {:?}", paths.len());
     let cwd = std::env::current_dir()?;
 
     // Start a timer
@@ -162,10 +161,12 @@ pub async fn add_files(
             (false, true) => repo_path.join(path),
             (false, false) => match diff_paths(repo_path, &cwd) {
                 Some(correct_path) => correct_path.join(path),
-                None => path.clone(),
+                None => {
+                    let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+                    repo_path.join(&relative_path)
+                }
             },
         };
-        log::debug!("corrected path is {corrected_path:?}");
 
         if corrected_path.is_dir() {
             total += add_dir_inner(

@@ -46,6 +46,7 @@ pub fn parse_glob_paths(
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths {
+        log::debug!("parse_glob_paths parsing path: {:?}", path);
         // Normalize canonicalization before checking if it's a glob path
         let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
         let glob_path = {
@@ -61,8 +62,6 @@ pub fn parse_glob_paths(
         };
 
         if util::fs::is_glob_path(&glob_path) {
-            log::debug!("parse_glob_paths got glob path: {:?}", path);
-
             if *staged_db {
                 // If staged flag set, only match against the staged db
                 let staged_paths = search_staged_db(
@@ -114,7 +113,7 @@ pub fn parse_glob_paths(
                     oxenignore.clone(),
                 )?;
             } else {
-                // let entry_path = repo_path.join(&relative_path);
+                // Else, return the original path
                 expanded_paths.insert(path.clone());
             }
         }
