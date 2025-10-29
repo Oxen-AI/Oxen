@@ -446,6 +446,102 @@ mod tests {
     /*
      * Modify the file on a branch
      * Commit file on branch
+     * Modify the file again
+     * Try to checkout main
+     * Assert that neither the file nor the branch are overwritten
+     */
+    #[tokio::test]
+    async fn test_command_checkout_does_not_overwrite_local_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write a file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            // Track & commit the file
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Added hello.txt")?;
+
+            // Get the original branch name
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create and checkout branch
+            let branch_name = "feature/world-explorer";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Modify and commit the file on the branch
+            let hello_file = test::modify_txt_file(hello_file, "Hello from branch")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Changed hello.txt on branch")?;
+
+            // Modify the file again
+            let hello_file = test::modify_txt_file(hello_file, "This will cause an error!")?;
+
+            // Try to checkout the main branch
+            let result = repositories::checkout(&repo, orig_branch.name, false).await;
+            assert!(result.is_err());
+
+            // Ensure the branch and file haven't changed
+            let current_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            assert_eq!(current_branch.name, "feature/world-explorer");
+            assert_eq!(
+                util::fs::read_from_path(&hello_file)?,
+                "This will cause an error!"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /*
+     * Modify the file on a branch
+     * Commit file on branch
+     * Modify the file again
+     * Force checkout main
+     * Assert that the file and branch have updated
+     */
+    #[tokio::test]
+    async fn test_command_force_checkout_overwrites_local_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write a file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            // Track & commit the file
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Added hello.txt")?;
+
+            // Get the original branch name
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create and checkout branch
+            let branch_name = "feature/world-explorer";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Modify and commit the file on the branch
+            let hello_file = test::modify_txt_file(hello_file, "Hello from branch")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Changed hello.txt on branch")?;
+
+            // Modify the file again
+            let hello_file = test::modify_txt_file(hello_file, "This will cause an error!")?;
+
+            // Force checkout the main branch
+            repositories::checkout(&repo, orig_branch.name, true).await?;
+
+            // Ensure the branch and file haven't changed
+            let current_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            assert_eq!(current_branch.name, "main");
+            assert_eq!(util::fs::read_from_path(&hello_file)?, "Hello");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /*
+     * Modify the file on a branch
+     * Commit file on branch
      * Checkout main
      * Modify the file on main
      * Merge branch into main
