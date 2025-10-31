@@ -3,6 +3,7 @@
 
 pub mod concurrency;
 pub mod fs;
+pub mod glob;
 pub mod hasher;
 pub mod image;
 pub mod logging;

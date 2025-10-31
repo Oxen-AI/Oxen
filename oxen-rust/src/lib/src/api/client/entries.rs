@@ -197,7 +197,6 @@ pub async fn download_entries_to_repo(
     for (local_path, remote_path) in paths_to_download.iter() {
         // TODO: Refactor to get the entries for all paths in one API call
         let entry = get_entry(remote_repo, remote_path, &revision).await?;
-
         let entry = match entry {
             Some(EMetadataEntry::MetadataEntry(entry)) => entry,
             Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
