@@ -196,7 +196,7 @@ pub async fn put(
         )),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
 
     log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
@@ -409,7 +409,7 @@ pub async fn import(
         ),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
     log::debug!("workspace::commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {

@@ -2,7 +2,6 @@ use crate::error::OxenError;
 use crate::model::diff::change_type::ChangeType;
 use crate::model::diff::text_diff::LineDiff;
 use crate::model::diff::text_diff::TextDiff;
-use crate::util;
 
 use difference::{Changeset, Difference};
 use std::path::PathBuf;
@@ -34,7 +33,9 @@ fn add_lines_to_diff(
 }
 
 pub fn diff(
+    original_data: Option<String>,
     version_file_1: Option<PathBuf>,
+    compare_data: Option<String>,
     version_file_2: Option<PathBuf>,
 ) -> Result<TextDiff, OxenError> {
     let mut result = TextDiff {
@@ -46,8 +47,10 @@ pub fn diff(
             .map(|p| p.to_string_lossy().to_string()),
         ..Default::default()
     };
-    let original_data = util::fs::read_file(version_file_1)?;
-    let compare_data = util::fs::read_file(version_file_2)?;
+
+    let original_data = original_data.unwrap_or_default();
+    let compare_data = compare_data.unwrap_or_default();
+
     let Changeset { diffs, .. } = Changeset::new(&original_data, &compare_data, "\n");
     log::debug!("Changeset created with {} diffs", diffs.len());
 

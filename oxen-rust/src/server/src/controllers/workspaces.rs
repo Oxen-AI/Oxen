@@ -326,7 +326,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         return Ok(HttpResponse::NotFound().json(StatusMessageDescription::not_found(branch_name)));
     };
 
-    match repositories::workspaces::commit(&workspace, &data, &branch_name) {
+    match repositories::workspaces::commit(&workspace, &data, &branch_name).await {
         Ok(commit) => {
             log::debug!("workspace::commit ✅ success! commit {commit:?}");
             Ok(HttpResponse::Ok().json(CommitResponse {

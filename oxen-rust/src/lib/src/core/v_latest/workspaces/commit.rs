@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tokio::fs::File;
+use tokio::io::BufReader;
 
 use crate::constants::STAGED_DIR;
 use crate::core;
@@ -22,7 +24,7 @@ use crate::view::merge::{MergeConflictFile, Mergeable};
 use filetime::FileTime;
 use indicatif::ProgressBar;
 
-pub fn commit(
+pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
@@ -62,7 +64,7 @@ pub fn commit(
             return Err(OxenError::workspace_behind(workspace));
         }
 
-        let dir_entries = export_tabular_data_frames(workspace, dir_entries)?;
+        let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
 
         repositories::commits::commit_writer::commit_dir_entries(
             &workspace.base_repo,
@@ -246,7 +248,7 @@ fn list_conflicts(
     Ok(conflicts)
 }
 
-fn export_tabular_data_frames(
+async fn export_tabular_data_frames(
     workspace: &Workspace,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
 ) -> Result<HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, OxenError> {
@@ -292,7 +294,8 @@ fn export_tabular_data_frames(
                             workspace,
                             &exported_path,
                             dir_entry.status,
-                        )?;
+                        )
+                        .await?;
 
                         log::debug!(
                             "export_tabular_data_frames new_staged_merkle_tree_node: {new_staged_merkle_tree_node:?}"
@@ -320,7 +323,7 @@ fn export_tabular_data_frames(
     Ok(new_dir_entries)
 }
 
-fn compute_staged_merkle_tree_node(
+async fn compute_staged_merkle_tree_node(
     workspace: &Workspace,
     path: &PathBuf,
     status: StagedEntryStatus,
@@ -359,19 +362,17 @@ fn compute_staged_merkle_tree_node(
     let combined_hash = util::hasher::get_combined_hash(Some(metadata_hash), hash.to_u128())?;
     let combined_hash = MerkleHash::new(combined_hash);
 
-    // Copy the file to the versioned directory
-    let dst_dir = util::fs::version_dir_from_hash(&workspace.base_repo.path, hash.to_string());
-    if !dst_dir.exists() {
-        util::fs::create_dir_all(&dst_dir).unwrap();
-    }
+    // Copy file to the version store
+    log::debug!("compute_staged_merkle_tree_node writing file to version store");
+    let file = File::open(path).await?;
+    let mut reader = BufReader::new(file);
+    let version_store = workspace.base_repo.version_store()?;
+    version_store
+        .store_version_from_reader(&hash.to_string(), &mut reader)
+        .await?;
 
-    let relative_path = util::fs::path_relative_to_dir(path, &workspace.workspace_repo.path)?;
-    let dst = dst_dir.join("data");
-
-    log::debug!("compute_staged_merkle_tree_node copying file to {dst:?}");
-
-    util::fs::copy(path, &dst).unwrap();
     let file_extension = path.extension().unwrap_or_default().to_string_lossy();
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace.workspace_repo.path)?;
     let relative_path_str = relative_path.to_str().unwrap();
     let file_node = FileNode::new(
         &workspace.base_repo,
