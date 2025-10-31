@@ -632,7 +632,7 @@ mod tests {
             assert!(history_main.is_err());
 
             // Back to main
-            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
+            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME, false).await?;
 
             // Push to remote
             repositories::push(&local_repo).await?;
