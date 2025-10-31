@@ -14,6 +14,7 @@ pub mod migrations;
 pub mod namespaces;
 pub mod not_found;
 pub mod oxen_version;
+pub mod prune;
 pub mod repositories;
 pub mod revisions;
 pub mod schemas;

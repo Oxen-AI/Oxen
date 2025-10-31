@@ -60,6 +60,7 @@ impl Default for PruneStats {
 /// # Returns
 /// Statistics about the prune operation
 pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, OxenError> {
+    let start = std::time::Instant::now();
     let mut stats = PruneStats::new();
 
     log::info!("Starting prune operation (dry_run: {})", dry_run);
@@ -81,7 +82,8 @@ pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, 
     log::info!("Pruning orphaned version files...");
     prune_versions(repo, &referenced_versions, &mut stats, dry_run).await?;
 
-    log::info!("Prune operation complete");
+    let duration = start.elapsed();
+    log::info!("Prune operation complete in {:.2?}", duration);
     log::info!(
         "Nodes: scanned={}, kept={}, removed={}",
         stats.nodes_scanned,
