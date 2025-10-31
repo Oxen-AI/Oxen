@@ -1042,14 +1042,10 @@ pub async fn rm_files(
     log::debug!("rm_files: {url}");
     let client = client::new_for_url(&url)?;
     let response = client.delete(&url).json(&expanded_paths).send().await?;
-    // TODO: Same issue as with add, will display same message even if rm doesn't stage the files
 
     if response.status().is_success() {
-        log::debug!("rm_files successful, status: {}", response.status());
-        let body = client::parse_json_body(&url, response).await?;
-        log::debug!("rm_files got body: {body}");
-
-        println!("🐂 oxen staged paths {paths:?} as removed for workspace {workspace_id}");
+        let _body = client::parse_json_body(&url, response).await?;
+        println!("🐂 oxen staged paths {paths:?} as removed in workspace {workspace_id}");
 
         // Remove files locally
         for path in expanded_paths {
@@ -1063,7 +1059,7 @@ pub async fn rm_files(
             }
         }
     } else {
-        log::debug!("rm_files failed with status: {}", response.status());
+        log::error!("rm_files failed with status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
 
         return Err(OxenError::basic_str(format!(
@@ -1156,16 +1152,28 @@ pub async fn download(
     let client = client::new_for_url(&url)?;
     let response = client.get(&url).send().await?;
 
-    // Save the raw file contents from the response stream
-    let output_path = output_path.unwrap_or_else(|| Path::new(path));
-    let mut file = tokio::fs::File::create(&output_path).await?;
-    let mut stream = response.bytes_stream();
+    if response.status().is_success() {
+        // Save the raw file contents from the response stream
+        let output_path = output_path.unwrap_or_else(|| Path::new(path));
+        let mut file = tokio::fs::File::create(&output_path).await?;
+        let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+    } else {
+        log::error!(
+            "api::client::workspace::files::download failed with status: {}",
+            response.status()
+        );
+        let body = client::parse_json_body(&url, response).await?;
+
+        return Err(OxenError::basic_str(format!(
+            "Error: Could not remove paths {body:?}"
+        )));
     }
-    file.flush().await?;
 
     Ok(())
 }
@@ -2054,6 +2062,36 @@ mod tests {
                 entries.added_files.entries[0].filename(),
                 assert_path.to_str().unwrap(),
             );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Download file from the workspace's base repo using the workspace download endpoint
+    #[tokio::test]
+    async fn test_download_version_file_from_workspace() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let branch_name = constants::DEFAULT_BRANCH_NAME;
+
+            let workspace_id = uuid::Uuid::new_v4().to_string();
+            let workspace =
+                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            assert_eq!(workspace.id, workspace_id);
+
+            let bounding_box_path = PathBuf::from("README.md");
+            let output_path = PathBuf::from("output.md");
+
+            // Download the bounding box from the base repo to a new path
+            api::client::workspaces::files::download(
+                &remote_repo,
+                &workspace_id,
+                bounding_box_path.to_str().unwrap(),
+                Some(&output_path),
+            )
+            .await?;
+
+            assert!(output_path.exists());
 
             Ok(remote_repo)
         })
