@@ -9,7 +9,7 @@ use crate::model::entry::metadata_entry::CLIMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
-use crate::model::{Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource};
+use crate::model::{Commit, LocalRepository, MetadataEntry, ParsedResource};
 use crate::util;
 
 use std::path::{Path, PathBuf};
@@ -62,37 +62,6 @@ pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
         hash: "".to_string(),
         is_dir: path.is_dir(),
         latest_commit: None,
-        resource: None,
-        size,
-        data_type,
-        mime_type,
-        extension,
-        metadata,
-        is_queryable: None,
-    })
-}
-
-pub async fn from_commit_entry(
-    repo: &LocalRepository,
-    entry: &CommitEntry,
-    commit: &Commit,
-) -> Result<MetadataEntry, OxenError> {
-    let path = util::fs::version_path(repo, entry);
-    let base_name = entry
-        .path
-        .file_name()
-        .ok_or(OxenError::file_has_no_name(&path))?;
-    let size = get_file_size(&path)?;
-    let mime_type = util::fs::file_mime_type(&path);
-    let data_type = util::fs::datatype_from_mimetype(&path, mime_type.as_str());
-    let extension = util::fs::file_extension(&path);
-    let metadata = get_file_metadata(&path, &data_type)?;
-
-    Ok(MetadataEntry {
-        filename: base_name.to_string_lossy().to_string(),
-        hash: entry.hash.to_string(),
-        is_dir: path.is_dir(),
-        latest_commit: Some(commit.to_owned()),
         resource: None,
         size,
         data_type,
