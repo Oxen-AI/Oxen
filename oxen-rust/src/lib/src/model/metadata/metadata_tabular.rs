@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
+use bitcode::{Encode, Decode};
 
 use crate::model::Schema;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataTabular {
     pub tabular: MetadataTabularImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataTabularImpl {
     pub width: usize,
     pub height: usize,

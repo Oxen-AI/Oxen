@@ -13,6 +13,7 @@ use polars::prelude::{SchemaExt, SchemaRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, fmt, path::PathBuf};
+use bitcode::{Encode, Decode};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Schema {

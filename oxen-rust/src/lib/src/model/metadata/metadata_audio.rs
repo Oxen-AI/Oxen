@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
+use bitcode::{Encode, Decode};
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataAudio {
     pub audio: MetadataAudioImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataAudioImpl {
     pub num_seconds: f64,
     pub num_channels: usize,

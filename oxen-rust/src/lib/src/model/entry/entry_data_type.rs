@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
+use bitcode::{Encode, Decode};
 
-#[derive(Default, Deserialize, Serialize, Debug, Clone, Eq, Hash, PartialEq)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, Eq, Hash, PartialEq, Encode, Decode)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryDataType {
     Dir,

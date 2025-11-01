@@ -145,10 +145,12 @@ xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = "2.4.1"
 pathdiff = "0.2.3"
 async-recursion = "1.1.1"
+decode = "0.1.0"
+bitcode = {version="0.6.7", features=["serde"]}
 
 
 [workspace]
-members = ["src/cli", "src/lib", "src/server"]
+members = [ "experiments/lmdb-oxen","src/cli", "src/lib", "src/server"]
 
 [profile.release]
 codegen-units = 1

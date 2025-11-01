@@ -28,8 +28,9 @@ pub use crate::model::{MerkleTreeNodeType, TMerkleTreeNode};
 use serde::{Deserialize, Serialize};
 
 use super::MerkleHash;
+use bitcode::{Encode, Decode};
 
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Encode, Decode)]
 pub enum EMerkleTreeNode {
     File(FileNode),
     Directory(DirNode),

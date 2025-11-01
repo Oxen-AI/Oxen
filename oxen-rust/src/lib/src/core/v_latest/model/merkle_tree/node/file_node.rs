@@ -8,8 +8,9 @@ use crate::model::merkle_tree::node::file_node_types::{FileChunkType, FileStorag
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{EntryDataType, MerkleHash, MerkleTreeNodeType};
 use serde::{Deserialize, Serialize};
+use bitcode::{Encode, Decode};
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Encode, Decode)]
 pub struct FileNodeData {
     pub node_type: MerkleTreeNodeType,
 

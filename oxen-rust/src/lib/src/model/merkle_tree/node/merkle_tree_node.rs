@@ -13,8 +13,9 @@ use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 use serde::{Deserialize, Serialize};
 
 use super::merkle_tree_node_cache;
+use bitcode::{Encode, Decode};
 
-#[derive(Clone, Eq, Deserialize, Serialize)]
+#[derive(Clone, Eq, Deserialize, Serialize, Encode, Decode)]
 pub struct MerkleTreeNode {
     pub hash: MerkleHash,
     pub node: EMerkleTreeNode,

@@ -12,6 +12,7 @@ use crate::model::{
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use bitcode::{Encode, Decode};
 
 pub struct FileNodeOpts {
     pub name: String,
@@ -54,12 +55,12 @@ pub trait TFileNode {
     fn storage_backend(&self) -> &FileStorageType;
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Encode, Decode)]
 pub enum EFileNode {
     V0_25_0(FileNodeDataV0_25_0),
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Encode, Decode)]
 pub struct FileNode {
     pub node: EFileNode,
 }

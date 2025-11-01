@@ -279,7 +279,16 @@ pub async fn download_trees_from(
 
     log::debug!("downloading trees {} from {}", commit_id, url);
 
-    node_download_request(local_repo, &url).await?;
+    match node_download_request(local_repo, &url).await {
+        Ok(_) => {
+            return Ok(());
+        }
+        Err(err) => {
+            log::error!("Error downloading trees from {}", url);
+            log::error!("Error: {}", err);
+            return Err(OxenError::basic_str(format!("Error downloading trees from {}", url)));
+        }
+    };
 
     log::debug!("unpacked trees {}", commit_id);
 

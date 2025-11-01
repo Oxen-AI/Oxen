@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
+use bitcode::{Encode, Decode};
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataVideo {
     pub video: MetadataVideoImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataVideoImpl {
     pub num_seconds: f64,
     pub width: usize,

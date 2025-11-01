@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = {version = "4.5.48", features = ["derive"] } 
+clap = {version = "4.5.48", features = ["derive"] }
 heed = "0.22.0"
 liboxen  = { path = "../../src/lib" }
 log = "0.4.28"
+rmp-serde = "1.3.0"
+capnp = "0.19"
+rayon = "1.11.0"
+
+[build-dependencies]
+capnpc = "0.19"

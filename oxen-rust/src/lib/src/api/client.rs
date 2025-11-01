@@ -101,7 +101,7 @@ fn builder_for_host<S: AsRef<str>>(
         }
     };
     if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
-        log::debug!("Setting auth token for host: {}", host.as_ref());
+        log::debug!("Setting auth token for host: {}, {:?}", host.as_ref(), auth_token);
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,

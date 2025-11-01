@@ -1403,7 +1403,11 @@ impl CommitMerkleTree {
         unique_hashes.insert(node.hash);
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        list_hashes.insert((node.hash, node.clone()));
+        let mut new_node = node.clone();
+        for (_,child) in children.clone() {
+            new_node.children.push(child.to_owned());
+        }
+        list_hashes.insert((node.hash, new_node));
         // log::debug!("load_unique_children Got {} children", children.len());
         for (_key, child) in children {
             let mut child = child.to_owned();

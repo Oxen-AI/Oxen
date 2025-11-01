@@ -5,8 +5,9 @@ use serde_json::Value;
 use crate::model::data_frame::schema::DataType;
 
 use super::CustomDataType;
+use bitcode::{Encode, Decode};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct Field {
     pub name: String,
     pub dtype: String,
@@ -14,14 +15,14 @@ pub struct Field {
     pub changes: Option<Changes>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct PreviousField {
     pub name: String,
     pub dtype: String,
     pub metadata: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct Changes {
     pub status: String,
     pub previous: Option<PreviousField>,

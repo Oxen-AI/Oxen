@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use bitcode::{Encode, Decode};
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum ImgColorSpace {
     // 8-bit
     RGB,
@@ -21,12 +22,12 @@ pub enum ImgColorSpace {
     Unknown,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataImage {
     pub image: MetadataImageImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 pub struct MetadataImageImpl {
     pub width: u32,
     pub height: u32,

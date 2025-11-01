@@ -5,15 +5,16 @@
 //!
 
 use serde::{Deserialize, Serialize};
+use bitcode::{Encode, Decode};
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Encode, Decode)]
 pub enum FileChunkType {
     SingleFile,
     // Chunked type is not used yet
     Chunked,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Encode, Decode)]
 pub enum FileStorageType {
     Disk,
     // S3 is not used yet

@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::model::metadata::{
     MetadataAudio, MetadataDir, MetadataImage, MetadataTabular, MetadataText, MetadataVideo,
 };
+use bitcode::{Encode, Decode};
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Encode, Decode)]
 #[serde(untagged)]
 pub enum GenericMetadata {
     MetadataDir(MetadataDir),
