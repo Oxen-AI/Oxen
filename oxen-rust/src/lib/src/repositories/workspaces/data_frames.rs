@@ -389,7 +389,8 @@ pub async fn from_directory(
 
     repositories::workspaces::files::add(workspace, &output_path).await?;
 
-    let commit = repositories::workspaces::commit(workspace, new_commit, branch.name.as_str())?;
+    let commit =
+        repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await?;
     println!(
         "Created parquet file with {} file paths at: {:?}",
         file_paths.len(),
@@ -782,7 +783,7 @@ mod tests {
                 email: "email".to_string(),
                 message: "Deleting a row allegedly".to_string(),
             };
-            let commit_2 = workspaces::commit(&workspace, &new_commit, branch_name)?;
+            let commit_2 = workspaces::commit(&workspace, &new_commit, branch_name).await?;
 
             let file_1 = repositories::revisions::get_version_file_from_commit_id(
                 &repo, &commit.id, &file_path,
@@ -1257,7 +1258,7 @@ mod tests {
                 message: "Appending tabular data".to_string(),
             };
 
-            let commit = workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME)?;
+            let commit = workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME).await?;
 
             // Make sure version file is updated
             let entry = repositories::entries::get_commit_entry(&repo, &commit, &path)?.unwrap();

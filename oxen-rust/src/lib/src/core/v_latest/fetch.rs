@@ -13,6 +13,7 @@ use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNodeWithDir, MerkleTr
 use crate::model::{Branch, Commit, CommitEntry};
 use crate::model::{LocalRepository, RemoteBranch, RemoteRepository};
 use crate::repositories;
+use crate::storage::VersionStore;
 use crate::util::concurrency;
 use crate::{api, util};
 
@@ -129,14 +130,7 @@ pub async fn fetch_remote_branch(
         missing_entries.len() as u64,
         total_bytes,
     ));
-    pull_entries_to_versions_dir(
-        repo,
-        remote_repo,
-        &missing_entries,
-        &repo.path,
-        &pull_progress,
-    )
-    .await?;
+    pull_entries_to_versions_dir(repo, remote_repo, &missing_entries, &pull_progress).await?;
 
     // If we fetched the data, we're no longer shallow
     repo.write_is_shallow(false)?;
@@ -528,14 +522,7 @@ async fn r_download_entries(
             }
         }
 
-        pull_entries_to_versions_dir(
-            repo,
-            remote_repo,
-            &missing_entries,
-            &repo.path,
-            pull_progress,
-        )
-        .await?;
+        pull_entries_to_versions_dir(repo, remote_repo, &missing_entries, pull_progress).await?;
     }
 
     if let EMerkleTreeNode::Commit(commit_node) = &node.node {
@@ -553,7 +540,6 @@ pub async fn pull_entries_to_versions_dir(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entries: &[Entry],
-    dst: &Path,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     log::debug!("entries.len() {}", entries.len());
@@ -561,7 +547,9 @@ pub async fn pull_entries_to_versions_dir(
         return Ok(());
     }
 
-    let missing_entries = get_missing_entries(entries, dst);
+    let version_store = repo.version_store()?;
+    let missing_entries = get_missing_entries_for_pull(&version_store, entries)?;
+    log::debug!("Pulling {} missing entries", missing_entries.len());
 
     if missing_entries.is_empty() {
         return Ok(());
@@ -790,7 +778,7 @@ pub async fn download_entries_to_working_dir(
         return Ok(());
     }
 
-    let missing_entries = get_missing_entries(entries, dst);
+    let missing_entries = get_missing_entries_for_download(entries, dst);
     log::debug!("Pulling {} missing entries", missing_entries.len());
 
     if missing_entries.is_empty() {
@@ -1019,18 +1007,6 @@ async fn download_small_entries(
     Ok(())
 }
 
-fn get_missing_entries(entries: &[Entry], dst: &Path) -> Vec<Entry> {
-    let dst: &Path = dst;
-
-    let version_path = util::fs::root_version_path(dst);
-
-    if !version_path.exists() {
-        get_missing_entries_for_download(entries, dst)
-    } else {
-        get_missing_entries_for_pull(entries, dst)
-    }
-}
-
 fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry> {
     let mut missing_entries: Vec<Entry> = vec![];
     for entry in entries {
@@ -1042,16 +1018,19 @@ fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry>
     missing_entries
 }
 
-fn get_missing_entries_for_pull(entries: &[Entry], dst: &Path) -> Vec<Entry> {
+fn get_missing_entries_for_pull(
+    version_store: &Arc<dyn VersionStore>,
+    entries: &[Entry],
+) -> Result<Vec<Entry>, OxenError> {
     let mut missing_entries: Vec<Entry> = vec![];
     for entry in entries {
-        let version_path = util::fs::version_path_from_dst_generic(dst, entry);
+        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         if !version_path.exists() {
             missing_entries.push(entry.to_owned())
         }
     }
 
-    missing_entries
+    Ok(missing_entries)
 }
 
 fn working_dir_paths_from_large_entries(entries: &[Entry], dst: &Path) -> Vec<PathBuf> {

@@ -350,14 +350,14 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     Ok(())
 }
 
-pub fn commit(
+pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
     match workspace.workspace_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name),
+        _ => core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name).await,
     }
 }
 
@@ -603,7 +603,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
@@ -624,7 +625,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             Ok(())
@@ -659,7 +661,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
@@ -679,7 +682,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                );
+                )
+                .await;
 
                 // We should get a merge conflict error
                 assert!(result.is_err());
@@ -720,7 +724,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
@@ -742,7 +747,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             Ok(())

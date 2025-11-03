@@ -196,7 +196,7 @@ pub async fn put(
         )),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
 
     log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
@@ -409,7 +409,7 @@ pub async fn import(
         ),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
     log::debug!("workspace::commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
@@ -753,9 +753,12 @@ mod tests {
         let entry =
             repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/hello.txt"))?
                 .unwrap();
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
-        let updated_content = util::fs::read_from_path(&version_path)?;
-        assert_eq!(updated_content, "Updated Content!");
+        let version_store = repo.version_store()?;
+        let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
+        assert_eq!(
+            String::from_utf8(uploaded_content).unwrap(),
+            "Updated Content!"
+        );
 
         // cleanup
         test::cleanup_sync_dir(&sync_dir)?;
@@ -820,7 +823,8 @@ mod tests {
             PathBuf::from("data/cats_vs_dogs.tsv"),
         )?
         .unwrap();
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
+        let version_store = repo.version_store()?;
+        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         assert!(version_path.exists());
 
         // cleanup
@@ -881,7 +885,8 @@ mod tests {
             PathBuf::from("notebooks/chat.py"),
         )?
         .unwrap();
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
+        let version_store = repo.version_store()?;
+        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         assert!(version_path.exists());
 
         // cleanup

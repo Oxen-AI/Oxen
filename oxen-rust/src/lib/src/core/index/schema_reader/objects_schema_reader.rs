@@ -71,69 +71,6 @@ impl ObjectsSchemaReader {
         ObjectsSchemaReader::new(repository, &commit.id)
     }
 
-    pub fn get_schema_for_file<P: AsRef<Path>>(
-        &self,
-        path: P,
-    ) -> Result<Option<Schema>, OxenError> {
-        log::debug!("in get_schema_for_file path {:?}", path.as_ref());
-        let schema_path = Path::new(SCHEMAS_TREE_PREFIX).join(&path);
-        let path_parent = path.as_ref().parent().unwrap_or(Path::new(""));
-
-        let parent_dir_hash: Option<String> = path_db::get_entry(
-            &self.dir_hashes_db,
-            path_parent.to_str().unwrap().replace('\\', "/"),
-        )?;
-
-        if parent_dir_hash.is_none() {
-            return Ok(None);
-        }
-
-        let parent_dir_hash = parent_dir_hash.unwrap();
-        let parent_dir_obj: TreeObject = self.object_reader.get_dir(&parent_dir_hash)?.unwrap();
-        let full_path_str = schema_path.to_str().unwrap().replace('\\', "/");
-        let schema_path_hash_prefix = util::hasher::hash_path(full_path_str)[0..2].to_string();
-
-        let vnode_child: Option<TreeObjectChild> = parent_dir_obj
-            .binary_search_on_path(&PathBuf::from(schema_path_hash_prefix.clone()))?;
-
-        if vnode_child.is_none() {
-            return Ok(None);
-        }
-
-        let vnode_child = vnode_child.unwrap();
-        let vnode = self.object_reader.get_vnode(vnode_child.hash())?.unwrap();
-
-        log::debug!("got vnode");
-        log::debug!("here's the vnode {:?}", vnode);
-
-        let schema_child: Option<TreeObjectChild> =
-            vnode.binary_search_on_path(&PathBuf::from(SCHEMAS_TREE_PREFIX).join(path))?;
-
-        if schema_child.is_none() {
-            return Ok(None);
-        }
-
-        let schema_child = schema_child.unwrap();
-        log::debug!("got this schema child {:?}", schema_child);
-
-        let version_path = util::fs::version_path_from_schema_hash(
-            &self.repository.path,
-            schema_child.hash().to_string(),
-        );
-
-        log::debug!("got version path {:?}", version_path);
-
-        let schema: Result<Schema, serde_json::Error> =
-            serde_json::from_reader(std::fs::File::open(version_path)?);
-
-        log::debug!("get_schema_for_file() got schema {:?}", schema);
-
-        match schema {
-            Ok(schema) => Ok(Some(schema)),
-            Err(_) => Ok(None),
-        }
-    }
-
     pub fn list_schemas(&self) -> Result<HashMap<PathBuf, Schema>, OxenError> {
         log::debug!("calling list schemas");
         let root_hash: String = path_db::get_entry(&self.dir_hashes_db, "")?.unwrap();
@@ -251,12 +188,5 @@ impl ObjectsSchemaReader {
             }
         }
         Ok(found_schemas)
-    }
-
-    fn get_schema_by_hash(&self, hash: &str) -> Result<Schema, OxenError> {
-        let version_path =
-            util::fs::version_path_from_schema_hash(&self.repository.path, hash.to_string());
-        let schema = serde_json::from_reader(std::fs::File::open(version_path)?)?;
-        Ok(schema)
     }
 }
