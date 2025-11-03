@@ -6,6 +6,8 @@
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
 
+use std::path::Path;
+
 /// # Set the remote for a repository
 /// Tells the CLI where to push the changes to
 pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<Remote, OxenError> {
@@ -52,5 +54,19 @@ pub fn set_workspace(repo: &mut LocalRepository, name: &str) -> Result<String, O
 pub fn delete_workspace(repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
     repo.delete_workspace(name)?;
     repo.save()?;
+    Ok(())
+}
+
+/// # Set the version store location for a repository
+/// Tells the CLI where to save version files
+pub fn set_version_store(
+    repo: &mut LocalRepository,
+    path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let path = path.as_ref();
+
+    repo.set_version_store(path)?;
+    repo.save()?;
+
     Ok(())
 }

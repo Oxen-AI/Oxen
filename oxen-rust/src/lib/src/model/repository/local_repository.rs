@@ -97,6 +97,19 @@ impl LocalRepository {
         Ok(())
     }
 
+    /// Initialize the version store at a new location
+    pub fn set_version_store(&mut self, path: &Path) -> Result<(), OxenError> {
+        // Load config to get storage settings
+        let config_path = util::fs::config_filepath(&self.path);
+        let config = RepositoryConfig::from_file(&config_path)?;
+
+        // Create and initialize the store
+        let store = create_version_store(path, config.storage.as_ref())?;
+        self.version_store = Some(store);
+
+        Ok(())
+    }
+
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {

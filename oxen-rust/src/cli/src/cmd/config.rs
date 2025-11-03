@@ -6,6 +6,8 @@ use liboxen::config::{AuthConfig, UserConfig};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 
+use std::path::{Path, PathBuf};
+
 use crate::cmd::RunCmd;
 pub const NAME: &str = "config";
 pub struct ConfigCmd;
@@ -49,6 +51,12 @@ impl RunCmd for ConfigCmd {
                     .long("delete-remote")
                     .value_name("REMOTE_NAME")
                     .help("Delete a remote from the current working repository.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("version_store")
+                    .long("version_store")
+                    .help("Set the location where version files are saved in your repository")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -136,6 +144,18 @@ impl RunCmd for ConfigCmd {
             }
         }
 
+        if let Some(name) = args.get_one::<String>("version-store") {
+            let mut repo = LocalRepository::from_current_dir()?;
+            let path = PathBuf::from(name); 
+
+            match self.set_version_store(&mut repo, &path) {
+                Ok(_) => {}
+                Err(err) => {
+                    eprintln!("{err}")
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -165,6 +185,12 @@ impl ConfigCmd {
 
     pub fn delete_remote(&self, repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
         command::config::delete_remote(repo, name)?;
+
+        Ok(())
+    }
+
+     pub fn set_version_store(&self, repo: &mut LocalRepository, path: &Path) -> Result<(), OxenError> {
+        command::config::set_version_store(repo, path)?;
 
         Ok(())
     }
