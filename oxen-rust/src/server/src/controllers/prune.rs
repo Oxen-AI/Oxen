@@ -4,6 +4,7 @@ use crate::params::{app_data, path_param};
 use actix_web::{web, HttpRequest, HttpResponse};
 use liboxen::repositories;
 use liboxen::view::http::{STATUS_ERROR, STATUS_SUCCESS};
+use liboxen::view::oxen_response::ErrorResponse;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,7 +27,9 @@ pub struct PruneStatsResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PruneResponse {
     pub status: String,
-    pub message: String,
+    pub status_message: String,
+    pub status_description: Option<String>,
+    pub error: Option<ErrorResponse>,
     pub stats: PruneStatsResponse,
 }
 
@@ -55,7 +58,7 @@ pub async fn prune(
     // Run the prune operation
     match repositories::prune::prune(&repository, dry_run).await {
         Ok(stats) => {
-            let message = if dry_run {
+            let status_message = if dry_run {
                 "Prune dry-run completed successfully. No files were deleted.".to_string()
             } else {
                 "Prune completed successfully.".to_string()
@@ -63,7 +66,9 @@ pub async fn prune(
 
             let response = PruneResponse {
                 status: STATUS_SUCCESS.to_string(),
-                message,
+                status_message,
+                status_description: None,
+                error: None,
                 stats: PruneStatsResponse {
                     nodes_scanned: stats.nodes_scanned,
                     nodes_kept: stats.nodes_kept,
@@ -81,7 +86,9 @@ pub async fn prune(
             log::error!("Prune failed: {}", err);
             let response = PruneResponse {
                 status: STATUS_ERROR.to_string(),
-                message: format!("Prune failed: {}", err),
+                status_message: format!("Prune failed: {}", err),
+                status_description: None,
+                error: None,
                 stats: PruneStatsResponse {
                     nodes_scanned: 0,
                     nodes_kept: 0,

@@ -6,10 +6,11 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
+use crate::api;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use crate::model::{LocalRepository, MerkleHash};
+use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::repositories;
 use crate::storage::version_store::create_version_store;
 
@@ -84,6 +85,57 @@ pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, 
 
     let duration = start.elapsed();
     log::info!("Prune operation complete in {:.2?}", duration);
+    log::info!(
+        "Nodes: scanned={}, kept={}, removed={}",
+        stats.nodes_scanned,
+        stats.nodes_kept,
+        stats.nodes_removed
+    );
+    log::info!(
+        "Versions: scanned={}, kept={}, removed={}",
+        stats.versions_scanned,
+        stats.versions_kept,
+        stats.versions_removed
+    );
+    log::info!("Bytes freed: {}", bytesize::ByteSize::b(stats.bytes_freed));
+
+    Ok(stats)
+}
+
+/// Prune orphaned nodes and version files from a remote repository
+///
+/// This function triggers a prune operation on the remote server.
+///
+/// # Arguments
+/// * `remote_repo` - The remote repository to prune
+/// * `dry_run` - If true, only report what would be removed without actually removing it
+///
+/// # Returns
+/// Statistics about the prune operation
+pub async fn prune_remote(
+    remote_repo: &RemoteRepository,
+    dry_run: bool,
+) -> Result<PruneStats, OxenError> {
+    log::info!(
+        "Starting remote prune operation on {} (dry_run: {})",
+        remote_repo.url(),
+        dry_run
+    );
+
+    let stats_response = api::client::prune::prune(remote_repo, dry_run).await?;
+
+    // Convert the API response stats to our local PruneStats type
+    let stats = PruneStats {
+        nodes_scanned: stats_response.nodes_scanned,
+        nodes_kept: stats_response.nodes_kept,
+        nodes_removed: stats_response.nodes_removed,
+        versions_scanned: stats_response.versions_scanned,
+        versions_kept: stats_response.versions_kept,
+        versions_removed: stats_response.versions_removed,
+        bytes_freed: stats_response.bytes_freed,
+    };
+
+    log::info!("Remote prune operation complete");
     log::info!(
         "Nodes: scanned={}, kept={}, removed={}",
         stats.nodes_scanned,
