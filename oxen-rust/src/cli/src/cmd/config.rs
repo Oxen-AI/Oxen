@@ -54,7 +54,7 @@ impl RunCmd for ConfigCmd {
                     .action(clap::ArgAction::Set),
             )
             .arg(
-                Arg::new("version_store")
+                Arg::new("version-store")
                     .long("version_store")
                     .help("Set the location where version files are saved in your repository")
                     .action(clap::ArgAction::Set),
@@ -146,7 +146,7 @@ impl RunCmd for ConfigCmd {
 
         if let Some(name) = args.get_one::<String>("version-store") {
             let mut repo = LocalRepository::from_current_dir()?;
-            let path = PathBuf::from(name); 
+            let path = PathBuf::from(name);
 
             match self.set_version_store(&mut repo, &path) {
                 Ok(_) => {}
@@ -189,7 +189,11 @@ impl ConfigCmd {
         Ok(())
     }
 
-     pub fn set_version_store(&self, repo: &mut LocalRepository, path: &Path) -> Result<(), OxenError> {
+    pub fn set_version_store(
+        &self,
+        repo: &mut LocalRepository,
+        path: &Path,
+    ) -> Result<(), OxenError> {
         command::config::set_version_store(repo, path)?;
 
         Ok(())
