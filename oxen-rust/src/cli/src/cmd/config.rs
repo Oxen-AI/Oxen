@@ -5,6 +5,7 @@ use liboxen::command;
 use liboxen::config::{AuthConfig, UserConfig};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::opts::{LocalStorageOpts, S3Opts, StorageOpts};
 
 use std::path::{Path, PathBuf};
 
@@ -54,9 +55,15 @@ impl RunCmd for ConfigCmd {
                     .action(clap::ArgAction::Set),
             )
             .arg(
-                Arg::new("version-store")
-                    .long("version_store")
-                    .help("Set the location where version files are saved in your repository")
+                Arg::new("storage-backend")
+                    .long("storage-backend")
+                    .help("Set the type of storage backend to save version files.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-path")
+                    .long("storage-backend-path")
+                    .help("Set the type of storage backend to save version files.")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -144,11 +151,33 @@ impl RunCmd for ConfigCmd {
             }
         }
 
-        if let Some(name) = args.get_one::<String>("version-store") {
+        if let Some(type_) = args.get_one::<String>("storage-backend") {
             let mut repo = LocalRepository::from_current_dir()?;
-            let path = PathBuf::from(name);
 
-            match self.set_version_store(&mut repo, &path) {
+            let mut local_storage_opts = None;
+            let mut s3_opts = None;
+
+            match type_ {
+                "local" => {
+                    let path = args
+                        .get_one::<Path>("storage-backend-path")
+                        .map(PathBuf::from);
+
+                    local_storage_opts = LocalStorageOpts {
+                        path: path
+                    };
+                }
+                "s3" => {
+                    // TODO
+                }
+            } 
+
+            let storage_opts = StorageOpts {
+                local_storage_opts,
+                s3_opts,
+            };
+
+            match self.set_version_store(&mut repo, &type_, &storage_opts) {
                 Ok(_) => {}
                 Err(err) => {
                     eprintln!("{err}")
@@ -192,9 +221,10 @@ impl ConfigCmd {
     pub fn set_version_store(
         &self,
         repo: &mut LocalRepository,
-        path: &Path,
+        type_: &str,
+        storage_opts: &StorageOpts,
     ) -> Result<(), OxenError> {
-        command::config::set_version_store(repo, path)?;
+        command::config::set_version_store(repo, type_, storage_opts)?;
 
         Ok(())
     }

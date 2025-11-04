@@ -5,6 +5,7 @@
 
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
+use crate::opts::StorageOpts;
 
 use std::path::Path;
 
@@ -61,11 +62,11 @@ pub fn delete_workspace(repo: &mut LocalRepository, name: &str) -> Result<(), Ox
 /// Tells the CLI where to save version files
 pub fn set_version_store(
     repo: &mut LocalRepository,
-    path: impl AsRef<Path>,
+    type_: &str,
+    opts: &StorageOpts,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref();
-
-    repo.set_version_store(path)?;
+    
+    repo.set_version_store(&type_, opts)?;
     repo.save()?;
 
     Ok(())
