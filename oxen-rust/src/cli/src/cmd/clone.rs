@@ -59,7 +59,6 @@ impl RunCmd for CloneCmd {
             .arg(
                 Arg::new("storage-backend")
                     .long("storage-backend")
-                    .short('v')
                     .help("Set the type of storage backend to save version files to")
                     .default_value("local")
                     .default_missing_value("local")
@@ -87,9 +86,9 @@ impl RunCmd for CloneCmd {
             .get_one::<String>("branch")
             .expect("Must supply a branch");
         let storage_backend = args
-            .get_one::<String>("version-store")
+            .get_one::<String>("storage-backend")
             .expect("Must supply a storage backend");
-        let storage_backend_path = args.get_one::<String>("version-path");
+        let storage_backend_path = args.get_one::<String>("storage-backend-path");
         let filters: Vec<PathBuf> = args
             .get_many::<String>("filter")
             .unwrap_or_default()
