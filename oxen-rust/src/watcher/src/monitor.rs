@@ -18,11 +18,12 @@ use crate::ipc::IpcServer;
 pub struct FileSystemWatcher {
     repo_path: PathBuf,
     cache: Arc<StatusCache>,
+    idle_timeout_secs: u64,
 }
 
 impl FileSystemWatcher {
     /// Create a new filesystem watcher for a repository
-    pub fn new(repo_path: PathBuf) -> Result<Self, WatcherError> {
+    pub fn new(repo_path: PathBuf, idle_timeout_secs: u64) -> Result<Self, WatcherError> {
         // Verify repository exists
         if !repo_path.join(".oxen").exists() {
             return Err(WatcherError::RepositoryNotFound(
@@ -35,7 +36,7 @@ impl FileSystemWatcher {
 
         let cache = Arc::new(StatusCache::new(&repo_path)?);
 
-        Ok(Self { repo_path, cache })
+        Ok(Self { repo_path, cache, idle_timeout_secs })
     }
 
     /// Run the watcher daemon
@@ -101,7 +102,7 @@ impl FileSystemWatcher {
         info!("Event processor started");
 
         // Start the IPC server
-        let ipc_server = IpcServer::new(self.repo_path.clone(), self.cache.clone());
+        let ipc_server = IpcServer::new(self.repo_path.clone(), self.cache.clone(), self.idle_timeout_secs);
         let ipc_handle = tokio::spawn(async move {
             if let Err(e) = ipc_server.run().await {
                 error!("IPC server error: {}", e);

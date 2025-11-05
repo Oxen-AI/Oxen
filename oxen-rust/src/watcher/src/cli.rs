@@ -17,6 +17,9 @@ pub enum Commands {
         /// Path to the repository
         #[arg(short, long)]
         repo: PathBuf,
+        /// Idle timeout in seconds (default: 600 = 10 minutes, minimum: 60 - enforced in monitor)
+        #[arg(short = 't', long, default_value = "600")]
+        idle_timeout: u64,
     },
     /// Stop the filesystem watcher for a repository
     Stop {

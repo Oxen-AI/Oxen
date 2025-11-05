@@ -13,9 +13,9 @@ async fn main() -> Result<(), WatcherError> {
     let args = cli::Args::parse();
 
     match args.command {
-        cli::Commands::Start { repo } => {
+        cli::Commands::Start { repo, idle_timeout } => {
             info!("Starting watcher for repository: {}", repo.display());
-            start_watcher(repo).await
+            start_watcher(repo, idle_timeout).await
         }
         cli::Commands::Stop { repo } => {
             info!("Stopping watcher for repository: {}", repo.display());
@@ -35,15 +35,27 @@ async fn main() -> Result<(), WatcherError> {
     }
 }
 
-async fn start_watcher(repo_path: PathBuf) -> Result<(), WatcherError> {
+async fn start_watcher(repo_path: PathBuf, idle_timeout_secs: u64) -> Result<(), WatcherError> {
     // Check if watcher is already running
     if is_watcher_running(&repo_path).await? {
         info!("Watcher is already running for this repository");
         return Ok(());
     }
 
+    // Enforce minimum timeout of 60 seconds (since we check every 60 seconds)
+    const MIN_TIMEOUT_SECS: u64 = 60;
+    let idle_timeout_secs = if idle_timeout_secs < MIN_TIMEOUT_SECS {
+        println!(
+            "Idle timeout of {} seconds is too low. Using minimum timeout of {} seconds.",
+            idle_timeout_secs, MIN_TIMEOUT_SECS
+        );
+        MIN_TIMEOUT_SECS
+    } else {
+        idle_timeout_secs
+    };
+
     // Initialize and run the watcher
-    let watcher = FileSystemWatcher::new(repo_path)?;
+    let watcher = FileSystemWatcher::new(repo_path, idle_timeout_secs)?;
     watcher.run().await
 }
 

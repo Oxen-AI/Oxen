@@ -12,11 +12,12 @@ use tokio::net::{UnixListener, UnixStream};
 pub struct IpcServer {
     repo_path: PathBuf,
     cache: Arc<StatusCache>,
+    idle_timeout_secs: u64,
 }
 
 impl IpcServer {
-    pub fn new(repo_path: PathBuf, cache: Arc<StatusCache>) -> Self {
-        Self { repo_path, cache }
+    pub fn new(repo_path: PathBuf, cache: Arc<StatusCache>, idle_timeout_secs: u64) -> Self {
+        Self { repo_path, cache, idle_timeout_secs }
     }
 
     /// Run the IPC server
@@ -33,7 +34,7 @@ impl IpcServer {
         info!("IPC server listening on {}", socket_path.display());
 
         // Track last request time for idle timeout
-        let idle_timeout = Duration::from_secs(600); // 10 minutes
+        let idle_timeout = Duration::from_secs(self.idle_timeout_secs);
         let mut last_request = Instant::now();
 
         loop {
