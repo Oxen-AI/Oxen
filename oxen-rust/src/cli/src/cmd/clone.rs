@@ -5,8 +5,8 @@ use std::path::{Component, Path, PathBuf};
 use liboxen::api;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
-use liboxen::opts::{FetchOpts, StorageOpts};
 use liboxen::opts::CloneOpts;
+use liboxen::opts::{FetchOpts, StorageOpts};
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
@@ -89,8 +89,7 @@ impl RunCmd for CloneCmd {
         let storage_backend = args
             .get_one::<String>("version-store")
             .expect("Must supply a storage backend");
-        let storage_backend_path = args
-            .get_one::<String>("version-path"); 
+        let storage_backend_path = args.get_one::<String>("version-path");
         let filters: Vec<PathBuf> = args
             .get_many::<String>("filter")
             .unwrap_or_default()
@@ -133,7 +132,7 @@ impl RunCmd for CloneCmd {
             "local" => {
                 if let Some(storage_backend_path) = storage_backend_path {
                     let version_path = Path::new(storage_backend_path);
-                    StorageOpts::from_path(&version_path)
+                    StorageOpts::from_path(version_path)
                 } else {
                     StorageOpts::from_path(&dst)
                 }
@@ -143,7 +142,7 @@ impl RunCmd for CloneCmd {
                 StorageOpts::new()
             }
             _ => {
-                return Err(OxenError::basic_str(format!("Unsupported async storage type:")));
+                return Err(OxenError::basic_str("Unsupported async storage type:"));
             }
         };
 

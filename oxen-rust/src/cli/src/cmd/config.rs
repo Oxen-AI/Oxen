@@ -160,23 +160,17 @@ impl RunCmd for ConfigCmd {
             match type_.as_str() {
                 "local" => {
                     let path_str = args.get_one::<String>("storage-backend-path");
-                    let path = if let Some(path_str) = path_str {
-                        Some(PathBuf::from(path_str))
-                    } else {
-                        None
-                    };
+                    let path = path_str.map(PathBuf::from);
 
-                    local_storage_opts = Some(LocalStorageOpts {
-                        path,
-                    });
+                    local_storage_opts = Some(LocalStorageOpts { path });
                 }
                 "s3" => {
                     // TODO
                 }
                 _ => {
-                    return Err(OxenError::basic_str(format!("Unsupported async storage type:")));
+                    return Err(OxenError::basic_str("Unsupported async storage type:"));
                 }
-            } 
+            }
 
             let storage_opts = StorageOpts {
                 type_: type_.to_string(),

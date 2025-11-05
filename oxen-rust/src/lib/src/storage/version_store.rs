@@ -13,8 +13,8 @@ use tokio_stream::Stream;
 
 use crate::constants;
 use crate::error::OxenError;
-use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::opts::StorageOpts;
+use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::util;
 
 /// Configuration for version storage backend
@@ -220,11 +220,9 @@ pub fn create_version_store(
     let storage_opts_clone = storage_opts.clone();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         // Use thread spawn - works in both single and multi-threaded runtimes
-        std::thread::spawn(move || {
-            handle.block_on(create_version_store_async(&storage_opts_clone))
-        })
-        .join()
-        .map_err(|_| OxenError::basic_str("Failed to join thread"))?
+        std::thread::spawn(move || handle.block_on(create_version_store_async(&storage_opts_clone)))
+            .join()
+            .map_err(|_| OxenError::basic_str("Failed to join thread"))?
     } else {
         // If not in tokio runtime, use futures' block_on
         tokio::runtime::Builder::new_current_thread()
@@ -251,7 +249,7 @@ pub async fn create_version_store_async(
                     .ok_or(OxenError::basic_str("path to version store not found"))?;
 
                 util::fs::oxen_hidden_dir(repo_dir)
-            }); 
+            });
 
             let versions_dir = path
                 .join(constants::VERSIONS_DIR)
@@ -277,6 +275,5 @@ pub async fn create_version_store_async(
             "Unsupported async storage type: {}",
             storage_opts.type_
         ))),
-
     }
 }

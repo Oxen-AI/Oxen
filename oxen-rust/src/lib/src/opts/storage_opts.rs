@@ -1,7 +1,7 @@
-use crate::opts::{LocalStorageOpts, S3Opts};
-use crate::model::LocalRepository;
-use crate::storage::StorageConfig;
 use crate::error::OxenError;
+use crate::model::LocalRepository;
+use crate::opts::{LocalStorageOpts, S3Opts};
+use crate::storage::StorageConfig;
 
 use std::path::Path;
 
@@ -15,9 +15,7 @@ pub struct StorageOpts {
 impl StorageOpts {
     // Defaults to local storage
     pub fn new() -> StorageOpts {
-        let local_storage_opts = LocalStorageOpts {
-            path: None,
-        };
+        let local_storage_opts = LocalStorageOpts { path: None };
 
         StorageOpts {
             type_: "local".to_string(),
@@ -26,11 +24,14 @@ impl StorageOpts {
         }
     }
 
-    pub fn from_repo_config(repo: &LocalRepository, config: &StorageConfig) -> Result<StorageOpts, OxenError> {
+    pub fn from_repo_config(
+        repo: &LocalRepository,
+        config: &StorageConfig,
+    ) -> Result<StorageOpts, OxenError> {
         match config.type_.as_str() {
             "local" => {
                 let local_storage_opts = LocalStorageOpts {
-                    path: Some(repo.path.to_path_buf())
+                    path: Some(repo.path.to_path_buf()),
                 };
 
                 Ok(StorageOpts {
@@ -61,18 +62,16 @@ impl StorageOpts {
                     s3_opts: Some(s3_opts),
                 })
             }
-            _ => {
-                Err(OxenError::basic_str(format!(
-                    "Unsupported async storage type: {}",
-                    config.type_
-                )))
-            }
+            _ => Err(OxenError::basic_str(format!(
+                "Unsupported async storage type: {}",
+                config.type_
+            ))),
         }
-    } 
+    }
 
     pub fn from_path(path: &Path) -> StorageOpts {
         let local_storage_opts = LocalStorageOpts {
-            path: Some(path.to_path_buf())
+            path: Some(path.to_path_buf()),
         };
 
         StorageOpts {

@@ -58,12 +58,8 @@ pub fn delete_workspace(repo: &mut LocalRepository, name: &str) -> Result<(), Ox
 
 /// # Set the version store location for a repository
 /// Tells the CLI where to save version files
-pub fn set_version_store(
-    repo: &mut LocalRepository,
-    opts: &StorageOpts,
-) -> Result<(), OxenError> {
-
-    repo.set_version_store(&opts)?;
+pub fn set_version_store(repo: &mut LocalRepository, opts: &StorageOpts) -> Result<(), OxenError> {
+    repo.set_version_store(opts)?;
     repo.save()?;
 
     Ok(())

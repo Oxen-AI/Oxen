@@ -10,8 +10,8 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote, RemoteRepository};
-use crate::opts::{FetchOpts, StorageOpts};
 use crate::opts::CloneOpts;
+use crate::opts::{FetchOpts, StorageOpts};
 use crate::{api, util};
 
 pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
