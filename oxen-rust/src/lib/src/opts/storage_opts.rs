@@ -2,7 +2,7 @@ use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::{LocalStorageOpts, S3Opts};
 use crate::storage::StorageConfig;
-use crate::util;
+use crate::{constants, util};
 
 use std::path::{Path, PathBuf};
 
@@ -33,13 +33,18 @@ impl StorageOpts {
             "local" => {
                 // Take the version store path from the config if specified
                 // Otherwise, default to the repo hidden dir
-                let path = if let Some(path) = config.settings.get("path") {
+                let version_path = if let Some(path) = config.settings.get("path") {
                     PathBuf::from(path)
                 } else {
-                    util::fs::oxen_hidden_dir(&repo.path)
+                    let repo_path = util::fs::oxen_hidden_dir(&repo.path);
+                    repo_path
+                        .join(constants::VERSIONS_DIR)
+                        .join(constants::FILES_DIR)
                 };
 
-                let local_storage_opts = LocalStorageOpts { path: Some(path) };
+                let local_storage_opts = LocalStorageOpts {
+                    path: Some(version_path),
+                };
 
                 Ok(StorageOpts {
                     type_: "local".to_string(),
@@ -77,14 +82,18 @@ impl StorageOpts {
     }
 
     pub fn from_path(path: &Path, is_repo_dir: bool) -> StorageOpts {
-        let repo_path = if is_repo_dir {
-            util::fs::oxen_hidden_dir(path)
+        let version_path = if is_repo_dir {
+            let repo_path = util::fs::oxen_hidden_dir(path);
+
+            repo_path
+                .join(constants::VERSIONS_DIR)
+                .join(constants::FILES_DIR)
         } else {
             path.to_path_buf()
         };
 
         let local_storage_opts = LocalStorageOpts {
-            path: Some(repo_path),
+            path: Some(version_path),
         };
 
         StorageOpts {

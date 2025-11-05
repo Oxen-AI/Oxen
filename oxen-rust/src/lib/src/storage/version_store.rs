@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 use tokio_stream::Stream;
 
-use crate::constants;
 use crate::error::OxenError;
 use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
@@ -254,11 +253,7 @@ pub async fn create_version_store_async(
                 &util::fs::oxen_hidden_dir(repo_dir)
             };
 
-            let versions_dir = path
-                .join(constants::VERSIONS_DIR)
-                .join(constants::FILES_DIR);
-
-            let store = LocalVersionStore::new(versions_dir);
+            let store = LocalVersionStore::new(path);
             store.init().await?;
             Ok(Arc::new(store))
         }
