@@ -6,6 +6,7 @@ use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::storage::{create_version_store, StorageConfig, VersionStore};
+use crate::opts::StorageOpts;
 use crate::util;
 use crate::view::RepositoryView;
 
@@ -62,8 +63,13 @@ impl LocalRepository {
         };
 
         // Initialize the version store based on config
-        let storage_opts = StorageOpts::from_repo_config(&repo, &config.storage)?;
-        let store = create_version_store(&config.type_, &storage_opts)?;
+        let storage_opts = if let Some(storage_config) = config.storage {
+            StorageOpts::from_repo_config(&repo, &storage_config)?
+        } else {
+            StorageOpts::new()
+        };
+        
+        let store = create_version_store(&storage_opts)?;
         repo.version_store = Some(store);
 
         Ok(repo)
@@ -83,10 +89,15 @@ impl LocalRepository {
             // Load config to get storage settings
             let config_path = util::fs::config_filepath(&self.path);
             let config = RepositoryConfig::from_file(&config_path)?;
-            let storage_opts = StorageOpts::from_repo_config(&self, &config.storage)?;
-
+            
+            let storage_opts = if let Some(storage_config) = config.storage {
+                StorageOpts::from_repo_config(&self, &storage_config)?
+            } else {
+                StorageOpts::new()
+            };
+        
             // Create and initialize the store
-            let store = create_version_store(&config.type_, &storage_opts)?;
+            let store = create_version_store(&storage_opts)?;
             self.version_store = Some(store);
         }
         Ok(())
@@ -94,20 +105,20 @@ impl LocalRepository {
 
     /// Initialize the default version store
     /// this will be a local storage backend
-    pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {;
+    pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
 
-        let type_ = "local";
-        let storage_opts = StorageOpts::from_path(&repo.path);
+        let storage_opts = StorageOpts::from_path(&self.path);
+
         // Create and initialize the store
-        let store = create_version_store(&type_, &storage_opts)?;
+        let store = create_version_store(&storage_opts)?;
         self.version_store = Some(store);
         Ok(())
     }
 
     /// Initialize local version store at a new location
-    pub fn set_version_store(&mut self, type_: &str, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+    pub fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
         
-        let version_store = create_version_store(type_, storage_opts)?;
+        let version_store = create_version_store(storage_opts)?;
         self.version_store = Some(version_store);
 
         Ok(())

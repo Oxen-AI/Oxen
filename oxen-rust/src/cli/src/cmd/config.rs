@@ -5,9 +5,9 @@ use liboxen::command;
 use liboxen::config::{AuthConfig, UserConfig};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::opts::{LocalStorageOpts, S3Opts, StorageOpts};
+use liboxen::opts::{LocalStorageOpts, StorageOpts};
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "config";
@@ -155,29 +155,36 @@ impl RunCmd for ConfigCmd {
             let mut repo = LocalRepository::from_current_dir()?;
 
             let mut local_storage_opts = None;
-            let mut s3_opts = None;
+            let s3_opts = None;
 
-            match type_ {
+            match type_.as_str() {
                 "local" => {
-                    let path = args
-                        .get_one::<Path>("storage-backend-path")
-                        .map(PathBuf::from);
-
-                    local_storage_opts = LocalStorageOpts {
-                        path: path
+                    let path_str = args.get_one::<String>("storage-backend-path");
+                    let path = if let Some(path_str) = path_str {
+                        Some(PathBuf::from(path_str))
+                    } else {
+                        None
                     };
+
+                    local_storage_opts = Some(LocalStorageOpts {
+                        path,
+                    });
                 }
                 "s3" => {
                     // TODO
                 }
+                _ => {
+                    return Err(OxenError::basic_str(format!("Unsupported async storage type:")));
+                }
             } 
 
             let storage_opts = StorageOpts {
+                type_: type_.to_string(),
                 local_storage_opts,
                 s3_opts,
             };
 
-            match self.set_version_store(&mut repo, &type_, &storage_opts) {
+            match self.set_version_store(&mut repo, &storage_opts) {
                 Ok(_) => {}
                 Err(err) => {
                     eprintln!("{err}")
@@ -221,10 +228,9 @@ impl ConfigCmd {
     pub fn set_version_store(
         &self,
         repo: &mut LocalRepository,
-        type_: &str,
         storage_opts: &StorageOpts,
     ) -> Result<(), OxenError> {
-        command::config::set_version_store(repo, type_, storage_opts)?;
+        command::config::set_version_store(repo, storage_opts)?;
 
         Ok(())
     }

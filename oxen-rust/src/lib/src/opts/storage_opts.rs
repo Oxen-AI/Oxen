@@ -1,24 +1,43 @@
-use crate::opts::{LocalStorageOpts, S3Opts}
+use crate::opts::{LocalStorageOpts, S3Opts};
+use crate::model::LocalRepository;
 use crate::storage::StorageConfig;
+use crate::error::OxenError;
 
-#[derive(Clone, Debug)]
+use std::path::Path;
+
+#[derive(Clone, Debug, Default)]
 pub struct StorageOpts {
+    pub type_: String,
     pub local_storage_opts: Option<LocalStorageOpts>,
     pub s3_opts: Option<S3Opts>,
 }
 
 impl StorageOpts {
+    // Defaults to local storage
+    pub fn new() -> StorageOpts {
+        let local_storage_opts = LocalStorageOpts {
+            path: None,
+        };
+
+        StorageOpts {
+            type_: "local".to_string(),
+            local_storage_opts: Some(local_storage_opts),
+            s3_opts: None,
+        }
+    }
+
     pub fn from_repo_config(repo: &LocalRepository, config: &StorageConfig) -> Result<StorageOpts, OxenError> {
-        match config.type_ {
+        match config.type_.as_str() {
             "local" => {
                 let local_storage_opts = LocalStorageOpts {
-                    path: Some(repo.path)
+                    path: Some(repo.path.to_path_buf())
                 };
 
-                StorageOpts {
-                    local_storage_opts,
+                Ok(StorageOpts {
+                    type_: "local".to_string(),
+                    local_storage_opts: Some(local_storage_opts),
                     s3_opts: None,
-                }
+                })
             }
             "s3" => {
                 let bucket = config
@@ -32,14 +51,15 @@ impl StorageOpts {
                     .unwrap_or_else(|| String::from("versions"));
 
                 let s3_opts = S3Opts {
-                    bucket,
+                    bucket: bucket.to_string(),
                     prefix: Some(prefix),
                 };
 
-                StorageOpts {
+                Ok(StorageOpts {
+                    type_: "s3".to_string(),
                     local_storage_opts: None,
-                    s3_opts,
-                }
+                    s3_opts: Some(s3_opts),
+                })
             }
             _ => {
                 Err(OxenError::basic_str(format!(
@@ -50,13 +70,14 @@ impl StorageOpts {
         }
     } 
 
-    pub fn from_path(path: &PathBuf) -> StorageOpts {
-        let local_storage_opts = LocalStorage {
-            path: Some(path)
+    pub fn from_path(path: &Path) -> StorageOpts {
+        let local_storage_opts = LocalStorageOpts {
+            path: Some(path.to_path_buf())
         };
 
         StorageOpts {
-            local_storage_opts,
+            type_: "local".to_string(),
+            local_storage_opts: Some(local_storage_opts),
             s3_opts: None,
         }
     }

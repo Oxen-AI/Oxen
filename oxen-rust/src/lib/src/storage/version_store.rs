@@ -14,6 +14,7 @@ use tokio_stream::Stream;
 use crate::constants;
 use crate::error::OxenError;
 use crate::storage::{LocalVersionStore, S3VersionStore};
+use crate::opts::StorageOpts;
 use crate::util;
 
 /// Configuration for version storage backend
@@ -213,14 +214,14 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 /// Factory method to create the appropriate async version store (sync wrapper)
 /// TODO: Review this function when implementing S3 version store
 pub fn create_version_store(
-    type_: &str,
     storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     // Handle async initialization in sync context
+    let storage_opts_clone = storage_opts.clone();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         // Use thread spawn - works in both single and multi-threaded runtimes
         std::thread::spawn(move || {
-            handle.block_on(create_version_store_async(&type_, &storage_opts))
+            handle.block_on(create_version_store_async(&storage_opts_clone))
         })
         .join()
         .map_err(|_| OxenError::basic_str("Failed to join thread"))?
@@ -230,40 +231,43 @@ pub fn create_version_store(
             .enable_all()
             .build()
             .unwrap()
-            .block_on(create_version_store_async(type_, storage_opts))
+            .block_on(create_version_store_async(storage_opts))
     }
 }
 
 /// Async implementation of create_version_store
 pub async fn create_version_store_async(
-    type_: &str,
     storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
-    let path = path.as_ref();
-    match type_ {
+    match storage_opts.type_.as_str() {
         "local" => {
-            let Some(local_storage_opts) = storage_opts.local_storage_opts else {
+            let Some(ref local_storage_opts) = storage_opts.local_storage_opts else {
                 return Err(OxenError::basic_str("local storage opts not found"));
             };
 
-            let Some(path) = local_storage_opts.path else {
-                return Err(OxenError::basic_str("path to local version store not found"));
-            };
+            // If no path is provided, default to the repo root
+            let path = local_storage_opts.path.clone().unwrap_or({
+                let repo_dir = util::fs::get_repo_root_from_current_dir()
+                    .ok_or(OxenError::basic_str("path to version store not found"))?;
 
-            let versions_dir = util::fs::oxen_hidden_dir(path)
+                util::fs::oxen_hidden_dir(repo_dir)
+            }); 
+
+            let versions_dir = path
                 .join(constants::VERSIONS_DIR)
                 .join(constants::FILES_DIR);
+
             let store = LocalVersionStore::new(versions_dir);
             store.init().await?;
             Ok(Arc::new(store))
         }
         "s3" => {
-            let Some(s3_opts) = storage_opts.s3_opts else {
+            let Some(ref s3_opts) = storage_opts.s3_opts else {
                 return Err(OxenError::basic_str("s3 storage opts not found"));
             };
 
-            let bucket = s3_opts.bucket;
-            let prefix = s3_opts.prefix.unwrap_or("versions");
+            let bucket = s3_opts.bucket.clone();
+            let prefix = s3_opts.prefix.clone().unwrap_or("versions".to_string());
 
             let store = S3VersionStore::new(bucket, prefix);
             store.init().await?;
@@ -271,7 +275,7 @@ pub async fn create_version_store_async(
         }
         _ => Err(OxenError::basic_str(format!(
             "Unsupported async storage type: {}",
-            config.type_
+            storage_opts.type_
         ))),
 
     }

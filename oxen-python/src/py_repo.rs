@@ -64,6 +64,7 @@ impl PyRepo {
                     all,
                     ..FetchOpts::new()
                 },
+                storage_opts: StorageOpts::new(),
                 ..Default::default()
             };
             repositories::clone(&opts).await
