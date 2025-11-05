@@ -4,7 +4,7 @@ use crate::opts::{LocalStorageOpts, S3Opts};
 use crate::storage::StorageConfig;
 use crate::util;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default)]
 pub struct StorageOpts {
@@ -31,10 +31,15 @@ impl StorageOpts {
     ) -> Result<StorageOpts, OxenError> {
         match config.type_.as_str() {
             "local" => {
-                let repo_path = util::fs::oxen_hidden_dir(&repo.path);
-                let local_storage_opts = LocalStorageOpts {
-                    path: Some(repo_path),
+                // Take the version store path from the config if specified
+                // Otherwise, default to the repo hidden dir
+                let path = if let Some(path) = config.settings.get("path") {
+                    PathBuf::from(path)
+                } else {
+                    util::fs::oxen_hidden_dir(&repo.path)
                 };
+
+                let local_storage_opts = LocalStorageOpts { path: Some(path) };
 
                 Ok(StorageOpts {
                     type_: "local".to_string(),
