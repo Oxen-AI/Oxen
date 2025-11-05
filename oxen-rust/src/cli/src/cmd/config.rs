@@ -58,12 +58,14 @@ impl RunCmd for ConfigCmd {
                 Arg::new("storage-backend")
                     .long("storage-backend")
                     .help("Set the type of storage backend to save version files.")
+                    .default_value("local")
+                    .default_missing_value("local")
                     .action(clap::ArgAction::Set),
             )
             .arg(
                 Arg::new("storage-backend-path")
                     .long("storage-backend-path")
-                    .help("Set the type of storage backend to save version files.")
+                    .help("Set the path for storage backend to save version files.")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -151,29 +153,17 @@ impl RunCmd for ConfigCmd {
             }
         }
 
-        if let Some(type_) = args.get_one::<String>("storage-backend") {
+        if let Some(path) = args
+            .get_one::<String>("storage-backend-path")
+            .map(PathBuf::from)
+        {
             let mut repo = LocalRepository::from_current_dir()?;
-
-            let mut local_storage_opts = None;
+            let local_storage_opts = Some(LocalStorageOpts { path: Some(path) });
             let s3_opts = None;
 
-            match type_.as_str() {
-                "local" => {
-                    let path_str = args.get_one::<String>("storage-backend-path");
-                    let path = path_str.map(PathBuf::from);
-
-                    local_storage_opts = Some(LocalStorageOpts { path });
-                }
-                "s3" => {
-                    // TODO
-                }
-                _ => {
-                    return Err(OxenError::basic_str("Unsupported async storage type:"));
-                }
-            }
-
+            // If path is provided, we can infer the type is local
             let storage_opts = StorageOpts {
-                type_: type_.to_string(),
+                type_: "local".to_string(),
                 local_storage_opts,
                 s3_opts,
             };

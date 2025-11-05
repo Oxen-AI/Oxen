@@ -66,7 +66,7 @@ impl RunCmd for CloneCmd {
             )
             .arg(
                 Arg::new("storage-backend-path")
-                    .long("path")
+                    .long("storage-backend-path")
                     .help("Set the location to create local version store")
                     .action(clap::ArgAction::Set),
             )
@@ -85,9 +85,7 @@ impl RunCmd for CloneCmd {
         let branch = args
             .get_one::<String>("branch")
             .expect("Must supply a branch");
-        let storage_backend = args
-            .get_one::<String>("storage-backend")
-            .expect("Must supply a storage backend");
+        let storage_backend = args.get_one::<String>("storage-backend");
         let storage_backend_path = args.get_one::<String>("storage-backend-path");
         let filters: Vec<PathBuf> = args
             .get_many::<String>("filter")
@@ -127,7 +125,7 @@ impl RunCmd for CloneCmd {
             }
         };
 
-        let storage_opts = match storage_backend.as_str() {
+        let storage_opts = match storage_backend.unwrap().as_str() {
             "local" => {
                 if let Some(storage_backend_path) = storage_backend_path {
                     let version_path = Path::new(storage_backend_path);
@@ -138,10 +136,12 @@ impl RunCmd for CloneCmd {
             }
             "s3" => {
                 // TODO
-                StorageOpts::new()
+                StorageOpts::default()
             }
-            _ => {
-                return Err(OxenError::basic_str("Unsupported async storage type:"));
+            unsupported_backend => {
+                return Err(OxenError::basic_str(format!(
+                    "Unsupported async storage type: {unsupported_backend}"
+                )));
             }
         };
 

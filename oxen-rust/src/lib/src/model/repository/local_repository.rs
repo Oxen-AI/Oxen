@@ -66,7 +66,7 @@ impl LocalRepository {
         let storage_opts = if let Some(storage_config) = config.storage {
             StorageOpts::from_repo_config(&repo, &storage_config)?
         } else {
-            StorageOpts::new()
+            StorageOpts::from_path(&repo.path, true)
         };
 
         let store = create_version_store(&storage_opts)?;
@@ -93,7 +93,7 @@ impl LocalRepository {
             let storage_opts = if let Some(storage_config) = config.storage {
                 StorageOpts::from_repo_config(self, &storage_config)?
             } else {
-                StorageOpts::new()
+                StorageOpts::from_path(&self.path, true)
             };
 
             // Create and initialize the store

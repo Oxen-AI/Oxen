@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 use tokio_stream::Stream;
 
+use crate::constants;
 use crate::error::OxenError;
 use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
@@ -244,13 +245,15 @@ pub async fn create_version_store_async(
 
             // If no path is provided, default to the repo root
             let path = if let Some(path) = &local_storage_opts.path {
-                path
+                path.clone()
             } else {
                 let repo_dir = util::fs::get_repo_root_from_current_dir().ok_or(
                     OxenError::basic_str("path to local version store not found"),
                 )?;
 
-                &util::fs::oxen_hidden_dir(repo_dir)
+                util::fs::oxen_hidden_dir(repo_dir)
+                    .join(constants::VERSIONS_DIR)
+                    .join(constants::FILES_DIR)
             };
 
             let store = LocalVersionStore::new(path);

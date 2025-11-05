@@ -14,17 +14,6 @@ pub struct StorageOpts {
 }
 
 impl StorageOpts {
-    // Defaults to local storage
-    pub fn new() -> StorageOpts {
-        let local_storage_opts = LocalStorageOpts { path: None };
-
-        StorageOpts {
-            type_: "local".to_string(),
-            local_storage_opts: Some(local_storage_opts),
-            s3_opts: None,
-        }
-    }
-
     pub fn from_repo_config(
         repo: &LocalRepository,
         config: &StorageConfig,
