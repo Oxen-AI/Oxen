@@ -244,12 +244,15 @@ pub async fn create_version_store_async(
             };
 
             // If no path is provided, default to the repo root
-            let path = local_storage_opts.path.clone().unwrap_or({
-                let repo_dir = util::fs::get_repo_root_from_current_dir()
-                    .ok_or(OxenError::basic_str("path to version store not found"))?;
+            let path = if let Some(path) = &local_storage_opts.path {
+                path
+            } else {
+                let repo_dir = util::fs::get_repo_root_from_current_dir().ok_or(
+                    OxenError::basic_str("path to local version store not found"),
+                )?;
 
-                util::fs::oxen_hidden_dir(repo_dir)
-            });
+                &util::fs::oxen_hidden_dir(repo_dir)
+            };
 
             let versions_dir = path
                 .join(constants::VERSIONS_DIR)

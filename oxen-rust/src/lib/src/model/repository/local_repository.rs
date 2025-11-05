@@ -106,7 +106,7 @@ impl LocalRepository {
     /// Initialize the default version store
     /// this will be a local storage backend
     pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
-        let storage_opts = StorageOpts::from_path(&self.path);
+        let storage_opts = StorageOpts::from_path(&self.path, true);
 
         // Create and initialize the store
         let store = create_version_store(&storage_opts)?;

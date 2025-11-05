@@ -132,9 +132,9 @@ impl RunCmd for CloneCmd {
             "local" => {
                 if let Some(storage_backend_path) = storage_backend_path {
                     let version_path = Path::new(storage_backend_path);
-                    StorageOpts::from_path(version_path)
+                    StorageOpts::from_path(version_path, false)
                 } else {
-                    StorageOpts::from_path(&dst)
+                    StorageOpts::from_path(&dst, true)
                 }
             }
             "s3" => {

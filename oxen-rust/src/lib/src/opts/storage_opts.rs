@@ -2,6 +2,7 @@ use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::{LocalStorageOpts, S3Opts};
 use crate::storage::StorageConfig;
+use crate::util;
 
 use std::path::Path;
 
@@ -30,8 +31,9 @@ impl StorageOpts {
     ) -> Result<StorageOpts, OxenError> {
         match config.type_.as_str() {
             "local" => {
+                let repo_path = util::fs::oxen_hidden_dir(&repo.path);
                 let local_storage_opts = LocalStorageOpts {
-                    path: Some(repo.path.to_path_buf()),
+                    path: Some(repo_path),
                 };
 
                 Ok(StorageOpts {
@@ -69,9 +71,15 @@ impl StorageOpts {
         }
     }
 
-    pub fn from_path(path: &Path) -> StorageOpts {
+    pub fn from_path(path: &Path, is_repo_dir: bool) -> StorageOpts {
+        let repo_path = if is_repo_dir {
+            util::fs::oxen_hidden_dir(path)
+        } else {
+            path.to_path_buf()
+        };
+
         let local_storage_opts = LocalStorageOpts {
-            path: Some(path.to_path_buf()),
+            path: Some(repo_path),
         };
 
         StorageOpts {

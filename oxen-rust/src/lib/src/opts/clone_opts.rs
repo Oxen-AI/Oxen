@@ -24,7 +24,7 @@ impl CloneOpts {
             url: url.as_ref().to_string(),
             dst: dst.as_ref().to_path_buf(),
             fetch_opts: FetchOpts::new(),
-            storage_opts: StorageOpts::from_path(dst.as_ref()),
+            storage_opts: StorageOpts::from_path(dst.as_ref(), true),
             is_remote: false,
         }
     }
@@ -36,7 +36,7 @@ impl CloneOpts {
     ) -> CloneOpts {
         CloneOpts {
             fetch_opts: FetchOpts::from_branch(branch.as_ref()),
-            storage_opts: StorageOpts::from_path(dst.as_ref()),
+            storage_opts: StorageOpts::from_path(dst.as_ref(), true),
             is_remote: false,
             ..CloneOpts::new(url, dst)
         }

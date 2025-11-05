@@ -51,7 +51,7 @@ async fn _clone(
         url: url.as_ref().to_string(),
         dst: dst.as_ref().to_owned(),
         fetch_opts,
-        storage_opts: StorageOpts::from_path(dst.as_ref()),
+        storage_opts: StorageOpts::from_path(dst.as_ref(), true),
         is_remote: false,
     };
     clone(&opts).await

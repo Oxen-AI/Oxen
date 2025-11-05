@@ -226,7 +226,7 @@ async fn prune_versions(
     stats: &mut PruneStats,
     dry_run: bool,
 ) -> Result<(), OxenError> {
-    let storage_opts = StorageOpts::from_path(&repo.path);
+    let storage_opts = StorageOpts::from_path(&repo.path, true);
     let version_store = create_version_store(&storage_opts)?;
 
     let all_versions = version_store.list_versions().await?;
