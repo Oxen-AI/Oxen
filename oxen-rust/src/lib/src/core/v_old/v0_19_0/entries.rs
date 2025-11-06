@@ -60,7 +60,7 @@ pub fn get_meta_entry(
             parsed_resource.clone(),
         ))?;
     log::debug!("get_meta_entry path: {path:?} commit: {commit}");
-    let node = repositories::tree::get_dir_without_children(repo, &commit, path)?;
+    let node = repositories::tree::get_dir_without_children(repo, &commit, path, None)?;
     log::debug!("get_meta_entry node: {node:?}");
 
     if let Some(node) = node {

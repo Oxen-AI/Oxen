@@ -236,7 +236,8 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
     // Get commit for the branch head
     log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
 
-    repositories::CommitMerkleTree::from_path_recursive(repo, commit, path)?;
+    let load_recursive = true;
+    repositories::CommitMerkleTree::read_from_path(repo, commit, path, load_recursive)?;
 
     if !is_indexed(workspace, path)? {
         return Err(OxenError::basic_str("Dataset is not indexed"));
@@ -306,7 +307,7 @@ pub async fn from_directory(
 
     let depth = if recursive { -1 } else { 1 };
 
-    let subtree = repositories::tree::get_subtree_by_depth(
+    let subtree = repositories::tree::get_subtree(
         repo,
         &workspace.commit,
         &Some(path.as_ref().to_path_buf()),

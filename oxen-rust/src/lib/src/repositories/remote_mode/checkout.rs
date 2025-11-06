@@ -1,7 +1,5 @@
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
-use crate::model::LocalRepository;
-use crate::model::MerkleHash;
+use crate::model::{LocalRepository, PartialNode};
 use crate::{api, repositories};
 
 use colored::Colorize;
@@ -38,16 +36,27 @@ pub async fn create_checkout(
 ) -> Result<(), OxenError> {
     // Save files in working directory to version store
     let head_commit = repositories::commits::head_commit(repo)?;
-    let mut paths_to_store: HashMap<PathBuf, MerkleHash> = HashMap::new();
-    let _from_root =
-        CommitMerkleTree::root_with_present_children(repo, &head_commit, &mut paths_to_store)?
-            .unwrap();
+    let mut partial_nodes: HashMap<PathBuf, PartialNode> = HashMap::new();
+
+    let _from_root = repositories::tree::get_root_with_children_and_partial_nodes(
+        repo,
+        &head_commit,
+        None,
+        None,
+        None,
+        &mut partial_nodes,
+    )?
+    .unwrap();
 
     let version_store = repo.version_store()?;
-    for (path, hash) in paths_to_store {
-        version_store
-            .store_version_from_path(&hash.to_string(), &path)
-            .await?;
+    for (path, node) in partial_nodes {
+        let full_path = repo.path.join(&path);
+
+        if full_path.exists() {
+            version_store
+                .store_version_from_path(&node.hash.to_string(), &full_path)
+                .await?;
+        }
     }
 
     // Create the new branch
@@ -476,7 +485,7 @@ mod tests {
                 // Create a new branch and checkout
                 let branch_name = "feature";
                 repositories::remote_mode::create_checkout(&mut cloned_repo, branch_name).await?;
-
+                println!("2");
                 // Modify the file content on the new branch and commit
                 let modified_content = "World";
                 test::modify_txt_file(&hello_file, modified_content)?;

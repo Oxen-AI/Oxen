@@ -1029,17 +1029,23 @@ fn compute_dir_node(
     let mut data_type_counts: HashMap<String, u64> = HashMap::new();
     let mut data_type_sizes: HashMap<String, u64> = HashMap::new();
 
-    if let Ok(Some(old_dir_node)) =
-        CommitMerkleTree::dir_without_children_with_dirhash(repo, &path, dir_hashes)
-    {
-        let old_dir_node = old_dir_node.dir().unwrap();
-        num_entries = old_dir_node.num_entries();
-        num_bytes = old_dir_node.num_bytes();
-        data_type_counts = old_dir_node.data_type_counts().clone();
-        data_type_sizes = old_dir_node.data_type_sizes().clone();
-    };
-    // Collect the previous commit counts
+    let head_commit_maybe = repositories::commits::head_commit_maybe(repo)?;
+    if let Some(head_commit) = head_commit_maybe {
+        if let Ok(Some(old_dir_node)) = repositories::tree::get_dir_without_children(
+            repo,
+            &head_commit,
+            &path,
+            Some(dir_hashes),
+        ) {
+            let old_dir_node = old_dir_node.dir().unwrap();
+            num_entries = old_dir_node.num_entries();
+            num_bytes = old_dir_node.num_bytes();
+            data_type_counts = old_dir_node.data_type_counts().clone();
+            data_type_sizes = old_dir_node.data_type_sizes().clone();
+        };
+    }
 
+    // Collect the previous commit counts
     let children = get_children(entries, &path)?;
     log::debug!(
         "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"

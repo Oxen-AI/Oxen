@@ -358,7 +358,7 @@ pub fn add_column_metadata(
     let path = path.as_ref();
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
 
-    log::debug!("add_column_metadata: path: {path:?}");
+    println!("add_column_metadata: path: {path:?}");
 
     let column = column.as_ref();
 
@@ -380,9 +380,12 @@ pub fn add_column_metadata(
                 "Cannot add metadata, no commits found.",
             ));
         };
-        log::debug!("add_column_metadata: commit: {commit} path: {path:?}");
+        println!("add_column_metadata: commit: {commit} path: {path:?}");
         let Some(node) = repositories::tree::get_node_by_path(repo, &commit, &path)? else {
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::basic_str(format!(
+                "path {:?} not found in commit {:?}",
+                path, commit
+            )));
         };
         let mut parent_id = node.parent_id;
         let mut dir_path = path.clone();

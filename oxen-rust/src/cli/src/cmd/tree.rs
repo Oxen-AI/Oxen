@@ -95,6 +95,7 @@ impl RunCmd for TreeCmd {
 impl TreeCmd {
     fn print_node(&self, repo: &LocalRepository, node: &str, depth: i32) -> Result<(), OxenError> {
         let node_hash = node.parse()?;
+        // REFACTOR: Get through repositories::tree
         let tree = CommitMerkleTree::read_node(repo, &node_hash, true)?.unwrap();
         CommitMerkleTree::print_node_depth(&tree, depth);
 

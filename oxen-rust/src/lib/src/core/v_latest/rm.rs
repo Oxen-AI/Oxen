@@ -486,7 +486,7 @@ fn remove_inner(
 
         let parent_path = path.parent().unwrap_or(Path::new(""));
         let parent_node: MerkleTreeNode = if let Some(dir_node) =
-            CommitMerkleTree::dir_with_children(repo, &head_commit, parent_path)?
+            CommitMerkleTree::dir_with_children(repo, &head_commit, parent_path, None)?
         {
             dir_node
         } else {
@@ -588,7 +588,7 @@ fn remove_dir_inner(
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<CumulativeStats, OxenError> {
-    let dir_node = match CommitMerkleTree::dir_with_children_recursive(repo, commit, path)? {
+    let dir_node = match CommitMerkleTree::dir_with_children_recursive(repo, commit, path, None)? {
         Some(node) => node,
         None => {
             let error = format!("Error: {path:?} must be committed in order to use `oxen rm`");

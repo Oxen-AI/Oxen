@@ -1098,8 +1098,12 @@ pub async fn rm_files(
             let parent_path = relative_path.parent().unwrap_or(&root_path);
 
             // If dir not found in tree, skip glob path
-            let Some(dir_node) =
-                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
+            let Some(dir_node) = repositories::tree::get_dir_with_children(
+                local_repo,
+                head_commit,
+                parent_path,
+                None,
+            )?
             else {
                 continue;
             };
@@ -1184,8 +1188,12 @@ pub async fn rm_files_from_staged(
             let parent_path = relative_path.parent().unwrap_or(&root_path);
 
             // If dir not found in tree, skip glob path
-            let Some(dir_node) =
-                repositories::tree::get_dir_with_children(local_repo, head_commit, parent_path)?
+            let Some(dir_node) = repositories::tree::get_dir_with_children(
+                local_repo,
+                head_commit,
+                parent_path,
+                None,
+            )?
             else {
                 continue;
             };

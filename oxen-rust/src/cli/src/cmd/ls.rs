@@ -114,7 +114,8 @@ impl RunCmd for LsCmd {
             .collect();
 
         // Get directory children from latest commit
-        let Some(dir_node) = repositories::tree::get_dir_with_children(&repo, &commit, &directory)?
+        let Some(dir_node) =
+            repositories::tree::get_dir_with_children(&repo, &commit, &directory, None)?
         else {
             return Ok(());
         };

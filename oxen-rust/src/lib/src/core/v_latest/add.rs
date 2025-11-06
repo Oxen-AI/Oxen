@@ -585,9 +585,14 @@ fn get_dir_status_compared_to_head(
     maybe_head_commit: &Option<Commit>,
     dir_hashes: &Option<HashMap<PathBuf, MerkleHash>>,
 ) -> Result<StagedEntryStatus, OxenError> {
-    if let (Some(dir_hashes), Some(_)) = (dir_hashes, maybe_head_commit) {
+    if let (Some(dir_hashes), Some(head_commit)) = (dir_hashes, maybe_head_commit) {
         // Check if the directory exists in the head commit's tree
-        match CommitMerkleTree::dir_without_children_with_dirhash(repo, dir_path, dir_hashes)? {
+        match repositories::tree::get_dir_without_children(
+            repo,
+            head_commit,
+            dir_path,
+            Some(dir_hashes),
+        )? {
             Some(_) => {
                 // Directory exists in HEAD.
                 Ok(StagedEntryStatus::Unmodified)
@@ -611,7 +616,7 @@ fn maybe_load_directory(
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     if let (Some(head_commit), Some(dir_hashes)) = (maybe_head_commit, dir_hashes) {
         let dir_node =
-            CommitMerkleTree::dir_with_children_from_dirhash(repo, head_commit, path, dir_hashes)?;
+            repositories::tree::get_dir_with_children(repo, head_commit, path, Some(dir_hashes))?;
         Ok(dir_node)
     } else {
         Ok(None)
@@ -649,7 +654,8 @@ async fn add_file_inner(
     if let Some(head_commit) = maybe_head_commit {
         let path = util::fs::path_relative_to_dir(path, repo_path)?;
         let parent_path = path.parent().unwrap_or(Path::new(""));
-        maybe_dir_node = CommitMerkleTree::dir_with_children(repo, head_commit, parent_path)?;
+        maybe_dir_node =
+            repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?;
     }
 
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();

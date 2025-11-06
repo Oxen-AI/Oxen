@@ -9,19 +9,21 @@ use std::str;
 use tar::Archive;
 
 use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR, NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
+use crate::core::commit_sync_status;
 use crate::core::db;
 use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
 use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
-use crate::core::{commit_sync_status, node_sync_status};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{
     CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
 };
 use crate::model::{
-    Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, TMerkleTreeNode,
+    Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,
+    TMerkleTreeNode,
 };
 use crate::{repositories, util};
 
@@ -49,6 +51,52 @@ pub fn get_root_with_children(
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_with_children(repo, commit),
         _ => CommitMerkleTreeLatest::root_with_children(repo, commit),
+    }
+}
+
+/// This will return the MerkleTreeNode with type CommitNode if the Commit exists
+/// Otherwise it will return None
+/// Also gathers all loaded dir and vnode hashes into `shared_hashes`  
+pub fn get_root_with_children_and_node_hashes(
+    repo: &LocalRepository,
+    commit: &Commit,
+    base_hashes: Option<&HashSet<MerkleHash>>,
+    unique_hashes: Option<&mut HashSet<MerkleHash>>,
+    shared_hashes: Option<&mut HashSet<MerkleHash>>,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_with_children(repo, commit),
+        _ => CommitMerkleTreeLatest::root_with_children_and_node_hashes(
+            repo,
+            commit,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+        ),
+    }
+}
+
+/// This will return the MerkleTreeNode with type CommitNode if the Commit exists
+/// Otherwise it will return None
+/// Also gathers all loaded dir and vnode hashes into `node_hashes`, and all loaded file nodes as partial nodes  
+pub fn get_root_with_children_and_partial_nodes(
+    repo: &LocalRepository,
+    commit: &Commit,
+    base_hashes: Option<&HashSet<MerkleHash>>,
+    unique_hashes: Option<&mut HashSet<MerkleHash>>,
+    shared_hashes: Option<&mut HashSet<MerkleHash>>,
+    partial_nodes: &mut HashMap<PathBuf, PartialNode>,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_with_children(repo, commit),
+        _ => CommitMerkleTreeLatest::root_with_children_and_partial_nodes(
+            repo,
+            commit,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            partial_nodes,
+        ),
     }
 }
 
@@ -162,6 +210,7 @@ pub fn get_node_by_path(
     let load_recursive = false;
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
+            println!("FUCK");
             match CommitMerkleTreeV0_19_0::from_path(repo, commit, path, load_recursive) {
                 Ok(tree) => Ok(Some(tree.root)),
                 Err(e) => {
@@ -170,10 +219,10 @@ pub fn get_node_by_path(
                 }
             }
         }
-        _ => match CommitMerkleTreeLatest::from_path(repo, commit, path, load_recursive) {
-            Ok(tree) => Ok(Some(tree.root)),
+        _ => match CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive) {
+            Ok(node) => Ok(node),
             Err(e) => {
-                log::warn!("Error getting node by path: {e:?}");
+                eprintln!("Error getting node by path: {e:?}");
                 Ok(None)
             }
         },
@@ -188,11 +237,12 @@ pub fn get_node_by_path_with_children(
     let load_recursive = true;
     let node = match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
-            CommitMerkleTreeV0_19_0::from_path(repo, commit, path, load_recursive)?.root
+            Some(CommitMerkleTreeV0_19_0::from_path(repo, commit, path, load_recursive)?.root)
         }
-        _ => CommitMerkleTreeLatest::from_path(repo, commit, path, load_recursive)?.root,
+        _ => CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive)?,
     };
-    Ok(Some(node))
+
+    Ok(node)
 }
 
 pub fn get_file_by_path(
@@ -213,10 +263,11 @@ pub fn get_dir_with_children(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
+    dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::dir_with_children(repo, commit, path),
-        _ => CommitMerkleTreeLatest::dir_with_children(repo, commit, path),
+        _ => CommitMerkleTreeLatest::dir_with_children(repo, commit, path, dir_hashes),
     }
 }
 
@@ -224,12 +275,13 @@ pub fn get_dir_without_children(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
+    dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
             CommitMerkleTreeV0_19_0::dir_without_children(repo, commit, path)
         }
-        _ => CommitMerkleTreeLatest::dir_without_children(repo, commit, path),
+        _ => CommitMerkleTreeLatest::dir_without_children(repo, commit, path, dir_hashes),
     }
 }
 
@@ -237,12 +289,34 @@ pub fn get_dir_with_children_recursive(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
+    dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
             CommitMerkleTreeV0_19_0::dir_with_children_recursive(repo, commit, path)
         }
-        _ => CommitMerkleTreeLatest::dir_with_children_recursive(repo, commit, path),
+        _ => CommitMerkleTreeLatest::dir_with_children_recursive(repo, commit, path, dir_hashes),
+    }
+}
+
+pub fn get_dir_with_unique_children(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+    base_hashes: &HashSet<MerkleHash>,
+    unique_hashes: &mut HashSet<MerkleHash>,
+    dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::dir_with_children(repo, commit, path),
+        _ => CommitMerkleTreeLatest::dir_with_unique_children(
+            repo,
+            commit,
+            path,
+            base_hashes,
+            unique_hashes,
+            dir_hashes,
+        ),
     }
 }
 
@@ -250,7 +324,7 @@ pub fn get_dir_with_children_recursive(
 /// If depth is None, it will default to -1 which means the entire subtree
 /// If path is None, it will default to the root
 /// Otherwise it will get the subtree at the given path with the given depth
-pub fn get_subtree_by_depth(
+pub fn get_subtree(
     repo: &LocalRepository,
     commit: &Commit,
     maybe_subtree: &Option<PathBuf>,
@@ -259,16 +333,16 @@ pub fn get_subtree_by_depth(
     match (maybe_subtree, maybe_depth) {
         (Some(subtree), Some(depth)) => {
             log::debug!("Getting subtree {subtree:?} with depth {depth} for commit {commit}");
-            get_subtree(repo, commit, subtree, *depth)
+            get_subtree_by_depth(repo, commit, subtree, *depth)
         }
         (Some(subtree), None) => {
             // If the depth is not provided, we default to -1 which means the entire subtree
             log::debug!("Getting subtree {subtree:?} for commit {commit} with depth -1");
-            get_subtree(repo, commit, subtree, -1)
+            get_subtree_by_depth(repo, commit, subtree, -1)
         }
         (None, Some(depth)) => {
             log::debug!("Getting tree from root with depth {depth} for commit {commit}");
-            get_subtree(repo, commit, PathBuf::from("."), *depth)
+            get_subtree_by_depth(repo, commit, PathBuf::from("."), *depth)
         }
         _ => {
             log::debug!("Getting full tree for commit {commit}");
@@ -277,7 +351,7 @@ pub fn get_subtree_by_depth(
     }
 }
 
-pub fn get_subtree(
+pub fn get_subtree_by_depth(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
@@ -287,7 +361,32 @@ pub fn get_subtree(
         MinOxenVersion::V0_19_0 => {
             CommitMerkleTreeV0_19_0::from_path_depth(repo, commit, path, depth)
         }
-        _ => CommitMerkleTreeLatest::from_path_depth(repo, commit, path, depth),
+        _ => CommitMerkleTreeLatest::read_depth_from_path(repo, commit, path, depth),
+    }
+}
+
+pub fn get_subtree_by_depth_with_unique_children(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+    base_hashes: Option<&HashSet<MerkleHash>>,
+    unique_hashes: Option<&mut HashSet<MerkleHash>>,
+    shared_hashes: Option<&mut HashSet<MerkleHash>>,
+    depth: i32,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_19_0 => {
+            CommitMerkleTreeV0_19_0::from_path_depth(repo, commit, path, depth)
+        }
+        _ => CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
+            repo,
+            commit,
+            path,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            depth,
+        ),
     }
 }
 
@@ -380,7 +479,7 @@ pub fn collect_nodes_along_path(
     repo: &LocalRepository,
     commit: &Commit,
     paths: Vec<PathBuf>,
-    starting_node_hashes: &mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>,
+    starting_node_hashes: &mut HashSet<MerkleHash>,
     hashes: &mut HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
     // Grab the first path or error if empty
@@ -393,7 +492,7 @@ pub fn collect_nodes_along_path(
     let (_root_node, nodes) = node.get_nodes_along_paths(paths)?;
 
     for node in nodes {
-        if !starting_node_hashes.contains_key(&(node.hash, node.node.node_type())) {
+        if !starting_node_hashes.contains(&node.hash) {
             hashes.insert(node.hash);
         }
     }
@@ -401,6 +500,21 @@ pub fn collect_nodes_along_path(
     Ok(())
 }
 
+pub fn list_missing_node_hashes(
+    repo: &LocalRepository,
+    hashes: &HashSet<MerkleHash>,
+) -> Result<HashSet<MerkleHash>, OxenError> {
+    let mut results = HashSet::new();
+    for hash in hashes {
+        if !node_sync_status::node_is_synced(repo, hash) {
+            results.insert(*hash);
+        }
+    }
+
+    Ok(results)
+}
+
+// TODO: Deduplicate functionality with model::MerkleTreeNode
 pub fn list_missing_file_hashes(
     repo: &LocalRepository,
     hash: &MerkleHash,
@@ -418,36 +532,7 @@ pub fn list_missing_file_hashes(
     }
 }
 
-/// Subtree in this context means we cloned a directory that was not the root of the repo
-pub fn from_commit_or_subtree(
-    repo: &LocalRepository,
-    commit: &Commit,
-) -> Result<Option<MerkleTreeNode>, OxenError> {
-    // This debug log is to help make sure we don't load the tree too many times
-    // if you see it in the logs being called too much, it could be why the code is slow.
-    log::debug!(
-        "Load tree from commit: {} in repo: {:?} with subtree_paths: {:?}",
-        commit,
-        repo.path,
-        repo.subtree_paths()
-    );
-
-    let node_hash = &commit.id.parse()?;
-    // If we have a subtree path, we need to load the tree from that path
-    let root = match (repo.subtree_paths(), repo.depth()) {
-        (Some(subtree_paths), Some(depth)) => {
-            // Get it working with the first path for now, we might want to clone recursively to the root
-            // or have multiple roots
-            get_subtree(repo, commit, &subtree_paths[0], depth)?
-        }
-        _ => get_node_by_id_with_children(repo, node_hash)?,
-    };
-
-    Ok(root)
-}
-
 /// Given a set of commit ids, return the hashes that are missing from the tree
-/// TODO: Partial loads for this
 pub fn list_missing_file_hashes_from_commits(
     repo: &LocalRepository,
     commit_ids: &HashSet<MerkleHash>,
@@ -472,12 +557,8 @@ pub fn list_missing_file_hashes_from_commits(
         if let Some(subtree_paths) = subtree_paths {
             for path in subtree_paths {
                 // TODO: Use the partial load
-                let Some(tree) = repositories::tree::get_subtree_by_depth(
-                    repo,
-                    &commit,
-                    &Some(path.clone()),
-                    depth,
-                )?
+                let Some(tree) =
+                    repositories::tree::get_subtree(repo, &commit, &Some(path.clone()), depth)?
                 else {
                     log::warn!("list_missing_file_hashes_from_commits subtree not found for path");
                     continue;
@@ -489,7 +570,6 @@ pub fn list_missing_file_hashes_from_commits(
                 });
             }
         } else {
-            // TODO: Use partial load
             let Some(tree) = get_root_with_children(repo, &commit)? else {
                 log::warn!(
                     "list_missing_file_hashes_from_commits root not found for commit: {commit:?}"
@@ -589,21 +669,6 @@ pub fn unique_dir_entries(
     }
 
     Ok(entries)
-}
-
-// Given a set of hashes, return the hashes that are missing from the tree
-pub fn list_missing_node_hashes(
-    repo: &LocalRepository,
-    hashes: &HashSet<MerkleHash>,
-) -> Result<HashSet<MerkleHash>, OxenError> {
-    let mut results = HashSet::new();
-    for hash in hashes {
-        if !node_sync_status::node_is_synced(repo, hash) {
-            results.insert(*hash);
-        }
-    }
-
-    Ok(results)
 }
 
 // Given a set of commit hashes, return the hashes that are unsynced
@@ -1038,6 +1103,7 @@ fn p_write_tree(
     Ok(())
 }
 
+// TODO: Deprecate. This should go directly to CommitMerkleTree
 /// The dir hashes allow you to skip to a directory in the tree
 pub fn dir_hashes(
     repo: &LocalRepository,
@@ -1069,6 +1135,7 @@ pub fn dir_hashes(
     Ok(dir_hashes)
 }
 
+// TODO: Refactor to remove 'is_download' var here
 /// Collect all the node hashes for the given commits
 pub fn get_all_node_hashes_for_commits(
     repository: &LocalRepository,
@@ -1084,7 +1151,7 @@ pub fn get_all_node_hashes_for_commits(
     );
 
     let mut all_node_hashes: HashSet<MerkleHash> = HashSet::new();
-    let mut starting_node_hashes = HashMap::new();
+    let mut starting_node_hashes = HashSet::new();
 
     for commit in commits {
         get_node_hashes_for_commit(
@@ -1122,7 +1189,7 @@ pub fn get_node_hashes_between_commits(
         .split_first()
         .ok_or(OxenError::basic_str("Must provide at least one commit"))?;
 
-    let mut starting_node_hashes = HashMap::new();
+    let mut starting_node_hashes = HashSet::new();
 
     if let Some(subtrees) = maybe_subtrees {
         for subtree in subtrees {
@@ -1146,10 +1213,7 @@ pub fn get_node_hashes_between_commits(
 
     if new_commits.is_empty() {
         // If there are no new commits, then we just return the node hashes for the first commit
-        return Ok(starting_node_hashes
-            .into_iter()
-            .map(|((hash, _), _)| hash)
-            .collect());
+        return Ok(starting_node_hashes);
     }
 
     let mut new_node_hashes: HashSet<MerkleHash> = HashSet::new();
@@ -1175,7 +1239,7 @@ pub fn get_node_hashes_for_commit(
     maybe_subtrees: &Option<Vec<PathBuf>>,
     maybe_depth: &Option<i32>,
     is_download: bool,
-    starting_node_hashes: &mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>,
+    starting_node_hashes: &mut HashSet<MerkleHash>,
     new_node_hashes: &mut HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
     log::debug!("get_node_hashes_for_commit: {}", commit.id);
@@ -1241,25 +1305,26 @@ fn get_node_hashes_for_subtree(
     commit: &Commit,
     subtree_path: &Option<PathBuf>,
     depth: &Option<i32>,
-    shared_hashes: &mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>,
+    base_hashes: &mut HashSet<MerkleHash>,
     new_node_hashes: &mut HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
-    let mut unique_hashes = HashMap::new();
-    //let starting_path =
-    let Ok(Some(_)) = CommitMerkleTreeLatest::from_path_depth_unique_children(
+    let mut unique_hashes = HashSet::new();
+
+    let Ok(Some(_)) = CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
         repository,
         commit,
         subtree_path.clone().unwrap_or(PathBuf::from(".")),
+        Some(base_hashes),
+        Some(&mut unique_hashes),
+        None,
         depth.unwrap_or(-1),
-        shared_hashes,
-        &mut unique_hashes,
     ) else {
         // If the subtree is not found, then we don't need to add any nodes to the unique node hashes
         return Ok(());
     };
 
-    new_node_hashes.extend(unique_hashes.iter().map(|((hash, _), _)| hash));
-    shared_hashes.extend(unique_hashes);
+    base_hashes.extend(unique_hashes.clone());
+    new_node_hashes.extend(unique_hashes);
 
     Ok(())
 }
@@ -1269,20 +1334,61 @@ pub fn populate_starting_hashes(
     commit: &Commit,
     subtree_path: &Option<PathBuf>,
     depth: &Option<i32>,
-    new_node_hashes: &mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>,
+    unique_hashes: &mut HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
-    let mut shared_hashes = HashMap::new();
-    let Ok(Some(_)) = CommitMerkleTreeLatest::from_path_depth_unique_children(
+    let Ok(Some(_)) = CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
         repository,
         commit,
         subtree_path.clone().unwrap_or(PathBuf::from(".")),
+        None,
+        Some(unique_hashes),
+        None,
         depth.unwrap_or(-1),
-        &mut shared_hashes,
-        new_node_hashes,
     ) else {
         // If the subtree is not found, then we don't need to add any nodes to the unique node hashes
         return Ok(());
     };
+
+    Ok(())
+}
+
+// Collect the hashes of every ancestor of each path in subtree_paths
+pub fn get_ancestor_nodes(
+    repo: &LocalRepository,
+    commit: &Commit,
+    subtree_paths: &Vec<PathBuf>,
+    unique_hashes: &mut HashSet<MerkleHash>,
+) -> Result<(), OxenError> {
+    for subtree_path in subtree_paths {
+        println!("Subtree path: {subtree_path:?}");
+        let parent = subtree_path.parent();
+        match parent {
+            Some(parent) => {
+                let ancestors = parent
+                    .ancestors()
+                    .map(|p| p.to_path_buf())
+                    .collect::<Vec<PathBuf>>();
+                for ancestor in ancestors.iter().rev() {
+                    let Some(node) =
+                        repositories::tree::get_node_by_path_with_children(repo, commit, ancestor)?
+                    else {
+                        return Err(OxenError::basic_str(format!(
+                            "Ancestor {:?} for subtree path {:?} not found in merkle tree",
+                            ancestor, subtree_path
+                        )));
+                    };
+
+                    println!("ancestor node: {node:?}");
+                    // Extend unique_hashes with the dir node and its vnode hashes
+                    let ancestor_node_hashes = node.list_dir_and_vnode_hashes()?;
+                    unique_hashes.extend(ancestor_node_hashes);
+                }
+            }
+            None => {
+                break; // subtree is root. no need to check other paths
+            }
+        }
+    }
 
     Ok(())
 }
@@ -1323,7 +1429,7 @@ pub fn print_tree_depth_subtree(
     depth: i32,
     subtree: &PathBuf,
 ) -> Result<(), OxenError> {
-    let tree = get_subtree(repo, commit, subtree, depth)?.unwrap();
+    let tree = get_subtree_by_depth(repo, commit, subtree, depth)?.unwrap();
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
             CommitMerkleTreeV0_19_0::print_node_depth(&tree, depth);
@@ -1587,6 +1693,8 @@ mod tests {
             // commit2, root dir (v2), root vnode (v2)
             // = 6 nodes
 
+            // TODO: This was an edge case I hacked out of the first time
+            // Look elsewhere before fixing it
             assert!(
                 depth_limited_hashes.len() == 6,
                 "Depth filter should return 6 hashes, got {}",
