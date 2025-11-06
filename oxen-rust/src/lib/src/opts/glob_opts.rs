@@ -8,3 +8,15 @@ pub struct GlobOpts {
     pub working_dir: bool,
     pub walk_dirs: bool,
 }
+
+impl Default for GlobOpts {
+    fn default() -> Self {
+        GlobOpts {
+            paths: Vec::new(),
+            staged_db: false,
+            merkle_tree: true,
+            working_dir: false,
+            walk_dirs: false,
+        }
+    }
+}

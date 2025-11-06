@@ -821,7 +821,7 @@ pub async fn stage_files_to_workspace(
         files_to_add.to_vec()
     };
 
-    println!("Files to send: {:?}", files_to_send.len());
+    log::debug!("Files to send: {:?}", files_to_send.len());
 
     let response = client.post(&url).json(&files_to_send).send().await?;
     let body = client::parse_json_body(&url, response).await?;

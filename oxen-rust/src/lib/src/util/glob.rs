@@ -211,8 +211,9 @@ fn r_search_merkle_tree(
         }
 
         // Else, recurse into the matching directories
-        let mut new_index = *search_index + 1;
+
         for mut entry in matched_entries {
+            let mut new_index = *search_index + 1;
             r_search_merkle_tree(
                 repo,
                 head_commit,

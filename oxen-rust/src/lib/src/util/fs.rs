@@ -1570,6 +1570,7 @@ pub fn is_relative_to_dir(path: impl AsRef<Path>, dir: impl AsRef<Path>) -> bool
         // If the components don't match, reset dir_iter and dir_component
         dir_iter = starting_dir_iter.clone();
         dir_component = dir_iter.next().unwrap();
+        matches = 0;
     }
 
     // If the loop finishes, the path cannot be found relative to the dir
