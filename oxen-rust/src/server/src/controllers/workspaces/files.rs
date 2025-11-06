@@ -166,7 +166,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         };
 
         ret_files.push(ret_file);
-        log::info!("Successfully staged file {:?}", upload_file);
+        log::info!("Successfully staged file {upload_file:?}");
     }
 
     Ok(HttpResponse::Ok().json(FilePathsResponse {
@@ -251,7 +251,7 @@ pub async fn rm_files(
 
     for path in &paths_to_remove {
         err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
-        log::debug!("rm ✅ success! staged file {:?} as removed", path);
+        log::debug!("rm ✅ success! staged file {path:?} as removed");
         ret_files.push(path);
     }
 
@@ -345,7 +345,7 @@ pub async fn save_parts(
 ) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>), Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {:?}", oxen_err);
+        log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
@@ -396,8 +396,7 @@ pub async fn save_parts(
                             let mut decompressed_bytes: Vec<u8> = Vec::new();
                             decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
                                 OxenError::basic_str(format!(
-                                    "Failed to decompress gzipped data: {}",
-                                    e
+                                    "Failed to decompress gzipped data: {e}"
                                 ))
                             })?;
 
@@ -426,7 +425,7 @@ pub async fn save_parts(
                                 &mut err_files,
                                 upload_filename.clone(),
                                 None,
-                                format!("Failed to decompress data: {:?}", e),
+                                format!("Failed to decompress data: {e:?}"),
                             );
                             continue;
                         }
@@ -440,7 +439,7 @@ pub async fn save_parts(
                                 &mut err_files,
                                 upload_filename.clone(),
                                 None,
-                                format!("Failed to execute blocking decompression: {}", e),
+                                format!("Failed to execute blocking decompression: {e}"),
                             );
                             continue;
                         }
@@ -467,7 +466,7 @@ pub async fn save_parts(
                             &mut err_files,
                             upload_filehash.clone(),
                             None,
-                            format!("Failed to store version: {}", e),
+                            format!("Failed to store version: {e}"),
                         );
                         continue;
                     }
