@@ -45,10 +45,6 @@ pub async fn get(
         &repo
     };
 
-    println!(
-        "{} resource {namespace}/{repo_name}/{resource}",
-        liboxen::current_function!()
-    );
     let path = resource.path.clone();
 
     // if resource is workspace, get file node from the staged db
