@@ -727,25 +727,6 @@ impl CommitMerkleTree {
         Ok(children)
     }
 
-    // MODULARIZE: List_files_and_folders in repositories::tree
-    pub fn node_files_and_folders(node: &MerkleTreeNode) -> Result<Vec<MerkleTreeNode>, OxenError> {
-        if MerkleTreeNodeType::Dir != node.node.node_type() {
-            return Err(OxenError::basic_str(format!(
-                "node_files_and_folders Merkle tree node is not a directory: '{:?}'",
-                node.node.node_type()
-            )));
-        }
-
-        // The dir node will have vnode children
-        let mut children = Vec::new();
-        for child in &node.children {
-            if let EMerkleTreeNode::VNode(_) = &child.node {
-                children.extend(child.children.iter().cloned());
-            }
-        }
-        Ok(children)
-    }
-
     pub fn total_vnodes(&self) -> usize {
         self.root.total_vnodes()
     }

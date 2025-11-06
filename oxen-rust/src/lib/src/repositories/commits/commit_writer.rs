@@ -573,7 +573,7 @@ fn get_node_dir_children(
     base_dir: impl AsRef<Path>,
     node: &MerkleTreeNode,
 ) -> Result<HashSet<StagedMerkleTreeNode>, OxenError> {
-    let dir_children = CommitMerkleTree::node_files_and_folders(node)?;
+    let dir_children = repositories::tree::list_files_and_folders(node)?;
     let children = dir_children
         .into_iter()
         .flat_map(|child| node_data_to_staged_node(&base_dir, &child))
