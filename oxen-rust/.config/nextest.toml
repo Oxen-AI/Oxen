@@ -1,0 +1,10 @@
+[profile.default]
+retries = 2
+failure-output = "immediate-final"
+fail-fast = { max-fail = 10 }
+
+[profile.ci]
+# Do not cancel the test run on the first failure
+fail-fast = false
+retries = 2
+failure-output = "immediate-final"
