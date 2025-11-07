@@ -1373,8 +1373,7 @@ pub fn get_ancestor_nodes(
                         repositories::tree::get_node_by_path_with_children(repo, commit, ancestor)?
                     else {
                         return Err(OxenError::basic_str(format!(
-                            "Ancestor {:?} for subtree path {:?} not found in merkle tree",
-                            ancestor, subtree_path
+                            "Ancestor {ancestor:?} for subtree path {subtree_path:?} not found in merkle tree"
                         )));
                     };
 

@@ -383,8 +383,7 @@ pub fn add_column_metadata(
         println!("add_column_metadata: commit: {commit} path: {path:?}");
         let Some(node) = repositories::tree::get_node_by_path(repo, &commit, &path)? else {
             return Err(OxenError::basic_str(format!(
-                "path {:?} not found in commit {:?}",
-                path, commit
+                "path {path:?} not found in commit {commit:?}"
             )));
         };
         let mut parent_id = node.parent_id;

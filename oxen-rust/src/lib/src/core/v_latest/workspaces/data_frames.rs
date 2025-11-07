@@ -120,8 +120,7 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
         repositories::tree::get_node_by_path_with_children(repo, commit, path)
     else {
         return Err(OxenError::basic_str(format!(
-            "Merkle tree for commit {} not found",
-            commit
+            "Merkle tree for commit {commit} not found"
         )));
     };
 

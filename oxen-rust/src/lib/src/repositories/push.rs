@@ -1757,8 +1757,7 @@ A: Checkout Oxen.ai
                 let cloned_file_path = clone_repo.path.join("large_file.bin");
                 assert!(
                     cloned_file_path.exists(),
-                    "Cloned file should exist at {:?}",
-                    cloned_file_path
+                    "Cloned file should exist at {cloned_file_path:?}"
                 );
 
                 // Verify the file size matches

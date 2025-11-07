@@ -54,8 +54,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
                     restore_file(repo, &child_file, &path, &version_store).await
                 }
                 Ok(None) => Err(OxenError::basic_str(format!(
-                    "Merkle tree for commit {:?} not found",
-                    commit
+                    "Merkle tree for commit {commit:?} not found"
                 ))),
                 Err(OxenError::Basic(msg))
                     if msg.to_string().contains("Merkle tree hash not found") =>
