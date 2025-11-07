@@ -5,6 +5,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
+use crate::opts::StorageOpts;
 use crate::storage::{create_version_store, StorageConfig, VersionStore};
 use crate::util;
 use crate::view::RepositoryView;
@@ -62,7 +63,13 @@ impl LocalRepository {
         };
 
         // Initialize the version store based on config
-        let store = create_version_store(&repo.path, config.storage.as_ref())?;
+        let storage_opts = if let Some(storage_config) = config.storage {
+            StorageOpts::from_repo_config(&repo, &storage_config)?
+        } else {
+            StorageOpts::from_path(&repo.path, true)
+        };
+
+        let store = create_version_store(&storage_opts)?;
         repo.version_store = Some(store);
 
         Ok(repo)
@@ -83,17 +90,35 @@ impl LocalRepository {
             let config_path = util::fs::config_filepath(&self.path);
             let config = RepositoryConfig::from_file(&config_path)?;
 
+            let storage_opts = if let Some(storage_config) = config.storage {
+                StorageOpts::from_repo_config(self, &storage_config)?
+            } else {
+                StorageOpts::from_path(&self.path, true)
+            };
+
             // Create and initialize the store
-            let store = create_version_store(&self.path, config.storage.as_ref())?;
+            let store = create_version_store(&storage_opts)?;
             self.version_store = Some(store);
         }
         Ok(())
     }
 
     /// Initialize the default version store
+    /// this will be a local storage backend
     pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
-        let store = create_version_store(&self.path, None)?;
+        let storage_opts = StorageOpts::from_path(&self.path, true);
+
+        // Create and initialize the store
+        let store = create_version_store(&storage_opts)?;
         self.version_store = Some(store);
+        Ok(())
+    }
+
+    /// Initialize local version store at a new location
+    pub fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+        let version_store = create_version_store(storage_opts)?;
+        self.version_store = Some(version_store);
+
         Ok(())
     }
 

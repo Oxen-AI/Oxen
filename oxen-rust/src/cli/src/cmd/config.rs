@@ -5,6 +5,9 @@ use liboxen::command;
 use liboxen::config::{AuthConfig, UserConfig};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::opts::{LocalStorageOpts, StorageOpts};
+
+use std::path::PathBuf;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "config";
@@ -49,6 +52,20 @@ impl RunCmd for ConfigCmd {
                     .long("delete-remote")
                     .value_name("REMOTE_NAME")
                     .help("Delete a remote from the current working repository.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend")
+                    .long("storage-backend")
+                    .help("Set the type of storage backend to save version files.")
+                    .default_value("local")
+                    .default_missing_value("local")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-path")
+                    .long("storage-backend-path")
+                    .help("Set the path for storage backend to save version files.")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -136,6 +153,29 @@ impl RunCmd for ConfigCmd {
             }
         }
 
+        if let Some(path) = args
+            .get_one::<String>("storage-backend-path")
+            .map(PathBuf::from)
+        {
+            let mut repo = LocalRepository::from_current_dir()?;
+            let local_storage_opts = Some(LocalStorageOpts { path: Some(path) });
+            let s3_opts = None;
+
+            // If path is provided, we can infer the type is local
+            let storage_opts = StorageOpts {
+                type_: "local".to_string(),
+                local_storage_opts,
+                s3_opts,
+            };
+
+            match self.set_version_store(&mut repo, &storage_opts) {
+                Ok(_) => {}
+                Err(err) => {
+                    eprintln!("{err}")
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -165,6 +205,16 @@ impl ConfigCmd {
 
     pub fn delete_remote(&self, repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
         command::config::delete_remote(repo, name)?;
+
+        Ok(())
+    }
+
+    pub fn set_version_store(
+        &self,
+        repo: &mut LocalRepository,
+        storage_opts: &StorageOpts,
+    ) -> Result<(), OxenError> {
+        command::config::set_version_store(repo, storage_opts)?;
 
         Ok(())
     }

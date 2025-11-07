@@ -11,6 +11,7 @@ use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
+use crate::opts::StorageOpts;
 use crate::repositories;
 use crate::storage::version_store::create_version_store;
 
@@ -64,7 +65,7 @@ pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, 
     let start = std::time::Instant::now();
     let mut stats = PruneStats::new();
 
-    log::info!("Starting prune operation (dry_run: {})", dry_run);
+    log::info!("Starting prune operation (dry_run: {dry_run})");
 
     // Step 1: Collect all referenced nodes and version hashes from all commits
     log::info!("Collecting referenced nodes and version files from commit history...");
@@ -194,7 +195,7 @@ fn collect_node_hashes(
 
         // Also collect chunk hashes if present
         for chunk_hash in file_node.chunk_hashes() {
-            referenced_versions.insert(format!("{:032x}", chunk_hash));
+            referenced_versions.insert(format!("{chunk_hash:032x}"));
         }
     }
 
@@ -220,7 +221,7 @@ fn prune_nodes(
         .join(NODES_DIR);
 
     if !nodes_dir.exists() {
-        log::debug!("Nodes directory does not exist: {:?}", nodes_dir);
+        log::debug!("Nodes directory does not exist: {nodes_dir:?}");
         return Ok(());
     }
 
@@ -259,9 +260,9 @@ fn prune_nodes(
                     let node_path = sub_entry.path();
 
                     if dry_run {
-                        log::debug!("Would remove orphaned node: {:?}", node_path);
+                        log::debug!("Would remove orphaned node: {node_path:?}");
                     } else {
-                        log::debug!("Removing orphaned node: {:?}", node_path);
+                        log::debug!("Removing orphaned node: {node_path:?}");
                         std::fs::remove_dir_all(&node_path)?;
                     }
                 }
@@ -279,7 +280,8 @@ async fn prune_versions(
     stats: &mut PruneStats,
     dry_run: bool,
 ) -> Result<(), OxenError> {
-    let version_store = create_version_store(&repo.path, None)?;
+    let storage_opts = StorageOpts::from_path(&repo.path, true);
+    let version_store = create_version_store(&storage_opts)?;
 
     let all_versions = version_store.list_versions().await?;
     stats.versions_scanned = all_versions.len();
@@ -297,9 +299,9 @@ async fn prune_versions(
             }
 
             if dry_run {
-                log::debug!("Would remove orphaned version: {}", version_hash);
+                log::debug!("Would remove orphaned version: {version_hash}");
             } else {
-                log::debug!("Removing orphaned version: {}", version_hash);
+                log::debug!("Removing orphaned version: {version_hash}");
                 version_store.delete_version(&version_hash).await?;
             }
         }

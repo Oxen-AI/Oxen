@@ -976,7 +976,7 @@ pub fn unpack_nodes(
         }
         // log::debug!("create_node writing {:?}", dst_path);
         if dst_path.exists() {
-            log::debug!("Node already exists at {:?}", dst_path);
+            log::debug!("Node already exists at {dst_path:?}");
             continue;
         }
         file.unpack(&dst_path)?;
@@ -1182,7 +1182,7 @@ pub fn get_node_hashes_for_commit(
     if let Some(subtrees) = maybe_subtrees {
         // Traverse up the tree to get all the parent directories
         let mut all_parent_paths: Vec<PathBuf> = Vec::new();
-        log::debug!("subtrees: {:?}", subtrees);
+        log::debug!("subtrees: {subtrees:?}");
         for subtree_path in subtrees {
             let path = subtree_path.clone();
             let mut current_path = path.clone();
@@ -1197,7 +1197,7 @@ pub fn get_node_hashes_for_commit(
             }
             all_parent_paths.reverse();
         }
-        log::debug!("all_parent_paths: {:?}", all_parent_paths);
+        log::debug!("all_parent_paths: {all_parent_paths:?}");
 
         for subtree in subtrees {
             get_node_hashes_for_subtree(

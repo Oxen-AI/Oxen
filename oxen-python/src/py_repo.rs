@@ -4,9 +4,7 @@
 use liboxen::error::OxenError;
 use liboxen::model::Branch;
 use liboxen::model::LocalRepository;
-use liboxen::opts::CloneOpts;
-use liboxen::opts::PushOpts;
-use liboxen::opts::RmOpts;
+use liboxen::opts::{CloneOpts, PushOpts, RmOpts, StorageOpts};
 use pyo3::prelude::*;
 
 use liboxen::api;
@@ -64,6 +62,7 @@ impl PyRepo {
                     all,
                     ..FetchOpts::new()
                 },
+                storage_opts: StorageOpts::from_path(&self.path.clone(), true),
                 ..Default::default()
             };
             repositories::clone(&opts).await

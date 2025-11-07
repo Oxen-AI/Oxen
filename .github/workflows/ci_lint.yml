@@ -27,6 +27,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
+          # Other branches will still use the cache but won't save it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             oxen-rust
             oxen-python

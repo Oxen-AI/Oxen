@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::opts::fetch_opts::FetchOpts;
+use crate::opts::FetchOpts;
+use crate::opts::StorageOpts;
 
 #[derive(Clone, Debug, Default)]
 pub struct CloneOpts {
@@ -10,6 +11,8 @@ pub struct CloneOpts {
     pub dst: PathBuf,
     // FetchOpts
     pub fetch_opts: FetchOpts,
+    // StorageOpts
+    pub storage_opts: StorageOpts,
     // Flag for remote mode
     pub is_remote: bool,
 }
@@ -21,6 +24,7 @@ impl CloneOpts {
             url: url.as_ref().to_string(),
             dst: dst.as_ref().to_path_buf(),
             fetch_opts: FetchOpts::new(),
+            storage_opts: StorageOpts::from_path(dst.as_ref(), true),
             is_remote: false,
         }
     }
@@ -32,6 +36,7 @@ impl CloneOpts {
     ) -> CloneOpts {
         CloneOpts {
             fetch_opts: FetchOpts::from_branch(branch.as_ref()),
+            storage_opts: StorageOpts::from_path(dst.as_ref(), true),
             is_remote: false,
             ..CloneOpts::new(url, dst)
         }
