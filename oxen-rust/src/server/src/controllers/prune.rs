@@ -48,9 +48,7 @@ pub async fn prune(
 
     let dry_run = body.dry_run;
 
-    log::info!(
-        "Prune requested for {namespace}/{repo_name} (dry_run: {dry_run})"
-    );
+    log::info!("Prune requested for {namespace}/{repo_name} (dry_run: {dry_run})");
 
     // Run the prune operation
     match repositories::prune::prune(&repository, dry_run).await {
