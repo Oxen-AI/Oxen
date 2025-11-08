@@ -243,7 +243,7 @@ pub async fn checkout_subtrees(
         }
 
         if from_root.is_some() {
-            log::debug!("🔥 from node: {:?}", from_root);
+            log::debug!("🔥 from node: {from_root:?}");
             cleanup_removed_files(
                 repo,
                 &from_root.unwrap(),

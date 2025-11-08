@@ -21,7 +21,7 @@ pub async fn checkout(repo: &mut LocalRepository, name: &str) -> Result<(), Oxen
             //println!("Checked out commit: {}", name);
         }
         Err(OxenError::RevisionNotFound(name)) => {
-            println!("Revision not found: {}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {}\n\nto update the local copy, then try again.", name, name);
+            println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
             return Err(OxenError::RevisionNotFound(name));
         }
         Err(e) => {
@@ -44,7 +44,7 @@ pub async fn force_checkout(repo: &mut LocalRepository, name: &str) -> Result<()
             //println!("Checked out commit: {}", name);
         }
         Err(OxenError::RevisionNotFound(name)) => {
-            println!("Revision not found: {}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {}\n\nto update the local copy, then try again.", name, name);
+            println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
             return Err(OxenError::RevisionNotFound(name));
         }
         Err(e) => {
