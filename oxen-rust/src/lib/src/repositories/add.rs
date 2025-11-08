@@ -251,7 +251,7 @@ A: Oxen.ai
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
-            repositories::checkout(&repo, og_branch.name, false).await?;
+            repositories::checkout(&repo, og_branch.name).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;

@@ -671,7 +671,7 @@ mod tests {
             repositories::commit(&repo, "adding initial labels file")?;
 
             // Checkout main again
-            repositories::checkout(&repo, og_branch.name, false).await?;
+            repositories::checkout(&repo, og_branch.name).await?;
 
             // Should not be able to delete `my-branch` because it is ahead of `main`
             if repositories::branches::delete(&repo, branch_name).is_ok() {
@@ -710,7 +710,7 @@ mod tests {
             repositories::commit(&repo, "adding initial labels file")?;
 
             // Checkout main again
-            repositories::checkout(&repo, og_branch.name, false).await?;
+            repositories::checkout(&repo, og_branch.name).await?;
 
             // Force delete
             repositories::branches::force_delete(&repo, branch_name)?;

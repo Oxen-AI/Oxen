@@ -319,7 +319,7 @@ mod tests {
                     ..FetchOpts::new()
                 };
                 repositories::fetch::fetch_branch(&repo, fetch_opts).await?;
-                repositories::checkout::checkout(&repo, branch_name, false).await?;
+                repositories::checkout::checkout(&repo, branch_name).await?;
 
                 let num_new_files = util::fs::rcount_files_in_dir(&repo.path);
                 // Now there should be a new hotdog file
@@ -578,7 +578,7 @@ mod tests {
 
                 // Switch to main branch and pull
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
-                repositories::checkout(&cloned_repo, "main", false).await?;
+                repositories::checkout(&cloned_repo, "main").await?;
 
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
                 assert_eq!(cloned_num_files, 2);
@@ -651,7 +651,7 @@ mod tests {
                 // Switch to main branch and pull
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
 
-                repositories::checkout(&cloned_repo, branch_name, false).await?;
+                repositories::checkout(&cloned_repo, branch_name).await?;
 
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
                 assert_eq!(cloned_num_files, 5);

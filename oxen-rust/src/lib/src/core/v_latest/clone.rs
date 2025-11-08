@@ -45,7 +45,7 @@ pub async fn clone_repo(
     }
 
     repositories::fetch::fetch_branch(&local_repo, &opts.fetch_opts).await?;
-    repositories::checkout::checkout(&local_repo, opts.fetch_opts.branch.as_str(), false).await?;
+    repositories::checkout::checkout(&local_repo, opts.fetch_opts.branch.as_str()).await?;
 
     // Notify the server that we are done cloning
     api::client::repositories::post_clone(&remote_repo).await?;

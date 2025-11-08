@@ -331,7 +331,6 @@ pub async fn checkout_subtrees_to_commit(
     to_commit: &Commit,
     subtree_paths: &[PathBuf],
     depth: i32,
-    force_checkout: bool,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
@@ -343,9 +342,27 @@ pub async fn checkout_subtrees_to_commit(
                 to_commit,
                 subtree_paths,
                 depth,
-                force_checkout,
+                false,
             )
             .await
+        }
+    }
+}
+
+/// Checkout a subtree from a commit, overwriting local file changes
+pub async fn force_checkout_subtrees_to_commit(
+    repo: &LocalRepository,
+    to_commit: &Commit,
+    subtree_paths: &[PathBuf],
+    depth: i32,
+) -> Result<(), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => {
+            panic!("checkout_subtree_from_commit not implemented for oxen v0.10.0")
+        }
+        _ => {
+            core::v_latest::branches::checkout_subtrees(repo, to_commit, subtree_paths, depth, true)
+                .await
         }
     }
 }
@@ -355,14 +372,22 @@ pub async fn checkout_commit_from_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
-    force_checkout: bool,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::branches::checkout_commit(repo, commit, from_commit, force_checkout)
-                .await
-        }
+        _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit, false).await,
+    }
+}
+
+/// Checkout a commit, overwritting local file changes
+pub async fn force_checkout_commit_from_commit(
+    repo: &LocalRepository,
+    commit: &Commit,
+    from_commit: &Option<Commit>,
+) -> Result<(), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit, true).await,
     }
 }
 
@@ -642,7 +667,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Must checkout main again before deleting
-            repositories::checkout(&repo, og_branch.name, false).await?;
+            repositories::checkout(&repo, og_branch.name).await?;
 
             // Now we can delete
             repositories::branches::delete(&repo, branch_name)?;

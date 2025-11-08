@@ -632,7 +632,7 @@ mod tests {
             assert!(history_main.is_err());
 
             // Back to main
-            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME, false).await?;
+            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
 
             // Push to remote
             repositories::push(&local_repo).await?;
@@ -1291,6 +1291,7 @@ A: Checkout Oxen.ai
                     Some(vec![PathBuf::from("nlp").join("classification")]);
                 clone_opts.fetch_opts.depth = Some(2);
                 let user_a_repo = repositories::clone(&clone_opts).await?;
+                println!("user_a_repo: {user_a_repo:?}");
 
                 // User adds a file and pushes
                 let new_file = PathBuf::from("nlp")

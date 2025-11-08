@@ -171,7 +171,7 @@ mod tests {
             assert!(!file_to_remove.exists());
 
             // Switch back to main branch
-            repositories::checkout(&repo, orig_branch.name, false).await?;
+            repositories::checkout(&repo, orig_branch.name).await?;
             // Make sure we restore file
             assert!(file_to_remove.exists());
 

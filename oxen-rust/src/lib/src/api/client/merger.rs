@@ -95,7 +95,7 @@ mod tests {
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Checkout main and add a file to be ahead
-            repositories::checkout(&local_repo, base, false).await?;
+            repositories::checkout(&local_repo, base).await?;
             let path = local_repo.path.join("file_1.txt");
             test::write_txt_file_to_path(&path, "hello")?;
             repositories::add(&local_repo, &path).await?;
@@ -210,7 +210,7 @@ mod tests {
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Checkout main and modify README.md to have a conflict
-            repositories::checkout(&local_repo, base, false).await?;
+            repositories::checkout(&local_repo, base).await?;
             let path = local_repo.path.join("README.md");
             test::write_txt_file_to_path(&path, "I am on main conflicting the README")?;
             repositories::add(&local_repo, &path).await?;
@@ -263,7 +263,7 @@ mod tests {
             // Merge the head branch into base
             api::client::merger::merge(&remote_repo, base, head).await?;
 
-            repositories::checkout::checkout(&local_repo, base, false).await?;
+            repositories::checkout::checkout(&local_repo, base).await?;
             let commits_before = repositories::commits::list(&local_repo)?;
             let fetch_opts = FetchOpts::new();
             repositories::pull::pull_remote_branch(&local_repo, &fetch_opts).await?;

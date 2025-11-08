@@ -49,7 +49,11 @@ impl RunCmd for RemoteModeCheckoutCmd {
         if let Some(name) = args.get_one::<String>("create") {
             repositories::remote_mode::create_checkout(&mut repo, name).await?
         } else if let Some(name) = args.get_one::<String>("name") {
-            repositories::remote_mode::checkout(&mut repo, name, force).await?;
+            if force {
+                repositories::remote_mode::checkout::force_checkout(&mut repo, name).await?;
+            } else {
+                repositories::remote_mode::checkout(&mut repo, name).await?;
+            }
         }
 
         Ok(())
