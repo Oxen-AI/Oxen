@@ -85,7 +85,7 @@ pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, 
     prune_versions(repo, &referenced_versions, &mut stats, dry_run).await?;
 
     let duration = start.elapsed();
-    log::info!("Prune operation complete in {:.2?}", duration);
+    log::info!("Prune operation complete in {duration:.2?}");
     log::info!(
         "Nodes: scanned={}, kept={}, removed={}",
         stats.nodes_scanned,

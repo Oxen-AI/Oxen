@@ -56,15 +56,15 @@ pub async fn prune(remote_repo: &RemoteRepository, dry_run: bool) -> Result<Prun
     match client.post(&url).json(&request_body).send().await {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("got body: {}", body);
+            log::debug!("got body: {body}");
             let response: Result<PruneResponse, serde_json::Error> = serde_json::from_str(&body);
             match response {
                 Ok(val) => {
-                    log::debug!("got PruneResponse: {:?}", val);
+                    log::debug!("got PruneResponse: {val:?}");
                     Ok(val.stats)
                 }
                 Err(err) => {
-                    log::error!("Failed to parse PruneResponse from body: {}", body);
+                    log::error!("Failed to parse PruneResponse from body: {body}");
                     Err(OxenError::basic_str(format!(
                         "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     )))

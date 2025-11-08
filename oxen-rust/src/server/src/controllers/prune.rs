@@ -49,10 +49,7 @@ pub async fn prune(
     let dry_run = body.dry_run;
 
     log::info!(
-        "Prune requested for {}/{} (dry_run: {})",
-        namespace,
-        repo_name,
-        dry_run
+        "Prune requested for {namespace}/{repo_name} (dry_run: {dry_run})"
     );
 
     // Run the prune operation
@@ -83,10 +80,10 @@ pub async fn prune(
             Ok(HttpResponse::Ok().json(response))
         }
         Err(err) => {
-            log::error!("Prune failed: {}", err);
+            log::error!("Prune failed: {err}");
             let response = PruneResponse {
                 status: STATUS_ERROR.to_string(),
-                status_message: format!("Prune failed: {}", err),
+                status_message: format!("Prune failed: {err}"),
                 status_description: None,
                 error: None,
                 stats: PruneStatsResponse {
