@@ -232,7 +232,7 @@ pub async fn batch_download(
         match tar.into_inner().await {
             Ok(mut enc) => {
                 if let Err(e) = enc.shutdown().await {
-                    log::error!("Failed to shutdown gzip encoder: {}", e);
+                    log::error!("Failed to shutdown gzip encoder: {e}");
                     error_tx.send(OxenError::IO(e)).ok();
                     had_error = true;
                 }
@@ -258,7 +258,7 @@ pub async fn batch_download(
     // convert reader to stream
     let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
         if let Ok(err) = error_rx.try_recv() {
-            log::error!("Stream error: {}", err);
+            log::error!("Stream error: {err}");
             return Err(OxenHttpError::from(err));
         }
         chunk.map_err(OxenHttpError::from)
@@ -349,8 +349,7 @@ pub async fn save_multiparts(
                         match decoder.read_to_end(&mut decompressed_bytes) {
                             Ok(_) => Ok(decompressed_bytes),
                             Err(e) => Err(OxenError::basic_str(format!(
-                                "Failed to decompress gzipped data: {}",
-                                e
+                                "Failed to decompress gzipped data: {e}"
                             ))),
                         }
                     } else {
@@ -371,7 +370,7 @@ pub async fn save_multiparts(
                                     &mut err_files_clone,
                                     upload_filehash.clone(),
                                     None,
-                                    format!("Failed to store version: {}", e),
+                                    format!("Failed to store version: {e}"),
                                 );
                             }
                             return;
@@ -400,7 +399,7 @@ pub async fn save_multiparts(
                                     &mut err_files_clone,
                                     upload_filehash.clone(),
                                     None,
-                                    format!("Failed to store version: {}", e),
+                                    format!("Failed to store version: {e}"),
                                 );
                             }
                         }
@@ -417,7 +416,7 @@ pub async fn save_multiparts(
             Ok(_) => {}
             Err(e) => {
                 // Only log the error here, as err_files are recorded immediately when the error occurs
-                log::error!("A task panicked or was cancelled: {:?}", e);
+                log::error!("A task panicked or was cancelled: {e:?}");
             }
         }
     }
@@ -426,8 +425,8 @@ pub async fn save_multiparts(
     let mutex = match Arc::try_unwrap(err_files) {
         Ok(mutex) => mutex,
         Err(e) => {
-            let err = format!("Couldn't acquire mutex guard for err_files: {:?}", e);
-            log::error!("{}", err);
+            let err = format!("Couldn't acquire mutex guard for err_files: {e:?}");
+            log::error!("{err}");
             return Err(actix_web::error::ErrorInternalServerError(err));
         }
     };

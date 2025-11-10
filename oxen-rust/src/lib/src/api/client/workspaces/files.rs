@@ -180,7 +180,7 @@ pub async fn add_bytes(
 
     match upload_bytes_as_file(remote_repo, workspace_id, directory, &path, buf).await {
         Ok(path) => {
-            println!("🐂 oxen added entry {path:?} to workspace {}", workspace_id);
+            println!("🐂 oxen added entry {path:?} to workspace {workspace_id}");
         }
         Err(e) => {
             return Err(e);
@@ -399,7 +399,7 @@ async fn parallel_batched_small_file_upload(
                 };
 
                 let file = std::fs::read(&path).map_err(|e| {
-                    OxenError::basic_str(format!("Failed to read file '{:?}': {e}", path))
+                    OxenError::basic_str(format!("Failed to read file '{path:?}': {e}"))
                 })?;
 
                 let hash = hasher::hash_buffer(&file);
@@ -476,8 +476,8 @@ async fn parallel_batched_small_file_upload(
         futures::future::try_join_all(producer_handles)
             .await
             .map_err(|e| {
-                log::error!("producer task failed: {:?}", e);
-                OxenError::basic_str(format!("producer task failed: {}", e))
+                log::error!("producer task failed: {e:?}");
+                OxenError::basic_str(format!("producer task failed: {e}"))
             })?;
 
         Ok::<(), OxenError>(())
@@ -572,10 +572,9 @@ async fn parallel_batched_small_file_upload(
                                 }
                                 // If staging failed, cancel the operation
                                 Err(e) => {
-                                    log::error!("failed to stage files to workspace: {}", e);
+                                    log::error!("failed to stage files to workspace: {e}");
                                     return Err(OxenError::basic_str(format!(
-                                        "failed to stage to workspace: {}",
-                                        e
+                                        "failed to stage to workspace: {e}"
                                     )));
                                 }
                             }
@@ -584,10 +583,9 @@ async fn parallel_batched_small_file_upload(
                         }
                         // If uploading the version files fails, cancel the operation
                         Err(e) => {
-                            log::error!("failed to upload version files to workspace: {}", e);
+                            log::error!("failed to upload version files to workspace: {e}");
                             return Err(OxenError::basic_str(format!(
-                                "failed to upload version files to workspace: {}",
-                                e
+                                "failed to upload version files to workspace: {e}"
                             )));
                         }
                     }
@@ -664,10 +662,9 @@ async fn parallel_batched_small_file_upload(
                             }
                             // If staging failed, cancel the operation
                             Err(e) => {
-                                log::debug!("Failed to stage files to workspace: {}", e);
+                                log::debug!("Failed to stage files to workspace: {e}");
                                 return Err(OxenError::basic_str(format!(
-                                    "Failed to stage to workspace: {}",
-                                    e
+                                    "Failed to stage to workspace: {e}"
                                 )));
                             }
                         }
@@ -676,10 +673,9 @@ async fn parallel_batched_small_file_upload(
                     }
                     // If uploading the version files fails, cancel the operation
                     Err(e) => {
-                        log::debug!("Failed to upload version files to workspace: {}", e);
+                        log::debug!("Failed to upload version files to workspace: {e}");
                         return Err(OxenError::basic_str(format!(
-                            "Failed to upload version files to workspace: {}",
-                            e
+                            "Failed to upload version files to workspace: {e}"
                         )));
                     }
                 }
@@ -693,8 +689,8 @@ async fn parallel_batched_small_file_upload(
         futures::future::try_join_all(upload_handles)
             .await
             .map_err(|e| {
-                log::error!("consumer task failed: {:?}", e);
-                OxenError::basic_str(format!("consumer task failed: {}", e))
+                log::error!("consumer task failed: {e:?}");
+                OxenError::basic_str(format!("consumer task failed: {e}"))
             })?;
 
         Ok::<(), OxenError>(())
@@ -706,11 +702,11 @@ async fn parallel_batched_small_file_upload(
     match result {
         (Ok(_producer_res), Ok(_consumer_res)) => {}
         (Err(e), _) => {
-            log::error!("Producer task failed: {:?}", e);
+            log::error!("Producer task failed: {e:?}");
             return Err(OxenError::basic_str(format!("Producer task failed: {e}")));
         }
         (_, Err(e)) => {
-            log::error!("Consumer task panicked: {:?}", e);
+            log::error!("Consumer task panicked: {e:?}");
             return Err(OxenError::basic_str(format!("Consumer task failed: {e}")));
         }
     }
@@ -719,8 +715,8 @@ async fn parallel_batched_small_file_upload(
     let mutex = match Arc::try_unwrap(err_files) {
         Ok(mutex) => mutex,
         Err(e) => {
-            let err = format!("Couldn't acquire mutex guard for err_files: {:?}", e);
-            log::error!("{}", err);
+            let err = format!("Couldn't acquire mutex guard for err_files: {e:?}");
+            log::error!("{err}");
             return Err(OxenError::basic_str(&err));
         }
     };
@@ -777,19 +773,17 @@ async fn parallel_batched_small_file_upload(
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to add version files to workspace: {}", e);
+                        log::error!("Failed to add version files to workspace: {e}");
                         return Err(OxenError::basic_str(format!(
-                            "Failed to add version files to workspace: {}",
-                            e
+                            "Failed to add version files to workspace: {e}"
                         )));
                     }
                 }
             }
             Err(e) => {
-                log::error!("Failed to upload batch of files: {}", e);
+                log::error!("Failed to upload batch of files: {e}");
                 return Err(OxenError::basic_str(format!(
-                    "Failed to upload batch of files: {}",
-                    e
+                    "Failed to upload batch of files: {e}"
                 )));
             }
         }
@@ -835,11 +829,10 @@ pub async fn stage_files_to_workspace_with_retry(
                 return Ok(stage_err_files);
             }
             Err(e) => {
-                log::error!("Error staging files to workspace: {:?}", e);
+                log::error!("Error staging files to workspace: {e:?}");
                 if retry_count == max_retries {
                     return Err(OxenError::basic_str(format!(
-                        "failed to stage files to workspace after retries: {:?}",
-                        e
+                        "failed to stage files to workspace after retries: {e:?}"
                     )));
                 }
             }
@@ -923,7 +916,7 @@ async fn p_upload_single_file(
     let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
     match result {
         Ok(val) => {
-            log::debug!("File path response: {:?}", val);
+            log::debug!("File path response: {val:?}");
             if let Some(path) = val.paths.first() {
                 Ok(path.clone())
             } else {
@@ -956,10 +949,10 @@ async fn p_upload_bytes_as_file(
     let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
     let path = path.as_ref();
-    log::debug!("multipart_file_upload path: {:?}", path);
+    log::debug!("multipart_file_upload path: {path:?}");
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!("uploading bytes with file_name: {:?}", file_name);
+    log::info!("uploading bytes with file_name: {file_name:?}");
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     std::io::copy(&mut buf, &mut encoder)?;

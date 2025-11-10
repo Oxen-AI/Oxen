@@ -225,7 +225,7 @@ impl DiffEntry {
                     diff_summary: Some(GenericDiffSummary::TabularDiffWrapper(
                         diff.clone().tabular.summary.to_wrapper(),
                     )),
-                    diff: Some(GenericDiff::TabularDiff(diff)),
+                    diff: Some(GenericDiff::TabularDiff(Box::new(diff))),
                 });
             }
         }
