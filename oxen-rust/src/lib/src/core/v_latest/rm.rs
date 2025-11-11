@@ -464,7 +464,6 @@ fn remove_inner(
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<CumulativeStats, OxenError> {
     let start = std::time::Instant::now();
-    log::debug!("paths: {paths:?}");
 
     // Head commit should always exist here, because we're removing committed files
     let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? else {

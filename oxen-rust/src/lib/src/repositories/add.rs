@@ -234,6 +234,69 @@ A: Oxen.ai
     }
 
     #[tokio::test]
+    async fn test_command_add_dot_can_add_removed_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Track a new file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Adding a file")?;
+
+            // Remove the file and add with dot
+            util::fs::remove_file(&hello_file)?;
+            repositories::add(&repo, &repo.path).await?;
+
+            // The new file should be staged as removed
+            let status = repositories::status(&repo)?;
+            status.print();
+            assert_eq!(status.staged_files.len(), 1);
+            assert!(!hello_file.exists());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_command_add_dot_only_adds_changed_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Track 3 new files
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&world_file, "World")?;
+
+            let third_file = repo.path.join("third.txt");
+            util::fs::write_to_path(&third_file, "!")?;
+
+            // Add all files with dot
+            repositories::add(&repo, &repo.path).await?;
+
+            // All files should be staged
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.staged_files.len(), 3);
+
+            repositories::commit(&repo, "Adding 3 files")?;
+
+            // Alter 2 files
+            util::fs::remove_file(&hello_file)?;
+            test::modify_txt_file(&world_file, "MODIFIED")?;
+
+            // Add all files again
+            repositories::add(&repo, &repo.path).await?;
+
+            // The modified and removed files should be staged
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.staged_files.len(), 2);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_can_add_merge_conflict() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");

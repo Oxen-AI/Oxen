@@ -805,7 +805,7 @@ pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenEr
     }
 }
 
-/// Wrapper around the util::fs::remove_file command to tell us which file it failed on
+/// Wrapper around the std::fs::remove_file command to tell us which file it failed on
 pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
     let src = src.as_ref();
     log::debug!("Removing file: {}", src.display());

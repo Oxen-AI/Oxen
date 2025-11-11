@@ -35,6 +35,7 @@ pub fn parse_glob_paths(
     };
 
     let paths = &opts.paths;
+    log::debug!("parse_glob_paths got {:?} paths", paths.len());
 
     let staged_db = &opts.staged_db;
     let merkle_tree = &opts.merkle_tree;
@@ -44,31 +45,38 @@ pub fn parse_glob_paths(
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths {
-        log::debug!("parse_glob_paths parsing path: {:?}", path);
+        // Correction for '.'
+        // Paths ending in '.' are expanded to the current dir at the cmd level
+        log::debug!("path: {:?}", path);
+        let path = if *path == repo_path {
+            path.join("*")
+        } else {
+            path.to_path_buf()
+        };
+
         // Normalize canonicalization before checking if it's a glob path
-        let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
+        let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
         let glob_path = {
             let cwd = std::env::current_dir()?;
             if util::fs::is_relative_to_dir(&cwd, &repo_path) {
                 let relative_cwd = util::fs::path_relative_to_dir(&cwd, &repo_path)?;
-                // Correction for '.'
-                // Paths ending in '.' are expanded to the current dir at the cmd level
-                if relative_path == relative_cwd {
-                    relative_path.join(PathBuf::from("*"))
-                } else {
-                    let path_relative_to_cwd = util::fs::path_relative_to_dir(path, &relative_cwd)?;
-                    relative_cwd.join(&path_relative_to_cwd)
-                }
+                let path_relative_to_cwd =
+                    util::fs::path_relative_to_dir(&relative_path, &relative_cwd)?;
+
+                relative_cwd.join(&path_relative_to_cwd)
             } else {
+                println!("2");
                 relative_path
             }
         };
+
+        log::debug!("glob path: {glob_path:?}");
 
         if util::fs::is_glob_path(&glob_path) {
             if *staged_db {
                 // If staged flag set, only match against the staged db
                 let staged_paths = search_staged_db(
-                    path,
+                    &path,
                     repo.expect("Cannot parse staged_db for paths without a repo"),
                 )?;
 
