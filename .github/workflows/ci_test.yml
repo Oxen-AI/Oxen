@@ -75,6 +75,9 @@ jobs:
           brew install ffmpeg imagemagick redis
           brew services start redis
 
+      - name: Install nextest runner
+        uses: taiki-e/install-action@nextest
+
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'
@@ -113,14 +116,14 @@ jobs:
         run: |
           cd ${{ github.workspace }}/oxen-rust
           ./target/debug/oxen-server start &
-          cargo test -- --test-threads=3
+          cargo nextest run --profile ci
 
       - name: Run oxen-rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
           Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo test -- --test-threads=3
+          cargo nextest run --profile ci
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)

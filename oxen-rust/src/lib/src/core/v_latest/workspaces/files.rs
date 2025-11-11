@@ -274,7 +274,7 @@ pub async fn upload_zip(
                 .components()
                 .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
             {
-                log::debug!("Skipping __MACOSX file: {:?}", file);
+                log::debug!("Skipping __MACOSX file: {file:?}");
                 continue;
             }
 
