@@ -53,7 +53,7 @@ pub fn parse_glob_paths(
                 let relative_cwd = util::fs::path_relative_to_dir(&cwd, &repo_path)?;
                 // Correction for '.'
                 // Paths ending in '.' are expanded to the current dir at the cmd level
-                if relative_path == relative_cwd  {
+                if relative_path == relative_cwd {
                     relative_path.join(PathBuf::from("*"))
                 } else {
                     let path_relative_to_cwd = util::fs::path_relative_to_dir(path, &relative_cwd)?;
@@ -108,7 +108,8 @@ pub fn parse_glob_paths(
             }
         } else {
             // If walk_dirs flag set, walk the dir and recursively collect file paths
-            if *walk_dirs && path.is_dir() {
+            let full_path = repo_path.join(&glob_path);
+            if *walk_dirs && full_path.is_dir() {
                 walk_working_dir(
                     &mut expanded_paths,
                     &repo_path,
@@ -328,7 +329,8 @@ fn walk_working_dir(
                     // Walkdir outputs full paths
                     let entry_path = entry.path().to_path_buf();
                     if entry.file_type().is_file() {
-                        if oxenignore::is_ignored(&relative_path, &oxenignore, entry_path.is_dir()) {
+                        if oxenignore::is_ignored(&relative_path, &oxenignore, entry_path.is_dir())
+                        {
                             continue;
                         }
 
