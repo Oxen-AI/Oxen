@@ -77,7 +77,7 @@ pub fn commit_allow_empty(
         // Use the existing create_empty_commit function
         let result = create_empty_commit(repo, &branch.name, &new_commit)?;
 
-        println!("🐂 commit {} (empty)", result);
+        println!("🐂 commit {result} (empty)");
 
         Ok(result)
     }
