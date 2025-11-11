@@ -25,6 +25,7 @@ pub mod merger;
 pub mod metadata;
 pub mod notebooks;
 pub mod oxen_version;
+pub mod prune;
 pub mod repositories;
 pub mod revisions;
 pub mod schemas;
@@ -181,6 +182,7 @@ pub async fn parse_json_body_with_err_msg(
     log::debug!("url: {url}\nstatus: {status}\nbody: {body}");
 
     let response: Result<OxenResponse, serde_json::Error> = serde_json::from_str(&body);
+    log::debug!("response: {response:?}");
     match response {
         Ok(response) => parse_status_and_message(
             url,
