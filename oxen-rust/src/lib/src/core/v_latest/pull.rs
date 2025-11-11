@@ -85,6 +85,7 @@ pub async fn pull_remote_branch(
 
         None => {
             repositories::branches::update(repo, branch, new_head_commit.id)?;
+            repositories::checkout::checkout(repo, branch).await?;
         }
     }
 

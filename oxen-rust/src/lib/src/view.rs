@@ -71,8 +71,6 @@ pub use crate::view::branch::{
 
 pub use crate::view::revision::ParseResourceResponse;
 
-pub use crate::view::compare::CompareResult;
-
 pub use crate::view::entry_metadata::MetadataEntryResponse;
 
 pub use crate::view::pagination::Pagination;

@@ -376,8 +376,12 @@ impl VersionStore for LocalVersionStore {
     }
 
     fn storage_settings(&self) -> HashMap<String, String> {
-        // Local storage doesn't need any special settings
-        HashMap::new()
+        let mut settings = HashMap::new();
+
+        let root_path_str = self.root_path.to_str().unwrap_or("").to_string();
+        settings.insert("path".to_string(), root_path_str);
+
+        settings
     }
 }
 

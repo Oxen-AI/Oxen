@@ -5,8 +5,8 @@ use std::path::{Component, Path, PathBuf};
 use liboxen::api;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
-use liboxen::opts::fetch_opts::FetchOpts;
 use liboxen::opts::CloneOpts;
+use liboxen::opts::{FetchOpts, StorageOpts};
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
@@ -43,6 +43,7 @@ impl RunCmd for CloneCmd {
             .arg(
                 Arg::new("all")
                     .long("all")
+                    .short('a')
                     .help("This downloads the full commit history, all the data files, and all the commit databases. Useful if you want to have the entire history locally or push to a new remote.")
                     .action(clap::ArgAction::SetTrue),
             )
@@ -53,6 +54,20 @@ impl RunCmd for CloneCmd {
                     .help("The branch you want to pull to when you clone.")
                     .default_value(DEFAULT_BRANCH_NAME)
                     .default_missing_value(DEFAULT_BRANCH_NAME)
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend")
+                    .long("storage-backend")
+                    .help("Set the type of storage backend to save version files to")
+                    .default_value("local")
+                    .default_missing_value("local")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-path")
+                    .long("storage-backend-path")
+                    .help("Set the location to create local version store")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -70,6 +85,8 @@ impl RunCmd for CloneCmd {
         let branch = args
             .get_one::<String>("branch")
             .expect("Must supply a branch");
+        let storage_backend = args.get_one::<String>("storage-backend");
+        let storage_backend_path = args.get_one::<String>("storage-backend-path");
         let filters: Vec<PathBuf> = args
             .get_many::<String>("filter")
             .unwrap_or_default()
@@ -108,6 +125,26 @@ impl RunCmd for CloneCmd {
             }
         };
 
+        let storage_opts = match storage_backend.unwrap().as_str() {
+            "local" => {
+                if let Some(storage_backend_path) = storage_backend_path {
+                    let version_path = Path::new(storage_backend_path);
+                    StorageOpts::from_path(version_path, false)
+                } else {
+                    StorageOpts::from_path(&dst, true)
+                }
+            }
+            "s3" => {
+                // TODO
+                StorageOpts::default()
+            }
+            unsupported_backend => {
+                return Err(OxenError::basic_str(format!(
+                    "Unsupported async storage type: {unsupported_backend}"
+                )));
+            }
+        };
+
         let opts = CloneOpts {
             url: url.to_string(),
             dst,
@@ -118,6 +155,7 @@ impl RunCmd for CloneCmd {
                 all,
                 ..FetchOpts::new()
             },
+            storage_opts,
             is_remote,
         };
 

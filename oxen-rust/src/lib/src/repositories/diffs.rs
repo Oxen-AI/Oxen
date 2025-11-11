@@ -28,7 +28,7 @@ use crate::model::{
     Commit, CommitEntry, DataFrameDiff, DiffEntry, EntryDataType, LocalRepository, ParsedResource,
     Schema,
 };
-
+use crate::storage::version_store::VersionStore;
 use crate::view::Pagination;
 use crate::{constants, repositories, util};
 
@@ -38,6 +38,7 @@ use polars::prelude::IntoLazy;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::model::diff::diff_entries_counts::DiffEntriesCounts;
 use crate::model::diff::schema_diff::SchemaDiff;
@@ -464,8 +465,12 @@ pub async fn diff_files(
         let result = tabular(path_1, path_2, keys, targets, display).await?;
         Ok(DiffResult::Tabular(result))
     } else if is_files_utf8(&path_1, &path_2) {
+        let file_content_1 = util::fs::read_file(Some(&path_1))?;
+        let file_content_2 = util::fs::read_file(Some(&path_2))?;
         let result = utf8_diff::diff(
+            Some(file_content_1),
             Some(path_1.as_ref().to_path_buf()),
+            Some(file_content_2),
             Some(path_2.as_ref().to_path_buf()),
         )?;
         Ok(DiffResult::Text(result))
@@ -507,7 +512,7 @@ pub async fn diff_file_and_node(
                     file_path.as_ref(),
                     file_node.hash().to_string()
                 );
-                let result = diff_text_file_and_node(repo, Some(&file_node), file_path)?;
+                let result = diff_text_file_and_node(repo, Some(&file_node), file_path).await?;
                 log::debug!(
                     "diff_file_and_node: diffing text files {:?} and {:?}",
                     file_node.hash().to_string(),
@@ -539,7 +544,7 @@ pub async fn diff_file_and_node(
                         "diff_file_and_node: diffing text files {:?}",
                         file_path.as_ref()
                     );
-                    let result = diff_text_file_and_node(repo, None, file_path)?;
+                    let result = diff_text_file_and_node(repo, None, file_path).await?;
                     log::debug!("diff_file_and_node: diffing text files {result:?}");
                     Ok(result)
                 }
@@ -585,7 +590,8 @@ pub async fn diff_file_nodes(
                     Ok(DiffResult::Tabular(result))
                 }
                 (EntryDataType::Text, EntryDataType::Text) => {
-                    let mut result = diff_text_file_nodes(repo, Some(&file_1), Some(&file_2))?;
+                    let mut result =
+                        diff_text_file_nodes(repo, Some(&file_1), Some(&file_2)).await?;
                     result.filename1 = Some(file_1.name().to_string());
                     result.filename2 = Some(file_2.name().to_string());
                     Ok(DiffResult::Text(result))
@@ -606,7 +612,7 @@ pub async fn diff_file_nodes(
                 Ok(DiffResult::Tabular(result))
             }
             EntryDataType::Text => {
-                let mut result = diff_text_file_nodes(repo, Some(&file_1), None)?;
+                let mut result = diff_text_file_nodes(repo, Some(&file_1), None).await?;
                 result.filename1 = Some(file_1.name().to_string());
                 Ok(DiffResult::Text(result))
             }
@@ -623,7 +629,7 @@ pub async fn diff_file_nodes(
                 Ok(DiffResult::Tabular(result))
             }
             EntryDataType::Text => {
-                let result = diff_text_file_nodes(repo, None, Some(&file_2))?;
+                let result = diff_text_file_nodes(repo, None, Some(&file_2)).await?;
                 Ok(DiffResult::Text(result))
             }
             _ => Err(OxenError::invalid_file_type(format!(
@@ -735,35 +741,66 @@ pub async fn diff_tabular_file_nodes(
     }
 }
 
-pub fn diff_text_file_and_node(
+pub async fn diff_text_file_and_node(
     repo: &LocalRepository,
     file_node: Option<&FileNode>,
     file_path: impl AsRef<Path>,
 ) -> Result<DiffResult, OxenError> {
-    let version_path = file_node
-        .map(|file_node| util::fs::version_path_from_hash(repo, file_node.hash().to_string()));
-    let result = utf8_diff::diff(version_path, Some(file_path.as_ref().to_path_buf()))?;
+    let version_store = repo.version_store()?;
+    let (file_node_content, version_path) = if let Some(node) = file_node {
+        let file_hash = node.hash().to_string();
+        let contents = read_version_file_to_string(&version_store, &file_hash).await?;
+        let path = version_store.get_version_path(&file_hash)?;
+
+        (Some(contents), Some(path))
+    } else {
+        (None, None)
+    };
+
+    let file_path_content = util::fs::read_file(Some(&file_path))?;
+    let result = utf8_diff::diff(
+        file_node_content,
+        version_path,
+        Some(file_path_content),
+        Some(file_path.as_ref().to_path_buf()),
+    )?;
     Ok(DiffResult::Text(result))
 }
 
-pub fn diff_text_file_nodes(
+pub async fn diff_text_file_nodes(
     repo: &LocalRepository,
     file_1: Option<&FileNode>,
     file_2: Option<&FileNode>,
 ) -> Result<TextDiff, OxenError> {
+    let version_store = repo.version_store()?;
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
-            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
-            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
-            utf8_diff::diff(Some(version_path_1), Some(version_path_2))
+            let file_hash_1 = file_1.hash().to_string();
+            let file_content_1 = read_version_file_to_string(&version_store, &file_hash_1).await?;
+            let version_path_1 = version_store.get_version_path(&file_hash_1)?;
+
+            let file_hash_2 = file_2.hash().to_string();
+            let file_content_2 = read_version_file_to_string(&version_store, &file_hash_2).await?;
+            let version_path_2 = version_store.get_version_path(&file_hash_2)?;
+
+            utf8_diff::diff(
+                Some(file_content_1),
+                Some(version_path_1),
+                Some(file_content_2),
+                Some(version_path_2),
+            )
         }
         (Some(file_1), None) => {
-            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
-            utf8_diff::diff(Some(version_path_1), None)
+            let file_hash_1 = file_1.hash().to_string();
+            let file_content_1 = read_version_file_to_string(&version_store, &file_hash_1).await?;
+            let version_path_1 = version_store.get_version_path(&file_hash_1)?;
+            utf8_diff::diff(Some(file_content_1), Some(version_path_1), None, None)
         }
         (None, Some(file_2)) => {
-            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
-            utf8_diff::diff(None, Some(version_path_2))
+            let file_hash_2 = file_2.hash().to_string();
+            let file_content_2 = read_version_file_to_string(&version_store, &file_hash_2).await?;
+            let version_path_2 = version_store.get_version_path(&file_hash_2)?;
+            utf8_diff::diff(None, None, Some(file_content_2), Some(version_path_2))
         }
         (None, None) => Err(OxenError::basic_str(
             "Could not find one or both of the files to compare",
@@ -789,6 +826,22 @@ pub async fn tabular(
     diff_dfs(&df_1, &df_2, keys, targets, display)
 }
 
+async fn read_version_file_to_string(
+    version_store: &Arc<dyn VersionStore>,
+    hash: impl AsRef<str>,
+) -> Result<String, OxenError> {
+    match version_store.get_version(hash.as_ref()).await {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) => Ok(s),
+            Err(_) => {
+                let err = format!("could not decode version {} as UTF-8", hash.as_ref());
+                log::warn!("{err}");
+                Err(OxenError::basic_str(&err))
+            }
+        },
+        Err(err) => Err(err),
+    }
+}
 fn validate_required_fields(
     schema_1: Schema,
     schema_2: Schema,

@@ -10,8 +10,8 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote, RemoteRepository};
-use crate::opts::fetch_opts::FetchOpts;
 use crate::opts::CloneOpts;
+use crate::opts::{FetchOpts, StorageOpts};
 use crate::{api, util};
 
 pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
@@ -51,6 +51,7 @@ async fn _clone(
         url: url.as_ref().to_string(),
         dst: dst.as_ref().to_owned(),
         fetch_opts,
+        storage_opts: StorageOpts::from_path(dst.as_ref(), true),
         is_remote: false,
     };
     clone(&opts).await
@@ -58,12 +59,13 @@ async fn _clone(
 
 async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenError> {
     log::debug!(
-        "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {} -> is remote? {}",
+        "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {} -> storage backend? {:?} -> is remote? {}",
         opts.url,
         opts.dst,
         opts.fetch_opts.subtree_paths,
         opts.fetch_opts.depth,
         opts.fetch_opts.all,
+        opts.storage_opts.type_,
         opts.is_remote,
     );
 

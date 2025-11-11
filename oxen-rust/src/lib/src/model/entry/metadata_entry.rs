@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::parsed_resource::ParsedResourceView;
-use crate::model::{
-    Commit, CommitEntry, EntryDataType, LocalRepository, ParsedResource, StagedEntryStatus,
-};
+use crate::model::{Commit, EntryDataType, LocalRepository, ParsedResource, StagedEntryStatus};
 use crate::repositories;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -74,17 +72,6 @@ pub struct WorkspaceChanges {
 }
 
 impl MetadataEntry {
-    pub async fn from_commit_entry(
-        repo: &LocalRepository,
-        entry: Option<CommitEntry>,
-        commit: &Commit,
-    ) -> Option<MetadataEntry> {
-        entry.as_ref()?;
-        repositories::metadata::from_commit_entry(repo, &entry.unwrap(), commit)
-            .await
-            .ok()
-    }
-
     pub fn from_file_node(
         repo: &LocalRepository,
         node: Option<FileNode>,

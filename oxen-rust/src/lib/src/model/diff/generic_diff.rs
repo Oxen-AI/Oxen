@@ -8,6 +8,6 @@ use crate::view::tabular_diff_view::TabularDiffView;
 #[serde(untagged)]
 pub enum GenericDiff {
     DirDiff(DirDiff),
-    TabularDiff(TabularDiffView),
+    TabularDiff(Box<TabularDiffView>),
     TextDiff(TextDiff),
 }

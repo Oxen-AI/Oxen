@@ -247,7 +247,7 @@ async fn get_commit_missing_hashes(
 
     for commit in commits.iter().rev() {
         let mut unique_hashes_and_type = HashMap::new();
-        log::debug!("push_commits adding candidate nodes for commit: {}", commit);
+        log::debug!("push_commits adding candidate nodes for commit: {commit}");
         let Some(_) = CommitMerkleTree::get_unique_children_for_commit(
             repo,
             commit,
@@ -260,10 +260,7 @@ async fn get_commit_missing_hashes(
             continue;
         };
 
-        log::debug!(
-            "push_commits unique hashes and type: {:?}",
-            unique_hashes_and_type
-        );
+        log::debug!("push_commits unique hashes and type: {unique_hashes_and_type:?}");
 
         // let (files, dir_nodes) = repositories::tree::list_files_and_dirs(&commit_node)?;
         let files = unique_hashes_and_type
@@ -279,7 +276,7 @@ async fn get_commit_missing_hashes(
             .iter()
             .filter(|((h, t), _)| {
                 let t = t.node.node_type();
-                log::debug!("push_commits dir node: {} | type: {:?}", h, t);
+                log::debug!("push_commits dir node: {h} | type: {t:?}");
                 log::debug!(
                     "push_commits dir node bool: {:?}",
                     !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
@@ -291,7 +288,7 @@ async fn get_commit_missing_hashes(
 
         shared_hashes.extend(unique_hashes_and_type);
         dir_nodes.insert(commit.hash()?);
-        log::debug!("push_commits dir nodes: {:?}", dir_nodes);
+        log::debug!("push_commits dir nodes: {dir_nodes:?}");
         let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
 
         let push_commit_info = PushCommitInfo {
@@ -337,7 +334,7 @@ async fn push_commits(
         .map(|commit| {
             let commit_hash = commit.hash()?;
             let info = commit_info.get(&commit_hash).cloned().ok_or_else(|| {
-                OxenError::basic_str(format!("Commit info not found for commit {}", commit_hash))
+                OxenError::basic_str(format!("Commit info not found for commit {commit_hash}"))
             })?;
             Ok((commit, info))
         })
@@ -351,9 +348,9 @@ async fn push_commits(
         .iter()
         .map(|(_, info)| info.unique_file_hashes.len())
         .sum();
-    log::debug!("got commits with info {:?}", commits_with_info);
+    log::debug!("got commits with info {commits_with_info:?}");
     let num_commits = commits_with_info.len();
-    log::debug!("got commit info {}", num_commits);
+    log::debug!("got commit info {num_commits}");
     let errors = Arc::new(Mutex::new(Vec::new()));
 
     let progress = Arc::new(PushProgress::new_with_totals(num_files as u64, total_bytes));
@@ -363,13 +360,13 @@ async fn push_commits(
             concurrency::num_threads_for_items(num_commits),
             |(commit, commit_info)| {
                 let id = commit.id.clone();
-                log::debug!("Pushing commit {:?}", commit);
+                log::debug!("Pushing commit {commit:?}");
                 let progress = progress.clone();
                 let errors = errors.clone();
                 async move {
                     let result = async {
                         let commit_hash = commit.hash()?;
-                        log::debug!("Pushing commit {}", commit_hash);
+                        log::debug!("Pushing commit {commit_hash}");
 
                         log::debug!("missing files {}", commit_info.unique_file_hashes.len());
 
@@ -402,13 +399,13 @@ async fn push_commits(
                             HashSet::from([commit_hash]),
                         )
                         .await?;
-                        log::debug!("marked commits as synced {}", commit_hash);
+                        log::debug!("marked commits as synced {commit_hash}");
                         Ok::<(), OxenError>(())
                     }
                     .await;
 
                     if let Err(err) = result {
-                        let err_str = format!("Error pushing commit {:?}: {}", id, err);
+                        let err_str = format!("Error pushing commit {id:?}: {err}");
                         errors.lock().await.push(OxenError::basic_str(err_str));
                     }
                 }
@@ -540,7 +537,7 @@ async fn chunk_and_send_large_entries(
                 let version_path = match version_store.get_version_path(&entry.hash()) {
                     Ok(path) => path,
                     Err(e) => {
-                        log::error!("Failed to get version path: {}", e);
+                        log::error!("Failed to get version path: {e}");
                         should_stop.store(true, Ordering::Relaxed);
                         *first_error.lock().await = Some(e.to_string());
                         break;
@@ -548,7 +545,7 @@ async fn chunk_and_send_large_entries(
                 };
                 let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
                     .unwrap_or_else(|e| {
-                        log::error!("Failed to get relative path: {}", e);
+                        log::error!("Failed to get relative path: {e}");
                         entry.path()
                     });
                 let path = if relative_path.exists() {

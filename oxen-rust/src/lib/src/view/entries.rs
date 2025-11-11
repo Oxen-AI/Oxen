@@ -77,6 +77,9 @@ pub struct PaginatedMetadataEntriesResponse {
     pub entries: PaginatedMetadataEntries,
 }
 
+// ignoring because the size difference isn't that big
+// look into updating at some point as a small optimization
+#[allow(clippy::large_enum_variant)]
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum EMetadataEntry {

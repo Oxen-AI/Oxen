@@ -274,7 +274,7 @@ pub async fn upload_zip(
                 .components()
                 .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
             {
-                log::debug!("Skipping __MACOSX file: {:?}", file);
+                log::debug!("Skipping __MACOSX file: {file:?}");
                 continue;
             }
 
@@ -286,7 +286,7 @@ pub async fn upload_zip(
         author: user.name.clone(),
         email: user.email.clone(),
     };
-    let res = repositories::workspaces::commit(workspace, &data, &branch.name);
+    let res = repositories::workspaces::commit(workspace, &data, &branch.name).await;
     match res {
         Ok(commit) => {
             log::debug!("workspace::commit ✅ success! commit {commit:?}");

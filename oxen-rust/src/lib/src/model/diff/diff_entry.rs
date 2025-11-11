@@ -225,7 +225,7 @@ impl DiffEntry {
                     diff_summary: Some(GenericDiffSummary::TabularDiffWrapper(
                         diff.clone().tabular.summary.to_wrapper(),
                     )),
-                    diff: Some(GenericDiff::TabularDiff(diff)),
+                    diff: Some(GenericDiff::TabularDiff(Box::new(diff))),
                 });
             }
         }
@@ -237,7 +237,9 @@ impl DiffEntry {
                 repo,
                 base_entry.as_ref(),
                 head_entry.as_ref(),
-            ) {
+            )
+            .await
+            {
                 Ok(text_diff) => Some(GenericDiff::TextDiff(text_diff)),
                 Err(_) => None,
             }

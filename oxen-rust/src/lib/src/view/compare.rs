@@ -8,7 +8,6 @@ use crate::constants::DIFF_STATUS_COL;
 use crate::error::OxenError;
 use crate::model::data_frame::schema::Field;
 use crate::model::diff::tabular_diff::{TabularDiffDupes, TabularSchemaDiff};
-use crate::model::diff::text_diff::TextDiff;
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
 use crate::model::{Commit, DiffEntry, Schema};
 use crate::view::message::{MessageLevel, OxenMessage};
@@ -167,14 +166,6 @@ impl CompareSchemaColumn {
     }
 }
 
-// TODONOW these should maybe be moved to a model
-
-#[derive(Debug)]
-pub enum CompareResult {
-    Tabular((CompareTabular, DataFrame)),
-    Text(TextDiff),
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CompareTabular {
     pub dupes: CompareDupes,
@@ -184,27 +175,6 @@ pub struct CompareTabular {
     pub keys: Option<Vec<TabularCompareFieldBody>>,
     pub targets: Option<Vec<TabularCompareTargetBody>>,
     pub display: Option<Vec<TabularCompareTargetBody>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompareVirtualResource {
-    // TODO: Maybe this should be common to all v resource types - diffs, queries, etc.
-    pub path: String,
-    pub base: String,
-    pub head: String,
-    pub resource: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompareSourceDFs {
-    pub left: CompareSourceDF,
-    pub right: CompareSourceDF,
-}
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompareSourceDF {
-    pub path: String,
-    pub version: Option<String>, // Needs to be option for py / CLI
-    pub schema: Schema,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
