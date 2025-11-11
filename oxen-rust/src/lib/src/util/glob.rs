@@ -47,7 +47,7 @@ pub fn parse_glob_paths(
     for path in paths {
         // Correction for '.'
         // Paths ending in '.' are expanded to the current dir at the cmd level
-        log::debug!("path: {:?}", path);
+        log::debug!("path: {path:?}");
         let path = if *path == repo_path {
             path.join("*")
         } else {
@@ -65,7 +65,6 @@ pub fn parse_glob_paths(
 
                 relative_cwd.join(&path_relative_to_cwd)
             } else {
-                println!("2");
                 relative_path
             }
         };
@@ -131,7 +130,7 @@ pub fn parse_glob_paths(
         }
     }
 
-    log::debug!("parse_glob_paths found paths: {:?}", expanded_paths);
+    log::debug!("parse_glob_paths found paths: {expanded_paths:?}");
     Ok(expanded_paths)
 }
 
@@ -327,7 +326,7 @@ fn walk_working_dir(
             let entry_path = entry?;
             let relative_path = util::fs::path_relative_to_dir(&entry_path, repo_path)?;
 
-            if oxenignore::is_ignored(&relative_path, &oxenignore, relative_path.is_dir()) {
+            if oxenignore::is_ignored(&relative_path, &oxenignore, entry_path.is_dir()) {
                 continue;
             }
 
@@ -336,9 +335,14 @@ fn walk_working_dir(
                 for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
                     // Walkdir outputs full paths
                     let entry_path = entry.path().to_path_buf();
+                    let relative_entry_path =
+                        util::fs::path_relative_to_dir(&entry_path, repo_path)?;
                     if entry.file_type().is_file() {
-                        if oxenignore::is_ignored(&relative_path, &oxenignore, entry_path.is_dir())
-                        {
+                        if oxenignore::is_ignored(
+                            &relative_entry_path,
+                            &oxenignore,
+                            entry_path.is_dir(),
+                        ) {
                             continue;
                         }
 
@@ -393,6 +397,8 @@ mod tests {
     #[tokio::test]
     async fn test_glob_parse_working_dir() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            let repo_path = repo.clone().path;
+
             // Test glob in root
             let opts = GlobOpts {
                 paths: vec![PathBuf::from("*")],
@@ -416,6 +422,7 @@ mod tests {
                 PathBuf::from("test"),
             ]
             .into_iter()
+            .map(|p| repo_path.join(p))
             .collect();
 
             assert_eq!(paths, expected);
@@ -436,6 +443,7 @@ mod tests {
                 PathBuf::from("annotations/test"),
             ]
             .into_iter()
+            .map(|p| repo_path.join(p))
             .collect();
 
             assert_eq!(paths, expected);
