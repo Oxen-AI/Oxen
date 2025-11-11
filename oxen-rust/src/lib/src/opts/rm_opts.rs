@@ -8,7 +8,22 @@ pub struct RmOpts {
     // TODO: add `force` flag
 }
 
+impl Default for RmOpts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RmOpts {
+    /// Creates a blank RmOpts, for use when the path is irrelevant
+    pub fn new() -> RmOpts {
+        RmOpts {
+            path: PathBuf::from(""),
+            staged: false,
+            recursive: false,
+        }
+    }
+
     /// Sets path and defaults all other options to false
     pub fn from_path<P: AsRef<Path>>(path: P) -> RmOpts {
         RmOpts {

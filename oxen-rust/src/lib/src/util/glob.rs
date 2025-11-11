@@ -1,5 +1,3 @@
-//! Module for handing glob path parsing
-//!
 use crate::core::oxenignore;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
@@ -53,9 +51,14 @@ pub fn parse_glob_paths(
             let cwd = std::env::current_dir()?;
             if util::fs::is_relative_to_dir(&cwd, &repo_path) {
                 let relative_cwd = util::fs::path_relative_to_dir(&cwd, &repo_path)?;
-                let path_relative_to_cwd = util::fs::path_relative_to_dir(path, &relative_cwd)?;
-
-                relative_cwd.join(&path_relative_to_cwd)
+                // Correction for '.'
+                // Paths ending in '.' are expanded to the current dir at the cmd level
+                if relative_path == relative_cwd  {
+                    relative_path.join(PathBuf::from("*"))
+                } else {
+                    let path_relative_to_cwd = util::fs::path_relative_to_dir(path, &relative_cwd)?;
+                    relative_cwd.join(&path_relative_to_cwd)
+                }
             } else {
                 relative_path
             }
@@ -119,7 +122,7 @@ pub fn parse_glob_paths(
         }
     }
 
-    log::debug!("parse_glob_paths found paths: {:?}", expanded_paths.len());
+    log::debug!("parse_glob_paths found paths: {:?}", expanded_paths);
     Ok(expanded_paths)
 }
 
@@ -190,15 +193,12 @@ fn r_search_merkle_tree(
         dir = PathBuf::from(&dir_str);
     }
 
+    log::debug!("search index: {search_index:?}, search_path: {search_path:?}, dir: {dir:?}");
+
     if *search_index < glob_path_components.len() {
-        let mut glob_pattern = dir.to_string_lossy().to_string();
+        let glob_pattern = dir.to_string_lossy().to_string();
 
         let is_final = *search_index == glob_path_components.len() - 1;
-
-        // Special cases for dir
-        if is_final && glob_pattern == "." {
-            glob_pattern = "*".to_string();
-        };
 
         // Match the current glob pattern against the Merkle Tree
         let matched_entries =
@@ -211,7 +211,6 @@ fn r_search_merkle_tree(
         }
 
         // Else, recurse into the matching directories
-
         for mut entry in matched_entries {
             let mut new_index = *search_index + 1;
             r_search_merkle_tree(
@@ -284,7 +283,9 @@ fn search_working_dir(
         let oxenignore = Some(oxenignore);
         for entry in glob(path_str)? {
             let entry_path = entry?;
-            if oxenignore::is_ignored(&entry_path, &oxenignore, entry_path.is_dir()) {
+            let relative_path = util::fs::path_relative_to_dir(&entry_path, repo_path)?;
+
+            if oxenignore::is_ignored(&relative_path, &oxenignore, entry_path.is_dir()) {
                 continue;
             }
 
@@ -292,7 +293,8 @@ fn search_working_dir(
         }
     } else {
         for entry in glob(path_str)? {
-            paths.insert(entry?);
+            let entry_path = entry?;
+            paths.insert(entry_path);
         }
     }
 
@@ -320,17 +322,21 @@ fn walk_working_dir(
                 continue;
             }
 
-            let full_path = repo_path.join(relative_path);
+            let full_path = repo_path.join(&relative_path);
             if full_path.is_dir() {
                 for entry in WalkDir::new(&full_path).into_iter().filter_map(|e| e.ok()) {
                     // Walkdir outputs full paths
                     let entry_path = entry.path().to_path_buf();
                     if entry.file_type().is_file() {
+                        if oxenignore::is_ignored(&relative_path, &oxenignore, entry_path.is_dir()) {
+                            continue;
+                        }
+
                         paths.insert(entry_path);
                     }
                 }
             } else {
-                // Correction for unit tests
+                // Correction for remote-mode
                 if entry_path.exists() {
                     paths.insert(entry_path.clone());
                 } else {
@@ -351,6 +357,7 @@ fn walk_working_dir(
                         paths.insert(entry_path);
                     }
                 }
+            // Correction for remote-mode
             } else if entry_path.exists() {
                 paths.insert(entry_path.clone());
             } else {

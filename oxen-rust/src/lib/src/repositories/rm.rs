@@ -677,7 +677,7 @@ mod tests {
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 1);
             assert!(status.staged_files.contains_key(path));
-
+            log::debug!("here");
             let opts = RmOpts::from_staged_path(path);
             repositories::rm(&repo, &opts)?;
 

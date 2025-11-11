@@ -85,21 +85,18 @@ pub async fn add<T: AsRef<Path>>(
 
     for path in paths {
         let path = path.as_ref();
-        if util::fs::is_glob_path(path) {
-            let glob_opts = GlobOpts {
-                paths: vec![path.to_path_buf()],
-                staged_db: false,
-                merkle_tree: true,
-                working_dir: true,
-                walk_dirs: false,
-            };
 
-            let matching_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+        let glob_opts = GlobOpts {
+            paths: vec![path.to_path_buf()],
+            staged_db: false,
+            merkle_tree: true,
+            working_dir: true,
+            walk_dirs: false,
+        };
 
-            expanded_paths.extend(matching_paths);
-        } else {
-            expanded_paths.insert(path.to_path_buf());
-        }
+        let matching_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+
+        expanded_paths.extend(matching_paths);
 
         // Adjust repo path if outside working tree
         if !repo_in_working_tree {
@@ -155,6 +152,10 @@ pub async fn add_files(
     let excluded_hashes: HashSet<MerkleHash> = HashSet::new();
     let gitignore = oxenignore::create(repo);
 
+    let mut paths_to_remove = HashSet::new();
+    let mut rm_opts = RmOpts::new();
+    rm_opts.recursive = true;
+
     for path in paths {
         let corrected_path = match (path.is_absolute(), repo_path.is_absolute()) {
             (true, true) | (true, false) => path.clone(),
@@ -184,7 +185,6 @@ pub async fn add_files(
             if oxenignore::is_ignored(&corrected_path, &gitignore, corrected_path.is_dir()) {
                 continue;
             }
-
             let entry = add_file_inner(
                 repo,
                 repo_path,
@@ -212,13 +212,7 @@ pub async fn add_files(
             continue;
         } else {
             log::debug!("Found nonexistent path {path:?}. Staging for removal. Recursive flag set");
-            let mut opts = RmOpts::from_path(path);
-            opts.recursive = true;
-            core::v_latest::rm::rm_with_staged_db(paths, repo, &opts, &staged_db)?;
-
-            // TODO: Make rm_with_staged_db return the stats of the files it removes
-
-            return Ok(total);
+            paths_to_remove.insert(path.to_owned());
         }
     }
 
@@ -226,13 +220,18 @@ pub async fn add_files(
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
     log::debug!("---END--- oxen add: {paths:?} duration: {duration:?}");
 
-    // oxen staged?
     println!(
         "🐂 oxen added {} files ({}) in {}",
         total.total_files,
         bytesize::ByteSize::b(total.total_bytes),
         humantime::format_duration(duration)
     );
+
+    // Stage the non-existant paths as removed
+    // TODO: Make rm_with_staged_db return the stats of the files it removes
+    if !paths_to_remove.is_empty() {
+        core::v_latest::rm::rm_with_staged_db(&paths_to_remove, repo, &rm_opts, &staged_db)?;
+    }
 
     Ok(total)
 }
