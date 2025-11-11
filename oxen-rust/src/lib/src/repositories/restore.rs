@@ -580,6 +580,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_wildcard_prefix_staged() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            // Repo has 7 images in train/
+            let rm_opts = RmOpts {
+                path: PathBuf::from("train/*"),
+                recursive: false,
+                staged: false,
+            };
+            repositories::rm(&repo, &rm_opts)?;
+
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.staged_files.len(), 7); // 3 cats, 4 dogs
+
+            // Restore just the dogs from the stage
+            let restore_opts = RestoreOpts {
+                path: PathBuf::from("train/dog_*.jpg"),
+                staged: true,
+                source_ref: None,
+                is_remote: false,
+            };
+            repositories::restore::restore(&repo, restore_opts).await?;
+
+            let status = repositories::status(&repo)?;
+            
+            assert_eq!(status.staged_files.len(), 3); // 3 cats should still be staged
+            assert_eq!(status.removed_files.len(), 4); // 4 dogs back in working dir
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Make a new dir in the repo - new_annotations

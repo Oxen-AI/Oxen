@@ -1078,4 +1078,33 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_rm_wildcard_multi_level() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            // Data from populate_annotations_dir:
+            // annotations/train/annotations.txt
+            // annotations/train/bounding_box.csv
+            // annotations/test/annotations.csv
+
+            // Remove only the files in annotations/test/
+            let rm_opts = RmOpts {
+                path: PathBuf::from("annotations/test/*"),
+                recursive: false,
+                staged: false,
+            };
+            repositories::rm(&repo, &rm_opts)?;
+
+            let status = repositories::status(&repo)?;
+
+            assert_eq!(status.staged_files.len(), 1);
+            assert_eq!(
+                status.staged_files.keys().next().unwrap(),
+                &PathBuf::from("annotations/test/annotations.csv")
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }

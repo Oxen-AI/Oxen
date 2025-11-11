@@ -637,4 +637,29 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_add_wildcard_prefix_match() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // Data from populate_train_dir:
+            // train/cat_1.jpg, train/cat_2.jpg, train/cat_3.jpg
+            // train/dog_1.jpg, train/dog_2.jpg, train/dog_3.jpg, train/dog_4.jpg
+
+            // Add only the cats
+            repositories::add(&repo, "train/cat_*.jpg").await?;
+            let status = repositories::status(&repo)?;
+
+            assert_eq!(status.staged_files.len(), 3);
+            
+            // Add the dogs
+            repositories::add(&repo, "train/dog_*.jpg").await?;
+            let status = repositories::status(&repo)?;
+
+            // Should stage all 7 files now
+            assert_eq!(status.staged_files.len(), 7);
+
+            Ok(())
+        })
+        .await
+    }
 }
