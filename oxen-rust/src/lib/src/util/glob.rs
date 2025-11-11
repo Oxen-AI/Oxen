@@ -378,3 +378,241 @@ fn walk_working_dir(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+
+    use crate::error::OxenError;
+    use crate::opts::GlobOpts;
+    use crate::util::glob::parse_glob_paths;
+    use crate::{repositories, test};
+
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn test_glob_parse_working_dir() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // Test glob in root
+            let opts = GlobOpts {
+                paths: vec![PathBuf::from("*")],
+                staged_db: false,
+                merkle_tree: false,
+                working_dir: true,
+                walk_dirs: false,
+            };
+
+            let paths = parse_glob_paths(&opts, Some(&repo))?;
+
+            let expected: HashSet<PathBuf> = vec![
+                PathBuf::from("README.md"),
+                PathBuf::from("LICENSE"),
+                PathBuf::from("labels.txt"),
+                PathBuf::from("train"),
+                PathBuf::from("prompts.jsonl"),
+                PathBuf::from("annotations"),
+                PathBuf::from("nlp"),
+                PathBuf::from("large_files"),
+                PathBuf::from("test"),
+            ]
+            .into_iter()
+            .collect();
+
+            assert_eq!(paths, expected);
+
+            // Test glob in subdir
+            let opts = GlobOpts {
+                paths: vec![PathBuf::from("annotations/*")],
+                staged_db: false,
+                merkle_tree: false,
+                working_dir: true,
+                walk_dirs: false,
+            };
+
+            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let expected: HashSet<PathBuf> = vec![
+                PathBuf::from("annotations/README.md"),
+                PathBuf::from("annotations/train"),
+                PathBuf::from("annotations/test"),
+            ]
+            .into_iter()
+            .collect();
+
+            assert_eq!(paths, expected);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_glob_parse_working_dir_walk_dirs() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            let repo_path = repo.clone().path;
+
+            // Test glob path with walk
+            let opts = GlobOpts {
+                paths: vec![PathBuf::from("nlp/*")],
+                staged_db: false,
+                merkle_tree: false,
+                working_dir: true,
+                walk_dirs: true,
+            };
+
+            let paths = parse_glob_paths(&opts, Some(&repo))?;
+
+            let expected: HashSet<PathBuf> = vec![
+                PathBuf::from("nlp/classification/annotations/test.tsv"),
+                PathBuf::from("nlp/classification/annotations/train.tsv"),
+            ]
+            .into_iter()
+            .map(|p| repo_path.join(p))
+            .collect();
+
+            assert_eq!(paths, expected);
+
+            // Test non-glob path with walk
+            let opts = GlobOpts {
+                paths: vec![PathBuf::from("annotations")],
+                staged_db: false,
+                merkle_tree: false,
+                working_dir: true,
+                walk_dirs: true,
+            };
+
+            let paths = parse_glob_paths(&opts, Some(&repo))?;
+
+            let expected: HashSet<PathBuf> = vec![
+                PathBuf::from("annotations/README.md"),
+                PathBuf::from("annotations/train/annotations.txt"),
+                PathBuf::from("annotations/train/bounding_box.csv"),
+                PathBuf::from("annotations/train/one_shot.csv"),
+                PathBuf::from("annotations/train/two_shot.csv"),
+                PathBuf::from("annotations/test/annotations.csv"),
+            ]
+            .into_iter()
+            .map(|p| repo_path.join(p))
+            .collect();
+
+            assert_eq!(paths, expected);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_glob_parse_staged_db() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // Stage some specific files and a directory
+            repositories::add(&repo, "train/dog_1.jpg").await?;
+            repositories::add(&repo, "annotations/train/*").await?;
+            repositories::add(&repo, "README.md").await?;
+
+            // Test glob in sub-directory
+            let opts = GlobOpts {
+                paths: vec![PathBuf::from("annotations/train/*")],
+                staged_db: true,
+                merkle_tree: false,
+                working_dir: false,
+                walk_dirs: false,
+            };
+
+            let paths = parse_glob_paths(&opts, Some(&repo))?;
+
+            let expected: HashSet<PathBuf> = vec![
+                PathBuf::from("annotations/train/annotations.txt"),
+                PathBuf::from("annotations/train/bounding_box.csv"),
+                PathBuf::from("annotations/train/one_shot.csv"),
+                PathBuf::from("annotations/train/two_shot.csv"),
+            ]
+            .into_iter()
+            .collect();
+
+            assert_eq!(paths, expected);
+
+            // Test glob at root
+            let opts_root = GlobOpts {
+                paths: vec![PathBuf::from("*")],
+                staged_db: true,
+                merkle_tree: false,
+                working_dir: false,
+                walk_dirs: false,
+            };
+
+            let paths_root = parse_glob_paths(&opts_root, Some(&repo))?;
+
+            let expected_root: HashSet<PathBuf> = vec![
+                PathBuf::from("annotations/train/annotations.txt"),
+                PathBuf::from("annotations/train/bounding_box.csv"),
+                PathBuf::from("annotations/train/one_shot.csv"),
+                PathBuf::from("annotations/train/two_shot.csv"),
+                PathBuf::from("train/dog_1.jpg"),
+                PathBuf::from("README.md"),
+            ]
+            .into_iter()
+            .collect();
+
+            assert_eq!(paths_root, expected_root);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_glob_parse_merkle_tree() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            // Test glob in sub-directory
+            let opts = GlobOpts {
+                paths: vec![PathBuf::from("nlp/classification/annotations/*")],
+                staged_db: false,
+                merkle_tree: true,
+                working_dir: false,
+                walk_dirs: false,
+            };
+
+            let paths = parse_glob_paths(&opts, Some(&repo))?;
+
+            let expected: HashSet<PathBuf> = vec![
+                PathBuf::from("nlp/classification/annotations/test.tsv"),
+                PathBuf::from("nlp/classification/annotations/train.tsv"),
+            ]
+            .into_iter()
+            .collect();
+
+            assert_eq!(paths, expected);
+
+            // Test glob at root
+            let opts_root = GlobOpts {
+                paths: vec![PathBuf::from("*")],
+                staged_db: false,
+                merkle_tree: true,
+                working_dir: false,
+                walk_dirs: false,
+            };
+
+            let paths_root = parse_glob_paths(&opts_root, Some(&repo))?;
+
+            // Merkle tree search should return both files and directories at this level
+            let expected_root: HashSet<PathBuf> = vec![
+                PathBuf::from("README.md"),
+                PathBuf::from("LICENSE"),
+                PathBuf::from("labels.txt"),
+                PathBuf::from("prompts.jsonl"),
+                PathBuf::from("train"),
+                PathBuf::from("test"),
+                PathBuf::from("annotations"),
+                PathBuf::from("nlp"),
+                PathBuf::from("large_files"),
+            ]
+            .into_iter()
+            .collect();
+
+            assert_eq!(paths_root, expected_root);
+
+            Ok(())
+        })
+        .await
+    }
+}

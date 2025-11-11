@@ -603,7 +603,7 @@ mod tests {
             repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;
-            
+
             assert_eq!(status.staged_files.len(), 3); // 3 cats should still be staged
             assert_eq!(status.removed_files.len(), 4); // 4 dogs back in working dir
 

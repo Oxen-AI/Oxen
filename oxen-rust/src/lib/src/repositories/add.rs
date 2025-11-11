@@ -650,7 +650,7 @@ A: Oxen.ai
             let status = repositories::status(&repo)?;
 
             assert_eq!(status.staged_files.len(), 3);
-            
+
             // Add the dogs
             repositories::add(&repo, "train/dog_*.jpg").await?;
             let status = repositories::status(&repo)?;
