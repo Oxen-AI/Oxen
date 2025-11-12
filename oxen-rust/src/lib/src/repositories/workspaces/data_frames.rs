@@ -328,6 +328,15 @@ pub async fn from_directory(
         })
         .collect();
 
+
+    let is_image_column: Vec<bool> = files
+        .iter()
+        .map(|file_with_dir| {
+            let mime_type = file_with_dir.file_node.mime_type();
+            mime_type == "image/jpeg" || mime_type == "image/png"
+        })
+        .collect();
+    
     let db_path = workspace.dir().join("temp_file_listing.db");
 
     let mut df = with_df_db_manager(&db_path, |manager| {
@@ -388,6 +397,24 @@ pub async fn from_directory(
     write_df_parquet(&mut df, &output_path)?;
 
     repositories::workspaces::files::add(workspace, &output_path).await?;
+
+    if !is_image_column.is_empty() && is_image_column.iter().all(|&x| x) {
+        let render_metadata = serde_json::json!({
+            "_oxen": {
+                "render": {
+                    "func": "image"
+                }
+            }
+        });
+        
+        repositories::workspaces::data_frames::columns::add_column_metadata(
+            repo,
+            workspace,
+            output_path.clone(),
+            "file_path".to_string(),
+            &render_metadata,
+        )?;
+    }
 
     let commit =
         repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await?;
