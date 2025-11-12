@@ -14,7 +14,7 @@ use crate::core::db::data_frames::{df_db, workspace_df_db};
 use crate::core::df::sql;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{Branch, Commit, LocalRepository, NewCommitBody, Workspace};
+use crate::model::{Branch, Commit, EntryDataType, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
 
@@ -413,8 +413,8 @@ pub async fn set_image_metadata_if_applicable(
     let is_image_column: Vec<bool> = files
         .iter()
         .map(|file_with_dir| {
-            let mime_type = file_with_dir.file_node.mime_type();
-            mime_type == "image/jpeg" || mime_type == "image/png"
+            let data_type = file_with_dir.file_node.data_type();
+            *data_type == EntryDataType::Image
         })
         .collect();
 
