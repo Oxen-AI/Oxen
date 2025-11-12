@@ -1,4 +1,5 @@
 use crate::core::df::tabular::write_df_parquet;
+use crate::model::merkle_tree::node::FileNodeWithDir;
 use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
 
@@ -328,14 +329,6 @@ pub async fn from_directory(
         })
         .collect();
 
-    let is_image_column: Vec<bool> = files
-        .iter()
-        .map(|file_with_dir| {
-            let mime_type = file_with_dir.file_node.mime_type();
-            mime_type == "image/jpeg" || mime_type == "image/png"
-        })
-        .collect();
-
     let db_path = workspace.dir().join("temp_file_listing.db");
 
     let mut df = with_df_db_manager(&db_path, |manager| {
@@ -397,6 +390,35 @@ pub async fn from_directory(
 
     repositories::workspaces::files::add(workspace, &output_path).await?;
 
+    let files_vec: Vec<FileNodeWithDir> = files.iter().cloned().collect();
+    set_image_metadata_if_applicable(repo, workspace, &files_vec, &output_path).await?;
+
+    let commit =
+        repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await?;
+    println!(
+        "Created parquet file with {} file paths at: {:?}",
+        file_paths.len(),
+        output_path
+    );
+
+    Ok(commit)
+}
+
+pub async fn set_image_metadata_if_applicable(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    files: &[FileNodeWithDir],
+    output_path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let is_image_column: Vec<bool> = files
+        .iter()
+        .map(|file_with_dir| {
+            let mime_type = file_with_dir.file_node.mime_type();
+            mime_type == "image/jpeg" || mime_type == "image/png"
+        })
+        .collect();
+
+    // Only set metadata if all files are images
     if !is_image_column.is_empty() && is_image_column.iter().all(|&x| x) {
         let render_metadata = serde_json::json!({
             "_oxen": {
@@ -409,21 +431,13 @@ pub async fn from_directory(
         repositories::workspaces::data_frames::columns::add_column_metadata(
             repo,
             workspace,
-            output_path.clone(),
+            output_path.as_ref().to_path_buf(),
             "file_path".to_string(),
             &render_metadata,
         )?;
     }
 
-    let commit =
-        repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await?;
-    println!(
-        "Created parquet file with {} file paths at: {:?}",
-        file_paths.len(),
-        output_path
-    );
-
-    Ok(commit)
+    Ok(())
 }
 
 pub fn duckdb_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
