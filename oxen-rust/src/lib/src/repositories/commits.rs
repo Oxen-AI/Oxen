@@ -64,6 +64,17 @@ pub fn commit_with_user(
     }
 }
 
+/// # Commit with --allow-empty flag
+///
+/// Allows creating a commit even when there are no staged changes.
+/// This reuses the existing create_empty_commit infrastructure.
+pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::commits::commit_allow_empty(repo, message),
+    }
+}
+
 /// Iterate over all commits and get the one with the latest timestamp
 pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     match repo.min_version() {
@@ -854,6 +865,76 @@ mod tests {
             // Make sure the file is in the second commit
             let node_from_tree_2 = tree_2.get_by_path(file_path_2)?;
             assert!(node_from_tree_2.is_some());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_commit_allow_empty() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create and commit an initial file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+            let first_commit = repositories::commit(&repo, "Initial commit")?;
+
+            // Try to create an empty commit without --allow-empty (should fail)
+            let result = repositories::commit(&repo, "Empty commit");
+            assert!(result.is_err());
+
+            // Create an empty commit with --allow-empty (should succeed)
+            let empty_commit = commit_allow_empty(&repo, "Empty commit")?;
+            assert_eq!(empty_commit.message, "Empty commit");
+            assert_eq!(empty_commit.parent_ids, vec![first_commit.id.clone()]);
+
+            // Verify the tree is the same as the parent
+            let first_tree =
+                repositories::tree::get_root_with_children(&repo, &first_commit)?.unwrap();
+            let empty_tree =
+                repositories::tree::get_root_with_children(&repo, &empty_commit)?.unwrap();
+
+            // Both trees should have the same file
+            let first_file = first_tree.get_by_path(Path::new("hello.txt"))?;
+            let empty_file = empty_tree.get_by_path(Path::new("hello.txt"))?;
+            assert!(first_file.is_some());
+            assert!(empty_file.is_some());
+            assert_eq!(first_file.unwrap().hash, empty_file.unwrap().hash);
+
+            // Verify commit history
+            let history = repositories::commits::list(&repo)?;
+            assert_eq!(history.len(), 2);
+            assert_eq!(history[0].message, "Empty commit");
+            assert_eq!(history[1].message, "Initial commit");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_commit_allow_empty_with_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create and commit an initial file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Initial commit")?;
+
+            // Stage a new file
+            let goodbye_file = repo.path.join("goodbye.txt");
+            util::fs::write_to_path(&goodbye_file, "Goodbye World")?;
+            repositories::add(&repo, &goodbye_file).await?;
+
+            // commit_allow_empty should commit the staged changes normally
+            let commit = commit_allow_empty(&repo, "Add goodbye")?;
+            assert_eq!(commit.message, "Add goodbye");
+
+            // Verify both files are in the tree
+            let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
+            assert!(tree.get_by_path(Path::new("hello.txt"))?.is_some());
+            assert!(tree.get_by_path(Path::new("goodbye.txt"))?.is_some());
 
             Ok(())
         })

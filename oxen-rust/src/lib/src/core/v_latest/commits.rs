@@ -31,6 +31,58 @@ pub fn commit_with_user(
     repositories::commits::commit_writer::commit_with_user(repo, message, user)
 }
 
+pub fn commit_allow_empty(
+    repo: &LocalRepository,
+    message: impl AsRef<str>,
+) -> Result<Commit, OxenError> {
+    let message = message.as_ref();
+
+    // Check if there are staged changes
+    let status = crate::core::v_latest::status::status(repo)?;
+    let has_changes = !status.staged_files.is_empty() || !status.staged_dirs.is_empty();
+
+    if has_changes {
+        // If there are changes, commit normally
+        repositories::commits::commit_writer::commit(repo, message)
+    } else {
+        // No changes, create an empty commit
+        let cfg = crate::config::UserConfig::get()?;
+        let branch = repositories::branches::current_branch(repo)?
+            .ok_or_else(|| OxenError::basic_str("No current branch found"))?;
+
+        let head_commit = head_commit(repo)?;
+
+        // Create a new commit with the same tree as parent
+        let timestamp = OffsetDateTime::now_utc();
+        let new_commit_data = crate::model::NewCommit {
+            parent_ids: vec![head_commit.id.clone()],
+            message: message.to_string(),
+            author: cfg.name.clone(),
+            email: cfg.email.clone(),
+            timestamp,
+        };
+
+        // Compute the commit hash
+        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+        hasher.update(b"commit");
+        hasher.update(format!("{:?}", new_commit_data.parent_ids).as_bytes());
+        hasher.update(new_commit_data.message.as_bytes());
+        hasher.update(new_commit_data.author.as_bytes());
+        hasher.update(new_commit_data.email.as_bytes());
+        hasher.update(&new_commit_data.timestamp.unix_timestamp().to_le_bytes());
+        let commit_hash = MerkleHash::new(hasher.digest128());
+
+        let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
+
+        // Use the existing create_empty_commit function
+        let result = create_empty_commit(repo, &branch.name, &new_commit)?;
+
+        println!("🐂 commit {result} (empty)");
+
+        Ok(result)
+    }
+}
+
 pub fn get_commit_or_head<S: AsRef<str> + Clone>(
     repo: &LocalRepository,
     commit_id_or_branch_name: Option<S>,
