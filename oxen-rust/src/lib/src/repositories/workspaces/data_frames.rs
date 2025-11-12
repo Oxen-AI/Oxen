@@ -328,7 +328,6 @@ pub async fn from_directory(
         })
         .collect();
 
-
     let is_image_column: Vec<bool> = files
         .iter()
         .map(|file_with_dir| {
@@ -336,7 +335,7 @@ pub async fn from_directory(
             mime_type == "image/jpeg" || mime_type == "image/png"
         })
         .collect();
-    
+
     let db_path = workspace.dir().join("temp_file_listing.db");
 
     let mut df = with_df_db_manager(&db_path, |manager| {
@@ -406,7 +405,7 @@ pub async fn from_directory(
                 }
             }
         });
-        
+
         repositories::workspaces::data_frames::columns::add_column_metadata(
             repo,
             workspace,
