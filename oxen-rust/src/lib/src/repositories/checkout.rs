@@ -26,7 +26,7 @@ pub async fn checkout(
             return repositories::branches::get_by_name(repo, value);
         }
 
-        println!("Checkout branch: {value}");
+        log::debug!("Checkout branch: {value}");
         let commit = repositories::revisions::get(repo, value)?
             .ok_or(OxenError::revision_not_found(value.into()))?;
         let subtree_paths = match repo.subtree_paths() {
@@ -54,6 +54,71 @@ pub async fn checkout(
         let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
         repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit)
             .await?;
+        repositories::branches::update(repo, value, &commit.id)?;
+        repositories::branches::set_head(repo, value)?;
+
+        if repo.is_remote_mode() {
+            // Set workspace_name to new branch name
+            let mut mut_repo = repo.clone();
+            mut_repo.set_workspace(value)?;
+            mut_repo.save()?;
+        }
+
+        Ok(None)
+    }
+}
+
+/// # Checkout a branch or commit id
+/// This overwrites local file changes in the working directory
+pub async fn force_checkout(
+    repo: &LocalRepository,
+    value: impl AsRef<str>,
+) -> Result<Option<Branch>, OxenError> {
+    let value = value.as_ref();
+    log::debug!("--- CHECKOUT START {value} ----");
+    if repositories::branches::exists(repo, value)? {
+        if repositories::branches::is_checked_out(repo, value) {
+            println!("Already on branch {value}");
+            return repositories::branches::get_by_name(repo, value);
+        }
+
+        log::debug!("Checkout branch: {value}");
+        let commit = repositories::revisions::get(repo, value)?
+            .ok_or(OxenError::revision_not_found(value.into()))?;
+        let subtree_paths = match repo.subtree_paths() {
+            Some(paths_vec) => paths_vec, // If Some(vec), take the inner vector
+            None => vec![Path::new("").to_path_buf()],
+        };
+        let depth = match repo.depth() {
+            Some(d) => d,
+            None => i32::MAX,
+        }; //TODO: make repo depth not an option so that we use depth from the repo consistently.
+        repositories::branches::force_checkout_subtrees_to_commit(
+            repo,
+            &commit,
+            &subtree_paths,
+            depth,
+        )
+        .await?;
+        repositories::branches::set_head(repo, value)?;
+        repositories::branches::get_by_name(repo, value)
+    } else {
+        // If we are already on the commit, do nothing
+        if repositories::branches::is_checked_out(repo, value) {
+            eprintln!("Commit already checked out {value}");
+            return Ok(None);
+        }
+
+        let commit = repositories::revisions::get(repo, value)?
+            .ok_or(OxenError::revision_not_found(value.into()))?;
+
+        let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
+        repositories::branches::force_checkout_commit_from_commit(
+            repo,
+            &commit,
+            &previous_head_commit,
+        )
+        .await?;
         repositories::branches::update(repo, value, &commit.id)?;
         repositories::branches::set_head(repo, value)?;
 
@@ -319,7 +384,7 @@ mod tests {
             // // Merge to main again
             // let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             // // Checkout the branch
-            // repositories::checkout(&repo, second_commit.id).await?;
+            // repositories::checkout(&repo, second_commit.id, false).await?;
 
             let has_merges = repositories::merge::merge(&repo, DEFAULT_BRANCH_NAME)
                 .await
@@ -425,6 +490,102 @@ mod tests {
             repositories::checkout(&repo, branch_name).await?;
             assert!(hello_file.exists());
             assert!(world_file.exists());
+
+            Ok(())
+        })
+        .await
+    }
+
+    /*
+     * Modify the file on a branch
+     * Commit file on branch
+     * Modify the file again
+     * Try to checkout main
+     * Assert that neither the file nor the branch are overwritten
+     */
+    #[tokio::test]
+    async fn test_command_checkout_does_not_overwrite_local_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write a file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            // Track & commit the file
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Added hello.txt")?;
+
+            // Get the original branch name
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create and checkout branch
+            let branch_name = "feature/world-explorer";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Modify and commit the file on the branch
+            let hello_file = test::modify_txt_file(hello_file, "Hello from branch")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Changed hello.txt on branch")?;
+
+            // Modify the file again
+            let hello_file = test::modify_txt_file(hello_file, "This will cause an error!")?;
+
+            // Try to checkout the main branch
+            let result = repositories::checkout(&repo, orig_branch.name).await;
+            assert!(result.is_err());
+
+            // Ensure the branch and file haven't changed
+            let current_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            assert_eq!(current_branch.name, "feature/world-explorer");
+            assert_eq!(
+                util::fs::read_from_path(&hello_file)?,
+                "This will cause an error!"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /*
+     * Modify the file on a branch
+     * Commit file on branch
+     * Modify the file again
+     * Force checkout main
+     * Assert that the file and branch have updated
+     */
+    #[tokio::test]
+    async fn test_command_force_checkout_overwrites_local_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write a file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            // Track & commit the file
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Added hello.txt")?;
+
+            // Get the original branch name
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create and checkout branch
+            let branch_name = "feature/world-explorer";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
+            // Modify and commit the file on the branch
+            let hello_file = test::modify_txt_file(hello_file, "Hello from branch")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Changed hello.txt on branch")?;
+
+            // Modify the file again
+            let hello_file = test::modify_txt_file(hello_file, "This will cause an error!")?;
+
+            // Force checkout the main branch
+            repositories::checkout::force_checkout(&repo, orig_branch.name).await?;
+
+            // Ensure the branch and file haven't changed
+            let current_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            assert_eq!(current_branch.name, "main");
+            assert_eq!(util::fs::read_from_path(&hello_file)?, "Hello");
 
             Ok(())
         })
