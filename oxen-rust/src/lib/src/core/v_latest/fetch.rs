@@ -1,12 +1,11 @@
 use futures::future;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::constants::{AVG_CHUNK_SIZE, OXEN_HIDDEN_DIR};
 use crate::core;
 use crate::core::refs::with_ref_manager;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNodeWithDir, MerkleTreeNode};
@@ -242,7 +241,7 @@ fn collect_missing_entries(
 
     let mut shared_hashes =
         if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
-            let mut starting_node_hashes = HashMap::new();
+            let mut starting_node_hashes = HashSet::new();
             repositories::tree::populate_starting_hashes(
                 repo,
                 &head_commit,
@@ -252,7 +251,7 @@ fn collect_missing_entries(
             )?;
             starting_node_hashes
         } else {
-            HashMap::new()
+            HashSet::new()
         };
 
     for commit in commits {
@@ -261,15 +260,15 @@ fn collect_missing_entries(
                 "collect_missing_entries for {subtree_paths:?} subtree paths and depth {depth:?}"
             );
             for subtree_path in subtree_paths {
-                let mut unique_hashes = HashMap::new();
-                // TARGET 3: HUGE
-                let Some(tree) = CommitMerkleTree::from_path_depth_unique_children(
+                let mut unique_hashes = HashSet::new();
+                let Some(tree) = repositories::tree::get_subtree_by_depth_with_unique_children(
                     repo,
                     commit,
                     subtree_path,
+                    Some(&shared_hashes),
+                    Some(&mut unique_hashes),
+                    None,
                     depth.unwrap_or(-1),
-                    &mut shared_hashes,
-                    &mut unique_hashes,
                 )?
                 else {
                     log::warn!("get_subtree_by_depth returned None for path: {subtree_path:?}");
@@ -286,14 +285,15 @@ fn collect_missing_entries(
                 )?;
             }
         } else {
-            let mut unique_hashes = HashMap::new();
-            let Some(tree) = CommitMerkleTree::from_path_depth_unique_children(
+            let mut unique_hashes = HashSet::new();
+            let Some(tree) = repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 commit,
                 PathBuf::from("."),
+                Some(&shared_hashes),
+                Some(&mut unique_hashes),
+                None,
                 depth.unwrap_or(-1),
-                &mut shared_hashes,
-                &mut unique_hashes,
             )?
             else {
                 log::warn!("get_subtree_by_depth returned None for commit: {commit:?}");

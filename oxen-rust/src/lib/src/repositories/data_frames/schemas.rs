@@ -569,6 +569,7 @@ mod tests {
                 "root": "images"
             });
 
+            println!("Here");
             repositories::add(&repo, &bbox_path).await?;
             repositories::data_frames::schemas::add_column_metadata(
                 &repo, &bbox_file, "file", &metadata,

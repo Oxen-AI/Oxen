@@ -597,7 +597,7 @@ pub fn parse_glob_path(
 
             // Otherwise, traverse the tree for files to restore
             if let Some(dir_node) =
-                repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
+                repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?
             {
                 let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
                 for child in dir_children {

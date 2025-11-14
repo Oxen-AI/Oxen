@@ -5,7 +5,6 @@ use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 use crate::core::merge::{db_path, node_merge_conflict_writer};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::{add, rm};
 use crate::error::OxenError;
 use crate::model::merge_conflict::NodeMergeConflict;
@@ -399,8 +398,13 @@ async fn fast_forward_merge(
     // Collect all dir and vnode hashes while loading the merge tree
     // This is done to identify shared dirs/vnodes between the merge and base trees while loading the base tree
     let mut merge_hashes = HashSet::new();
-    let Some(merge_tree) =
-        CommitMerkleTree::root_with_children_and_hashes(repo, merge_commit, &mut merge_hashes)?
+    let Some(merge_tree) = repositories::tree::get_root_with_children_and_node_hashes(
+        repo,
+        merge_commit,
+        None,
+        Some(&mut merge_hashes),
+        None,
+    )?
     else {
         return Err(OxenError::basic_str("Cannot get root node for base commit"));
     };
@@ -409,11 +413,12 @@ async fn fast_forward_merge(
     // These are done to skip checks for shared dirs/vnodes and avoid slow tree traversals when comparing files in the recursvie functions respectively
     let mut shared_hashes = HashSet::new();
     let mut partial_nodes = HashMap::new();
-    let Some(base_tree) = CommitMerkleTree::root_with_unique_children(
+    let Some(base_tree) = repositories::tree::get_root_with_children_and_partial_nodes(
         repo,
         base_commit,
-        &mut merge_hashes,
-        &mut shared_hashes,
+        Some(&merge_hashes),
+        None,
+        Some(&mut shared_hashes),
         &mut partial_nodes,
     )?
     else {
@@ -506,7 +511,7 @@ fn r_ff_merge_commit(
                 let base_file_node = &base_files[&file_path];
 
                 // determine if file should be restored from its hash and last modified time
-                let should_restore = restore::should_restore_partial(
+                let should_restore = restore::should_restore_partial_node(
                     repo,
                     Some(base_file_node.clone()),
                     merge_file_node,
@@ -874,23 +879,23 @@ pub async fn find_merge_conflicts(
     let mut lca_hashes = HashSet::new();
     let mut base_hashes = HashSet::new();
 
-    // TODO: Could the partial nodes be used to replace 'unique_dir_entries' below?
-    let mut _partial_nodes = HashMap::new();
+    // First, load in every node from the LCA tree
+    let lca_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
+        repo,
+        &merge_commits.lca,
+        None,
+        Some(&mut lca_hashes),
+        None,
+    )?
+    .unwrap();
 
-    // Use the same functions from the fast forward merge to load in only the entries found to be unique to each tree
-    // First, we load in every node from the LCA tree
-    let lca_commit_tree =
-        CommitMerkleTree::root_with_children_and_hashes(repo, &merge_commits.lca, &mut lca_hashes)?
-            .unwrap();
-
-    // Then, we load in only the nodes of the base commit tree that weren't in the LCA tree
-    // We also track the shared hashes between them
-    let base_commit_tree = CommitMerkleTree::root_with_unique_children(
+    // Then, load in only the nodes of the base commit tree that weren't in the LCA tree
+    let base_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
         repo,
         &merge_commits.base,
-        &mut lca_hashes,
-        &mut base_hashes,
-        &mut _partial_nodes,
+        Some(&lca_hashes),
+        Some(&mut base_hashes),
+        Some(shared_hashes),
     )?
     .unwrap();
 
@@ -898,15 +903,16 @@ pub async fn find_merge_conflicts(
     // After this, 'shared hashes' will have all the dir/vnode hashes shared between all 3 trees
     // This lets us skip checking these nodes, and also lets us skip adding them when creating the merge commit later
 
-    let merge_commit_tree = CommitMerkleTree::root_with_unique_children(
+    let merge_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
         repo,
         &merge_commits.merge,
-        &mut base_hashes,
-        shared_hashes,
-        &mut _partial_nodes,
+        Some(&base_hashes),
+        None,
+        Some(shared_hashes),
     )?
     .unwrap();
-    // TODO: Remove this unless debugging
+
+    // Note: Remove this unless debugging
     // log::debug!("lca_hashes: {lca_hashes:?}");
     //lca_commit_tree.print();
     // log::debug!("base_hashes: {base_hashes:?}");

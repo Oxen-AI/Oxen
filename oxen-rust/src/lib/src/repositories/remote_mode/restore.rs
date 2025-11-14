@@ -36,7 +36,7 @@ pub async fn restore(
 
             // If dir not found in tree, skip glob path
             let Some(dir_node) =
-                repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
+                repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?
             else {
                 continue;
             };

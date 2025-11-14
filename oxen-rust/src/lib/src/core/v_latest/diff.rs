@@ -29,8 +29,8 @@ pub async fn list_diff_entries(
         "list_diff_entries base_dir: '{base_path:?}', head_dir: '{head_path:?}' base_commit: '{base_commit}', head_commit: '{head_commit}'"
     );
 
-    let base_tree = CommitMerkleTree::node_from_path_maybe(repo, base_commit, &base_path, true)?;
-    let head_tree = CommitMerkleTree::node_from_path_maybe(repo, head_commit, &head_path, true)?;
+    let base_tree = CommitMerkleTree::read_from_path_maybe(repo, base_commit, &base_path, true)?;
+    let head_tree = CommitMerkleTree::read_from_path_maybe(repo, head_commit, &head_path, true)?;
 
     let mut base_files: HashSet<FileNodeWithDir> = HashSet::new();
     let mut head_files: HashSet<FileNodeWithDir> = HashSet::new();

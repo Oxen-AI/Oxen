@@ -8,7 +8,6 @@ use serde_json::Value;
 
 use crate::constants::DIFF_STATUS_COL;
 use crate::core::db;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::opts::DFOpts;
 
@@ -258,23 +257,27 @@ pub async fn prepare_modified_or_removed_row(
         .ok_or_else(|| OxenError::basic_str("Row index not found"))?;
     let row_idx_og = (row_idx - 1) as i64;
 
-    let commit_merkle_tree = CommitMerkleTree::from_path(repo, commit, &path, true)?;
-    let file_node = match commit_merkle_tree.root.node {
+    let Some(commit_merkle_tree) =
+        repositories::tree::get_node_by_path_with_children(repo, commit, &path)?
+    else {
+        return Err(OxenError::basic_str(format!(
+            "Merkle tree for commit {commit:?} not found"
+        )));
+    };
+
+    let file_node = match commit_merkle_tree.node {
         EMerkleTreeNode::File(file_node) => file_node,
         _ => return Err(OxenError::basic_str("File node not found")),
     };
 
     log::debug!(
         "prepare_modified_or_removed_row() commit_merkle_tree: {:?}",
-        &commit_merkle_tree.root.hash.to_string()
+        &commit_merkle_tree.hash.to_string()
     );
 
     // let scan_rows = 10000 as usize;
-    let committed_df_path = util::fs::version_path_from_node(
-        repo,
-        commit_merkle_tree.root.hash.to_string(),
-        path.as_ref(),
-    );
+    let committed_df_path =
+        util::fs::version_path_from_node(repo, commit_merkle_tree.hash.to_string(), path.as_ref());
 
     log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 

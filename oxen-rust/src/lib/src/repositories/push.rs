@@ -1291,6 +1291,7 @@ A: Checkout Oxen.ai
                     Some(vec![PathBuf::from("nlp").join("classification")]);
                 clone_opts.fetch_opts.depth = Some(2);
                 let user_a_repo = repositories::clone(&clone_opts).await?;
+                println!("user_a_repo: {user_a_repo:?}");
 
                 // User adds a file and pushes
                 let new_file = PathBuf::from("nlp")
@@ -1319,6 +1320,7 @@ A: Checkout Oxen.ai
                     .any(|entry| entry.filename() == "new_data.tsv"));
 
                 // Make sure the root directory is in tact
+                // TODO: HERE'S THE ISSUE! And I think it has to do with push? I wasn't wholly sure what the point of the ancestor bs was before, but this is the best bet
                 let root_dir_entries =
                     api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                         .await?;

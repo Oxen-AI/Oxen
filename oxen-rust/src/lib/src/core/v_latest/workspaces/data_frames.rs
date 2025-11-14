@@ -4,7 +4,6 @@ use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::staged::with_staged_db_manager;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use parking_lot::Mutex;
 use sql_query_builder::Delete;
@@ -117,8 +116,15 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
 
     log::debug!("core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}");
 
-    let commit_merkle_tree = CommitMerkleTree::from_path(repo, commit, path, true)?;
-    let file_hash = commit_merkle_tree.root.hash;
+    let Ok(Some(commit_merkle_tree)) =
+        repositories::tree::get_node_by_path_with_children(repo, commit, path)
+    else {
+        return Err(OxenError::basic_str(format!(
+            "Merkle tree for commit {commit} not found"
+        )));
+    };
+
+    let file_hash = commit_merkle_tree.hash;
 
     log::debug!(
         "core::v_latest::workspaces::data_frames::index({path:?}) got file hash {file_hash:?}"
@@ -139,7 +145,7 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
     );
 
-    let extension = match &commit_merkle_tree.root.node {
+    let extension = match &commit_merkle_tree.node {
         EMerkleTreeNode::File(file_node) => file_node.extension(),
         _ => {
             return Err(OxenError::basic_str("File node is not a file node"));

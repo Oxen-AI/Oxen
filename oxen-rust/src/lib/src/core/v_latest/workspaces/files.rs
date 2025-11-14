@@ -18,7 +18,6 @@ use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
     process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::{self, db};
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
@@ -624,7 +623,8 @@ async fn p_add_file(
     if let Some(head_commit) = maybe_head_commit {
         let path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
         let parent_path = path.parent().unwrap_or(Path::new(""));
-        maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, head_commit, parent_path)?;
+        maybe_dir_node =
+            repositories::tree::get_dir_with_children(base_repo, head_commit, parent_path, None)?;
     }
 
     // Skip if it's not a file
@@ -671,7 +671,8 @@ async fn p_rm(
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
 
     let parent_path = path.parent().unwrap_or(Path::new(""));
-    let maybe_dir_node = CommitMerkleTree::dir_with_children(base_repo, &head_commit, parent_path)?;
+    let maybe_dir_node =
+        repositories::tree::get_dir_with_children(base_repo, &head_commit, parent_path, None)?;
 
     let file_name = util::fs::path_relative_to_dir(path, parent_path)?;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
@@ -685,9 +686,12 @@ async fn p_rm(
             &seen_dirs,
         )?);
     } else if has_dir_node(&maybe_dir_node, file_name)? {
-        if let Some(dir_node) =
-            CommitMerkleTree::dir_with_children_recursive(base_repo, &head_commit, &relative_path)?
-        {
+        if let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(
+            base_repo,
+            &head_commit,
+            &relative_path,
+            None,
+        )? {
             core::v_latest::rm::remove_dir_with_db_manager(
                 workspace_repo,
                 &dir_node,

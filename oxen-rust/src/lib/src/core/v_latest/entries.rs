@@ -64,7 +64,7 @@ pub fn list_directory(
 
     log::debug!("list_directory commit {commit}");
 
-    let dir = repositories::tree::get_dir_with_children(repo, &commit, directory)?
+    let dir = repositories::tree::get_dir_with_children(repo, &commit, directory, None)?
         .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
 
     log::debug!("list_directory dir {dir}");
@@ -131,7 +131,7 @@ pub fn get_meta_entry(
             parsed_resource.clone(),
         ))?;
     log::debug!("get_meta_entry path: {path:?} commit: {commit}");
-    let node = repositories::tree::get_dir_without_children(repo, &commit, path)?;
+    let node = repositories::tree::get_dir_without_children(repo, &commit, path, None)?;
     log::debug!("get_meta_entry node: {node:?}");
 
     if let Some(node) = node {
