@@ -63,15 +63,16 @@ impl LocalRepository {
         };
 
         // Initialize the version store based on config
+        println!("storage config is {:#?}", config.storage);
         let storage_opts = if let Some(storage_config) = config.storage {
             StorageOpts::from_repo_config(&repo, &storage_config)?
         } else {
             StorageOpts::from_path(&repo.path, true)
         };
-
+        println!("Creating version store");
         let store = create_version_store(&storage_opts)?;
         repo.version_store = Some(store);
-
+        println!("Version store created");
         Ok(repo)
     }
 
@@ -114,9 +115,19 @@ impl LocalRepository {
         Ok(())
     }
 
+    pub fn init_default_version_store_s3(&mut self) -> Result<(), OxenError> {
+        let storage_opts = StorageOpts::from_path_s3(&self.path, true);
+
+        // Create and initialize the store
+        let store = create_version_store(&storage_opts)?;
+        self.version_store = Some(store);
+        Ok(())
+    }
+
     /// Initialize local version store at a new location
-    pub fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+    pub async fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
         let version_store = create_version_store(storage_opts)?;
+        version_store.init().await?;
         self.version_store = Some(version_store);
 
         Ok(())
@@ -154,6 +165,28 @@ impl LocalRepository {
         repo.init_default_version_store()?;
         Ok(repo)
     }
+
+    pub fn new_s3(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
+        let mut repo = LocalRepository {
+            path: path.as_ref().to_path_buf(),
+            // No remotes are set yet
+            remotes: vec![],
+            remote_name: None,
+            // New with a path should default to our current MIN_OXEN_VERSION
+            min_version: Some(MIN_OXEN_VERSION.to_string()),
+            vnode_size: None,
+            subtree_paths: None,
+            depth: None,
+            version_store: None,
+            remote_mode: None,
+            workspace_name: None,
+            workspaces: None,
+        };
+
+        repo.init_default_version_store_s3()?;
+        Ok(repo)
+    }
+
 
     /// Load an older version of a repository with older oxen core logic
     pub fn new_from_version(

@@ -213,32 +213,41 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
 /// Factory method to create the appropriate async version store (sync wrapper)
 /// TODO: Review this function when implementing S3 version store
-pub fn create_version_store(
-    storage_opts: &StorageOpts,
-) -> Result<Arc<dyn VersionStore>, OxenError> {
-    // Handle async initialization in sync context
-    let storage_opts_clone = storage_opts.clone();
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // Use thread spawn - works in both single and multi-threaded runtimes
-        std::thread::spawn(move || handle.block_on(create_version_store_async(&storage_opts_clone)))
-            .join()
-            .map_err(|_| OxenError::basic_str("Failed to join thread"))?
-    } else {
-        // If not in tokio runtime, use futures' block_on
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(create_version_store_async(storage_opts))
-    }
-}
+// pub fn create_version_store(
+//     storage_opts: &StorageOpts,
+// ) -> Result<Arc<dyn VersionStore>, OxenError> {
+//     // Handle async initialization in sync context
+//     let storage_opts_clone = storage_opts.clone();
+//     if let Ok(handle) = tokio::runtime::Handle::try_current() {
+//         // Use thread spawn - works in both single and multi-threaded runtimes
+//         handle.block_on(async{
+//             create_version_store_async(&storage_opts_clone).await
+//         }).map_err(|_| OxenError::basic_str("Failed to join thread"))?
+//     } else {
+//         // If not in tokio runtime, use futures' block_on
+//         tokio::runtime::Builder::new_current_thread()
+//             .enable_all()
+//             .build()
+//             .unwrap()
+//             .block_on(create_version_store_async(storage_opts))
+//     }
+
+
+//     // let store = tokio::task::block_in_place(|| {
+//     //     let handle = tokio::runtime::Handle::current();
+//     //     handle.block_on(create_version_store_async(&storage_opts_clone))
+//     // })?;
+
+//     // Ok(store)
+// }
 
 /// Async implementation of create_version_store
-pub async fn create_version_store_async(
+pub fn create_version_store(
     storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     match storage_opts.type_.as_str() {
         "local" => {
+            println!("Create version store locally");
             let Some(ref local_storage_opts) = storage_opts.local_storage_opts else {
                 return Err(OxenError::basic_str("local storage opts not found"));
             };
@@ -257,19 +266,20 @@ pub async fn create_version_store_async(
             };
 
             let store = LocalVersionStore::new(path);
-            store.init().await?;
+
             Ok(Arc::new(store))
         }
         "s3" => {
+            println!("Create version store in s3");
             let Some(ref s3_opts) = storage_opts.s3_opts else {
                 return Err(OxenError::basic_str("s3 storage opts not found"));
             };
 
             let bucket = s3_opts.bucket.clone();
             let prefix = s3_opts.prefix.clone().unwrap_or("versions".to_string());
-
+            eprintln!("s3 version store new");
             let store = S3VersionStore::new(bucket, prefix);
-            store.init().await?;
+
             Ok(Arc::new(store))
         }
         _ => Err(OxenError::basic_str(format!(

@@ -51,13 +51,13 @@ pub async fn push_remote_branch(
     let remote = repo
         .get_remote(&opts.remote)
         .ok_or_else(|| OxenError::remote_not_set(&opts.remote))?;
-
+    eprintln!("Getting remote repo {remote:?}");
     let remote_repo = match api::client::repositories::get_by_remote(&remote).await {
         Ok(Some(repo)) => repo,
         Ok(None) => return Err(OxenError::remote_repo_not_found(&remote.url)),
         Err(err) => return Err(err),
     };
-
+    eprintln!("Pushing local branch to remote repo {remote_repo:?}");
     push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts).await?;
     let duration = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);
     println!(
@@ -82,7 +82,7 @@ async fn push_local_branch_to_remote_repo(
 
     // Notify the server that we are starting a push
     api::client::repositories::pre_push(remote_repo, local_branch, &commit.id).await?;
-
+    eprintln!("before push to branch");
     // Check if the remote branch exists, and either push to it or create a new one
     match api::client::branches::get_by_name(remote_repo, &local_branch.name).await? {
         Some(remote_branch) => {
@@ -126,6 +126,7 @@ async fn push_to_existing_branch(
     remote_branch: &Branch,
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
+    eprintln!("pushing to existing branch");
     // Check if the latest commit on the remote is the same as the local branch
     if remote_branch.commit_id == commit.id && !opts.missing_files {
         println!("Everything is up to date");
@@ -145,7 +146,7 @@ async fn push_to_existing_branch(
                 let mut commits =
                     repositories::commits::list_between(repo, &latest_remote_commit, commit)?;
                 commits.reverse();
-
+                eprintln!("Pushing commits");
                 push_commits(repo, remote_repo, Some(latest_remote_commit), commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
@@ -319,6 +320,7 @@ async fn push_commits(
     if opts.missing_files {
         return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
     }
+    eprintln!("pushing commits");
 
     // We need to find all the commits that need to be pushed
 

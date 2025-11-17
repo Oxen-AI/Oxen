@@ -48,7 +48,8 @@ const SUPPORT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
-#[actix_web::main]
+// #[actix_web::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 

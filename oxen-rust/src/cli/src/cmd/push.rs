@@ -67,8 +67,11 @@ impl RunCmd for PushCmd {
                 (false, None)
             };
 
+        eprintln!("Initializing local repository");
         let repo = LocalRepository::from_current_dir()?;
+        eprintln!("Local repo initialized");
         let current_branch = repositories::branches::current_branch(&repo)?;
+        // println!("Current branch: {}", current_branch.name);
 
         // Default to CURRENT branch
         let branch_name = if let Some(branch) = args.get_one::<String>("BRANCH") {
@@ -107,7 +110,7 @@ impl RunCmd for PushCmd {
             check_repo_migration_needed(&repo)?;
             check_remote_version_blocking(scheme.clone(), host.clone()).await?;
             check_remote_version(scheme, host).await?;
-
+            eprintln!("Before entering push_remote_branch");
             match repositories::push::push_remote_branch(&repo, &opts).await {
                 Ok(_) => Ok(()),
                 Err(OxenError::BranchNotFound(branch)) => {

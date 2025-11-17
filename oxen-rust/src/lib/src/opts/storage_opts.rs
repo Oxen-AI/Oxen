@@ -42,15 +42,18 @@ impl StorageOpts {
                 })
             }
             "s3" => {
+                println!("Storage backend is S3");
                 let bucket = config
                     .settings
                     .get("bucket")
                     .ok_or_else(|| OxenError::basic_str("S3 bucket not specified"))?;
+                println!("Bucket: {}", bucket);
                 let prefix = config
                     .settings
                     .get("prefix")
                     .cloned()
                     .unwrap_or_else(|| String::from("versions"));
+                println!("Prefix: {}", prefix);
 
                 let s3_opts = S3Opts {
                     bucket: bucket.to_string(),
@@ -89,6 +92,29 @@ impl StorageOpts {
             type_: "local".to_string(),
             local_storage_opts: Some(local_storage_opts),
             s3_opts: None,
+        }
+    }
+
+    pub fn from_path_s3(path: &Path, is_repo_dir: bool) -> StorageOpts {
+        let version_path = if is_repo_dir {
+            let repo_path = util::fs::oxen_hidden_dir(path);
+
+            repo_path
+                .join(constants::VERSIONS_DIR)
+                .join(constants::FILES_DIR)
+        } else {
+            path.to_path_buf()
+        };
+
+        let s3_opts = S3Opts {
+            bucket: "test-s3-integ".to_string(),
+            prefix: Some("ox/S3".to_string()),
+        };
+
+        StorageOpts {
+            type_: "s3".to_string(),
+            local_storage_opts: None,
+            s3_opts: Some(s3_opts),
         }
     }
 }

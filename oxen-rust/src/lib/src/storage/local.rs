@@ -393,7 +393,7 @@ mod tests {
 
     async fn setup() -> (TempDir, LocalVersionStore) {
         let temp_dir = TempDir::new().unwrap();
-        let store = LocalVersionStore::new(temp_dir.path());
+        let mut store = LocalVersionStore::new(temp_dir.path());
         store.init().await.unwrap();
         (temp_dir, store)
     }

@@ -81,7 +81,7 @@ pub fn get_by_namespace_and_name(
         log::debug!("Repo does not exist: {repo_dir:?}");
         return Ok(None);
     }
-
+    eprintln!("repo_dir is {repo_dir:?}");
     let repo = LocalRepository::from_dir(&repo_dir);
     match repo {
         Ok(repo) => Ok(Some(repo)),
@@ -224,9 +224,9 @@ pub async fn create(
     util::fs::create_dir_all(&hidden_dir)?;
 
     // Create config file
-    let local_repo = LocalRepository::new(&repo_dir)?;
+    let local_repo = LocalRepository::new_s3(&repo_dir)?;
     local_repo.save()?;
-
+    
     // Create history dir
     let history_dir = util::fs::oxen_hidden_dir(&repo_dir).join(constants::HISTORY_DIR);
     util::fs::create_dir_all(history_dir)?;

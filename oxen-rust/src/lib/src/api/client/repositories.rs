@@ -113,10 +113,12 @@ pub async fn get_by_url(url: &str) -> Result<Option<RemoteRepository>, OxenError
 pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, OxenError> {
     let url = api::endpoint::url_from_remote(remote, "")?;
     log::debug!("get_by_remote url: {url}");
+    eprintln!("get_by_remote url: {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     log::debug!("get_by_remote status: {}", res.status());
+    eprintln!("get_by_remote status:{}", res.status());
     if 404 == res.status() {
         return Ok(None);
     }

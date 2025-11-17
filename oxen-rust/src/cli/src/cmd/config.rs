@@ -168,7 +168,7 @@ impl RunCmd for ConfigCmd {
                 s3_opts,
             };
 
-            match self.set_version_store(&mut repo, &storage_opts) {
+            match self.set_version_store(&mut repo, &storage_opts).await {
                 Ok(_) => {}
                 Err(err) => {
                     eprintln!("{err}")
@@ -209,12 +209,12 @@ impl ConfigCmd {
         Ok(())
     }
 
-    pub fn set_version_store(
+    pub async fn set_version_store(
         &self,
         repo: &mut LocalRepository,
         storage_opts: &StorageOpts,
     ) -> Result<(), OxenError> {
-        command::config::set_version_store(repo, storage_opts)?;
+        command::config::set_version_store(repo, storage_opts).await?;
 
         Ok(())
     }

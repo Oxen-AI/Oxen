@@ -174,7 +174,7 @@ pub async fn add_files(
             },
         };
         log::debug!("corrected path is {corrected_path:?}");
-
+        println!("Adding {corrected_path:?}");
         if corrected_path.is_dir() {
             total += add_dir_inner(
                 repo,

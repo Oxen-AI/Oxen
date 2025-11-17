@@ -48,17 +48,20 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    eprintln!("Inside show");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-
+    eprintln!("Getting repo");
     // Get the repository or return error
     let repository = get_repo(&app_data.path, &namespace, &name)?;
+    eprintln!("Got repo");
     let mut size: u64 = 0;
     let mut data_types: Vec<DataTypeCount> = vec![];
-
+    eprintln!("Getting commit");
     // If we have a commit on the main branch, we can get the size and data types from the commit
     if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME) {
+        eprintln!("Got commit");
         if let Some(dir_node) =
             repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
         {
@@ -73,7 +76,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 .collect();
         }
     }
-
+    eprintln!("Got dir node");
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {
         status: STATUS_SUCCESS.to_string(),
