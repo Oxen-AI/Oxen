@@ -2,7 +2,9 @@ use crate::constants::OXEN_VERSION;
 use crate::view;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+use utoipa::ToSchema;
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct StatusMessage {
     pub status: String,
     pub status_message: String,

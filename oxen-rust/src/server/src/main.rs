@@ -3,6 +3,7 @@ use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::model::merkle_tree::merkle_tree_node_cache;
+use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::User;
 use liboxen::util;
 
@@ -23,6 +24,9 @@ extern crate lru;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
+
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use clap::{Arg, Command};
 
@@ -47,6 +51,28 @@ const SUPPORT: &str = "
     💬 For more support, or to chat with the Oxen team, join our Discord:
             https://discord.gg/s3tBEn7Ptg
 ";
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        crate::controllers::workspaces::files::get,
+        crate::controllers::workspaces::files::add,
+        crate::controllers::workspaces::files::add_version_files,
+        crate::controllers::workspaces::files::delete,
+        crate::controllers::workspaces::files::rm_files,
+        crate::controllers::workspaces::files::rm_files_from_staged,
+    ),
+    components(
+        schemas(
+            ImgResize,
+        )
+    ),
+    tags(
+        (name = "Oxen", description = "Oxen Data Management API")
+    )
+)]
+struct ApiDoc;
+
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -159,6 +185,8 @@ async fn main() -> std::io::Result<()> {
                     let enable_auth = sub_matches.get_flag("auth");
                     let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
 
+                    let openapi = ApiDoc::openapi();
+
                     HttpServer::new(move || {
                         App::new()
                             .app_data(data.clone())
@@ -188,6 +216,10 @@ async fn main() -> std::io::Result<()> {
                                 HttpAuthentication::bearer(auth::validator::validate),
                             ))
                             .service(web::scope("/api/repos").configure(routes::config))
+                            .service(
+                                SwaggerUi::new("/swagger-ui/{_:.*}")
+                                    .url("/api-docs/openapi.json", openapi.clone()),
+                            )
                             .default_service(web::route().to(controllers::not_found::index))
                             .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
                             .wrap(Logger::default())

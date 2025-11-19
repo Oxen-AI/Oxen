@@ -7,6 +7,7 @@ use crate::model::{
     Branch, Commit, CommitEntry, EntryDataType, MerkleHash, ParsedResource, RemoteEntry,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{Pagination, StatusMessage};
 
@@ -29,14 +30,14 @@ pub struct EntryResponse {
     pub entry: CommitEntry,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct RemoteEntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub entry: RemoteEntry,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct ResourceVersion {
     pub path: String,
     pub version: String,

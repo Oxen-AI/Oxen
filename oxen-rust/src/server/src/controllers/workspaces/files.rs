@@ -29,7 +29,37 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
+use utoipa;
 
+#[derive(utoipa::ToSchema)]
+pub struct FileUpload {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspaces",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository"),
+        ("repo_name" = String, Path, description = "The name of the repository"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace"),
+        ("path" = String, Path, description = "The path to the file in the workspace"),
+        ImgResize
+    ),
+    responses(
+        (status = 200, description = "File content returned as a stream", 
+            content_type = "application/octet-stream", 
+            body = Vec<u8>,
+            headers(
+                ("oxen-revision-id" = String, description = "The commit ID of the file version")
+            )
+        ),
+        (status = 404, description = "Workspace or File not found"),
+        (status = 400, description = "Invalid parameters")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
@@ -124,6 +154,27 @@ pub async fn get(
         .streaming(stream))
 }
 
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspaces",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository"),
+        ("repo_name" = String, Path, description = "The name of the repository"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace"),
+        ("path" = String, Path, description = "The directory to upload the file to")
+    ),
+    request_body(
+        content_type = "multipart/form-data", 
+        description = "Multipart upload of file. Form field 'file' should be the file content.",
+        content = FileUpload,
+    ),
+    responses(
+        (status = 200, description = "File successfully uploaded to workspace", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found"),
+        (status = 400, description = "Invalid upload request")
+    )
+)]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -175,6 +226,22 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
+    tag = "Workspaces",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository"),
+        ("repo_name" = String, Path, description = "The name of the repository"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace"),
+        ("directory" = String, Path, description = "The directory to stage the files into")
+    ),
+    request_body = Vec<FileWithHash>,
+    responses(
+        (status = 200, description = "Files staged successfully", body = ErrorFilesResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn add_version_files(
     req: HttpRequest,
     payload: web::Json<Vec<FileWithHash>>,
@@ -212,6 +279,21 @@ pub async fn add_version_files(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspaces",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository"),
+        ("repo_name" = String, Path, description = "The name of the repository"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace"),
+        ("path" = String, Path, description = "The path to the file to delete")
+    ),
+    responses(
+        (status = 200, description = "File marked for deletion", body = StatusMessage),
+        (status = 404, description = "Workspace or File not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -228,7 +310,23 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     remove_file_from_workspace(&repo, &workspace, &path)
 }
 
-// Stage files as removed
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/delete",
+    tag = "Workspaces",
+    summary = "Batch delete files (Stage removal)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository"),
+        ("repo_name" = String, Path, description = "The name of the repository"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace")
+    ),
+    request_body(content = Vec<String>, description = "List of paths to remove"),
+    responses(
+        (status = 200, description = "Files successfully removed", body = FilePathsResponse),
+        (status = 206, description = "Some files could not be found/removed", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn rm_files(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,
@@ -276,6 +374,23 @@ pub async fn rm_files(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/restore",
+    tag = "Workspaces",
+    summary = "Unstage files (restore from staging)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository"),
+        ("repo_name" = String, Path, description = "The name of the repository"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace")
+    ),
+    request_body(content = Vec<String>, description = "List of paths to restore/unstage"),
+    responses(
+        (status = 200, description = "Files restored from staging", body = StatusMessage),
+        (status = 206, description = "Some files could not be restored", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 // Remove files from staging
 pub async fn rm_files_from_staged(
     req: HttpRequest,

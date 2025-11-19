@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum ImgColorSpace {
@@ -33,7 +34,7 @@ pub struct MetadataImageImpl {
     pub color_space: Option<ImgColorSpace>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, IntoParams, ToSchema)]
 pub struct ImgResize {
     pub width: Option<u32>,
     pub height: Option<u32>,
