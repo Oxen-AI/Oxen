@@ -13,6 +13,8 @@ pub struct CloneOpts {
     pub fetch_opts: FetchOpts,
     // StorageOpts
     pub storage_opts: StorageOpts,
+    // Flag for cloning on VFS
+    pub is_vfs: bool,
     // Flag for remote mode
     pub is_remote: bool,
 }
@@ -25,6 +27,7 @@ impl CloneOpts {
             dst: dst.as_ref().to_path_buf(),
             fetch_opts: FetchOpts::new(),
             storage_opts: StorageOpts::from_path(dst.as_ref(), true),
+            is_vfs: false,
             is_remote: false,
         }
     }
@@ -37,6 +40,7 @@ impl CloneOpts {
         CloneOpts {
             fetch_opts: FetchOpts::from_branch(branch.as_ref()),
             storage_opts: StorageOpts::from_path(dst.as_ref(), true),
+            is_vfs: false,
             is_remote: false,
             ..CloneOpts::new(url, dst)
         }
