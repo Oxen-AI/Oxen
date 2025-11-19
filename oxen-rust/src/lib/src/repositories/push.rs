@@ -1291,6 +1291,7 @@ A: Checkout Oxen.ai
                     Some(vec![PathBuf::from("nlp").join("classification")]);
                 clone_opts.fetch_opts.depth = Some(2);
                 let user_a_repo = repositories::clone(&clone_opts).await?;
+                println!("user_a_repo: {user_a_repo:?}");
 
                 // User adds a file and pushes
                 let new_file = PathBuf::from("nlp")

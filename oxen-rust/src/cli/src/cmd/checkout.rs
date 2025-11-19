@@ -39,6 +39,14 @@ impl RunCmd for CheckoutCmd {
                     .help("Checkout the content of the merge branch and take it as the working directories version. Will overwrite your working file.")
                     .action(clap::ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .short('f')
+                    .help("Allow checkout to overwrite changes in working directory")
+                    .action(clap::ArgAction::SetTrue),
+
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -65,7 +73,12 @@ impl RunCmd for CheckoutCmd {
 
             self.checkout_theirs(&repo, name).await?
         } else if let Some(name) = args.get_one::<String>("name") {
-            self.checkout(&repo, name).await?;
+            let force = args.get_flag("force");
+            if force {
+                self.force_checkout(&repo, name).await?;
+            } else {
+                self.checkout(&repo, name).await?;
+            }
         }
         Ok(())
     }
@@ -75,10 +88,10 @@ impl CheckoutCmd {
     pub async fn checkout(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
         match repositories::checkout(repo, name).await {
             Ok(Some(branch)) => {
-                println!("Checked out branch: {}", branch.name);
+                log::debug!("Checked out branch: {}", branch.name);
             }
             Ok(None) => {
-                println!("Checked out commit: {name}");
+                log::debug!("Checked out commit: {name}");
             }
             Err(OxenError::RevisionNotFound(name)) => {
                 println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
@@ -89,6 +102,29 @@ impl CheckoutCmd {
         }
         Ok(())
     }
+
+    pub async fn force_checkout(
+        &self,
+        repo: &LocalRepository,
+        name: &str,
+    ) -> Result<(), OxenError> {
+        match repositories::checkout::force_checkout(repo, name).await {
+            Ok(Some(branch)) => {
+                log::debug!("Checked out branch: {}", branch.name);
+            }
+            Ok(None) => {
+                log::debug!("Checked out commit: {name}");
+            }
+            Err(OxenError::RevisionNotFound(name)) => {
+                log::debug!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     pub async fn checkout_theirs(
         &self,
         repo: &LocalRepository,

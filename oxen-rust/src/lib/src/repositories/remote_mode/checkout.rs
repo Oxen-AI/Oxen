@@ -21,7 +21,30 @@ pub async fn checkout(repo: &mut LocalRepository, name: &str) -> Result<(), Oxen
             //println!("Checked out commit: {}", name);
         }
         Err(OxenError::RevisionNotFound(name)) => {
-            println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
+            println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
+            return Err(OxenError::RevisionNotFound(name));
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn force_checkout(repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
+    match repositories::checkout::force_checkout(repo, name).await {
+        Ok(Some(branch)) => {
+            // Change current workspace name
+            repo.set_workspace(branch.name.clone())?;
+            repo.save()?;
+        }
+        // TODO: This should create a workspace on this commit
+        Ok(None) => {
+            //println!("Checked out commit: {}", name);
+        }
+        Err(OxenError::RevisionNotFound(name)) => {
+            println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
             return Err(OxenError::RevisionNotFound(name));
         }
         Err(e) => {

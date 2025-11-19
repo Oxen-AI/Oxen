@@ -226,7 +226,7 @@ mod tests {
         // have a common ancestor
         // Ex) We want to merge E into D to create F
         // A - C - D - F
-        //    \      /
+        //    \       /
         //     B - E
 
         let a_branch = repositories::branches::current_branch(repo)?.unwrap();
@@ -491,7 +491,7 @@ mod tests {
 
             // Ex) We want to merge E into D to create F
             // A - C - D - F
-            //    \      /
+            //    \       /
             //     B - E
 
             let a_branch = repositories::branches::current_branch(&repo)?.unwrap();
