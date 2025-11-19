@@ -485,7 +485,7 @@ mod tests {
                 // Create a new branch and checkout
                 let branch_name = "feature";
                 repositories::remote_mode::create_checkout(&mut cloned_repo, branch_name).await?;
-                println!("2");
+
                 // Modify the file content on the new branch and commit
                 let modified_content = "World";
                 test::modify_txt_file(&hello_file, modified_content)?;

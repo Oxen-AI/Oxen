@@ -115,7 +115,7 @@ impl RunCmd for PushCmd {
                     Err(OxenError::basic_str(msg))
                 }
                 Err(e) => {
-                    eprintln!("Error pushing: {e}");
+                    println!("Error pushing: {e}");
                     Err(e)
                 }
             }

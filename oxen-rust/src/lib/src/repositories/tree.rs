@@ -210,7 +210,6 @@ pub fn get_node_by_path(
     let load_recursive = false;
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
-            println!("FUCK");
             match CommitMerkleTreeV0_19_0::from_path(repo, commit, path, load_recursive) {
                 Ok(tree) => Ok(Some(tree.root)),
                 Err(e) => {
@@ -222,7 +221,7 @@ pub fn get_node_by_path(
         _ => match CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive) {
             Ok(node) => Ok(node),
             Err(e) => {
-                eprintln!("Error getting node by path: {e:?}");
+                log::warn!("Error getting node by path: {e:?}");
                 Ok(None)
             }
         },
@@ -1360,7 +1359,6 @@ pub fn get_ancestor_nodes(
     unique_hashes: &mut HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
     for subtree_path in subtree_paths {
-        println!("Subtree path: {subtree_path:?}");
         let parent = subtree_path.parent();
         match parent {
             Some(parent) => {
@@ -1373,14 +1371,17 @@ pub fn get_ancestor_nodes(
                         repositories::tree::get_node_by_path_with_children(repo, commit, ancestor)?
                     else {
                         return Err(OxenError::basic_str(format!(
-                            "Ancestor {:?} for subtree path {:?} not found in merkle tree",
-                            ancestor, subtree_path
+                            "Ancestor {ancestor:?} for subtree path {subtree_path:?} not found in merkle tree"
                         )));
                     };
 
-                    println!("ancestor node: {node:?}");
                     // Extend unique_hashes with the dir node and its vnode hashes
                     let ancestor_node_hashes = node.list_dir_and_vnode_hashes()?;
+                    log::debug!(
+                        "get_ancestor_nodes found {} hashes for subtree path {:?}",
+                        ancestor_node_hashes.len(),
+                        subtree_path
+                    );
                     unique_hashes.extend(ancestor_node_hashes);
                 }
             }
@@ -1410,6 +1411,7 @@ pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &Merkl
         .join(DIR_HASHES_DIR)
 }
 
+// TODO: Deduplicate these
 pub fn print_tree(repo: &LocalRepository, commit: &Commit) -> Result<(), OxenError> {
     let tree = get_root_with_children(repo, commit)?.unwrap();
     match repo.min_version() {

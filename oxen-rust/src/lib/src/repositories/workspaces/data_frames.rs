@@ -231,13 +231,9 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DataFrame, 
 
 pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult, OxenError> {
     let repo = &workspace.base_repo;
-    let commit = &workspace.commit;
     let path = path.as_ref();
     // Get commit for the branch head
     log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
-
-    let load_recursive = true;
-    repositories::CommitMerkleTree::read_from_path(repo, commit, path, load_recursive)?;
 
     if !is_indexed(workspace, path)? {
         return Err(OxenError::basic_str("Dataset is not indexed"));

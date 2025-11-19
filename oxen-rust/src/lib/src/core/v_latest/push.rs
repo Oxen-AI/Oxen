@@ -259,7 +259,7 @@ async fn get_commit_missing_hashes(
         let mut dir_nodes: HashSet<MerkleHash> = HashSet::new();
 
         for path in paths {
-            log::debug!("push_commits adding candidate nodes for commit: {}", commit);
+            log::debug!("push_commits adding candidate nodes for commit: {commit}");
             let Some(root) = repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 commit,
@@ -293,7 +293,7 @@ async fn get_commit_missing_hashes(
 
         dir_nodes.insert(commit.hash()?);
 
-        log::debug!("push_commits dir nodes: {:?}", dir_nodes);
+        log::debug!("push_commits dir nodes: {dir_nodes:?}");
         let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
 
         let push_commit_info = PushCommitInfo {
