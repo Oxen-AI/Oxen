@@ -47,13 +47,14 @@ jobs:
 
       - name: Start EC2 runner
         id: start-ec2-runner
-        uses: crunchy234/ec2-github-runner@windows-support-18
+        uses: Oxen-AI/ec2-github-runner-windows@v1
         with:
           mode: start
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           ec2-image-id: ${{ env.EC2_IMAGE_ID }}
           ec2-instance-type: ${{ env.EC2_INSTANCE_TYPE }}
           ec2-os: windows
+          startup-timeout-minutes: 10
           subnet-id: subnet-0e28805edbdad482f
           security-group-id: sg-09c8aa5830122d671
           aws-resource-tags: >
