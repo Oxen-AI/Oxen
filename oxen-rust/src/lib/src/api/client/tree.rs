@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time;
+use tempfile::TempDir;
 
 use crate::api::client;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
@@ -365,18 +366,26 @@ async fn node_download_request(
         .bytes_stream()
         .map_err(futures::io::Error::other)
         .into_async_read();
+
     let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
     let archive = Archive::new(decoder);
+
+    let temp_dir = TempDir::new()?;
+    let temp_path = temp_dir.path();
+
+    // Unpack the tar in a temp dir
+    log::debug!("node_download_request unpacking to {temp_path:?}");
+    archive.unpack(&temp_path).await?;
 
     // The remote tar packs it in TREE_DIR/NODES_DIR
     // So this will unpack it in OXEN_HIDDEN_DIR/TREE_DIR/NODES_DIR
     let full_unpacked_path = local_repo.path.join(OXEN_HIDDEN_DIR);
-    log::debug!("node_download_request unpacking to {full_unpacked_path:?}");
-
+    log::debug!("Succesfully unpack to temp dir");
     // create the temp path if it doesn't exist
     util::fs::create_dir_all(&full_unpacked_path)?;
 
-    archive.unpack(&full_unpacked_path).await?;
+    // copy the temp dir to the repo
+    util::fs::copy_dir_all(&temp_dir, &full_unpacked_path)?;
 
     Ok(())
 }
