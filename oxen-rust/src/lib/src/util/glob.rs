@@ -45,17 +45,10 @@ pub fn parse_glob_paths(
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths {
-        // Correction for '.'
-        // Paths ending in '.' are expanded to the current dir at the cmd level
         log::debug!("path: {path:?}");
-        let path = if *path == repo_path {
-            path.join("*")
-        } else {
-            path.to_path_buf()
-        };
 
         // Normalize canonicalization before checking if it's a glob path
-        let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
         let glob_path = {
             let cwd = std::env::current_dir()?;
             if util::fs::is_relative_to_dir(&cwd, &repo_path) {
@@ -75,7 +68,7 @@ pub fn parse_glob_paths(
             if *staged_db {
                 // If staged flag set, only match against the staged db
                 let staged_paths = search_staged_db(
-                    &path,
+                    path,
                     repo.expect("Cannot parse staged_db for paths without a repo"),
                 )?;
 
@@ -159,18 +152,19 @@ fn search_merkle_tree(
 ) -> Result<(), OxenError> {
     if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
         let glob_path_components: Vec<Component> = glob_path.components().collect();
-
         let mut search_index = 0;
         let mut search_path = PathBuf::from("");
 
-        r_search_merkle_tree(
-            repo,
-            &head_commit,
-            &glob_path_components,
-            paths,
-            &mut search_path,
-            &mut search_index,
-        )?;
+        if !glob_path_components.is_empty() {
+            r_search_merkle_tree(
+                repo,
+                &head_commit,
+                &glob_path_components,
+                paths,
+                &mut search_path,
+                &mut search_index,
+            )?;
+        }
     }
 
     Ok(())
@@ -381,6 +375,31 @@ fn walk_working_dir(
     }
 
     Ok(())
+}
+
+// Collects the removed paths in a directory
+pub fn collect_removed_paths(
+    repo: &LocalRepository,
+    dir_path: &PathBuf,
+) -> Result<HashSet<PathBuf>, OxenError> {
+    let mut removed_paths = HashSet::new();
+    let repo_path = repo.path.clone();
+    if dir_path.is_dir() {
+        let glob_path = util::fs::path_relative_to_dir(dir_path, &repo_path)?.join("*");
+
+        // Search the merkle tree for all paths in the directory
+        search_merkle_tree(&mut removed_paths, repo, &glob_path)?;
+
+        // Filter out existant paths
+        removed_paths.retain(|path| !repo_path.join(path).exists());
+    }
+
+    log::debug!(
+        "collect_removed_paths found {:?} removed paths in dir {:?}",
+        removed_paths.len(),
+        dir_path
+    );
+    Ok(removed_paths)
 }
 
 #[cfg(test)]

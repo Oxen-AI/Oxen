@@ -181,6 +181,12 @@ pub async fn add_files(
                 &gitignore,
             )
             .await?;
+
+            // Collect removed paths in the dir
+            // Correction for `oxen add .`
+            let removed_paths = util::glob::collect_removed_paths(repo, &corrected_path)?;
+
+            paths_to_remove.extend(removed_paths);
         } else if corrected_path.is_file() {
             if oxenignore::is_ignored(&corrected_path, &gitignore, corrected_path.is_dir()) {
                 continue;
