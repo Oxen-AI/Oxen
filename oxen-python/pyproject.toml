@@ -1,5 +1,5 @@
 [project]
-version = "0.40.1"
+version = "0.40.2"
 name = "oxenai"
 description = "Data version control for machine learning"
 readme = "README.md"
