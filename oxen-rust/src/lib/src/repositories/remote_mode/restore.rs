@@ -1,11 +1,9 @@
-use crate::{api, repositories, util};
+use crate::{api, util};
 
-use crate::repositories::merkle_tree::node::EMerkleTreeNode;
+use crate::opts::GlobOpts;
 use crate::repositories::LocalRepository;
 use crate::repositories::OxenError;
 use std::path::PathBuf;
-
-use glob_match::glob_match;
 
 pub async fn restore(
     repo: &LocalRepository,
@@ -14,62 +12,23 @@ pub async fn restore(
 ) -> Result<(), OxenError> {
     let mut paths_to_download: Vec<(PathBuf, PathBuf)> = vec![];
     let remote_repo = api::client::repositories::get_default_remote(repo).await?;
-    let head_commit = repositories::commits::head_commit_maybe(repo)?;
-    let root_path = PathBuf::from("");
     let repo_path = repo.path.clone();
 
-    for path in paths.iter() {
-        let relative_path = util::fs::path_relative_to_dir(path, &repo_path)?;
+    let glob_opts = GlobOpts {
+        paths: paths.to_vec(),
+        staged_db: false,
+        merkle_tree: true,
+        working_dir: false,
+        walk_dirs: false,
+    };
+
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+
+    for entry_path in expanded_paths.iter().collect::<Vec<&PathBuf>>() {
+        let relative_path = util::fs::path_relative_to_dir(entry_path, &repo_path)?;
         let full_path = repo_path.join(&relative_path);
 
-        // If glob path, check for paths against the tree
-        if util::fs::is_glob_path(&relative_path) {
-            let Some(ref head_commit) = head_commit else {
-                // TODO: Better error message?
-                return Err(OxenError::basic_str(
-                    "Error: Cannot restore with glob paths in remote-mode repo without HEAD commit",
-                ));
-            };
-
-            let glob_pattern = full_path.file_name().unwrap().to_string_lossy().to_string();
-            let parent_path = relative_path.parent().unwrap_or(&root_path);
-
-            // If dir not found in tree, skip glob path
-            let Some(dir_node) =
-                repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?
-            else {
-                continue;
-            };
-
-            let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
-            for child in dir_children {
-                if let EMerkleTreeNode::File(file_node) = &child.node {
-                    let child_str = file_node.name();
-                    let child_path = parent_path.join(child_str);
-                    if glob_match(&glob_pattern, child_str) {
-                        // Skip files that aren't modified
-                        if child_path.exists()
-                            && !util::fs::is_modified_from_node(&child_path, file_node)?
-                        {
-                            continue;
-                        }
-
-                        let full_dir_path = repo_path.join(&child_path);
-                        paths_to_download.push((full_dir_path, child_path));
-                    }
-                } else if let EMerkleTreeNode::Directory(dir_node) = &child.node {
-                    let child_str = dir_node.name();
-                    let child_path = parent_path.join(child_str);
-                    if glob_match(&glob_pattern, child_str) {
-                        // TODO: Method to detect if dirs are modified from the tree
-                        let full_dir_path = repo_path.join(&child_path);
-                        paths_to_download.push((full_dir_path, child_path));
-                    }
-                }
-            }
-        } else {
-            paths_to_download.push((full_path, relative_path));
-        }
+        paths_to_download.push((full_path, relative_path));
     }
 
     api::client::entries::download_entries_to_repo(

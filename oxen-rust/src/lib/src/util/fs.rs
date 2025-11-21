@@ -27,19 +27,16 @@ use crate::constants::TREE_DIR;
 use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
+use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
-use crate::{constants, repositories, util};
+use crate::{constants, util};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
-
-use glob::Pattern;
-use glob_match::glob_match;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -566,66 +563,6 @@ pub fn rlist_dirs_in_repo(repo: &LocalRepository) -> Vec<PathBuf> {
     dirs
 }
 
-pub fn parse_glob_path(
-    path: &Path,
-    repo: &LocalRepository,
-    is_staged: &bool,
-) -> Result<HashSet<PathBuf>, OxenError> {
-    let mut paths: HashSet<PathBuf> = HashSet::new();
-
-    let root_path = PathBuf::from("");
-    let repo_path = &repo.path;
-    let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
-    let full_path = repo_path.join(&relative_path);
-
-    if util::fs::is_glob_path(&relative_path) {
-        let path_str = relative_path.to_str().unwrap();
-
-        // If --staged, only operate on staged files
-        if *is_staged {
-            let pattern = Pattern::new(path_str)?;
-            let staged_data = repositories::status::status(repo)?;
-            for entry in staged_data.staged_files {
-                let entry_path_str = entry.0.to_str().unwrap();
-                if pattern.matches(entry_path_str) {
-                    paths.insert(entry.0.to_owned());
-                }
-            }
-        } else if let Some(ref head_commit) = repositories::commits::head_commit_maybe(repo)? {
-            let glob_pattern = full_path.file_name().unwrap().to_string_lossy().to_string();
-            let parent_path = relative_path.parent().unwrap_or(&root_path);
-
-            // Otherwise, traverse the tree for files to restore
-            if let Some(dir_node) =
-                repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?
-            {
-                let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
-                for child in dir_children {
-                    if let EMerkleTreeNode::File(file_node) = &child.node {
-                        let child_str = file_node.name();
-                        let child_path = parent_path.join(child_str);
-                        if glob_match(&glob_pattern, child_str) {
-                            paths.insert(child_path);
-                        }
-                    } else if let EMerkleTreeNode::Directory(dir_node) = &child.node {
-                        let child_str = dir_node.name();
-                        let child_path = parent_path.join(child_str);
-                        if glob_match(&glob_pattern, child_str) {
-                            // TODO: Method to detect if dirs are modified from the tree
-                            paths.insert(child_path);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        paths.insert(relative_path);
-    }
-
-    log::debug!("parse_glob_paths found paths: {paths:?}");
-    Ok(paths)
-}
-
 /// Recursively tries to traverse up for an .oxen directory, returns None if not found
 pub fn get_repo_root(path: &Path) -> Option<PathBuf> {
     if path.join(OXEN_HIDDEN_DIR).exists() {
@@ -841,7 +778,7 @@ pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenEr
     }
 }
 
-/// Wrapper around the util::fs::remove_file command to tell us which file it failed on
+/// Wrapper around the std::fs::remove_file command to tell us which file it failed on
 pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
     let src = src.as_ref();
     log::debug!("Removing file: {}", src.display());
@@ -1549,6 +1486,68 @@ pub fn path_relative_to_dir(
         result.push::<&Path>(component.as_ref());
     }
     Ok(result)
+}
+
+// Check whether a path can be found relative to a dir
+pub fn is_relative_to_dir(path: impl AsRef<Path>, dir: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    let dir = dir.as_ref();
+
+    let path_components: Vec<Component> = path.components().collect();
+    let dir_components: Vec<Component> = dir.components().collect();
+
+    if path_components.is_empty() || dir == path {
+        return true;
+    }
+
+    if dir_components.is_empty() || dir_components.len() > path_components.len() {
+        return false;
+    }
+
+    // Get iterators for the component vectors
+    let mut path_iter = path_components.iter();
+    let mut dir_iter = dir_components.iter();
+    let starting_dir_iter = dir_iter.clone();
+
+    let mut dir_component = dir_iter.next().unwrap();
+    let mut matches = 0;
+
+    for _ in 0..(path_components.len()) {
+        let path_component = path_iter.next().expect("Path bounds violated");
+        let path_str = path_component.as_os_str();
+        let dir_str = dir_component.as_os_str();
+
+        if path_str == dir_str {
+            matches += 1;
+            if matches == dir_components.len() {
+                return true;
+            }
+            dir_component = dir_iter.next().expect("Dir bounds violated");
+            continue;
+        }
+
+        if path_str.len() == dir_str.len() {
+            let path_lower = path_str.to_string_lossy().to_lowercase();
+            let dir_lower = dir_str.to_string_lossy().to_lowercase();
+
+            if path_lower == dir_lower {
+                matches += 1;
+                if matches == dir_components.len() {
+                    return true;
+                }
+                dir_component = dir_iter.next().expect("Dir bounds violated");
+                continue;
+            }
+        }
+
+        // If the components don't match, reset dir_iter and dir_component
+        dir_iter = starting_dir_iter.clone();
+        dir_component = dir_iter.next().unwrap();
+        matches = 0;
+    }
+
+    // If the loop finishes, the path cannot be found relative to the dir
+    false
 }
 
 pub fn linux_path_str(string: &str) -> String {

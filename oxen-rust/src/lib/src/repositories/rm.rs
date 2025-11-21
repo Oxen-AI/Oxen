@@ -8,18 +8,27 @@ use std::collections::HashSet;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::RmOpts;
+use crate::opts::{GlobOpts, RmOpts};
 use crate::{core, util};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Removes the path from the index
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
 
-    let path: &Path = opts.path.as_ref();
-    let paths = util::fs::parse_glob_path(path, repo, &opts.staged)?;
+    let path = &opts.path;
 
-    p_rm(&paths, repo, opts)?;
+    let glob_opts = GlobOpts {
+        paths: vec![path.to_path_buf()],
+        staged_db: opts.staged,
+        merkle_tree: !opts.staged,
+        working_dir: false,
+        walk_dirs: false,
+    };
+
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+
+    p_rm(&expanded_paths, repo, opts)?;
 
     Ok(())
 }
@@ -668,7 +677,7 @@ mod tests {
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 1);
             assert!(status.staged_files.contains_key(path));
-
+            log::debug!("here");
             let opts = RmOpts::from_staged_path(path);
             repositories::rm(&repo, &opts)?;
 
@@ -1063,6 +1072,35 @@ mod tests {
             assert!(
                 oxen_dir.exists(),
                 "OXEN_HIDDEN_DIR should not be removed by direct 'oxen rm .oxen'"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_rm_wildcard_multi_level() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            // Data from populate_annotations_dir:
+            // annotations/train/annotations.txt
+            // annotations/train/bounding_box.csv
+            // annotations/test/annotations.csv
+
+            // Remove only the files in annotations/test/
+            let rm_opts = RmOpts {
+                path: PathBuf::from("annotations/test/*"),
+                recursive: false,
+                staged: false,
+            };
+            repositories::rm(&repo, &rm_opts)?;
+
+            let status = repositories::status(&repo)?;
+
+            assert_eq!(status.staged_files.len(), 1);
+            assert_eq!(
+                status.staged_files.keys().next().unwrap(),
+                &PathBuf::from("annotations/test/annotations.csv")
             );
 
             Ok(())
