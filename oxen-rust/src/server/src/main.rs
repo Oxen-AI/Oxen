@@ -21,48 +21,34 @@ pub mod test;
 extern crate log;
 extern crate lru;
 
- use liboxen::view::StatusMessage;
- use liboxen::view::BranchResponse;
- use liboxen::view::ListBranchesResponse;
-  use liboxen::view::BranchNewFromBranchName;
-use liboxen::view::BranchUpdate;
-   use liboxen::view::BranchNewFromCommitId;
-   use liboxen::view::BranchRemoteMerge;
-   use liboxen::view::CommitResponse;
-   use liboxen::view::BranchLockResponse;
-   use liboxen::model::metadata::{MetadataAudio, MetadataDir, MetadataImage, MetadataTabular, MetadataText, MetadataVideo};
-    use liboxen::model::metadata::generic_metadata::GenericMetadata;
-    use liboxen::view::PaginatedEntryVersionsResponse;
-    use liboxen::view::CommitEntryVersion;
-     use liboxen::view::entries::ResourceVersion;
-     use liboxen::view::{FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash, ListCommitResponse, PaginatedCommits,
-    RootCommitResponse, MerkleHashesResponse, ListNamespacesResponse, NamespaceResponse, NamespaceView, ListRepositoryResponse, RepositoryResponse, RepositoryView, 
-};
-use liboxen::view::repository::{RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView, DataTypeView};
-    use liboxen::view::tree::merkle_hashes::MerkleHashes;
-     use liboxen::view::entry_metadata::EMetadataEntryResponseView;
-       use liboxen::view::entries::ListCommitEntryResponse;
-
-      use liboxen::model::Commit;
-    use liboxen::view::PaginatedEntryVersions;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
-use liboxen::view::DataTypeCount;
-use utoipa::OpenApi;
+use liboxen::model::metadata::{
+    generic_metadata::GenericMetadata, MetadataAudio, MetadataDir, MetadataImage,
+    MetadataTabular, MetadataText, MetadataVideo,
+};
+use liboxen::model::{Commit, RepoNew};
+use liboxen::view::data_frames::FromDirectoryRequest;
+use liboxen::view::entries::{ListCommitEntryResponse, ResourceVersion};
+use liboxen::view::entry_metadata::EMetadataEntryResponseView;
+use liboxen::view::merge::MergeableResponse;
+use liboxen::view::repository::{
+    DataTypeView, RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
+    RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView,
+};
+use liboxen::view::tree::merkle_hashes::MerkleHashes;
+use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
+use liboxen::view::{
+    CommitEntryVersion, CommitResponse, DataTypeCount, ErrorFileInfo, ErrorFilesResponse,
+    FilePathsResponse, FileWithHash, ListCommitResponse, ListNamespacesResponse,
+    ListRepositoryResponse, MerkleHashesResponse, NamespaceResponse, NamespaceView,
+    PaginatedCommits, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
+    ParseResourceResponse, RepositoryResponse, RepositoryView, RootCommitResponse, StatusMessage,
+};
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
- use utoipa::Modify;
- use utoipa::openapi::security::SecurityScheme;
- use utoipa::openapi::security::HttpBuilder;
-  use utoipa::openapi::security::HttpAuthScheme;
- use liboxen::model::RepoNew;
- use liboxen::view::ParseResourceResponse;
- use liboxen::view::workspaces::ListWorkspaceResponseView;
- use liboxen::view::workspaces::WorkspaceResponse;
-  use liboxen::view::merge::MergeableResponse;
-  use liboxen::view::data_frames::FromDirectoryRequest;
-use liboxen::view::workspaces::NewWorkspace;
-    
 
 use clap::{Arg, Command};
 
@@ -88,6 +74,8 @@ const SUPPORT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
+// Exports for the utoipa docs
+// To add new endpoints to the docs, register their respective controller modules and schemas below 
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -162,19 +150,22 @@ const SUPPORT: &str = "
         crate::controllers::file::upload_zip,
         crate::controllers::file::import,
 
-        // --- Directories/DataFrames ---
-        crate::controllers::dir::get,
+        // --- DataFrames ---
         crate::controllers::data_frames::get,
         crate::controllers::data_frames::index,
         crate::controllers::data_frames::from_directory,
+
+        // --- Directories --- 
+        crate::controllers::dir::get,
         
         // --- Metadata --- 
         crate::controllers::metadata::file,
         crate::controllers::metadata::update_metadata,
     ),
     components(
+        // TODO: I'm not sure if these are all necessary to include
         schemas(
-            // --- General/Base ---
+            // --- Misc ---
             StatusMessage,
             ParseResourceResponse,
             ImgResize,
@@ -209,7 +200,7 @@ const SUPPORT: &str = "
             crate::controllers::file::ImportFileBody,
             FromDirectoryRequest, 
 
-            // --- Metadata Schemas (Includes Untagged Enums) ---
+            // --- Metadata Schemas ---
             EMetadataEntryResponseView,
             GenericMetadata, MetadataDir, MetadataText, MetadataImage, 
             MetadataVideo, MetadataAudio, MetadataTabular,
@@ -225,18 +216,6 @@ const SUPPORT: &str = "
     security(
         ("api_key" = [])
     ),
-    tags(
-        (name = "Actions", description = "Long running task status"),
-        (name = "Namespaces", description = "Namespace management"),
-        (name = "Repositories", description = "Repository management"),
-        (name = "Branches", description = "Branch management"),
-        (name = "Commits", description = "Commit history and database management"),
-        (name = "Entries", description = "File metadata and retrieval"),
-        (name = "Files", description = "Repository file operations (Upload/Download)"),
-        (name = "Workspaces", description = "Workspace/Draft management"),
-        (name = "DataFrames", description = "Tabular data query and indexing"),
-        (name = "Oxen", description = "Oxen Data Management API"),
-    )
 )]
 struct ApiDoc;
 
@@ -398,11 +377,11 @@ async fn main() -> std::io::Result<()> {
                                 enable_auth,
                                 HttpAuthentication::bearer(auth::validator::validate),
                             ))
-                            .service(web::scope("/api/repos").configure(routes::config))
                             .service(
                                 SwaggerUi::new("/swagger-ui/{_:.*}")
                                     .url("/api-docs/openapi.json", openapi.clone()),
                             )
+                            .service(web::scope("/api/repos").configure(routes::config))
                             .default_service(web::route().to(controllers::not_found::index))
                             .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
                             .wrap(Logger::default())
