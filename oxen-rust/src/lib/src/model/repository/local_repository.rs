@@ -26,6 +26,7 @@ pub struct LocalRepository {
     vnode_size: Option<u64>,     // Size of the vnodes
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     pub depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
+    pub vfs: Option<bool>,  // Flag for repositories stored on virtual file systems
     pub remote_mode: Option<bool>, // Flag for remote repositories
     pub workspace_name: Option<String>, // ID of the associated workspace for remote mode
     workspaces: Option<Vec<String>>, // List of workspaces for remote mode
@@ -57,6 +58,7 @@ impl LocalRepository {
             subtree_paths: config.subtree_paths.clone(),
             depth: config.depth,
             version_store: None,
+            vfs: config.vfs,
             remote_mode: config.remote_mode,
             workspace_name: config.workspace_name,
             workspaces: config.workspaces,
@@ -146,6 +148,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
@@ -169,6 +172,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
@@ -188,6 +192,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
@@ -207,6 +212,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
@@ -284,6 +290,14 @@ impl LocalRepository {
         self.remote_mode.unwrap_or(false)
     }
 
+    pub fn is_vfs(&self) -> bool {
+        self.vfs.unwrap_or(false)
+    }
+
+    pub fn set_vfs(&mut self, is_vfs: Option<bool>) {
+        self.vfs = is_vfs;
+    }
+
     /// Save the repository configuration to disk
     pub fn save(&self) -> Result<(), OxenError> {
         let config_path = util::fs::config_filepath(&self.path);
@@ -302,6 +316,7 @@ impl LocalRepository {
             min_version: self.min_version.clone(),
             vnode_size: self.vnode_size,
             storage,
+            vfs: self.vfs,
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),

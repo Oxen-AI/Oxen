@@ -37,6 +37,12 @@ pub async fn clone_repo(
     local_repo.set_depth(opts.fetch_opts.depth);
     local_repo.set_version_store(&opts.storage_opts)?;
 
+    if opts.is_vfs {
+        local_repo.set_vfs(Some(true));
+    } else {
+        local_repo.set_vfs(None);
+    }
+
     local_repo.save()?;
 
     if remote_repo.is_empty {
@@ -90,6 +96,12 @@ pub async fn clone_repo_remote_mode(
     local_repo.set_min_version(remote_repo.min_version());
     local_repo.set_remote_mode(Some(true));
     local_repo.set_version_store(&opts.storage_opts)?;
+
+    if opts.is_vfs {
+        local_repo.set_vfs(Some(true));
+    } else {
+        local_repo.set_vfs(None);
+    }
 
     let workspace = api::client::workspaces::create_with_new_branch(
         &remote_repo,

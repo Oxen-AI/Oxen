@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time;
+use tempfile::TempDir;
 
 use crate::api::client;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
@@ -363,22 +364,37 @@ async fn node_download_request(
     let res = client.get(url).send().await?;
     let res = client::handle_non_json_response(url, res).await?;
 
+    // The remote tar packs it in TREE_DIR/NODES_DIR
+    // So this will unpack it in OXEN_HIDDEN_DIR/TREE_DIR/NODES_DIR
+    let full_unpacked_path = local_repo.path.join(OXEN_HIDDEN_DIR);
+
+    // Create the temp path if it doesn't exist
+    util::fs::create_dir_all(&full_unpacked_path)?;
+
     let reader = res
         .bytes_stream()
         .map_err(futures::io::Error::other)
         .into_async_read();
+
     let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
     let archive = Archive::new(decoder);
 
-    // The remote tar packs it in TREE_DIR/NODES_DIR
-    // So this will unpack it in OXEN_HIDDEN_DIR/TREE_DIR/NODES_DIR
-    let full_unpacked_path = local_repo.path.join(OXEN_HIDDEN_DIR);
-    log::debug!("node_download_request unpacking to {full_unpacked_path:?}");
+    // If the repo is stored on a virtual file system, re-route the nodes through a temp dir
+    if local_repo.is_vfs() {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path();
 
-    // create the temp path if it doesn't exist
-    util::fs::create_dir_all(&full_unpacked_path)?;
+        // Unpack the tar in a temp dir
+        log::debug!("node_download_request unpacking to {temp_path:?}");
+        archive.unpack(&temp_path).await?;
+        log::debug!("Succesfully unpacked tar to temp dir");
 
-    archive.unpack(&full_unpacked_path).await?;
+        // Copy to the repo
+        util::fs::copy_dir_all(&temp_dir, &full_unpacked_path)?;
+    } else {
+        // Else, unpack directly to the repo
+        archive.unpack(&full_unpacked_path).await?;
+    }
 
     Ok(())
 }

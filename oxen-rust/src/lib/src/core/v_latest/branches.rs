@@ -242,7 +242,7 @@ pub async fn checkout_subtrees(
         }
 
         if from_root.is_some() {
-            log::debug!("🔥 from node: {from_root:?}");
+            log::debug!("Cleanup_removed_files");
             cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
