@@ -12,11 +12,29 @@ use liboxen::view::{
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use utoipa;
 
 pub mod changes;
 pub mod data_frames;
 pub mod files;
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/get_or_create",
+    operation_id = "get_or_create_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body = NewWorkspace,
+    responses(
+        (status = 200, description = "Workspace found or created", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload or branch not found"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn get_or_create(
     req: HttpRequest,
     body: String,
@@ -86,6 +104,22 @@ pub async fn get_or_create(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
+    operation_id = "get_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("workspace_id" = String, Path, description = "ID of the workspace"),
+    ),
+    responses(
+        (status = 200, description = "Workspace found", body = WorkspaceResponseView),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -108,6 +142,23 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces",
+    operation_id = "create_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body = NewWorkspace,
+    responses(
+        (status = 200, description = "Workspace created", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload or branch not found"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn create(
     req: HttpRequest,
     body: String,
@@ -157,6 +208,23 @@ pub async fn create(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/new_branch",
+    operation_id = "create_workspace_new_branch",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body = NewWorkspace,
+    responses(
+        (status = 200, description = "Workspace created with new branch", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn create_with_new_branch(
     req: HttpRequest,
     body: String,
@@ -205,6 +273,22 @@ pub async fn create_with_new_branch(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces",
+    operation_id = "list_workspaces",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        NameParam // Query parameter for optional name filtering
+    ),
+    responses(
+        (status = 200, description = "List of workspaces", body = ListWorkspaceResponseView),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn list(
     req: HttpRequest,
     params: web::Query<NameParam>,
@@ -240,6 +324,21 @@ pub async fn list(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/clear",
+    operation_id = "clear_all_workspaces",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    responses(
+        (status = 200, description = "All workspaces cleared", body = StatusMessage),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -249,6 +348,22 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
+    operation_id = "delete_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("workspace_id" = String, Path, description = "ID of the workspace"),
+    ),
+    responses(
+        (status = 200, description = "Workspace deleted", body = WorkspaceResponseView),
+        (status = 404, description = "Workspace or Repository not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -273,6 +388,23 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/mergeable/{branch}",
+    operation_id = "check_workspace_mergeability",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("workspace_id" = String, Path, description = "ID of the workspace"),
+        ("branch" = String, Path, description = "Target branch name to merge into"),
+    ),
+    responses(
+        (status = 200, description = "Mergeability status found", body = MergeableResponse),
+        (status = 404, description = "Workspace or target branch not found")
+    )
+)]
 pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -294,6 +426,25 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/commit/{branch}",
+    operation_id = "commit_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("workspace_id" = String, Path, description = "ID of the workspace"),
+        ("branch" = String, Path, description = "Target branch name to commit to"),
+    ),
+    request_body = NewCommitBody,
+    responses(
+        (status = 200, description = "Workspace committed successfully", body = CommitResponse),
+        (status = 404, description = "Workspace or branch not found"),
+        (status = 422, description = "Unprocessable Entity, e.g., workspace is behind main branch")
+    )
+)]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 

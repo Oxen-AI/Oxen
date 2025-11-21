@@ -4,7 +4,9 @@ use crate::model::merkle_tree::merkle_hash::MerkleHashAsString;
 use crate::model::MerkleHash;
 use crate::view::StatusMessage;
 
-#[derive(Deserialize, Serialize, Debug)]
+use utoipa::ToSchema;
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct MerkleHashResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

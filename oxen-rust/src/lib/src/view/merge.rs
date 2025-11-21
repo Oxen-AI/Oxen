@@ -1,22 +1,22 @@
 use serde::{Deserialize, Serialize};
-
+use utoipa::ToSchema;
 use crate::model::Commit;
 
 use super::StatusMessage;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct MergeConflictFile {
     pub path: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Mergeable {
     pub is_mergeable: bool,
     pub conflicts: Vec<MergeConflictFile>,
     pub commits: Vec<Commit>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct MergeableResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

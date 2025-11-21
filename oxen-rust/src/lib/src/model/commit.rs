@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 use super::{MerkleHash, User};
 use crate::config::UserConfig;
@@ -9,7 +10,7 @@ use crate::error::OxenError;
 use crate::view::workspaces::WorkspaceCommit;
 
 /// NewCommitBody is used to parse the json into a Commit from the API
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct NewCommitBody {
     pub message: String,
     pub author: String,
@@ -39,7 +40,7 @@ impl NewCommit {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Commit {
     pub id: String,
     pub parent_ids: Vec<String>,
@@ -210,7 +211,7 @@ impl NewCommitBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CommitStats {
     pub commit: Commit,
     pub num_entries: usize, // this is how many entries are in our commit db

@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::Schema;
+use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataTabular {
     pub tabular: MetadataTabularImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataTabularImpl {
     pub width: usize,
     pub height: usize,

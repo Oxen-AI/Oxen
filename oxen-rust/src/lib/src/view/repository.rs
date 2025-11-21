@@ -1,10 +1,11 @@
 use crate::model::{Commit, EntryDataType, MetadataEntry, RemoteRepository};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{DataTypeCount, StatusMessage};
 use std::str::FromStr;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct RepositoryView {
     pub namespace: String,
     pub name: String,
@@ -12,14 +13,14 @@ pub struct RepositoryView {
     pub is_empty: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct RepositoryListView {
     pub namespace: String,
     pub name: String,
     pub min_version: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct RepositoryCreationView {
     pub namespace: String,
     pub name: String,
@@ -27,7 +28,7 @@ pub struct RepositoryCreationView {
     pub min_version: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct RepositoryDataTypesView {
     pub namespace: String,
     pub name: String,
@@ -37,14 +38,14 @@ pub struct RepositoryDataTypesView {
     pub is_empty: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct RepositoryResponse {
     pub status: String,
     pub status_message: String,
     pub repository: RepositoryView,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct RepositoryCreationResponse {
     pub status: String,
     pub status_message: String,
@@ -52,42 +53,42 @@ pub struct RepositoryCreationResponse {
     pub metadata_entries: Option<Vec<MetadataEntry>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct RepositoryDataTypesResponse {
     pub status: String,
     pub status_message: String,
     pub repository: RepositoryDataTypesView,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct ListRepositoryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub repositories: Vec<RepositoryListView>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct RepositoryResolveResponse {
     pub status: String,
     pub status_message: String,
     pub repository_api_url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct RepositoryStatsResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub repository: RepositoryStatsView,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct DataTypeView {
     pub data_type: EntryDataType,
     pub data_size: u64,
     pub file_count: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct RepositoryStatsView {
     pub data_size: u64,
     pub data_types: Vec<DataTypeView>,

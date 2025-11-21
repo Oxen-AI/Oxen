@@ -21,12 +21,48 @@ pub mod test;
 extern crate log;
 extern crate lru;
 
+ use liboxen::view::StatusMessage;
+ use liboxen::view::BranchResponse;
+ use liboxen::view::ListBranchesResponse;
+  use liboxen::view::BranchNewFromBranchName;
+use liboxen::view::BranchUpdate;
+   use liboxen::view::BranchNewFromCommitId;
+   use liboxen::view::BranchRemoteMerge;
+   use liboxen::view::CommitResponse;
+   use liboxen::view::BranchLockResponse;
+   use liboxen::model::metadata::{MetadataAudio, MetadataDir, MetadataImage, MetadataTabular, MetadataText, MetadataVideo};
+    use liboxen::model::metadata::generic_metadata::GenericMetadata;
+    use liboxen::view::PaginatedEntryVersionsResponse;
+    use liboxen::view::CommitEntryVersion;
+     use liboxen::view::entries::ResourceVersion;
+     use liboxen::view::{FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash, ListCommitResponse, PaginatedCommits,
+    RootCommitResponse, MerkleHashesResponse, ListNamespacesResponse, NamespaceResponse, NamespaceView, ListRepositoryResponse, RepositoryResponse, RepositoryView, 
+};
+use liboxen::view::repository::{RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView, DataTypeView};
+    use liboxen::view::tree::merkle_hashes::MerkleHashes;
+     use liboxen::view::entry_metadata::EMetadataEntryResponseView;
+       use liboxen::view::entries::ListCommitEntryResponse;
+
+      use liboxen::model::Commit;
+    use liboxen::view::PaginatedEntryVersions;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
-
+use liboxen::view::DataTypeCount;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+ use utoipa::Modify;
+ use utoipa::openapi::security::SecurityScheme;
+ use utoipa::openapi::security::HttpBuilder;
+  use utoipa::openapi::security::HttpAuthScheme;
+ use liboxen::model::RepoNew;
+ use liboxen::view::ParseResourceResponse;
+ use liboxen::view::workspaces::ListWorkspaceResponseView;
+ use liboxen::view::workspaces::WorkspaceResponse;
+  use liboxen::view::merge::MergeableResponse;
+  use liboxen::view::data_frames::FromDirectoryRequest;
+use liboxen::view::workspaces::NewWorkspace;
+    
 
 use clap::{Arg, Command};
 
@@ -55,24 +91,171 @@ const SUPPORT: &str = "
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        // --- Namespaces ---
+        crate::controllers::namespaces::index,
+        crate::controllers::namespaces::show,
+
+        // --- Repositories ---
+        crate::controllers::repositories::index,
+        crate::controllers::repositories::show,
+        crate::controllers::repositories::create,
+        crate::controllers::repositories::delete,
+        crate::controllers::repositories::stats,
+        crate::controllers::repositories::update_size,
+        crate::controllers::repositories::get_size,
+        crate::controllers::repositories::transfer_namespace,
+        
+        // --- Workspaces (CRUD + File Staging) ---
+        crate::controllers::workspaces::get_or_create,
+        crate::controllers::workspaces::get,
+        crate::controllers::workspaces::create,
+        crate::controllers::workspaces::create_with_new_branch,
+        crate::controllers::workspaces::list,
+        crate::controllers::workspaces::clear,
+        crate::controllers::workspaces::delete,
+        crate::controllers::workspaces::mergeability,
+        crate::controllers::workspaces::commit,
+        
+        // --- Workspaces: Files ---
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
         crate::controllers::workspaces::files::delete,
         crate::controllers::workspaces::files::rm_files,
         crate::controllers::workspaces::files::rm_files_from_staged,
+        
+        // --- Branches ---
+        crate::controllers::branches::index,
+        crate::controllers::branches::show,
+        crate::controllers::branches::create,
+        crate::controllers::branches::delete,
+        crate::controllers::branches::update,
+        crate::controllers::branches::maybe_create_merge,
+        crate::controllers::branches::latest_synced_commit,
+        crate::controllers::branches::lock,
+        crate::controllers::branches::unlock,
+        crate::controllers::branches::is_locked,
+        crate::controllers::branches::list_entry_versions,
+
+        // --- Commits ---
+        crate::controllers::commits::index,
+        crate::controllers::commits::history,
+        crate::controllers::commits::list_all,
+        crate::controllers::commits::list_missing,
+        crate::controllers::commits::list_missing_files,
+        crate::controllers::commits::mark_commits_as_synced,
+        crate::controllers::commits::show,
+        crate::controllers::commits::parents,
+        crate::controllers::commits::download_commits_db,
+        crate::controllers::commits::download_dir_hashes_db,
+        crate::controllers::commits::download_commit_entries_db,
+        crate::controllers::commits::create,
+        crate::controllers::commits::upload_chunk,
+        crate::controllers::commits::upload_tree,
+        crate::controllers::commits::root_commit,
+        crate::controllers::commits::upload,
+        crate::controllers::commits::complete,
+
+        // --- Files (Repository) ---
+        crate::controllers::file::get,
+        crate::controllers::file::put,
+        crate::controllers::file::upload_zip,
+        crate::controllers::file::import,
+
+        // --- Directories/DataFrames ---
+        crate::controllers::dir::get,
+        crate::controllers::data_frames::get,
+        crate::controllers::data_frames::index,
+        crate::controllers::data_frames::from_directory,
+        
+        // --- Metadata --- 
+        crate::controllers::metadata::file,
+        crate::controllers::metadata::update_metadata,
     ),
     components(
         schemas(
+            // --- General/Base ---
+            StatusMessage,
+            ParseResourceResponse,
             ImgResize,
-        )
+
+            // --- Namespaces Schemas ---
+            ListNamespacesResponse,
+            NamespaceResponse,
+            NamespaceView,
+            
+            // --- Repository Schemas ---
+            ListRepositoryResponse, RepositoryResponse, RepositoryView,
+            RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, 
+            RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, 
+            RepositoryStatsView, DataTypeView, DataTypeCount,
+            RepoNew, User,
+            
+            // --- Commit Schemas ---
+            CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse, 
+            MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit, 
+
+            // --- Workspace Schemas ---
+            ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse, MergeableResponse,
+            
+            // --- File/Entry Schemas ---
+            CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
+            FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
+
+            // --- Upload & Request Bodies ---
+            crate::controllers::workspaces::files::FileUpload,
+            crate::controllers::file::FileUploadBody,
+            crate::controllers::file::ZipUploadBody,
+            crate::controllers::file::ImportFileBody,
+            FromDirectoryRequest, 
+
+            // --- Metadata Schemas (Includes Untagged Enums) ---
+            EMetadataEntryResponseView,
+            GenericMetadata, MetadataDir, MetadataText, MetadataImage, 
+            MetadataVideo, MetadataAudio, MetadataTabular,
+        ),
+    ),
+    modifiers(
+        &SecurityAddon
+    ),
+    servers(
+        (url = "https://hub.oxen.ai", description = "Production API"),
+        (url = "http://localhost:3000", description = "Local Development")
+    ),
+    security(
+        ("api_key" = [])
     ),
     tags(
-        (name = "Oxen", description = "Oxen Data Management API")
+        (name = "Actions", description = "Long running task status"),
+        (name = "Namespaces", description = "Namespace management"),
+        (name = "Repositories", description = "Repository management"),
+        (name = "Branches", description = "Branch management"),
+        (name = "Commits", description = "Commit history and database management"),
+        (name = "Entries", description = "File metadata and retrieval"),
+        (name = "Files", description = "Repository file operations (Upload/Download)"),
+        (name = "Workspaces", description = "Workspace/Draft management"),
+        (name = "DataFrames", description = "Tabular data query and indexing"),
+        (name = "Oxen", description = "Oxen Data Management API"),
     )
 )]
 struct ApiDoc;
 
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.as_mut().unwrap(); 
+        components.add_security_scheme(
+            "api_key",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT") 
+                    .build(),
+            ),
+        );
+    }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

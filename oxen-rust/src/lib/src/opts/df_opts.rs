@@ -11,6 +11,7 @@ use crate::core::df::filter::{self, DFFilterExp};
 use crate::error::OxenError;
 use crate::model::data_frame::schema::Field;
 use crate::model::Schema;
+use utoipa::ToSchema;
 
 use super::{EmbeddingQueryOpts, PaginateOpts};
 
@@ -27,7 +28,7 @@ pub struct IndexedItem {
     pub index: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToSchema)]
 pub struct DFOpts {
     pub add_col: Option<String>,
     pub add_row: Option<String>,
@@ -41,14 +42,17 @@ pub struct DFOpts {
     pub filter: Option<String>,
     pub head: Option<usize>,
     pub host: Option<String>,
+    #[schema(value_type = Option<String>)]
     pub output: Option<PathBuf>,
     pub output_column: Option<String>,
     pub page_size: Option<usize>,
     pub page: Option<usize>,
+    #[schema(value_type = Option<String>)]
     pub path: Option<PathBuf>,
     pub row: Option<usize>,
     pub item: Option<String>,
     pub quote_char: Option<String>,
+    #[schema(value_type = Option<String>)]
     pub repo_dir: Option<PathBuf>,
     pub should_randomize: bool,
     pub should_reverse: bool,
@@ -61,16 +65,18 @@ pub struct DFOpts {
     pub tail: Option<usize>,
     pub take: Option<String>,
     pub unique: Option<String>,
+    #[schema(value_type = Option<Vec<String>>)]
     pub vstack: Option<Vec<PathBuf>>,
+    #[schema(value_type = Option<String>)]
     pub write: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct DFOptsView {
     pub opts: Vec<DFOptView>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct DFOptView {
     pub name: String,
     pub value: serde_json::Value,

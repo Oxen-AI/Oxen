@@ -17,10 +17,9 @@ use liboxen::view::{
     StatusMessageDescription,
 };
 
-use actix_web::{web, HttpRequest, HttpResponse};
-
 use actix_multipart::Multipart;
 use actix_web::Error;
+use actix_web::{web, HttpRequest, HttpResponse};
 use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
 use std::io::Read as StdRead;
@@ -236,7 +235,20 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         ("workspace_id" = String, Path, description = "The UUID of the workspace"),
         ("directory" = String, Path, description = "The directory to stage the files into")
     ),
-    request_body = Vec<FileWithHash>,
+    request_body(
+        content = Vec<FileWithHash>,
+        description = "List of files and their pre-calculated hashes to stage",
+        example = json!([
+            {
+                "path": "images/train/dog.jpg",
+                "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+                "path": "annotations/labels.csv",
+                "hash": "82e35a63ceba37e9646434c5dd412ea577147f1e4a41ccde1614253187e3dbf9"
+            }
+        ])
+    ),
     responses(
         (status = 200, description = "Files staged successfully", body = ErrorFilesResponse),
         (status = 404, description = "Workspace not found")
@@ -320,7 +332,11 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         ("repo_name" = String, Path, description = "The name of the repository"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace")
     ),
-    request_body(content = Vec<String>, description = "List of paths to remove"),
+    request_body(
+        content = Vec<String>, 
+        description = "List of paths to remove",
+        example = json!(["images/train/001.jpg", "annotations/incorrect.xml"])
+    ),
     responses(
         (status = 200, description = "Files successfully removed", body = FilePathsResponse),
         (status = 206, description = "Some files could not be found/removed", body = FilePathsResponse),
@@ -384,7 +400,11 @@ pub async fn rm_files(
         ("repo_name" = String, Path, description = "The name of the repository"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace")
     ),
-    request_body(content = Vec<String>, description = "List of paths to restore/unstage"),
+    request_body(
+        content = Vec<String>, 
+        description = "List of paths to restore/unstage",
+        example = json!(["images/train/revert_me.jpg", "data/config.json"])
+    ),
     responses(
         (status = 200, description = "Files restored from staging", body = StatusMessage),
         (status = 206, description = "Some files could not be restored", body = FilePathsResponse),

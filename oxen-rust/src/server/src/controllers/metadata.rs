@@ -10,7 +10,25 @@ use liboxen::view::StatusMessage;
 use liboxen::{current_function, repositories};
 
 use actix_web::{HttpRequest, HttpResponse};
+use utoipa;
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
+    operation_id = "get_entry_metadata",
+    tag = "Entries",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the file/dir (including branch/commit info)"),
+    ),
+    responses(
+        (status = 200, description = "Metadata for the entry found", body = EMetadataEntryResponseView),
+        (status = 404, description = "Entry not found"),
+        (status = 400, description = "Invalid resource path")
+    )
+)]
 pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -81,6 +99,23 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(meta))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
+    operation_id = "update_entry_metadata",
+    tag = "Entries",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the file (including version to update)"),
+    ),
+    responses(
+        (status = 200, description = "Metadata cache updated", body = StatusMessage),
+        (status = 400, description = "Missing version in resource path"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn update_metadata(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;

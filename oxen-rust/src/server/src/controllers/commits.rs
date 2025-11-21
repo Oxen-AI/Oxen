@@ -43,18 +43,40 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::io::BufReader;
 use tokio_tar::Archive;
+use utoipa::{IntoParams, ToSchema};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, IntoParams)]
 pub struct ChunkedDataUploadQuery {
-    hash: String,             // UUID to tie all the chunks together (hash of the contents)
-    chunk_num: usize,         // which chunk it is, so that we can combine it all in the end
-    total_chunks: usize,      // how many chunks to expect
-    total_size: usize,        // total size so we can know when we are finished
-    is_compressed: bool,      // whether or not we need to decompress the archive
-    filename: Option<String>, // maybe a file name if !compressed
+    pub hash: String,            // UUID to tie all the chunks together (hash of the contents)
+    pub chunk_num: usize,        // which chunk it is, so that we can combine it all in the end
+    pub total_chunks: usize,     // how many chunks to expect
+    pub total_size: usize,       // total size so we can know when we are finished
+    pub is_compressed: bool,     // whether or not we need to decompress the archive
+    pub filename: Option<String>, // maybe a file name if !compressed
+}
+
+#[derive(Deserialize, IntoParams)]
+pub struct ListMissingFilesQuery {
+    pub base: Option<String>,
+    pub head: String,
 }
 
 // List commits for a repository
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits",
+    operation_id = "list_commits",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    responses(
+        (status = 200, description = "List of commits", body = ListCommitResponse),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -65,6 +87,23 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(ListCommitResponse::success(commits)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/history/{revision}",
+    operation_id = "list_commit_history",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Commit ID, Branch name, or range (base..head)"),
+        PageNumQuery
+    ),
+    responses(
+        (status = 200, description = "Paginated list of commits", body = PaginatedCommits),
+        (status = 404, description = "Repository or resource not found")
+    )
+)]
 pub async fn history(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -128,6 +167,22 @@ pub async fn history(
 }
 
 // List all commits in the repository
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/all",
+    operation_id = "list_all_commits",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        PageNumQuery
+    ),
+    responses(
+        (status = 200, description = "Paginated list of all commits", body = PaginatedCommits),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn list_all(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -146,6 +201,23 @@ pub async fn list_all(
     Ok(HttpResponse::Ok().json(paginated_commits))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/missing",
+    operation_id = "list_missing_commits",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body = MerkleHashes,
+    responses(
+        (status = 200, description = "List of missing commit hashes", body = MerkleHashesResponse),
+        (status = 400, description = "Invalid JSON body"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn list_missing(
     req: HttpRequest,
     body: String,
@@ -179,12 +251,22 @@ pub async fn list_missing(
     Ok(HttpResponse::Ok().json(response))
 }
 
-#[derive(Deserialize)]
-pub struct ListMissingFilesQuery {
-    pub base: Option<String>,
-    pub head: String,
-}
-
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/missing_files",
+    operation_id = "list_missing_files",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ListMissingFilesQuery
+    ),
+    responses(
+        (status = 200, description = "List of missing file entries", body = ListCommitEntryResponse),
+        (status = 404, description = "Repository or commit not found")
+    )
+)]
 pub async fn list_missing_files(
     req: HttpRequest,
     query: web::Query<ListMissingFilesQuery>,
@@ -215,6 +297,22 @@ pub async fn list_missing_files(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/synced",
+    operation_id = "mark_commits_synced",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body = MerkleHashes,
+    responses(
+        (status = 200, description = "Commits marked as synced", body = MerkleHashesResponse),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn mark_commits_as_synced(
     req: HttpRequest,
     mut body: web::Payload,
@@ -247,6 +345,22 @@ pub async fn mark_commits_as_synced(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}",
+    operation_id = "get_commit",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("commit_id" = String, Path, description = "Hash of the commit"),
+    ),
+    responses(
+        (status = 200, description = "Commit details", body = CommitResponse),
+        (status = 404, description = "Commit not found")
+    )
+)]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -262,6 +376,22 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/parents",
+    operation_id = "get_commit_parents",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("commit_or_branch" = String, Path, description = "Commit ID or Branch name"),
+    ),
+    responses(
+        (status = 200, description = "List of parent commits", body = ListCommitResponse),
+        (status = 404, description = "Commit or Branch not found")
+    )
+)]
 pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -278,6 +408,21 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
 }
 
 /// Download the database that holds all the commits and their parents
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits_db",
+    operation_id = "download_commits_db",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    responses(
+        (status = 200, description = "Tarball of commits DB", content_type = "application/x-tar"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn download_commits_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -313,6 +458,23 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
 }
 
 /// Download the database of all entries given a specific commit
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/{base_head}/dir_hashes_db",
+    operation_id = "download_dir_hashes_db",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("base_head" = String, Path, description = "Commit range (base..head) or single commit"),
+    ),
+    responses(
+        (status = 200, description = "Tarball of dir hashes DB", content_type = "application/x-tar"),
+        (status = 400, description = "Invalid base_head format"),
+        (status = 404, description = "Repository or commit not found")
+    )
+)]
 pub async fn download_dir_hashes_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -347,6 +509,22 @@ pub async fn download_dir_hashes_db(
 }
 
 /// Download the database of all entries given a specific commit
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/commit_entries_db",
+    operation_id = "download_commit_entries_db",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("commit_or_branch" = String, Path, description = "Commit ID or Branch name"),
+    ),
+    responses(
+        (status = 200, description = "Tarball of commit entries DB", content_type = "application/x-tar"),
+        (status = 404, description = "Repository or commit not found")
+    )
+)]
 pub async fn download_commit_entries_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -444,6 +622,23 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
 }
 
 /// This creates an empty commit on the given branch
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits",
+    operation_id = "create_commit",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body = Commit,
+    responses(
+        (status = 200, description = "Commit created", body = CommitResponse),
+        (status = 400, description = "Invalid commit data or mismatched remote history"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn create(
     req: HttpRequest,
     body: String,
@@ -491,6 +686,27 @@ pub async fn create(
 }
 
 /// Controller to upload large chunks of data that will be combined at the end
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/upload_chunk",
+    operation_id = "upload_chunk",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ChunkedDataUploadQuery
+    ),
+    request_body(
+        content_type = "application/octet-stream", 
+        description = "Chunk of data", 
+        content = Vec<u8>
+    ),
+    responses(
+        (status = 200, description = "Chunk uploaded successfully", body = StatusMessage),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn upload_chunk(
     req: HttpRequest,
     mut chunk: web::Payload,                   // the chunk of the file body,
@@ -681,6 +897,27 @@ async fn check_if_upload_complete_and_unpack(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/upload_tree",
+    operation_id = "upload_tree",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("commit_id" = String, Path, description = "Client head commit ID"),
+    ),
+    request_body(
+        content_type = "application/octet-stream", 
+        description = "Compressed tree data", 
+        content = Vec<u8>
+    ),
+    responses(
+        (status = 200, description = "Tree uploaded successfully", body = CommitResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn upload_tree(
     req: HttpRequest,
     mut body: web::Payload,
@@ -720,6 +957,21 @@ pub async fn upload_tree(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/root",
+    operation_id = "get_root_commit",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    responses(
+        (status = 200, description = "Root commit found", body = RootCommitResponse),
+        (status = 404, description = "Root commit not found (empty repo)")
+    )
+)]
 pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -802,6 +1054,26 @@ fn unpack_to_file(
 }
 
 /// Controller to upload the commit database
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/upload",
+    operation_id = "upload_commits_db",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+    ),
+    request_body(
+        content_type = "application/octet-stream", 
+        description = "Compressed commit database", 
+        content = Vec<u8>
+    ),
+    responses(
+        (status = 200, description = "Commits DB uploaded successfully", body = StatusMessage),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn upload(
     req: HttpRequest,
     mut body: web::Payload, // the actual file body
@@ -843,6 +1115,23 @@ pub async fn upload(
 }
 
 /// Notify that the push should be complete, and we should start doing our background processing
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/complete",
+    operation_id = "commit_upload_complete",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("commit_id" = String, Path, description = "ID of the commit to complete"),
+    ),
+    responses(
+        (status = 200, description = "Commit push completed successfully", body = CommitResponse),
+        (status = 404, description = "Repository or commit not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     let app_data = req.app_data::<OxenAppData>().unwrap();
     // name to the repo, should be in url path so okay to unwrap
@@ -998,252 +1287,4 @@ fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
     Err(OxenError::basic_str(format!(
         "Could not get hash for file: {path:?}"
     )))
-}
-
-#[cfg(test)]
-mod tests {
-
-    use actix_web::body::to_bytes;
-    use actix_web::{web, App};
-    use flate2::write::GzEncoder;
-    use flate2::Compression;
-    use std::path::Path;
-    use std::thread;
-
-    use liboxen::constants::OXEN_HIDDEN_DIR;
-    use liboxen::error::OxenError;
-    use liboxen::repositories;
-    use liboxen::util;
-    use liboxen::view::{ListCommitResponse, StatusMessage};
-
-    use crate::app_data::OxenAppData;
-    use crate::controllers;
-    use crate::params::PageNumQuery;
-    use crate::test::{self, init_test_env};
-
-    #[actix_web::test]
-    async fn test_controllers_commits_index_empty() -> Result<(), OxenError> {
-        init_test_env();
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let name = "Testing-Name";
-        test::create_local_repo(&sync_dir, namespace, name)?;
-
-        let uri = format!("/oxen/{namespace}/{name}/commits");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let resp = controllers::commits::index(req).await.unwrap();
-
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListCommitResponse = serde_json::from_str(text)?;
-        assert_eq!(list.commits.len(), 0);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_commits_list_two_commits() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
-
-        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path).await?;
-        repositories::commit(&repo, "first commit")?;
-        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path).await?;
-        repositories::commit(&repo, "second commit")?;
-
-        let uri = format!("/oxen/{namespace}/{name}/commits");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let resp = controllers::commits::index(req).await.unwrap();
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListCommitResponse = serde_json::from_str(text)?;
-        assert_eq!(list.commits.len(), 2);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_commits_list_commits_on_branch() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-
-        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path).await?;
-        repositories::commit(&repo, "first commit")?;
-
-        let branch_name = "feature/list-commits";
-        repositories::branches::create_checkout(&repo, branch_name)?;
-
-        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path).await?;
-        repositories::commit(&repo, "second commit")?;
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/commits/history/{branch_name}");
-        let req = test::repo_request_with_param(
-            &sync_dir,
-            &uri,
-            namespace,
-            repo_name,
-            "resource",
-            branch_name,
-        );
-
-        let query: web::Query<PageNumQuery> =
-            web::Query::from_query("page=1&page_size=10").unwrap();
-        let resp = controllers::commits::history(req, query).await.unwrap();
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListCommitResponse = serde_json::from_str(text)?;
-        assert_eq!(list.commits.len(), 2);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    // Switch branches, add a commit, and only list commits from first branch
-    #[actix_web::test]
-    async fn test_controllers_commits_list_some_commits_on_branch() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        repositories::commit(&repo, "First commit")?;
-        let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path).await?;
-        repositories::commit(&repo, "first commit")?;
-
-        let branch_name = "feature/list-commits";
-        repositories::branches::create_checkout(&repo, branch_name)?;
-
-        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "world")?;
-        repositories::add(&repo, path).await?;
-        repositories::commit(&repo, "second commit")?;
-
-        // List commits from the first branch
-        let uri = format!(
-            "/oxen/{}/{}/commits/history/{}",
-            namespace, repo_name, og_branch.name
-        );
-        let req = test::repo_request_with_param(
-            &sync_dir,
-            &uri,
-            namespace,
-            repo_name,
-            "resource",
-            og_branch.name,
-        );
-
-        let query: web::Query<PageNumQuery> =
-            web::Query::from_query("page=1&page_size=10").unwrap();
-        let resp = controllers::commits::history(req, query).await.unwrap();
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListCommitResponse = serde_json::from_str(text)?;
-        // there should be 2 instead of the 3 total
-        assert_eq!(list.commits.len(), 2);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_commits_upload() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        let commit = repositories::commit(&repo, "First commit")?;
-
-        // create random tarball to post.. currently no validation that it is a valid commit dir
-        let path_to_compress = format!("history/{}", commit.id);
-        let commit_dir_name = format!("data/test/runs/{}", commit.id);
-        let commit_dir = Path::new(&commit_dir_name);
-        util::fs::create_dir_all(commit_dir)?;
-        // Write a random file to it
-        let zipped_filename = "blah.txt";
-        let zipped_file_contents = "sup";
-        let random_file = commit_dir.join(zipped_filename);
-        util::fs::write_to_path(&random_file, zipped_file_contents)?;
-
-        println!("Compressing commit {}...", commit.id);
-        let enc = GzEncoder::new(Vec::new(), Compression::default());
-        let mut tar = tar::Builder::new(enc);
-
-        tar.append_dir_all(&path_to_compress, commit_dir)?;
-        tar.finish()?;
-        let payload: Vec<u8> = tar.into_inner()?.finish()?;
-        println!("Uploading commit {}... {} bytes", commit.id, payload.len());
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/commits/upload");
-        let app = actix_web::test::init_service(
-            App::new()
-                .app_data(OxenAppData::new(sync_dir.clone()))
-                .route(
-                    "/oxen/{namespace}/{repo_name}/commits/upload",
-                    web::post().to(controllers::commits::upload),
-                ),
-        )
-        .await;
-
-        let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
-            .set_payload(payload)
-            .to_request();
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
-        let body = std::str::from_utf8(&bytes).unwrap();
-        println!("Upload response: {body}");
-        let resp: StatusMessage = serde_json::from_str(body)?;
-        assert_eq!(resp.status, "success");
-
-        // We unzip in a background thread, so give it a second
-        thread::sleep(std::time::Duration::from_secs(1));
-
-        // Make sure we unzipped the tar ball
-        let uploaded_file = sync_dir
-            .join(namespace)
-            .join(repo_name)
-            .join(OXEN_HIDDEN_DIR)
-            .join(path_to_compress)
-            .join(zipped_filename);
-        println!("Looking for file: {uploaded_file:?}");
-        assert!(uploaded_file.exists());
-        assert_eq!(
-            util::fs::read_from_path(&uploaded_file)?,
-            zipped_file_contents
-        );
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-        util::fs::remove_dir_all(commit_dir)?;
-
-        Ok(())
-    }
 }

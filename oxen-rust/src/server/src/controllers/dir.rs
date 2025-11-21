@@ -8,7 +8,25 @@ use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use utoipa;
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/contents/{resource}",
+    operation_id = "list_directory_contents",
+    tag = "Entries",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the directory (including branch/commit ID)"),
+        PageNumVersionQuery // Assumes this implements IntoParams for page/page_size/version queries
+    ),
+    responses(
+        (status = 200, description = "Paginated list of directory entries", body = PaginatedDirEntriesResponse),
+        (status = 404, description = "Directory or repository not found")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<PageNumVersionQuery>,

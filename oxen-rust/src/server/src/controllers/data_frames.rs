@@ -19,7 +19,25 @@ use liboxen::view::{
 };
 
 use uuid::Uuid;
+use utoipa;
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/{resource}",
+    operation_id = "get_data_frame_slice",
+    tag = "DataFrames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the tabular file (including branch/commit info)"),
+        DFOptsQuery // Assumes DFOptsQuery derives IntoParams
+    ),
+    responses(
+        (status = 200, description = "Data frame slice found", body = JsonDataFrameViewResponse),
+        (status = 404, description = "File or resource not found")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
@@ -99,6 +117,23 @@ pub async fn get(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}/index",
+    operation_id = "start_data_frame_indexing",
+    tag = "DataFrames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the tabular file to index (including branch/commit info)"),
+    ),
+    responses(
+        (status = 200, description = "Indexing process started or completed", body = StatusMessage),
+        (status = 409, description = "Dataset already indexed"),
+        (status = 404, description = "Resource not found")
+    )
+)]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -135,6 +170,24 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/data_frames/from_directory/{resource}",
+    operation_id = "create_data_frame_from_directory",
+    tag = "DataFrames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Directory path to read from (including branch/commit info)"),
+    ),
+    request_body = FromDirectoryRequest,
+    responses(
+        (status = 200, description = "Data frame created and committed", body = CommitResponse),
+        (status = 400, description = "Invalid request body or resource path"),
+        (status = 404, description = "Repository or resource not found")
+    )
+)]
 pub async fn from_directory(
     req: HttpRequest,
     body: String,

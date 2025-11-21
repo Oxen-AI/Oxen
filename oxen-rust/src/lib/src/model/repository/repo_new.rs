@@ -1,12 +1,13 @@
 use http::Uri;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::constants::DEFAULT_HOST;
 use crate::error::OxenError;
 use crate::model::commit::Commit;
 use crate::model::file::FileNew;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct RepoNew {
     pub namespace: String,
     pub name: String,

@@ -17,16 +17,63 @@ use actix_multipart::Multipart;
 use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::TryStreamExt as _;
 use liboxen::repositories::commits;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
+use utoipa::ToSchema;
 
 const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen.ai"];
 
+// --- Helper Schemas for Utoipa Documentation ---
+
+#[derive(ToSchema, Deserialize)]
+pub struct FileUploadBody {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+    pub message: Option<String>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(ToSchema, Deserialize)]
+pub struct ZipUploadBody {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+    pub commit_message: Option<String>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(ToSchema, Deserialize)]
+pub struct ImportFileBody {
+    pub download_url: String,
+    #[schema(value_type = Object, example = json!({"Authorization": "Bearer token"}))]
+    pub headers: Option<Value>,
+}
+
+// -----------------------------------------------
+
 /// Download file content
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the file (including branch/commit info)"),
+        ImgResize
+    ),
+    responses(
+        (status = 200, description = "File content stream", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 404, description = "File not found")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
@@ -117,6 +164,26 @@ pub async fn get(
 }
 
 /// Update file content in place (add to temp workspace and commit)
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the file (including branch)"),
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        content = FileUploadBody
+    ),
+    responses(
+        (status = 200, description = "File committed successfully", body = CommitResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Branch or path not found")
+    )
+)]
 pub async fn put(
     req: HttpRequest,
     payload: Multipart,
@@ -202,6 +269,25 @@ pub async fn put(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/archive/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Destination path (including branch)"),
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        content = ZipUploadBody
+    ),
+    responses(
+        (status = 200, description = "Zip archive decompressed and committed", body = CommitResponse),
+        (status = 400, description = "Bad Request")
+    )
+)]
 pub async fn upload_zip(
     req: HttpRequest,
     payload: Multipart,
@@ -304,6 +390,31 @@ async fn handle_initial_put_empty_repo(
 }
 
 /// import files from hf/kaggle (create a workspace and commit)
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/import/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Destination path (including branch)"),
+    ),
+    request_body(
+        content = ImportFileBody,
+        description = "Import configuration",
+        example = json!({
+            "download_url": "https://huggingface.co/datasets/user/dataset/resolve/main/data.csv",
+            "headers": {
+                "Authorization": "Bearer <token>"
+            }
+        })
+    ),
+    responses(
+        (status = 200, description = "File imported and committed", body = CommitResponse),
+        (status = 400, description = "Bad Request / Invalid URL")
+    )
+)]
 pub async fn import(
     req: HttpRequest,
     body: web::Json<Value>,

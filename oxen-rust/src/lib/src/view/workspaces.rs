@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-
+use utoipa::ToSchema;
 use time::OffsetDateTime;
 
 use super::StatusMessage;
 use crate::model::Commit;
 
-#[derive(Deserialize, Serialize, Debug)]
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct NewWorkspace {
     pub workspace_id: String,
     pub branch_name: String,
@@ -14,10 +15,9 @@ pub struct NewWorkspace {
     pub name: Option<String>,
     pub force: Option<bool>,
 }
-
 // HACK to get this to work with our hub where we don't keep parent_ids 🤦‍♂️
 // TODO: it should just be a Commit object
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceCommit {
     pub id: String,
     pub message: String,
@@ -40,7 +40,7 @@ impl From<WorkspaceCommit> for Commit {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceResponse {
     pub id: String,
     pub name: Option<String>,
@@ -55,14 +55,14 @@ pub struct WorkspaceResponseWithStatus {
     pub status: String,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct WorkspaceResponseView {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub workspace: WorkspaceResponse,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct ListWorkspaceResponseView {
     #[serde(flatten)]
     pub status: StatusMessage,
