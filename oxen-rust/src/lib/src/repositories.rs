@@ -6,7 +6,6 @@
 use crate::constants;
 use crate::core;
 use crate::core::refs::with_ref_manager;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::error::NO_REPO_FOUND;
 use crate::model::file::FileContents;

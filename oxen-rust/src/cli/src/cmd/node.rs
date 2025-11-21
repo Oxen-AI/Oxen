@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::core::v_latest::index::CommitMerkleTree;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
@@ -69,7 +68,8 @@ impl RunCmd for NodeCmd {
         // otherwise, get the node based on the node hash
         let node_hash = args.get_one::<String>("node").expect("Must supply node");
         let node_hash = node_hash.parse()?;
-        let node = CommitMerkleTree::read_node(&repository, &node_hash, false)?;
+
+        let node = repositories::tree::get_node_by_id(&repository, &node_hash)?;
 
         println!("{:?}", node);
         if args.get_flag("verbose") {

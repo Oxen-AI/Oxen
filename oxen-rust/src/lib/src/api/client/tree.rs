@@ -124,6 +124,7 @@ pub async fn download_node(
     log::debug!("unpacked node {node_hash_str}");
 
     // We just downloaded, so unwrap is safe
+
     let node = CommitMerkleTree::read_node(local_repo, node_id, false)?.unwrap();
 
     log::debug!("read node {node}");
@@ -148,6 +149,7 @@ pub async fn download_node_with_children(
     log::debug!("unpacked node {node_hash_str}");
 
     // We just downloaded, so unwrap is safe
+    // REFACTOR: Get through repositories::tree
     let node = CommitMerkleTree::read_node(local_repo, node_id, true)?.unwrap();
 
     log::debug!("read node {node}");

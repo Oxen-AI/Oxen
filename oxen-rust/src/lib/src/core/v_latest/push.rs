@@ -9,12 +9,13 @@ use tokio::time::Duration;
 use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
+use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{
     Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
 };
+
 use crate::opts::PushOpts;
 use crate::util::{self, concurrency};
 use crate::{api, repositories};
@@ -227,67 +228,71 @@ async fn get_commit_missing_hashes(
     latest_remote_commit: Option<Commit>,
     commits: &[Commit],
 ) -> Result<HashMap<MerkleHash, PushCommitInfo>, OxenError> {
-    let mut starting_node_hashes = HashMap::new();
-    let mut shared_hashes = HashMap::new();
+    let mut base_hashes = HashSet::new();
+    let paths = &repo.subtree_paths().unwrap_or(vec![PathBuf::new()]);
+
     if let Some(ref commit) = latest_remote_commit {
-        CommitMerkleTree::get_unique_children_for_commit(
-            repo,
-            commit,
-            &repo.subtree_paths().unwrap_or(vec![PathBuf::from("")]), //Should we default to root?
-            &mut shared_hashes,
-            &mut starting_node_hashes,
-        )?;
+        for path in paths {
+            let mut starting_node_hashes = HashSet::new();
+            repositories::tree::get_subtree_by_depth_with_unique_children(
+                repo,
+                commit,
+                path,
+                Some(&base_hashes),
+                Some(&mut starting_node_hashes),
+                None,
+                repo.depth().unwrap_or(-1),
+            )?;
+
+            base_hashes.extend(starting_node_hashes.clone());
+        }
     }
 
-    log::debug!("starting hashes: {:?}", starting_node_hashes.len());
-
-    let mut shared_hashes = starting_node_hashes.clone();
+    log::debug!("starting hashes: {:?}", base_hashes.len());
 
     let mut result = HashMap::new();
 
     for commit in commits.iter().rev() {
-        let mut unique_hashes_and_type = HashMap::new();
-        log::debug!("push_commits adding candidate nodes for commit: {commit}");
-        let Some(_) = CommitMerkleTree::get_unique_children_for_commit(
-            repo,
-            commit,
-            &repo.subtree_paths().unwrap_or(vec![PathBuf::from("")]), //Should we default to root?
-            &mut shared_hashes,
-            &mut unique_hashes_and_type,
-        )?
-        else {
-            log::error!("push_commits commit node not found for commit: {commit}");
-            continue;
-        };
+        let mut unique_hashes = HashSet::new();
 
-        log::debug!("push_commits unique hashes and type: {unique_hashes_and_type:?}");
+        let mut files: Vec<Entry> = Vec::new();
+        let mut dir_nodes: HashSet<MerkleHash> = HashSet::new();
 
-        // let (files, dir_nodes) = repositories::tree::list_files_and_dirs(&commit_node)?;
-        let files = unique_hashes_and_type
-            .iter()
-            .filter(|((_, t), _)| {
-                let t = t.node.node_type();
-                t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk
-            })
-            .map(|((_, node), _)| Entry::CommitEntry(CommitEntry::from_node(&node.node)))
-            .collect::<Vec<Entry>>();
+        for path in paths {
+            log::debug!("push_commits adding candidate nodes for commit: {commit}");
+            let Some(root) = repositories::tree::get_subtree_by_depth_with_unique_children(
+                repo,
+                commit,
+                path,
+                Some(&base_hashes),
+                Some(&mut unique_hashes),
+                None,
+                repo.depth().unwrap_or(-1),
+            )?
+            else {
+                log::error!("push_commits commit node not found for commit: {commit}");
+                continue;
+            };
 
-        let mut dir_nodes = unique_hashes_and_type
-            .iter()
-            .filter(|((h, t), _)| {
-                let t = t.node.node_type();
-                log::debug!("push_commits dir node: {h} | type: {t:?}");
-                log::debug!(
-                    "push_commits dir node bool: {:?}",
-                    !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
-                );
-                !(t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk)
-            })
-            .map(|((h, _), _)| *h)
-            .collect::<HashSet<MerkleHash>>();
+            base_hashes.extend(unique_hashes.clone());
 
-        shared_hashes.extend(unique_hashes_and_type);
+            root.walk_tree(|node: &MerkleTreeNode| {
+                let t = node.node.node_type();
+
+                if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
+                    files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
+                } else if !node.node.is_leaf() {
+                    let hash = node.node.hash();
+                    dir_nodes.insert(*hash);
+                }
+            });
+        }
+
+        // Add the ancestor dirs of each subtree path to dir_nodes
+        repositories::tree::get_ancestor_nodes(repo, commit, paths, &mut dir_nodes)?;
+
         dir_nodes.insert(commit.hash()?);
+
         log::debug!("push_commits dir nodes: {dir_nodes:?}");
         let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
 
