@@ -384,22 +384,43 @@ pub fn collect_removed_paths(
 ) -> Result<HashSet<PathBuf>, OxenError> {
     let mut removed_paths = HashSet::new();
     let repo_path = repo.path.clone();
-    if dir_path.is_dir() {
-        let glob_path = util::fs::path_relative_to_dir(dir_path, &repo_path)?.join("*");
+    r_collect_removed_paths(repo, dir_path, &mut removed_paths)?;
 
-        // Search the merkle tree for all paths in the directory
-        search_merkle_tree(&mut removed_paths, repo, &glob_path)?;
-
-        // Filter out existant paths
-        removed_paths.retain(|path| !repo_path.join(path).exists());
-    }
+    // Filter out existant paths
+    removed_paths.retain(|path| !repo_path.join(path).exists());
 
     log::debug!(
         "collect_removed_paths found {:?} removed paths in dir {:?}",
         removed_paths.len(),
         dir_path
     );
+
     Ok(removed_paths)
+}
+
+pub fn r_collect_removed_paths(
+    repo: &LocalRepository,
+    dir_path: &PathBuf,
+    removed_paths: &mut HashSet<PathBuf>,
+) -> Result<(), OxenError> {
+    let repo_path = repo.path.clone();
+    if dir_path.is_dir() {
+        let glob_path = util::fs::path_relative_to_dir(dir_path, &repo_path)?.join("*");
+
+        // Search the merkle tree for all paths in the directory
+        search_merkle_tree(removed_paths, repo, &glob_path)?;
+        let paths = removed_paths.clone();
+
+        // Recurse into present directories to find removed subdirs and files
+        for path in paths.iter() {
+            if repo_path.join(path).is_dir() {
+                let dir_path = dir_path.join(path);
+                r_collect_removed_paths(repo, &dir_path, removed_paths)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
