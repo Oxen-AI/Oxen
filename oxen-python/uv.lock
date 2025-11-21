@@ -301,7 +301,7 @@ wheels = [
 
 [[package]]
 name = "oxenai"
-version = "0.39.1"
+version = "0.40.1"
 source = { editable = "." }
 dependencies = [
     { name = "fsspec" },

@@ -2,7 +2,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::core::v_latest::fetch;
 use crate::core::v_latest::index::restore::{self, FileToRestore};
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Commit, CommitEntry, LocalRepository, MerkleHash, PartialNode};
@@ -179,12 +178,14 @@ pub async fn checkout_subtrees(
         let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
         let mut target_hashes = HashSet::new();
         let target_root = if let Some(target_root) =
-            CommitMerkleTree::from_path_depth_children_and_hashes(
+            repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 to_commit,
                 subtree_path.clone(),
+                None,
+                Some(&mut target_hashes),
+                None,
                 depth,
-                &mut target_hashes,
             )? {
             target_root
         } else {
@@ -201,11 +202,12 @@ pub async fn checkout_subtrees(
         let from_root = if maybe_from_commit.is_some() {
             log::debug!("from id: {:?}", maybe_from_commit.as_ref().unwrap().id);
             log::debug!("to id: {:?}", to_commit.id);
-            CommitMerkleTree::root_with_unique_children(
+            repositories::tree::get_root_with_children_and_partial_nodes(
                 repo,
                 maybe_from_commit.as_ref().unwrap(),
-                &mut target_hashes,
-                &mut shared_hashes,
+                Some(&target_hashes),
+                None,
+                Some(&mut shared_hashes),
                 &mut partial_nodes,
             )
             .map_err(|e| {
@@ -240,7 +242,7 @@ pub async fn checkout_subtrees(
         }
 
         if from_root.is_some() {
-            log::debug!("🔥 from node: {from_root:?}");
+            log::debug!("Cleanup_removed_files");
             cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
@@ -312,8 +314,13 @@ pub async fn set_working_repo_to_commit(
 
     // Load in the target tree, collecting every dir and vnode hash for comparison with the from tree
     let mut target_hashes = HashSet::new();
-    let Some(target_tree) =
-        CommitMerkleTree::root_with_children_and_hashes(repo, to_commit, &mut target_hashes)?
+    let Some(target_tree) = repositories::tree::get_root_with_children_and_node_hashes(
+        repo,
+        to_commit,
+        None,
+        Some(&mut target_hashes),
+        None,
+    )?
     else {
         return Err(OxenError::basic_str(
             "Cannot get root node for target commit",
@@ -332,11 +339,12 @@ pub async fn set_working_repo_to_commit(
 
         log::debug!("from id: {:?}", from_commit.id);
         log::debug!("to id: {:?}", to_commit.id);
-        CommitMerkleTree::root_with_unique_children(
+        repositories::tree::get_root_with_children_and_partial_nodes(
             repo,
             from_commit,
-            &mut target_hashes,
-            &mut shared_hashes,
+            Some(&target_hashes),
+            None,
+            Some(&mut shared_hashes),
             &mut partial_nodes,
         )
         .map_err(|_| OxenError::basic_str("Cannot get root node for base commit"))?
@@ -368,7 +376,7 @@ pub async fn set_working_repo_to_commit(
         ));
     }
 
-    // Cleanup files if checking out from another commit
+    // Cleanup files if checking out fr om another commit
     if maybe_from_commit.is_some() {
         log::debug!("Cleanup_removed_files");
         cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes).await?;
@@ -577,29 +585,40 @@ fn r_restore_missing_or_modified_files(
 
                 progress.increment_restored();
             } else {
+                // TODO: Refactor this check into a separate module
+                // We don't have a module for a 3-way is_modified_from_node right now
+
                 // File exists, check whether it matches the target node or a from node
-                // First check last modified times
+                // First, check the metadata
                 let meta = util::fs::metadata(&full_path)?;
                 let last_modified = Some(FileTime::from_last_modification_time(&meta));
+                let size = Some(meta.len());
 
-                // If last_modified matches the target, do nothing
                 let target_last_modified = util::fs::last_modified_time(
                     file_node.last_modified_seconds(),
                     file_node.last_modified_nanoseconds(),
                 );
-                if last_modified == Some(target_last_modified) {
+
+                let target_size = file_node.num_bytes();
+
+                // If this matches the target, do nothing
+                if last_modified == Some(target_last_modified) && size == Some(target_size) {
                     return Ok(());
                 }
 
-                // If last_modified matches a corresponding from_node, stage it to be restored
-                let (from_node, from_last_modified) =
+                // If the metadata matches a corresponding from_node, stage it to be restored
+                let (from_node, from_last_modified, from_size) =
                     if let Some(from_node) = partial_nodes.get(&file_path) {
-                        (Some(from_node), Some(from_node.last_modified))
+                        (
+                            Some(from_node),
+                            Some(from_node.last_modified),
+                            Some(from_node.size),
+                        )
                     } else {
-                        (None, None)
+                        (None, None, None)
                     };
 
-                if last_modified == from_last_modified {
+                if last_modified == from_last_modified && size == from_size {
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),

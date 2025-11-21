@@ -71,6 +71,12 @@ impl RunCmd for CloneCmd {
                     .action(clap::ArgAction::Set),
             )
             .arg(
+                Arg::new("vfs")
+                    .long("vfs")
+                    .help("Configure the repo to be stored on a virtual file system")
+                    .action(clap::ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("remote")
                     .long("remote")
                     .help("Clone the repo in 'remote mode', pulling the metadata but not the file contents")
@@ -95,6 +101,7 @@ impl RunCmd for CloneCmd {
         let depth: Option<i32> = args
             .get_one::<String>("depth")
             .map(|s| s.parse().expect("Invalid depth, must be an integer"));
+        let is_vfs = args.get_flag("vfs");
         let is_remote = args.get_flag("remote");
 
         let current_dir = std::env::current_dir().expect("Could not get current working directory");
@@ -156,6 +163,7 @@ impl RunCmd for CloneCmd {
                 ..FetchOpts::new()
             },
             storage_opts,
+            is_vfs,
             is_remote,
         };
 

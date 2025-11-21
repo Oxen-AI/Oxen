@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::STAGED_DIR;
 use crate::core::db::{self};
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, PartialNode};
@@ -34,7 +33,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
 
-    let dir = CommitMerkleTree::dir_with_children_recursive(repo, &commit, &path)?;
+    let dir = repositories::tree::get_dir_with_children_recursive(repo, &commit, &path, None)?;
 
     match dir {
         Some(dir) => {
@@ -43,20 +42,20 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
         }
         None => {
             log::debug!("restore::restore: restoring file");
-            match CommitMerkleTree::from_path(repo, &commit, &path, false) {
-                Ok(merkle_tree) => {
-                    log::debug!(
-                        "restore::restore: got merkle tree {:?}",
-                        merkle_tree.root.node
-                    );
-                    if !matches!(&merkle_tree.root.node, EMerkleTreeNode::File(_)) {
+            match repositories::tree::get_node_by_path_with_children(repo, &commit, &path) {
+                Ok(Some(node)) => {
+                    log::debug!("restore::restore: got merkle tree {:?}", node.node);
+                    if !matches!(&node.node, EMerkleTreeNode::File(_)) {
                         return Err(OxenError::basic_str("Path is not a file"));
                     }
 
-                    let child_file = merkle_tree.root.file().unwrap();
+                    let child_file = node.file().unwrap();
 
                     restore_file(repo, &child_file, &path, &version_store).await
                 }
+                Ok(None) => Err(OxenError::basic_str(format!(
+                    "Merkle tree for commit {commit:?} not found"
+                ))),
                 Err(OxenError::Basic(msg))
                     if msg.to_string().contains("Merkle tree hash not found") =>
                 {
@@ -216,7 +215,7 @@ async fn restore_dir(
     Ok(())
 }
 
-pub fn should_restore_partial(
+pub fn should_restore_partial_node(
     repo: &LocalRepository,
     base_node: Option<PartialNode>,
     file_node: &FileNode,
@@ -230,12 +229,14 @@ pub fn should_restore_partial(
         // Check metadata for changes first
         let meta = util::fs::metadata(&working_path)?;
         let file_last_modified = filetime::FileTime::from_last_modification_time(&meta);
+        let file_size = meta.len();
 
         // If there are modifications compared to the base node, we should not restore the file
         if let Some(base_node) = base_node {
             let node_last_modified = base_node.last_modified;
+            let node_size = base_node.size;
 
-            if file_last_modified == node_last_modified {
+            if file_last_modified == node_last_modified && file_size == node_size {
                 return Ok(true);
             }
 

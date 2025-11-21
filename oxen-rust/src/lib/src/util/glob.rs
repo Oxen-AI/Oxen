@@ -242,7 +242,7 @@ fn expand_glob_pattern(
     log::debug!("Expand_glob_pattern got: pattern: {glob_pattern:?}, parent_path: {parent_path:?}, is_final: {is_final:?}");
 
     if let Some(dir_node) =
-        repositories::tree::get_dir_with_children(repo, head_commit, parent_path)?
+        repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?
     {
         let dir_children = repositories::tree::list_files_and_folders(&dir_node)?;
         for child in dir_children {

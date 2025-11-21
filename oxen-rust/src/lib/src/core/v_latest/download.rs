@@ -69,7 +69,7 @@ pub async fn download_dir_entries(
     // Get tree from local repos
     let commit = &entry.latest_commit.as_ref().unwrap();
     let Some(dir_node) =
-        repositories::tree::get_dir_with_children_recursive(local_repo, commit, remote_path)?
+        repositories::tree::get_dir_with_children_recursive(local_repo, commit, remote_path, None)?
     else {
         log::warn!("Dir node not found for path {local_path:?}");
         return Ok(());

@@ -21,7 +21,9 @@ pub struct RepositoryConfig {
     pub vnode_size: Option<u64>,
     /// Storage configuration
     pub storage: Option<StorageConfig>,
-    /// Flag for remote repo
+    /// Flag for repositories stored on virtual file systems
+    pub vfs: Option<bool>,
+    /// Flag for remote-mode repositories
     pub remote_mode: Option<bool>,
     /// Currently used only for remote mode
     pub workspace_name: Option<String>,
@@ -47,6 +49,7 @@ impl RepositoryConfig {
             min_version: None,
             vnode_size: None,
             storage: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,

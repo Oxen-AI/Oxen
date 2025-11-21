@@ -597,7 +597,7 @@ fn find_changes(
                 // If the subtree is the root, we need to check for removed files in the root
                 let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
                 if let Some(node) = dir_node {
-                    for child in CommitMerkleTree::node_files_and_folders(&node)? {
+                    for child in repositories::tree::list_files_and_folders(&node)? {
                         if let EMerkleTreeNode::File(file_node) = &child.node {
                             let file_path = full_path.join(file_node.name());
                             if !file_path.exists() {
@@ -612,7 +612,7 @@ fn find_changes(
 
         let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
         if let Some(node) = dir_node {
-            for child in CommitMerkleTree::node_files_and_folders(&node)? {
+            for child in repositories::tree::list_files_and_folders(&node)? {
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let file_path = full_path.join(file_node.name());
                     if !file_path.exists() {
@@ -808,7 +808,7 @@ fn find_local_changes(
                 // If the subtree is the root, we need to check for removed files in the root
                 let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
                 if let Some(node) = dir_node {
-                    for child in CommitMerkleTree::node_files_and_folders(&node)? {
+                    for child in repositories::tree::list_files_and_folders(&node)? {
                         if let EMerkleTreeNode::File(file_node) = &child.node {
                             let file_path = full_path.join(file_node.name());
                             if !file_path.exists() && !unsynced.files.contains(&file_path) {
@@ -823,7 +823,7 @@ fn find_local_changes(
 
         let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
         if let Some(node) = dir_node {
-            for child in CommitMerkleTree::node_files_and_folders(&node)? {
+            for child in repositories::tree::list_files_and_folders(&node)? {
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let file_path = full_path.join(file_node.name());
 
@@ -878,7 +878,7 @@ fn count_removed_entries(
 
     let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
     if let Some(ref node) = dir_node {
-        for child in CommitMerkleTree::node_files_and_folders(node)? {
+        for child in repositories::tree::list_files_and_folders(node)? {
             if let EMerkleTreeNode::File(_) = &child.node {
                 // Any files nodes accessed here are children of a removed dir, so they must also be removed
                 *removed_entries += 1;
