@@ -52,6 +52,7 @@ mod tests {
     use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
+    use crate::repositories::LocalRepository;
     use crate::test;
     use crate::util;
     use std::path::Path;
@@ -1949,6 +1950,46 @@ mod tests {
             .await?;
 
             Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    // Pull and merge a non-empty remote with a non-empty repo
+    #[tokio::test]
+    async fn test_pull_and_merge_non_empty_repos() -> Result<(), OxenError> {
+        // Create a remote repo with a commit
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let remote_repo_clone = remote_repo.clone();
+            test::run_empty_dir_test_async(|dir| async move {
+                // Create an empty repo locally
+                let mut local_repo = LocalRepository::new(dir)?;
+
+                // Add and commit a new file
+                let hello_file = local_repo.path.join("dir").join("hello.txt");
+                util::fs::write_to_path(
+                    &hello_file,
+                    "Oxen.ai is the best data version control system.",
+                )?;
+
+                repositories::add(&local_repo, &hello_file).await?;
+                repositories::commit(&local_repo, "Hello!")?;
+
+                // Set the remote
+                let url = remote_repo_clone.url();
+                command::config::set_remote(&mut local_repo, "origin", url)?;
+
+                // Pull the remote
+                repositories::pull(&local_repo).await?;
+
+                // Both files should exist in the local repo
+                assert!(hello_file.exists());
+                assert!(PathBuf::from("README.md").exists());
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo)
         })
         .await
     }
