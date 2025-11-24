@@ -1985,6 +1985,10 @@ mod tests {
                 assert!(hello_file.exists());
                 assert!(PathBuf::from("README.md").exists());
 
+                // There should be 3 total commits: The two divergent commits, and the merge commit
+                let commits = repositories::commits::list_all(&local_repo)?;
+                assert_eq!(commits.len(), 3);
+
                 Ok(())
             })
             .await?;
