@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use serde_json::json;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
@@ -18,6 +17,7 @@ use liboxen::view::{
 };
 use liboxen::{constants, repositories};
 
+/// List Branches
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -70,6 +70,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
+// Get Branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -106,6 +107,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Create Branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -186,6 +188,7 @@ fn create_from_commit(
     }))
 }
 
+/// Delete Branch
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -219,6 +222,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
+/// Update Branch
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -258,6 +262,7 @@ pub async fn update(
     }))
 }
 
+/// Merge Branches
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
@@ -327,6 +332,7 @@ pub async fn maybe_create_merge(
     }
 }
 
+/// Get Latest Commit for Branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
@@ -360,6 +366,7 @@ pub async fn latest_synced_commit(
     }))
 }
 
+/// Lock Branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
@@ -402,6 +409,7 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }
 }
 
+/// Unlock Branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/unlock",
@@ -433,6 +441,7 @@ pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
+/// Check if Branch is Locked
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
@@ -464,6 +473,7 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     }))
 }
 
+/// List Entries for Branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",

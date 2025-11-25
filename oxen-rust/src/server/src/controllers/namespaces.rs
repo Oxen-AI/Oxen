@@ -15,7 +15,6 @@ use utoipa;
     security( ("api_key" = []) ),
     responses(
         (status = 200, description = "List of namespaces", body = ListNamespacesResponse),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
@@ -47,7 +46,6 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         (status = 200, description = "Namespace details", body = NamespaceResponse),
         (status = 400, description = "Missing namespace parameter"),
         (status = 404, description = "Namespace not found"),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {

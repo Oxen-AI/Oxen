@@ -79,11 +79,11 @@ const SUPPORT: &str = "
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        // --- Namespaces ---
+        // Namespaces
         crate::controllers::namespaces::index,
         crate::controllers::namespaces::show,
 
-        // --- Repositories ---
+        // Repositories
         crate::controllers::repositories::index,
         crate::controllers::repositories::show,
         crate::controllers::repositories::create,
@@ -93,7 +93,7 @@ const SUPPORT: &str = "
         crate::controllers::repositories::get_size,
         crate::controllers::repositories::transfer_namespace,
         
-        // --- Workspaces (CRUD + File Staging) ---
+        // Workspaces (CRUD + File Staging) 
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
         crate::controllers::workspaces::create,
@@ -104,7 +104,7 @@ const SUPPORT: &str = "
         crate::controllers::workspaces::mergeability,
         crate::controllers::workspaces::commit,
         
-        // --- Workspaces: Files ---
+        // Workspaces: Files 
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
@@ -112,7 +112,7 @@ const SUPPORT: &str = "
         crate::controllers::workspaces::files::rm_files,
         crate::controllers::workspaces::files::rm_files_from_staged,
         
-        // --- Branches ---
+        // Branches 
         crate::controllers::branches::index,
         crate::controllers::branches::show,
         crate::controllers::branches::create,
@@ -125,7 +125,7 @@ const SUPPORT: &str = "
         crate::controllers::branches::is_locked,
         crate::controllers::branches::list_entry_versions,
 
-        // --- Commits ---
+        // Commits
         crate::controllers::commits::index,
         crate::controllers::commits::history,
         crate::controllers::commits::list_all,
@@ -144,63 +144,63 @@ const SUPPORT: &str = "
         crate::controllers::commits::upload,
         crate::controllers::commits::complete,
 
-        // --- Files (Repository) ---
+        // Files (Repository) 
         crate::controllers::file::get,
         crate::controllers::file::put,
         crate::controllers::file::upload_zip,
         crate::controllers::file::import,
 
-        // --- DataFrames ---
+        // DataFrames
         crate::controllers::data_frames::get,
         crate::controllers::data_frames::index,
         crate::controllers::data_frames::from_directory,
 
-        // --- Directories --- 
+        // Directories 
         crate::controllers::dir::get,
         
-        // --- Metadata --- 
+        // Metadata 
         crate::controllers::metadata::file,
         crate::controllers::metadata::update_metadata,
     ),
     components(
         // TODO: I'm not sure if these are all necessary to include
         schemas(
-            // --- Misc ---
+            // Misc 
             StatusMessage,
             ParseResourceResponse,
             ImgResize,
 
-            // --- Namespaces Schemas ---
+            // Namespaces Schemas 
             ListNamespacesResponse,
             NamespaceResponse,
             NamespaceView,
             
-            // --- Repository Schemas ---
+            // Repository Schemas
             ListRepositoryResponse, RepositoryResponse, RepositoryView,
             RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, 
             RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, 
             RepositoryStatsView, DataTypeView, DataTypeCount,
             RepoNew, User,
             
-            // --- Commit Schemas ---
+            // Commit Schemas
             CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse, 
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit, 
 
-            // --- Workspace Schemas ---
+            // Workspace Schemas 
             ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse, MergeableResponse,
             
-            // --- File/Entry Schemas ---
+            // File/Entry Schemas 
             CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
             FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
 
-            // --- Upload & Request Bodies ---
+            // Upload & Request Bodies
             crate::controllers::workspaces::files::FileUpload,
             crate::controllers::file::FileUploadBody,
             crate::controllers::file::ZipUploadBody,
             crate::controllers::file::ImportFileBody,
             FromDirectoryRequest, 
 
-            // --- Metadata Schemas ---
+            // Metadata Schemas 
             EMetadataEntryResponseView,
             GenericMetadata, MetadataDir, MetadataText, MetadataImage, 
             MetadataVideo, MetadataAudio, MetadataTabular,

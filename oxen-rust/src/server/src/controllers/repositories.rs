@@ -34,7 +34,7 @@ use utoipa;
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace to list repositories from"),
+        ("namespace" = String, Path, description = "Namespace to list repositories from, e.g. 'ox'"),
     ),
     responses(
         (status = 200, description = "List of repositories", body = ListRepositoryResponse),
@@ -133,7 +133,6 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     responses(
         (status = 200, description = "Repository statistics", body = RepositoryStatsResponse),
         (status = 404, description = "Repository not found"),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -246,7 +245,6 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
         (status = 200, description = "Repository created", body = RepositoryCreationResponse),
         (status = 400, description = "Invalid payload"),
         (status = 409, description = "Repository already exists"),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn create(

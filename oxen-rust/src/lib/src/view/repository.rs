@@ -61,9 +61,21 @@ pub struct RepositoryDataTypesResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(example = json!({
+    "status": "success",
+    "status_message": "resource_found",
+    "repositories": [
+        { "name": "data-fields", "namespace": "ox" },
+        { "name": "my-corn-pics", "namespace": "bessie" }
+    ],
+}))]
 pub struct ListRepositoryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
+    #[schema(example = json!([
+        { "name": "data-fields", "namespace": "ox" },
+        { "name": "my-corn-pics", "namespace": "bessie" }
+    ]))]
     pub repositories: Vec<RepositoryListView>,
 }
 

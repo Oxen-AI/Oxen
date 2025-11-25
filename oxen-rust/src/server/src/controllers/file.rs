@@ -28,14 +28,23 @@ use utoipa::ToSchema;
 
 const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen.ai"];
 
-// --- Helper Schemas for Utoipa Documentation ---
-
 #[derive(ToSchema, Deserialize)]
+#[schema(
+    example = json!({
+        "file": "<binary data>", 
+        "commit_message": "Add initial data file"
+        "name": "bessie",
+        "email": "bessie@oxen.ai"
+    })
+)]
 pub struct FileUploadBody {
     #[schema(value_type = String, format = Binary)]
     pub file: Vec<u8>,
+    #[schema(example = "This is a commit message!")]
     pub message: Option<String>,
+      #[schema(example = "bessie")]
     pub name: Option<String>,
+      #[schema(example = "ox@oxen.ai")]
     pub email: Option<String>,
 }
 
@@ -54,8 +63,6 @@ pub struct ImportFileBody {
     #[schema(value_type = Object, example = json!({"Authorization": "Bearer token"}))]
     pub headers: Option<Value>,
 }
-
-// -----------------------------------------------
 
 /// Download file content
 #[utoipa::path(
@@ -170,9 +177,9 @@ pub async fn get(
     tag = "Files",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the file (including branch)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "my_namespace"),
+        ("resource" = String, Path, description = "Path to the file (including branch)", example = "train/image.jpeg"),
     ),
     request_body(
         content_type = "multipart/form-data",

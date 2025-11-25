@@ -43,7 +43,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::io::BufReader;
 use tokio_tar::Archive;
-use utoipa::{IntoParams, ToSchema};
+use utoipa::IntoParams;
 
 #[derive(Deserialize, Debug, IntoParams)]
 pub struct ChunkedDataUploadQuery {
@@ -636,7 +636,6 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
     responses(
         (status = 200, description = "Commit created", body = CommitResponse),
         (status = 400, description = "Invalid commit data or mismatched remote history"),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn create(
@@ -704,7 +703,6 @@ pub async fn create(
     ),
     responses(
         (status = 200, description = "Chunk uploaded successfully", body = StatusMessage),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn upload_chunk(
@@ -915,7 +913,6 @@ async fn check_if_upload_complete_and_unpack(
     ),
     responses(
         (status = 200, description = "Tree uploaded successfully", body = CommitResponse),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn upload_tree(
@@ -1071,7 +1068,6 @@ fn unpack_to_file(
     ),
     responses(
         (status = 200, description = "Commits DB uploaded successfully", body = StatusMessage),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn upload(
@@ -1129,7 +1125,6 @@ pub async fn upload(
     responses(
         (status = 200, description = "Commit push completed successfully", body = CommitResponse),
         (status = 404, description = "Repository or commit not found"),
-        (status = 500, description = "Internal server error")
     )
 )]
 pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
