@@ -12,6 +12,7 @@ use liboxen::{current_function, repositories};
 use actix_web::{HttpRequest, HttpResponse};
 use utoipa;
 
+/// Get entry metadata
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
@@ -19,9 +20,9 @@ use utoipa;
     tag = "Entries",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the file/dir (including branch/commit info)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file/dir (including branch/commit info)", example = "main/images/train/dog_1.jpg"),
     ),
     responses(
         (status = 200, description = "Metadata for the entry found", body = EMetadataEntryResponseView),
@@ -99,6 +100,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(meta))
 }
 
+/// Update metadata cache
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
@@ -106,9 +108,9 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     tag = "Entries",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the file (including version to update)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file (including version to update)", example = "versions/files/b4/158b417c800c7322d711f1816f5c00e1215b4d7c001c9b6892556d11/data"),
     ),
     responses(
         (status = 200, description = "Metadata cache updated", body = StatusMessage),

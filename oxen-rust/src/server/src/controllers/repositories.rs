@@ -27,6 +27,7 @@ use serde_json::from_slice;
 use std::path::PathBuf;
 use utoipa;
  
+/// List repositories
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}",
@@ -34,7 +35,7 @@ use utoipa;
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace to list repositories from, e.g. 'ox'"),
+        ("namespace" = String, Path, description = "Namespace to list repositories from", example = "ox"),
     ),
     responses(
         (status = 200, description = "List of repositories", body = ListRepositoryResponse),
@@ -62,6 +63,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get repository details
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}",
@@ -69,8 +71,8 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
         (status = 200, description = "Repository details", body = RepositoryDataTypesResponse),
@@ -119,7 +121,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }))
 }
 
-// Need this endpoint to get the size and data types for a repo from the UI
+/// Get repository stats
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/stats",
@@ -127,8 +129,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
         (status = 200, description = "Repository statistics", body = RepositoryStatsResponse),
@@ -179,6 +181,7 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     }
 } 
 
+/// Update repository size
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/size",
@@ -186,8 +189,8 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
         (status = 200, description = "Repository size updated", body = StatusMessage),
@@ -205,6 +208,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+/// Get repository size
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/size",
@@ -212,11 +216,11 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
-        (status = 200, description = "Repository size", body = u64), // Assuming size returns u64 or similar
+        (status = 200, description = "Repository size in bytes", body = u64),
         (status = 404, description = "Repository not found")
     )
 )]
@@ -230,6 +234,7 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     Ok(HttpResponse::Ok().json(size))
 }
 
+/// Create repository
 #[utoipa::path(
     post,
     path = "/api/repos",
@@ -240,6 +245,15 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
         content = RepoNew,
         description = "Repository creation payload (JSON or Multipart)",
         content_type = "application/json",
+        example = json!({
+            "namespace": "ox",
+            "name": "Cat-Dog-Classifier",
+            "user": {
+                "name": "bessie",
+                "email": "bessie@oxen.ai"
+            },
+            "description": "A repository for image classification"
+        })
     ),
     responses(
         (status = 200, description = "Repository created", body = RepositoryCreationResponse),
@@ -470,6 +484,7 @@ async fn handle_multipart_creation(
     }
 }
 
+/// Delete repository
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}",
@@ -477,11 +492,11 @@ async fn handle_multipart_creation(
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
     ),
     responses(
-        (status = 200, description = "Repository deleted", body = StatusMessage),
+        (status = 200, description = "Repository deletion started", body = StatusMessage),
         (status = 404, description = "Repository not found")
     )
 )]
@@ -503,6 +518,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
+/// Transfer repository namespace
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/transfer",
@@ -510,10 +526,16 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Current namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Current namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
     ),
-    request_body = NamespaceView,
+    request_body(
+        content = NamespaceView,
+        description = "Target namespace to transfer the repository to.",
+        example = json!({
+            "namespace": "new_org"
+        })
+    ),
     responses(
         (status = 200, description = "Repository transferred successfully", body = RepositoryResponse),
         (status = 400, description = "Invalid body or target namespace"),

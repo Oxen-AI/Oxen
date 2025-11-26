@@ -10,6 +10,7 @@ use liboxen::{constants, repositories};
 use actix_web::{web, HttpRequest, HttpResponse};
 use utoipa;
 
+/// List directory contents
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/contents/{resource}",
@@ -17,9 +18,9 @@ use utoipa;
     tag = "Entries",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the directory (including branch/commit ID)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the directory (including branch/commit ID)", example = "main/data/train"),
         PageNumVersionQuery // Assumes this implements IntoParams for page/page_size/version queries
     ),
     responses(

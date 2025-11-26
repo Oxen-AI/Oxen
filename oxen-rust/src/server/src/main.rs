@@ -28,7 +28,7 @@ use liboxen::model::metadata::{
     generic_metadata::GenericMetadata, MetadataAudio, MetadataDir, MetadataImage,
     MetadataTabular, MetadataText, MetadataVideo,
 };
-use liboxen::model::{Commit, RepoNew};
+use liboxen::model::{Commit, CommitStats, RepoNew};
 use liboxen::view::data_frames::FromDirectoryRequest;
 use liboxen::view::entries::{ListCommitEntryResponse, ResourceVersion};
 use liboxen::view::entry_metadata::EMetadataEntryResponseView;
@@ -39,8 +39,9 @@ use liboxen::view::repository::{
 };
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
+use liboxen::view::commit::CommitTreeValidationResponse;
 use liboxen::view::{
-    CommitEntryVersion, CommitResponse, DataTypeCount, ErrorFileInfo, ErrorFilesResponse,
+    CommitEntryVersion, CommitResponse, CommitStatsResponse, DataTypeCount, ErrorFileInfo, ErrorFilesResponse,
     FilePathsResponse, FileWithHash, ListCommitResponse, ListNamespacesResponse,
     ListRepositoryResponse, MerkleHashesResponse, NamespaceResponse, NamespaceView,
     PaginatedCommits, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
@@ -144,6 +145,26 @@ const SUPPORT: &str = "
         crate::controllers::commits::upload,
         crate::controllers::commits::complete,
 
+        // Merge
+        crate::controllers::merge::show,
+        crate::controllers::merge::merge,
+        
+        // Compare
+        crate::controllers::compare::commits,
+        crate::controllers::compare::entries,
+        crate::controllers::compare::dir_tree,
+        crate::controllers::compare::dir_entries,
+        crate::controllers::compare::file,
+        crate::controllers::compare::create_df_diff,
+        crate::controllers::compare::update_df_diff,
+        crate::controllers::compare::get_df_diff,
+        crate::controllers::compare::delete_df_diff,
+        crate::controllers::compare::get_derived_df,
+
+        // Fork
+        crate::controllers::fork::fork,
+        crate::controllers::fork::get_status,
+
         // Files (Repository) 
         crate::controllers::file::get,
         crate::controllers::file::put,
@@ -175,20 +196,32 @@ const SUPPORT: &str = "
             NamespaceResponse,
             NamespaceView,
             
-            // Repository Schemas
+            // Repository Schemas 
             ListRepositoryResponse, RepositoryResponse, RepositoryView,
             RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, 
             RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, 
             RepositoryStatsView, DataTypeView, DataTypeCount,
             RepoNew, User,
             
-            // Commit Schemas
+            // Commit Schemas 
             CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse, 
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit, 
-
+            CommitStatsResponse, CommitStats, CommitTreeValidationResponse, 
+            
             // Workspace Schemas 
             ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse, MergeableResponse,
             
+            // Merge Schemas
+            MergeSuccessResponse, MergeResult, Mergeable, MergeConflictFile,
+
+            // Compare Schemas
+            CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
+            CompareTabular, CompareTabularResponse, DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse,
+            TabularCompareBody, TabularCompareTargetBody,
+            
+            // Fork Schemas
+            ForkRequest, ForkStartResponse, ForkStatus,
+
             // File/Entry Schemas 
             CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
             FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
@@ -199,7 +232,7 @@ const SUPPORT: &str = "
             crate::controllers::file::ZipUploadBody,
             crate::controllers::file::ImportFileBody,
             FromDirectoryRequest, 
-
+            
             // Metadata Schemas 
             EMetadataEntryResponseView,
             GenericMetadata, MetadataDir, MetadataText, MetadataImage, 

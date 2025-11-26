@@ -7,6 +7,7 @@ use liboxen::view::{ListNamespacesResponse, NamespaceResponse, NamespaceView, St
 use actix_web::{HttpRequest, HttpResponse, Result};
 use utoipa;
 
+/// List namespaces
 #[utoipa::path(
     get,
     path = "/api/namespaces",
@@ -33,6 +34,7 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get namespace
 #[utoipa::path(
     get,
     path = "/api/namespaces/{namespace}",

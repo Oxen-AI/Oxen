@@ -24,14 +24,14 @@ pub struct MergeableResponse {
     pub mergeable: Mergeable,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct MergeResult {
     pub head: Commit,
     pub base: Commit,
     pub merge: Commit,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct MergeSuccessResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

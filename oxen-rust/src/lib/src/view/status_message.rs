@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use utoipa::ToSchema;
 
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_found",
+    })
+)]
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct StatusMessage {
     pub status: String,

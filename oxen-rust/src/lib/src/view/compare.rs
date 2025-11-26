@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use polars::frame::DataFrame;
 use polars::prelude::SchemaExt;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::constants::DIFF_STATUS_COL;
 use crate::error::OxenError;
@@ -23,7 +24,7 @@ pub struct CompareCommits {
     pub commits: Vec<Commit>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularCompareSummary {
     pub num_left_only_rows: usize,
     pub num_right_only_rows: usize,
@@ -31,7 +32,7 @@ pub struct TabularCompareSummary {
     pub num_match_rows: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareCommitsResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -41,7 +42,7 @@ pub struct CompareCommitsResponse {
     pub compare: CompareCommits,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareEntries {
     pub base_commit: Commit,
     pub head_commit: Commit,
@@ -51,14 +52,14 @@ pub struct CompareEntries {
     pub self_diff: Option<DiffEntry>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareEntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub compare: DiffEntry,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareEntriesResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -67,7 +68,7 @@ pub struct CompareEntriesResponse {
     pub compare: CompareEntries,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareTabularResponse {
     pub dfs: CompareTabular,
     #[serde(flatten)]
@@ -75,7 +76,7 @@ pub struct CompareTabularResponse {
     pub messages: Vec<OxenMessage>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareTabularResponseWithDF {
     pub dfs: CompareTabular,
     pub data: JsonDataFrameViews,
@@ -166,7 +167,7 @@ impl CompareSchemaColumn {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct CompareTabular {
     pub dupes: CompareDupes,
     pub summary: Option<CompareSummary>,

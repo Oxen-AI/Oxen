@@ -21,6 +21,7 @@ use liboxen::view::{
 use uuid::Uuid;
 use utoipa;
 
+/// Get data frame slice
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/{resource}",
@@ -28,9 +29,9 @@ use utoipa;
     tag = "DataFrames",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the tabular file (including branch/commit info)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the tabular file (including branch/commit info)", example = "main/data/labels.csv"),
         DFOptsQuery // Assumes DFOptsQuery derives IntoParams
     ),
     responses(
@@ -117,6 +118,7 @@ pub async fn get(
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// Start data frame indexing
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}/index",
@@ -124,9 +126,9 @@ pub async fn get(
     tag = "DataFrames",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the tabular file to index (including branch/commit info)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
+        ("resource" = String, Path, description = "Path to the tabular file to index (including branch/commit info)", example = "main/data/weights.csv"),
     ),
     responses(
         (status = 200, description = "Indexing process started or completed", body = StatusMessage),
@@ -170,6 +172,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+/// Create data frame from directory
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/from_directory/{resource}",
@@ -177,11 +180,22 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     tag = "DataFrames",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Directory path to read from (including branch/commit info)"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
+        ("resource" = String, Path, description = "Directory path to read from (including branch/commit info)", example = "main/data/images"),
     ),
-    request_body = FromDirectoryRequest,
+    request_body(
+        content = FromDirectoryRequest,
+        description = "Options for creating a data frame from a directory, including output path, columns, and commit message.",
+        example = json!({
+            "output_path": "data/image_index.csv",
+            "extra_columns": ["size", "extension"],
+            "commit_message": "Generated image index",
+            "user_email": "bessie@oxen.ai",
+            "user_name": "Bessie",
+            "recursive": true
+        })
+    ),
     responses(
         (status = 200, description = "Data frame created and committed", body = CommitResponse),
         (status = 400, description = "Invalid request body or resource path"),

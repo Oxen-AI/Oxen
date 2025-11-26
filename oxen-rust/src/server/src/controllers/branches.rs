@@ -17,7 +17,7 @@ use liboxen::view::{
 };
 use liboxen::{constants, repositories};
 
-/// List Branches
+/// List all branches
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -25,8 +25,8 @@ use liboxen::{constants, repositories};
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
         (
@@ -45,6 +45,17 @@ use liboxen::{constants, repositories};
                         },
                         "commit_id": "592d564750031fa1431000472c2d721d",
                         "name": "main"
+                    },
+                    {
+                        "commit": {
+                            "author": "Daisy Oxington",
+                            "email": "daisy@oxen.ai",
+                            "id": "abc1234567890def1234567890fedcba",
+                            "message": "added new validation data",
+                            "timestamp": "2024-11-25T20:00:00Z"
+                        },
+                        "commit_id": "abc1234567890def1234567890fedcba",
+                        "name": "development"
                     }
                 ],
                 "oxen_version": "0.22.2",
@@ -70,7 +81,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
-// Get Branch
+/// Get a specific branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -78,9 +89,9 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
     ),
     responses(
         (status = 200, description = "Branch found", body = BranchResponse),
@@ -107,7 +118,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(view))
 }
 
-/// Create Branch
+/// Create a new branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -115,14 +126,21 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
-    request_body = BranchNewFromBranchName,
+    request_body(
+        content = BranchNewFromBranchName,
+        description = "Branch creation details. Can be created from another branch or a commit ID.",
+        example = json!({
+            "new_name": "development",
+            "from_name": "main"
+        })
+    ),
     responses(
         (status = 200, description = "Branch created", body = BranchResponse),
         (status = 400, description = "Invalid request body"),
-        (status = 404, description = "Repository or source branch not found")
+        (status = 404, description = "Repository or source branch/commit not found")
     )
 )]
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
@@ -188,7 +206,7 @@ fn create_from_commit(
     }))
 }
 
-/// Delete Branch
+/// Delete a branch
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -196,9 +214,9 @@ fn create_from_commit(
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to delete", example = "development"),
     ),
     responses(
         (status = 200, description = "Branch deleted", body = BranchResponse),
@@ -222,7 +240,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
-/// Update Branch
+/// Update a branch to a new commit
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -230,15 +248,21 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to update", example = "main"),
     ),
-    request_body = BranchUpdate,
+    request_body(
+        content = BranchUpdate,
+        description = "The commit ID to update the branch head to.",
+        example = json!({
+            "commit_id": "84c76a5b2e9a2637f9091991475c404d"
+        })
+    ),
     responses(
         (status = 200, description = "Branch updated", body = BranchResponse),
         (status = 400, description = "Bad Request"),
-        (status = 404, description = "Branch not found")
+        (status = 404, description = "Branch or Commit not found")
     )
 )]
 pub async fn update(
@@ -262,7 +286,7 @@ pub async fn update(
     }))
 }
 
-/// Merge Branches
+/// Merge an incoming commit into a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
@@ -270,14 +294,21 @@ pub async fn update(
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch to merge into"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to merge into (the destination)", example = "main"),
     ),
-    request_body = BranchRemoteMerge,
+    request_body(
+        content = BranchRemoteMerge,
+        description = "Client and Server commit IDs for performing the merge.",
+        example = json!({
+            "client_commit_id": "abc1234567890def1234567890fedcba",
+            "server_commit_id": "84c76a5b2e9a2637f9091991475c404d"
+        })
+    ),
     responses(
-        (status = 200, description = "Merge successful or conflict", body = CommitResponse),
-        (status = 400, description = "Bad Request"),
+        (status = 200, description = "Merge successful or merge conflicts encountered. Returns the new head commit.", body = CommitResponse),
+        (status = 400, description = "Bad Request (e.g., malformed body)"),
         (status = 404, description = "Branch or Commit not found")
     )
 )]
@@ -340,9 +371,9 @@ pub async fn maybe_create_merge(
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
     ),
     responses(
         (status = 200, description = "Latest synced commit found", body = CommitResponse),
@@ -366,7 +397,7 @@ pub async fn latest_synced_commit(
     }))
 }
 
-/// Lock Branch
+/// Lock a branch (prevents writes)
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
@@ -374,13 +405,13 @@ pub async fn latest_synced_commit(
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to lock", example = "main"),
     ),
     responses(
-        (status = 200, description = "Branch locked", body = BranchLockResponse),
-        (status = 409, description = "Failed to lock branch", body = BranchLockResponse),
+        (status = 200, description = "Branch locked successfully", body = BranchLockResponse),
+        (status = 409, description = "Failed to lock branch (already locked or unavailable)", body = BranchLockResponse),
     )
 )]
 pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -409,7 +440,7 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }
 }
 
-/// Unlock Branch
+/// Unlock a branch (allows writes)
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/unlock",
@@ -417,9 +448,9 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to unlock", example = "main"),
     ),
     responses(
         (status = 200, description = "Branch unlocked", body = BranchLockResponse),
@@ -441,7 +472,7 @@ pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
-/// Check if Branch is Locked
+/// Check if a branch is locked
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
@@ -449,12 +480,12 @@ pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to check", example = "main"),
     ),
     responses(
-        (status = 200, description = "Branch lock status", body = BranchLockResponse),
+        (status = 200, description = "Branch lock status returned", body = BranchLockResponse),
     )
 )]
 pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -473,7 +504,7 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     }))
 }
 
-/// List Entries for Branch
+/// List file history/versions for a path on a branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
@@ -481,14 +512,14 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
-        ("namespace" = String, Path, description = "Namespace of the repository"),
-        ("repo_name" = String, Path, description = "Name of the repository"),
-        ("branch_name" = String, Path, description = "Name of the branch"),
-        ("path" = String, Path, description = "Path to the file/entry"),
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
+        ("path" = String, Path, description = "Path to the file/entry", example = "images/train.jpg"),
         PageNumQuery
     ),
     responses(
-        (status = 200, description = "List of entry versions", body = PaginatedEntryVersionsResponse),
+        (status = 200, description = "List of entry versions found", body = PaginatedEntryVersionsResponse),
         (status = 404, description = "Repository, branch or path not found")
     )
 )]

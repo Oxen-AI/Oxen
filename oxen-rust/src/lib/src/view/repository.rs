@@ -1,11 +1,18 @@
 use crate::model::{Commit, EntryDataType, MetadataEntry, RemoteRepository};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
+use serde_json::json;
 use super::{DataTypeCount, StatusMessage};
 use std::str::FromStr;
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "namespace": "ox",
+        "name": "ImageNet-1k",
+        "is_empty": false,
+    })
+)]
 pub struct RepositoryView {
     pub namespace: String,
     pub name: String,
@@ -14,6 +21,12 @@ pub struct RepositoryView {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "namespace": "bessie",
+        "name": "my-farm-data",
+    })
+)]
 pub struct RepositoryListView {
     pub namespace: String,
     pub name: String,
@@ -21,6 +34,20 @@ pub struct RepositoryListView {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "namespace": "ox",
+        "name": "ImageNet-1k",
+        "latest_commit": {
+            "id": "a1b2c3d4e5f67890abcdef1234567890",
+            "parent_ids": ["f1e2d3c4b5a67890fedcba9876543210"],
+            "message": "Initial dataset import.",
+            "author": "ox",
+            "email": "ox@example.com",
+            "timestamp": "2025-01-01T10:00:00Z"
+        },
+    })
+)]
 pub struct RepositoryCreationView {
     pub namespace: String,
     pub name: String,
@@ -29,6 +56,18 @@ pub struct RepositoryCreationView {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "namespace": "bessie",
+        "name": "my-corn-pics",
+        "size": 1073741824, // 1 GB
+        "data_types": [
+            { "data_type": "image", "count": 1000 },
+            { "data_type": "tabular", "count": 5 }
+        ],
+        "is_empty": false,
+    })
+)]
 pub struct RepositoryDataTypesView {
     pub namespace: String,
     pub name: String,
@@ -39,6 +78,17 @@ pub struct RepositoryDataTypesView {
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_found",
+        "repository": {
+            "namespace": "ox",
+            "name": "ImageNet-1k",
+            "is_empty": false,
+        },
+    })
+)]
 pub struct RepositoryResponse {
     pub status: String,
     pub status_message: String,
@@ -46,6 +96,32 @@ pub struct RepositoryResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_created",
+        "repository": {
+            "namespace": "ox",
+            "name": "ImageNet-1k",
+            "latest_commit": {
+                "id": "a1b2c3d4e5f678902e41",
+                "parent_ids": ["f1e2d3c4b5a67890fedc"],
+                "message": "Initial dataset import.",
+                "author": "ox",
+                "email": "ox@example.com",
+                "timestamp": "2025-01-01T10:00:00Z"
+            },
+        },
+        "metadata_entries": [
+            {
+                "path": "data/images/cow.jpg",
+                "data_type": "image",
+                "content_hash": "a1b2c3d4e5f678902e41",
+                "file_size": 1024000,
+            }
+        ],
+    })
+)]
 pub struct RepositoryCreationResponse {
     pub status: String,
     pub status_message: String,
@@ -54,6 +130,22 @@ pub struct RepositoryCreationResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_found",
+        "repository": {
+            "namespace": "bessie",
+            "name": "my-corn-pics",
+            "size": 1073741824,
+            "data_types": [
+                { "data_type": "image", "count": 1000 },
+                { "data_type": "tabular", "count": 5 }
+            ],
+            "is_empty": false,
+        },
+    })
+)]
 pub struct RepositoryDataTypesResponse {
     pub status: String,
     pub status_message: String,
@@ -71,6 +163,10 @@ pub struct RepositoryDataTypesResponse {
 }))]
 pub struct ListRepositoryResponse {
     #[serde(flatten)]
+    #[schema(
+        value_type = StatusMessage,
+        example = json!({"status": "success", "status_message": "resource_found"})
+    )]
     pub status: StatusMessage,
     #[schema(example = json!([
         { "name": "data-fields", "namespace": "ox" },
@@ -80,6 +176,13 @@ pub struct ListRepositoryResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_found",
+        "repository_api_url": "http://localhost:3000/api/repos/ox/ImageNet-1k",
+    })
+)]
 pub struct RepositoryResolveResponse {
     pub status: String,
     pub status_message: String,
@@ -87,13 +190,37 @@ pub struct RepositoryResolveResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_found",
+        "repository": {
+            "data_size": 1073741824, // 1 GB
+            "data_types": [
+                { "data_type": "image", "data_size": 524288000, "file_count": 500 },
+                { "data_type": "tabular", "data_size": 550000000, "file_count": 5 },
+            ],
+        },
+    })
+)]
 pub struct RepositoryStatsResponse {
     #[serde(flatten)]
+    #[schema(
+        value_type = StatusMessage,
+        example = json!({"status": "success", "status_message": "resource_found"})
+    )]
     pub status: StatusMessage,
     pub repository: RepositoryStatsView,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "data_type": "image",
+        "data_size": 524288000,
+        "file_count": 500,
+    })
+)]
 pub struct DataTypeView {
     pub data_type: EntryDataType,
     pub data_size: u64,
@@ -101,6 +228,15 @@ pub struct DataTypeView {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "data_size": 1073741824, 
+        "data_types": [
+            { "data_type": "image", "data_size": 524288000, "file_count": 500 },
+            { "data_type": "tabular", "data_size": 550000000, "file_count": 5 },
+        ],
+    })
+)]
 pub struct RepositoryStatsView {
     pub data_size: u64,
     pub data_types: Vec<DataTypeView>,
