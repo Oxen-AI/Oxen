@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use utoipa::ToSchema;
 
 #[derive(Deserialize)]
 pub struct ForkRequest {
@@ -9,7 +8,7 @@ pub struct ForkRequest {
     pub new_repo_name: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ForkStatus {
     Started,
     Counting(u32),
@@ -18,20 +17,20 @@ pub enum ForkStatus {
     Failed(String),
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Serialize, Deserialize)]
 pub struct ForkStatusFile {
     pub status: ForkStatus,
     pub progress: Option<f32>,
     pub error: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ForkStartResponse {
     pub repository: String,
     pub fork_status: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ForkStatusResponse {
     pub repository: String,
     pub status: String,

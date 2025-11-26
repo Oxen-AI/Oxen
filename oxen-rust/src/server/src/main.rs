@@ -145,26 +145,6 @@ const SUPPORT: &str = "
         crate::controllers::commits::upload,
         crate::controllers::commits::complete,
 
-        // Merge
-        crate::controllers::merge::show,
-        crate::controllers::merge::merge,
-        
-        // Compare
-        crate::controllers::compare::commits,
-        crate::controllers::compare::entries,
-        crate::controllers::compare::dir_tree,
-        crate::controllers::compare::dir_entries,
-        crate::controllers::compare::file,
-        crate::controllers::compare::create_df_diff,
-        crate::controllers::compare::update_df_diff,
-        crate::controllers::compare::get_df_diff,
-        crate::controllers::compare::delete_df_diff,
-        crate::controllers::compare::get_derived_df,
-
-        // Fork
-        crate::controllers::fork::fork,
-        crate::controllers::fork::get_status,
-
         // Files (Repository) 
         crate::controllers::file::get,
         crate::controllers::file::put,
@@ -203,25 +183,14 @@ const SUPPORT: &str = "
             RepositoryStatsView, DataTypeView, DataTypeCount,
             RepoNew, User,
             
-            // Commit Schemas 
+            // Commit Schemas (UPDATED LIST)
             CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse, 
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit, 
-            CommitStatsResponse, CommitStats, CommitTreeValidationResponse, 
+            CommitStatsResponse, CommitStats, CommitTreeValidationResponse, // <-- New Commit Schemas
             
             // Workspace Schemas 
             ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse, MergeableResponse,
             
-            // Merge Schemas
-            MergeSuccessResponse, MergeResult, Mergeable, MergeConflictFile,
-
-            // Compare Schemas
-            CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
-            CompareTabular, CompareTabularResponse, DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse,
-            TabularCompareBody, TabularCompareTargetBody,
-            
-            // Fork Schemas
-            ForkRequest, ForkStartResponse, ForkStatus,
-
             // File/Entry Schemas 
             CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
             FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,

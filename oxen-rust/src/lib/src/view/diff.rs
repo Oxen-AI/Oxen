@@ -1,21 +1,19 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 use crate::model::diff::diff_entry_status::DiffEntryStatus;
 
 use super::StatusMessage;
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct DirTreeDiffResponse {
     pub dirs: Vec<DirDiffTreeSummary>,
     #[serde(flatten)]
     pub status: StatusMessage,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct DirDiffTreeSummary {
-    #[schema(value_type = String)]
     pub name: PathBuf,
     pub status: DiffEntryStatus,
     pub num_subdirs: usize,
@@ -23,9 +21,8 @@ pub struct DirDiffTreeSummary {
     pub children: Vec<DirDiffStatus>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct DirDiffStatus {
-    #[schema(value_type = String)]
     pub name: PathBuf,
     pub status: DiffEntryStatus,
 }
