@@ -79,9 +79,13 @@ pub async fn can_merge_commits(
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<bool, OxenError> {
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+    // If there is no common ancestor, there are no merge conflicts
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)? else {
+        return Ok(true);
+    };
+
     let merge_commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
@@ -117,7 +121,13 @@ pub fn list_commits_between_branches(
     let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
     let head_commit = get_commit_or_head(repo, Some(head_branch.commit_id.clone()))?;
 
-    let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)?;
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)? else {
+        return Err(OxenError::basic_str(format!(
+            "Error: head commit {:?} and base commit {:?} have no common ancestor",
+            head_commit.id, base_commit.id
+        )));
+    };
+
     log::debug!(
         "list_commits_between_branches {base_commit:?} -> {head_commit:?} found lca {lca:?}"
     );
@@ -131,7 +141,12 @@ pub fn list_commits_between_commits(
 ) -> Result<Vec<Commit>, OxenError> {
     log::debug!("list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}");
 
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)?;
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)? else {
+        return Err(OxenError::basic_str(format!(
+            "Error: head commit {:?} and base commit {:?} have no common ancestor",
+            head_commit.id, base_commit.id
+        )));
+    };
 
     log::debug!("For commits {base_commit:?} -> {head_commit:?} found lca {lca:?}");
 
@@ -144,9 +159,13 @@ pub async fn list_conflicts_between_commits(
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<Vec<PathBuf>, OxenError> {
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+    // If there is no common ancestor, there are no merge conflicts
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)? else {
+        return Ok(vec![]);
+    };
+
     let merge_commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
@@ -307,8 +326,11 @@ async fn merge_commits_on_branch(
 
     log::debug!(
         "FOUND MERGE COMMITS:\nLCA: {} -> {}\nBASE: {} -> {}\nMerge: {} -> {}",
-        merge_commits.lca.id,
-        merge_commits.lca.message,
+        merge_commits.lca.as_ref().map_or("None", |c| c.id.as_str()),
+        merge_commits
+            .lca
+            .as_ref()
+            .map_or("None", |c| c.message.as_str()),
         merge_commits.base.id,
         merge_commits.base.message,
         merge_commits.merge.id,
@@ -371,7 +393,7 @@ Found {} conflicts, please resolve them before merging.
 pub fn lowest_common_ancestor(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
-) -> Result<Commit, OxenError> {
+) -> Result<Option<Commit>, OxenError> {
     let branch_name = branch_name.as_ref();
     let current_branch = repositories::branches::current_branch(repo)?
         .ok_or(OxenError::basic_str("No current branch"))?;
@@ -677,8 +699,11 @@ async fn merge_commits(
 
     log::debug!(
         "FOUND MERGE COMMITS:\nLCA: {} -> {}\nBASE: {} -> {}\nMerge: {} -> {}",
-        merge_commits.lca.id,
-        merge_commits.lca.message,
+        merge_commits.lca.as_ref().map_or("None", |c| c.id.as_str()),
+        merge_commits
+            .lca
+            .as_ref()
+            .map_or("None", |c| c.message.as_str()),
         merge_commits.base.id,
         merge_commits.base.message,
         merge_commits.merge.id,
@@ -808,7 +833,7 @@ pub fn lowest_common_ancestor_from_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
-) -> Result<Commit, OxenError> {
+) -> Result<Option<Commit>, OxenError> {
     log::debug!(
         "lowest_common_ancestor_from_commits: base: {} merge: {}",
         base_commit.id,
@@ -824,10 +849,14 @@ pub fn lowest_common_ancestor_from_commits(
     let commit_depths_from_merge =
         repositories::commits::list_from_with_depth(repo, merge_commit.id.as_str())?;
 
+    // If the commits have no common ancestor (new repository), return None
+    let mut has_common_ancestor = false;
     let mut min_depth = usize::MAX;
     let mut lca: Commit = commit_depths_from_head.keys().next().unwrap().clone();
     for (commit, _) in commit_depths_from_merge.iter() {
         if let Some(depth) = commit_depths_from_head.get(commit) {
+            has_common_ancestor = true;
+
             if depth < &min_depth {
                 min_depth = *depth;
                 log::debug!("setting new lca, {commit:?}");
@@ -836,7 +865,11 @@ pub fn lowest_common_ancestor_from_commits(
         }
     }
 
-    Ok(lca)
+    if has_common_ancestor {
+        Ok(Some(lca))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Will try a three way merge and return conflicts if there are any to indicate that the merge was unsuccessful
@@ -879,10 +912,16 @@ pub async fn find_merge_conflicts(
     let mut lca_hashes = HashSet::new();
     let mut base_hashes = HashSet::new();
 
-    // First, load in every node from the LCA tree
+    // If there's no LCA, let the LCA be the base commit
+    let lca = merge_commits
+        .lca
+        .clone()
+        .unwrap_or(merge_commits.base.clone());
+
+    // Load in every node from the LCA tree
     let lca_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
         repo,
-        &merge_commits.lca,
+        &lca,
         None,
         Some(&mut lca_hashes),
         None,

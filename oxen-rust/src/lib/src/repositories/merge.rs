@@ -9,14 +9,14 @@ use crate::model::{Branch, LocalRepository};
 
 #[derive(Debug)]
 pub struct MergeCommits {
-    pub lca: Commit,
+    pub lca: Option<Commit>,
     pub base: Commit,
     pub merge: Commit,
 }
 
 impl MergeCommits {
     pub fn is_fast_forward_merge(&self) -> bool {
-        self.lca.id == self.base.id
+        self.lca.is_some() && self.lca.as_ref().unwrap().id == self.base.id
     }
 }
 
@@ -192,7 +192,7 @@ pub fn lowest_common_ancestor_from_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
-) -> Result<Commit, OxenError> {
+) -> Result<Option<Commit>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::lowest_common_ancestor_from_commits(
@@ -437,7 +437,8 @@ mod tests {
 
             // Make sure the merger can detect the three way merge
             let guess =
-                repositories::merge::lowest_common_ancestor_from_commits(&repo, &lca, &lca)?;
+                repositories::merge::lowest_common_ancestor_from_commits(&repo, &lca, &lca)?
+                    .unwrap();
             assert_eq!(lca.id, guess.id);
 
             Ok(())
