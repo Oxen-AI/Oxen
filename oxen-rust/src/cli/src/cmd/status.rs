@@ -55,6 +55,12 @@ impl RunCmd for StatusCmd {
                     .action(clap::ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("no-cache")
+                    .long("no-cache")
+                    .help("Skip filesystem cache and perform full scan")
+                    .action(clap::ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("paths")
                     .num_args(0..)
                     .trailing_var_arg(true)  // Collect all remaining args as paths
@@ -74,6 +80,7 @@ impl RunCmd for StatusCmd {
             .parse::<usize>()
             .expect("limit must be a valid integer.");
         let print_all = args.get_flag("print_all");
+        let no_cache = args.get_flag("no-cache");
 
         let repository = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repository)?;
@@ -93,7 +100,15 @@ impl RunCmd for StatusCmd {
         };
         log::debug!("status opts: {:?}", opts);
 
-        let repo_status = repositories::status::status_from_opts(&repository, &opts)?;
+        // Use the watcher-enabled status function unless --no-cache is specified
+        let repo_status = if no_cache {
+            log::debug!("Using direct scan (--no-cache specified)");
+            repositories::status::status_from_opts(&repository, &opts)?
+        } else {
+            // Try to use watcher cache by default
+            log::debug!("Attempting to use watcher cache");
+            liboxen::core::v_latest::status::status_with_cache(&repository, &opts, true).await?
+        };
 
         if let Some(current_branch) = repositories::branches::current_branch(&repository)? {
             println!(
