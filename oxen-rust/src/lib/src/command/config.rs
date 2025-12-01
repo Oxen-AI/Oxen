@@ -65,8 +65,5 @@ pub async fn set_version_store(
     repo.set_version_store(opts).await?;
     repo.save()?;
 
-    let version_store = repo.version_store()?;
-    version_store.init().await?;
-
     Ok(())
 }

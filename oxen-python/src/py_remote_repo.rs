@@ -131,6 +131,7 @@ impl PyRemoteRepo {
             .collect())
     }
 
+    #[pyo3(signature = (empty, is_public, storage_backend=None, storage_backend_path=None, storage_backend_bucket=None))]
     fn create(&mut self, empty: bool, is_public: bool, storage_backend: Option<String>, storage_backend_path: Option<String>, storage_backend_bucket: Option<String>,) -> Result<PyRemoteRepo, PyOxenError> {
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             // parse storage backend options
