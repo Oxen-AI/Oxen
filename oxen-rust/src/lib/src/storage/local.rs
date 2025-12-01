@@ -345,6 +345,7 @@ impl VersionStore for LocalVersionStore {
 
         // Get list of chunks and sort them to ensure correct order
         let mut chunks = self.list_version_chunks(hash).await?;
+        log::debug!("combine_version_chunks found {:?} chunks", chunks.len());
         chunks.sort();
 
         // Process each chunk
@@ -352,12 +353,6 @@ impl VersionStore for LocalVersionStore {
             let chunk_path = self.version_chunk_file(hash, chunk_offset);
             let mut chunk_file = File::open(&chunk_path).await?;
             tokio::io::copy(&mut chunk_file, &mut output_file).await?;
-
-            // Cleanup chunk if requested
-            if cleanup {
-                let chunk_dir = self.version_chunk_dir(hash, chunk_offset);
-                fs::remove_dir_all(&chunk_dir).await?;
-            }
         }
 
         // Cleanup the chunks directory if requested
@@ -367,7 +362,7 @@ impl VersionStore for LocalVersionStore {
                 fs::remove_dir_all(&chunks_dir).await?;
             }
         }
-
+        
         Ok(version_path)
     }
 
