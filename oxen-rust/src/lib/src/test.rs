@@ -300,7 +300,7 @@ where
     log::info!("<<<<< run_empty_local_repo_test_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
-    
+
     let version_store = repo.version_store()?;
     version_store.init().await?;
 

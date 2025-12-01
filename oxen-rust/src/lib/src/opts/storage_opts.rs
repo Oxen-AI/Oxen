@@ -53,9 +53,7 @@ impl StorageOpts {
                     .cloned()
                     .unwrap_or_else(|| String::from("versions"));
 
-                log::debug!(
-                    "Storage backend is in S3 Bucket: {bucket}, Prefix: {prefix}",
-                );
+                log::debug!("Storage backend is in S3 Bucket: {bucket}, Prefix: {prefix}",);
 
                 let s3_opts = S3Opts {
                     bucket: bucket.to_string(),
@@ -106,24 +104,21 @@ impl StorageOpts {
         if let Some(backend) = storage_backend {
             match backend.as_str() {
                 "local" => {
-                    let path =
-                        storage_backend_path
-                            .map(PathBuf::from)
-                            .ok_or(OxenError::basic_str(
-                                "storage-backend-path is required when storage-backend is local",
-                            ))?;
                     if storage_backend_bucket.is_some() {
                         return Err(OxenError::basic_str("Error: storage-backend-bucket should not be set when storage-backend is local"));
                     }
-
-                    let local_storage_opts = Some(LocalStorageOpts { path: Some(path) });
-                    let s3_opts = None;
-
-                    Ok(Some(StorageOpts {
-                        type_: "local".to_string(),
-                        local_storage_opts,
-                        s3_opts,
-                    }))
+                    if storage_backend_path.is_some() {
+                        let local_storage_opts = Some(LocalStorageOpts {
+                            path: Some(PathBuf::from(storage_backend_path.unwrap())),
+                        });
+                        Ok(Some(StorageOpts {
+                            type_: "local".to_string(),
+                            local_storage_opts,
+                            s3_opts: None,
+                        }))
+                    } else {
+                        Ok(None)
+                    }
                 }
                 "s3" => {
                     let bucket = storage_backend_bucket.ok_or(OxenError::basic_str(
@@ -143,11 +138,9 @@ impl StorageOpts {
                         }),
                     }))
                 }
-                _ => {
-                    Err(OxenError::basic_str(
-                        "storage-backend can only be local or s3",
-                    ))
-                }
+                _ => Err(OxenError::basic_str(
+                    "storage-backend can only be local or s3",
+                )),
             }
         } else {
             Ok(None)

@@ -99,12 +99,10 @@ impl VersionStore for S3VersionStore {
                     ))),
                 }
             }
-            Err(err) => {
-                Err(OxenError::basic_str(format!(
-                    "Cannot access S3 bucket '{}': {err}",
-                    self.bucket
-                )))
-            }
+            Err(err) => Err(OxenError::basic_str(format!(
+                "Cannot access S3 bucket '{}': {err}",
+                self.bucket
+            ))),
         }
     }
 
@@ -113,18 +111,12 @@ impl VersionStore for S3VersionStore {
         let client = self.init_client().await;
         // get file content from the path
         let mut file = std::fs::File::open(file_path).map_err(|e| {
-            OxenError::basic_str(format!(
-                "Failed to open file {}: {e}",
-                file_path.display()
-            ))
+            OxenError::basic_str(format!("Failed to open file {}: {e}", file_path.display()))
         })?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).map_err(|e| {
-            OxenError::basic_str(format!(
-                "Failed to read file {}: {e}",
-                file_path.display()
-            ))
+            OxenError::basic_str(format!("Failed to read file {}: {e}", file_path.display()))
         })?;
 
         let key = self.generate_key(hash);
