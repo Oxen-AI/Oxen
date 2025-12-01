@@ -94,7 +94,6 @@ const SUPPORT: &str = "
         // Namespaces
         crate::controllers::namespaces::index,
         crate::controllers::namespaces::show,
-
         // Repositories
         crate::controllers::repositories::index,
         crate::controllers::repositories::show,
@@ -104,8 +103,7 @@ const SUPPORT: &str = "
         crate::controllers::repositories::update_size,
         crate::controllers::repositories::get_size,
         crate::controllers::repositories::transfer_namespace,
-        
-        // Workspaces  
+        // Workspaces
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
         crate::controllers::workspaces::create,
@@ -115,16 +113,14 @@ const SUPPORT: &str = "
         crate::controllers::workspaces::delete,
         crate::controllers::workspaces::mergeability,
         crate::controllers::workspaces::commit,
-        
-        // Files (Workspace) 
+        // Files (Workspace)
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
         crate::controllers::workspaces::files::delete,
         crate::controllers::workspaces::files::rm_files,
         crate::controllers::workspaces::files::rm_files_from_staged,
-        
-        // Branches 
+        // Branches
         crate::controllers::branches::index,
         crate::controllers::branches::show,
         crate::controllers::branches::create,
@@ -136,7 +132,6 @@ const SUPPORT: &str = "
         crate::controllers::branches::unlock,
         crate::controllers::branches::is_locked,
         crate::controllers::branches::list_entry_versions,
-
         // Commits
         crate::controllers::commits::index,
         crate::controllers::commits::history,
@@ -155,11 +150,9 @@ const SUPPORT: &str = "
         crate::controllers::commits::root_commit,
         crate::controllers::commits::upload,
         crate::controllers::commits::complete,
-
         // Merge
         crate::controllers::merger::show,
         crate::controllers::merger::merge,
-        
         // Diff
         crate::controllers::diff::commits,
         crate::controllers::diff::entries,
@@ -171,51 +164,46 @@ const SUPPORT: &str = "
         crate::controllers::diff::get_df_diff,
         crate::controllers::diff::delete_df_diff,
         crate::controllers::diff::get_derived_df,
-
         // Fork
         crate::controllers::fork::fork,
         crate::controllers::fork::get_status,
-
-        // Files (Repository) 
+        // Files (Repository)
         crate::controllers::file::get,
         crate::controllers::file::put,
         crate::controllers::file::upload_zip,
         crate::controllers::file::import,
-
         // DataFrames
         crate::controllers::data_frames::get,
         crate::controllers::data_frames::index,
         crate::controllers::data_frames::from_directory,
-
-        // Directories 
+        // Directories
         crate::controllers::dir::get,
-        
-        // Metadata 
+        // Metadata
         crate::controllers::metadata::file,
         crate::controllers::metadata::update_metadata,
     ),
     components(
         // TODO: I'm not sure if these are all necessary to include
         schemas(
-            // Misc 
+            // Misc
             StatusMessage,
             ParseResourceResponse,
             ImgResize,
-            // Namespaces Schemas 
+            // Namespaces Schemas
             ListNamespacesResponse,
             NamespaceResponse,
             NamespaceView,
-            // Repository Schemas 
+            // Repository Schemas
             ListRepositoryResponse, RepositoryResponse, RepositoryView,
-            RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, 
-            RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, 
+            RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
+            RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse,
             RepositoryStatsView, DataTypeView, DataTypeCount,
             RepoNew, User,
-            // Commit Schemas 
-            CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse, 
-            MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit, 
-            CommitStatsResponse, CommitStats, CommitTreeValidationResponse, 
-            // Workspace Schemas 
+            // Commit Schemas
+            CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
+            MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit,
+            CommitStatsResponse, CommitStats, CommitTreeValidationResponse,
+            // Workspace Schemas
             ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse, MergeableResponse,
             // Merge Schemas
             MergeSuccessResponse, MergeResult, Mergeable, MergeConflictFile,
@@ -225,17 +213,17 @@ const SUPPORT: &str = "
             TabularCompareBody, TabularCompareTargetBody,
             // Fork Schemas
             ForkRequest, ForkStartResponse, ForkStatus,
-            // File/Entry Schemas 
+            // File/Entry Schemas
             CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,            FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
             // Upload & Request Bodies
             crate::controllers::workspaces::files::FileUpload,
             crate::controllers::file::FileUploadBody,
             crate::controllers::file::ZipUploadBody,
             crate::controllers::file::ImportFileBody,
-            FromDirectoryRequest, 
-            // Metadata Schemas 
+            FromDirectoryRequest,
+            // Metadata Schemas
             EMetadataEntryResponseView,
-            GenericMetadata, MetadataDir, MetadataText, MetadataImage, 
+            GenericMetadata, MetadataDir, MetadataText, MetadataImage,
             MetadataVideo, MetadataAudio, MetadataTabular,
         ),
     ),

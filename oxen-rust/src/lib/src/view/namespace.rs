@@ -23,12 +23,10 @@ pub struct ListNamespacesResponse {
     #[serde(flatten)]
     #[schema(
         value_type = StatusMessage,
-        example = json!(
-            { 
-                "status": "success",
-                "status_message": "resource_found" 
-            }
-        )
+        example = json!({
+            "status": "success",
+            "status_message": "resource_found" 
+        })
     )]
     pub status: StatusMessage,
     pub namespaces: Vec<NamespaceView>,

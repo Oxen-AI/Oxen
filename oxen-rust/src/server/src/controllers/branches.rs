@@ -30,7 +30,7 @@ use liboxen::{constants, repositories};
     ),
     responses(
         (
-            status = 200, 
+            status = 200,
             description = "List of branches", 
             body = ListBranchesResponse,
             example = json!({

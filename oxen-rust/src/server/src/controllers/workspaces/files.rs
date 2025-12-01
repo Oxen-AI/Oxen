@@ -334,7 +334,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745")
     ),
     request_body(
-        content = Vec<String>, 
+        content = Vec<String>,
         description = "List of paths to remove from the workspace staging area",
         example = json!(["images/train/dog_1.jpg", "annotations/incorrect.xml"])
     ),
@@ -403,7 +403,7 @@ pub async fn rm_files(
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745")
     ),
     request_body(
-        content = Vec<String>, 
+        content = Vec<String>,
         description = "List of paths to restore/unstage from the workspace staging area",
         example = json!(["images/train/revert_me.jpg", "data/config.json"])
     ),

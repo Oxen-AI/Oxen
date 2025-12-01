@@ -21,7 +21,7 @@ use utoipa;
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
         ("resource" = String, Path, description = "Path to the directory (including branch/commit ID)", example = "main/data/train"),
-        PageNumVersionQuery 
+        PageNumVersionQuery
     ),
     responses(
         (status = 200, description = "Paginated list of directory entries", body = PaginatedDirEntriesResponse),
