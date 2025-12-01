@@ -62,8 +62,6 @@ impl RunCmd for CreateRemoteCmd {
             Arg::new("storage-backend")
                 .long("storage-backend")
                 .help("Set the type of storage backend to save version files.")
-                .default_value("local")
-                .default_missing_value("local")
                 .value_parser(["local", "s3"])
                 .action(clap::ArgAction::Set),
         )
