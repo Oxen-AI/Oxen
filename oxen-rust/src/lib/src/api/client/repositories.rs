@@ -181,21 +181,21 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
     let scheme = repo.scheme();
 
     let url = api::endpoint::url_from_host_and_scheme(&host, "", &scheme);
-    let params = json!({
-        "name": repo_name,
-        "namespace": namespace,
-        "description": repo.description,
-        "is_public": repo.is_public(),
-    });
-    log::debug!("Create remote: {} {}\n{}", url, repo.repo_id(), params);
-
+    let body = serde_json::to_string(&repo)?;
+    log::debug!("Create remote: {} {}\n{}", url, repo.repo_id(), body);
     // no user agent, otherwise the create will fail when going through the hub
     let client = client::new_for_url_no_user_agent(&url)?;
     log::debug!("client: {client:?}");
-    match client.post(&url).json(&params).send().await {
+
+    match client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-
             log::debug!("repositories::create response {body}");
             let response: RepositoryCreationResponse = serde_json::from_str(&body)?;
             Ok(RemoteRepository::from_creation_view(
@@ -659,7 +659,8 @@ mod tests {
         test::run_empty_local_repo_test_async(|local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
-            let repo_new = RepoNew::from_namespace_name_host(namespace, &name, test::test_host());
+            let repo_new =
+                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
             let repository =
                 api::client::repositories::create_from_local(&local_repo, repo_new).await?;
             println!("got repository: {repository:?}");
@@ -685,7 +686,7 @@ mod tests {
                 contents: FileContents::Text(String::from("Hello world!")),
                 user,
             }];
-            let mut repo_new = RepoNew::from_files(namespace, &name, files);
+            let mut repo_new = RepoNew::from_files(namespace, &name, files, None);
             repo_new.host = Some(test::test_host());
             repo_new.scheme = Some("http".to_string());
             let repository = api::client::repositories::create(repo_new).await?;
@@ -734,7 +735,7 @@ mod tests {
             };
 
             let mut repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, test::test_host());
+                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
             repo_new.scheme = Some("http".to_string());
 
             let repository = api::client::repositories::create_repo_with_files(

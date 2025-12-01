@@ -5,9 +5,7 @@ use liboxen::command;
 use liboxen::config::{AuthConfig, UserConfig};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::opts::{LocalStorageOpts, StorageOpts};
-
-use std::path::PathBuf;
+use liboxen::opts::StorageOpts;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "config";
@@ -60,12 +58,20 @@ impl RunCmd for ConfigCmd {
                     .help("Set the type of storage backend to save version files.")
                     .default_value("local")
                     .default_missing_value("local")
+                    .value_parser(["local", "s3"])
                     .action(clap::ArgAction::Set),
             )
             .arg(
                 Arg::new("storage-backend-path")
                     .long("storage-backend-path")
-                    .help("Set the path for storage backend to save version files.")
+                    .help("Set the path for local storage backend or the prefix for s3 storage backend.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-bucket")
+                    .long("storage-backend-bucket")
+                    .help("Set the bucket for s3 storage backend.")
+                    .requires_if("s3", "storage-backend")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -153,28 +159,26 @@ impl RunCmd for ConfigCmd {
             }
         }
 
-        if let Some(path) = args
-            .get_one::<String>("storage-backend-path")
-            .map(PathBuf::from)
+        if (args.get_one::<String>("storage-backend-path").is_some()
+            || args.get_one::<String>("storage-backend-bucket").is_some())
+            && args.get_one::<String>("storage-backend").is_none()
         {
-            let mut repo = LocalRepository::from_current_dir()?;
-            let local_storage_opts = Some(LocalStorageOpts { path: Some(path) });
-            let s3_opts = None;
-
-            // If path is provided, we can infer the type is local
-            let storage_opts = StorageOpts {
-                type_: "local".to_string(),
-                local_storage_opts,
-                s3_opts,
-            };
-
-            match self.set_version_store(&mut repo, &storage_opts) {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("{err}")
-                }
-            }
+            eprintln!("Error: storage-backend must be provided when storage-backend-path or storage-backend-bucket is set")
         }
+
+        let backend = args.get_one::<String>("storage-backend").map(String::from);
+        let path = args
+            .get_one::<String>("storage-backend-path")
+            .map(String::from);
+        let bucket = args
+            .get_one::<String>("storage-backend-bucket")
+            .map(String::from);
+        let storage_opts = StorageOpts::from_args(backend, path, bucket)?;
+
+        let mut repo = LocalRepository::from_current_dir()?;
+        self.set_version_store(&mut repo, storage_opts)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("{e}")))?;
 
         Ok(())
     }
@@ -209,12 +213,14 @@ impl ConfigCmd {
         Ok(())
     }
 
-    pub fn set_version_store(
+    pub async fn set_version_store(
         &self,
         repo: &mut LocalRepository,
-        storage_opts: &StorageOpts,
+        storage_opts: Option<StorageOpts>,
     ) -> Result<(), OxenError> {
-        command::config::set_version_store(repo, storage_opts)?;
+        if let Some(storage_opts) = storage_opts {
+            command::config::set_version_store(repo, &storage_opts).await?;
+        }
 
         Ok(())
     }

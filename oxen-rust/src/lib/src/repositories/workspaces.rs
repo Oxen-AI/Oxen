@@ -1,10 +1,12 @@
-use crate::constants::OXEN_HIDDEN_DIR;
+use crate::config::RepositoryConfig;
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::core;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
+use crate::opts::StorageOpts;
 use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
@@ -78,11 +80,19 @@ pub fn get_by_dir(
         )));
     };
 
+    // Read repo config file for the storage config
+    let config_file = repo.path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
+    let repo_config = RepositoryConfig::from_file(&config_file)?;
+    let storage_opts = repo_config
+        .storage
+        .map(|s| StorageOpts::from_repo_config(repo, &s))
+        .transpose()?;
+
     Ok(Some(Workspace {
         id: config.workspace_id.unwrap_or(workspace_id.to_owned()),
         name: config.workspace_name,
         base_repo: repo.clone(),
-        workspace_repo: LocalRepository::new(workspace_dir)?,
+        workspace_repo: LocalRepository::new(workspace_dir, storage_opts)?,
         commit,
         is_editable: config.is_editable,
     }))

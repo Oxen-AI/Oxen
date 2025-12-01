@@ -176,6 +176,7 @@ pub fn transfer_namespace(
         return Err(OxenError::repo_not_found(RepoNew::from_namespace_name(
             from_namespace,
             repo_name,
+            None,
         )));
     }
 
@@ -223,8 +224,12 @@ pub async fn create(
     util::fs::create_dir_all(&hidden_dir)?;
 
     // Create config file
-    let local_repo = LocalRepository::new(&repo_dir)?;
+    let local_repo = LocalRepository::new(&repo_dir, new_repo.storage_opts)?;
     local_repo.save()?;
+
+    // Initialize version store
+    let version_store = local_repo.version_store()?;
+    version_store.init().await?;
 
     // Create history dir
     let history_dir = util::fs::oxen_hidden_dir(&repo_dir).join(constants::HISTORY_DIR);
@@ -405,7 +410,7 @@ mod tests {
                 contents: FileContents::Text(String::from("Hello world!")),
                 user,
             }];
-            let repo_new = RepoNew::from_files(namespace, name, files);
+            let repo_new = RepoNew::from_files(namespace, name, files, None);
             let _repo = repositories::create(&sync_dir, repo_new).await?;
 
             let repo_path = Path::new(&sync_dir)
@@ -426,7 +431,7 @@ mod tests {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let namespace: &str = "test-namespace";
             let name: &str = "test-repo-name";
-            let repo_new = RepoNew::from_namespace_name(namespace, name);
+            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
             let _repo = repositories::create(&sync_dir, repo_new).await?;
 
             let repo_path = Path::new(&sync_dir)

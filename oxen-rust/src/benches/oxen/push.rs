@@ -180,6 +180,7 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                             DEFAULT_NAMESPACE,
                             iter_dirname,
                             test_host(),
+                            None,
                         );
 
                         let remote_repo = rt
