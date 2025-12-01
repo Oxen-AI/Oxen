@@ -18,8 +18,27 @@ use liboxen::view::{
     StatusMessage,
 };
 
+use utoipa;
 use uuid::Uuid;
 
+/// Get data frame slice
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/{resource}",
+    operation_id = "get_data_frame_slice",
+    tag = "DataFrames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the tabular file (including branch/commit info)", example = "main/data/labels.csv"),
+        DFOptsQuery // Assumes DFOptsQuery derives IntoParams
+    ),
+    responses(
+        (status = 200, description = "Data frame slice found", body = JsonDataFrameViewResponse),
+        (status = 404, description = "File or resource not found")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
@@ -99,6 +118,24 @@ pub async fn get(
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// Start data frame indexing
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}/index",
+    operation_id = "start_data_frame_indexing",
+    tag = "DataFrames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
+        ("resource" = String, Path, description = "Path to the tabular file to index (including branch/commit info)", example = "main/data/weights.csv"),
+    ),
+    responses(
+        (status = 200, description = "Indexing process started or completed", body = StatusMessage),
+        (status = 409, description = "Dataset already indexed"),
+        (status = 404, description = "Resource not found")
+    )
+)]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -135,6 +172,36 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+/// Create data frame from directory
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/data_frames/from_directory/{resource}",
+    operation_id = "create_data_frame_from_directory",
+    tag = "DataFrames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
+        ("resource" = String, Path, description = "Directory path to read from (including branch/commit info)", example = "main/data/images"),
+    ),
+    request_body(
+        content = FromDirectoryRequest,
+        description = "Options for creating a data frame from a directory, including output path, columns, and commit message.",
+        example = json!({
+            "output_path": "data/image_index.csv",
+            "extra_columns": ["size", "extension"],
+            "commit_message": "Generated image index",
+            "user_email": "bessie@oxen.ai",
+            "user_name": "Bessie",
+            "recursive": true
+        })
+    ),
+    responses(
+        (status = 200, description = "Data frame created and committed", body = CommitResponse),
+        (status = 400, description = "Invalid request body or resource path"),
+        (status = 404, description = "Repository or resource not found")
+    )
+)]
 pub async fn from_directory(
     req: HttpRequest,
     body: String,

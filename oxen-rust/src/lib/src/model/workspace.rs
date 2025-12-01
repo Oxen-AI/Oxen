@@ -5,6 +5,8 @@ use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACES_DIR, WORKSPACE_CONFIG};
 use crate::model::{Commit, LocalRepository};
 use crate::util;
 
+use utoipa::ToSchema;
+
 // Define a struct for the workspace config to make it easier to serialize
 #[derive(Serialize, Deserialize)]
 pub struct WorkspaceConfig {
@@ -14,7 +16,7 @@ pub struct WorkspaceConfig {
     pub workspace_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Workspace {
     pub id: String,
     pub name: Option<String>,
@@ -75,7 +77,7 @@ impl From<Workspace> for WorkspaceView {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceView {
     pub name: Option<String>,
     pub id: String,

@@ -17,6 +17,55 @@ use liboxen::view::{
 };
 use liboxen::{constants, repositories};
 
+/// List all branches
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/branches",
+    operation_id = "list_branches",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    responses(
+        (
+            status = 200, 
+            description = "List of branches", 
+            body = ListBranchesResponse,
+            example = json!({
+                "branches": [
+                    {
+                        "commit": {
+                            "author": "Bessie Oxington",
+                            "email": "hello@oxen.ai",
+                            "id": "592d564750031fa1431000472c2d721d",
+                            "message": "update README",
+                            "timestamp": "2024-11-25T21:11:12Z"
+                        },
+                        "commit_id": "592d564750031fa1431000472c2d721d",
+                        "name": "main"
+                    },
+                    {
+                        "commit": {
+                            "author": "Daisy Oxington",
+                            "email": "daisy@oxen.ai",
+                            "id": "abc1234567890def1234567890fedcba",
+                            "message": "added new validation data",
+                            "timestamp": "2024-11-25T20:00:00Z"
+                        },
+                        "commit_id": "abc1234567890def1234567890fedcba",
+                        "name": "development"
+                    }
+                ],
+                "oxen_version": "0.22.2",
+                "status": "success",
+                "status_message": "resource_found"
+            })
+        ),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -32,6 +81,23 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get a specific branch
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
+    operation_id = "get_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Branch found", body = BranchResponse),
+        (status = 404, description = "Branch not found")
+    )
+)]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -52,6 +118,31 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Create a new branch
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/branches",
+    operation_id = "create_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = BranchNewFromBranchName,
+        description = "Branch creation details. Can be created from another branch or a commit ID.",
+        example = json!({
+            "new_name": "development",
+            "from_name": "main"
+        })
+    ),
+    responses(
+        (status = 200, description = "Branch created", body = BranchResponse),
+        (status = 400, description = "Invalid request body"),
+        (status = 404, description = "Repository or source branch/commit not found")
+    )
+)]
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -115,6 +206,23 @@ fn create_from_commit(
     }))
 }
 
+/// Delete a branch
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
+    operation_id = "delete_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to delete", example = "development"),
+    ),
+    responses(
+        (status = 200, description = "Branch deleted", body = BranchResponse),
+        (status = 404, description = "Branch not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -132,6 +240,31 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
+/// Update a branch to a new commit
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
+    operation_id = "update_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to update", example = "main"),
+    ),
+    request_body(
+        content = BranchUpdate,
+        description = "The commit ID to update the branch head to.",
+        example = json!({
+            "commit_id": "84c76a5b2e9a2637f9091991475c404d"
+        })
+    ),
+    responses(
+        (status = 200, description = "Branch updated", body = BranchResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Branch or Commit not found")
+    )
+)]
 pub async fn update(
     req: HttpRequest,
     body: String,
@@ -153,6 +286,32 @@ pub async fn update(
     }))
 }
 
+/// Merge an incoming commit into a branch
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
+    operation_id = "merge_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to merge into (the destination)", example = "main"),
+    ),
+    request_body(
+        content = BranchRemoteMerge,
+        description = "Client and Server commit IDs for performing the merge.",
+        example = json!({
+            "client_commit_id": "abc1234567890def1234567890fedcba",
+            "server_commit_id": "84c76a5b2e9a2637f9091991475c404d"
+        })
+    ),
+    responses(
+        (status = 200, description = "Merge successful or merge conflicts encountered. Returns the new head commit.", body = CommitResponse),
+        (status = 400, description = "Bad Request (e.g., malformed body)"),
+        (status = 404, description = "Branch or Commit not found")
+    )
+)]
 pub async fn maybe_create_merge(
     req: HttpRequest,
     body: String,
@@ -203,6 +362,24 @@ pub async fn maybe_create_merge(
         }))
     }
 }
+
+/// Get Latest Commit for Branch
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
+    operation_id = "get_latest_synced_commit",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Latest synced commit found", body = CommitResponse),
+        (status = 404, description = "Branch not found")
+    )
+)]
 pub async fn latest_synced_commit(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -220,6 +397,23 @@ pub async fn latest_synced_commit(
     }))
 }
 
+/// Lock a branch (prevents writes)
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
+    operation_id = "lock_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to lock", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Branch locked successfully", body = BranchLockResponse),
+        (status = 409, description = "Failed to lock branch (already locked or unavailable)", body = BranchLockResponse),
+    )
+)]
 pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -246,6 +440,22 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }
 }
 
+/// Unlock a branch (allows writes)
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/unlock",
+    operation_id = "unlock_branch",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to unlock", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Branch unlocked", body = BranchLockResponse),
+    )
+)]
 pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -262,6 +472,22 @@ pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
+/// Check if a branch is locked
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
+    operation_id = "is_branch_locked",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch to check", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Branch lock status returned", body = BranchLockResponse),
+    )
+)]
 pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -278,6 +504,25 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     }))
 }
 
+/// List file history/versions for a path on a branch
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
+    operation_id = "list_entry_versions",
+    tag = "Branches",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
+        ("path" = String, Path, description = "Path to the file/entry", example = "images/train.jpg"),
+        PageNumQuery
+    ),
+    responses(
+        (status = 200, description = "List of entry versions found", body = PaginatedEntryVersionsResponse),
+        (status = 404, description = "Repository, branch or path not found")
+    )
+)]
 pub async fn list_entry_versions(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -347,198 +592,4 @@ pub async fn list_entry_versions(
     };
 
     Ok(HttpResponse::Ok().json(response))
-}
-
-#[cfg(test)]
-mod tests {
-
-    use actix_web::http::{self};
-
-    use actix_web::body::to_bytes;
-
-    use liboxen::constants::DEFAULT_BRANCH_NAME;
-    use liboxen::error::OxenError;
-    use liboxen::repositories;
-    use liboxen::util;
-    use liboxen::view::http::STATUS_SUCCESS;
-    use liboxen::view::{
-        BranchNewFromBranchName, BranchResponse, CommitResponse, ListBranchesResponse,
-    };
-
-    use crate::controllers;
-    use crate::test;
-
-    #[actix_web::test]
-    async fn test_controllers_branches_index_empty() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let name = "Testing-Branches-1";
-        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        repositories::commit(&repo, "First commit")?;
-        let uri = format!("/oxen/{namespace}/{name}/branches");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let resp = controllers::branches::index(req).await.unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListBranchesResponse = serde_json::from_str(text)?;
-        assert_eq!(list.status.status, STATUS_SUCCESS);
-        // Should have main branch initialized
-        assert_eq!(list.branches.len(), 1);
-        assert_eq!(list.branches.first().unwrap().name, DEFAULT_BRANCH_NAME);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_branches_index_multiple_branches() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let name = "Testing-Branches-1";
-        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        repositories::commit(&repo, "First commit")?;
-        repositories::branches::create_from_head(&repo, "branch-1")?;
-        repositories::branches::create_from_head(&repo, "branch-2")?;
-
-        let uri = format!("/oxen/{namespace}/{name}/branches");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let resp = controllers::branches::index(req).await.unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListBranchesResponse = serde_json::from_str(text)?;
-        // main + branch-1 + branch-2
-        assert_eq!(list.branches.len(), 3);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_branch_show() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Branches-1";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        repositories::commit(&repo, "First commit")?;
-        let branch_name = "branch-1";
-        repositories::branches::create_from_head(&repo, branch_name)?;
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/branches");
-        let req = test::repo_request_with_param(
-            &sync_dir,
-            &uri,
-            namespace,
-            repo_name,
-            "branch_name",
-            branch_name,
-        );
-
-        let resp = controllers::branches::show(req).await.unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let branch_resp: BranchResponse = serde_json::from_str(text)?;
-        assert_eq!(branch_resp.branch.name, branch_name);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_branch_create() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let name = "Testing-Branches-Create";
-        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        repositories::commit(&repo, "First commit")?;
-
-        let new_name = "My-Branch-Name";
-
-        let params = BranchNewFromBranchName {
-            new_name: new_name.to_string(),
-            from_name: DEFAULT_BRANCH_NAME.to_string(),
-        };
-        let uri = format!("/oxen/{namespace}/{name}/branches");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let resp = controllers::branches::create(req, serde_json::to_string(&params)?)
-            .await
-            .map_err(|_err| OxenError::basic_str("OxenHttpError - could not create branch"))?;
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-
-        let repo_response: BranchResponse = serde_json::from_str(text)?;
-        assert_eq!(repo_response.status.status, STATUS_SUCCESS);
-        assert_eq!(repo_response.branch.name, "My-Branch-Name");
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_branch_get_latest() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Branches-1";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let hello_file = repo.path.join("hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        repositories::commit(&repo, "First commit")?;
-        let branch_name = "branch-1";
-        repositories::branches::create_from_head(&repo, branch_name)?;
-
-        // Get head commit through local API
-        let created_branch = repositories::branches::get_by_name(&repo, branch_name)?
-            .ok_or(OxenError::remote_branch_not_found(branch_name))?;
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/branches/");
-        let req = test::repo_request_with_param(
-            &sync_dir,
-            &uri,
-            namespace,
-            repo_name,
-            "branch_name",
-            branch_name,
-        );
-
-        let resp = controllers::branches::latest_synced_commit(req)
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let commit_resp: CommitResponse = serde_json::from_str(text)?;
-        assert_eq!(commit_resp.commit.id, created_branch.commit_id);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
 }

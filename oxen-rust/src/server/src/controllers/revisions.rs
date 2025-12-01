@@ -7,7 +7,25 @@ use actix_web::{HttpRequest, HttpResponse, Result};
 use liboxen::view::{ParseResourceResponse, StatusMessage};
 
 use log;
+use utoipa;
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/dir/{resource}",
+    operation_id = "get_dir",
+    tag = "Entries",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository"),
+        ("repo_name" = String, Path, description = "Name of the repository"),
+        ("resource" = String, Path, description = "Path to the directory (including branch/commit info)"),
+    ),
+    responses(
+        (status = 200, description = "Directory structure resolved", body = ParseResourceResponse),
+        (status = 404, description = "Directory or repository not found"),
+        (status = 400, description = "Invalid resource string")
+    )
+)]
 pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;

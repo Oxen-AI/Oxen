@@ -6,7 +6,6 @@ use utoipa::ToSchema;
 use super::entries::ResourceVersion;
 use super::StatusMessage;
 
-
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct FileMetadata {
     pub size: u64,
@@ -47,6 +46,6 @@ pub struct ErrorFileInfo {
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct FileWithHash {
     pub hash: String,
-    #[schema(value_type = String)] 
+    #[schema(value_type = String)]
     pub path: PathBuf,
 }

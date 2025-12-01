@@ -25,7 +25,41 @@ use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
 
-use utoipa::OpenApi;
+// Note: These 'view' imports are all for the auto-generated docs with utoipa
+use liboxen::model::metadata::{
+    generic_metadata::GenericMetadata, MetadataAudio, MetadataDir, MetadataImage, MetadataTabular,
+    MetadataText, MetadataVideo,
+};
+use liboxen::model::{Commit, CommitStats, RepoNew};
+use liboxen::view::commit::CommitTreeValidationResponse;
+use liboxen::view::compare::{
+    CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
+    CompareTabular, CompareTabularResponse, TabularCompareBody, TabularCompareTargetBody,
+};
+use liboxen::view::data_frames::FromDirectoryRequest;
+use liboxen::view::diff::{DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse};
+use liboxen::view::entries::{ListCommitEntryResponse, ResourceVersion};
+use liboxen::view::entry_metadata::EMetadataEntryResponseView;
+use liboxen::view::fork::{ForkRequest, ForkStartResponse, ForkStatus};
+use liboxen::view::merge::{
+    MergeConflictFile, MergeResult, MergeSuccessResponse, Mergeable, MergeableResponse,
+};
+use liboxen::view::repository::{
+    DataTypeView, RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
+    RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView,
+};
+use liboxen::view::tree::merkle_hashes::MerkleHashes;
+use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
+use liboxen::view::{
+    CommitEntryVersion, CommitResponse, CommitStatsResponse, DataTypeCount, ErrorFileInfo,
+    ErrorFilesResponse, FilePathsResponse, FileWithHash, ListCommitResponse,
+    ListNamespacesResponse, ListRepositoryResponse, MerkleHashesResponse, NamespaceResponse,
+    NamespaceView, PaginatedCommits, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
+    ParseResourceResponse, RepositoryResponse, RepositoryView, RootCommitResponse, StatusMessage,
+};
+
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 
 use clap::{Arg, Command};
@@ -52,27 +86,188 @@ const SUPPORT: &str = "
             https://discord.gg/s3tBEn7Ptg
 ";
 
+// Exports for the utoipa docs
+// To add new endpoints to the docs, register their respective controller modules and schemas below
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        // Namespaces
+        crate::controllers::namespaces::index,
+        crate::controllers::namespaces::show,
+
+        // Repositories
+        crate::controllers::repositories::index,
+        crate::controllers::repositories::show,
+        crate::controllers::repositories::create,
+        crate::controllers::repositories::delete,
+        crate::controllers::repositories::stats,
+        crate::controllers::repositories::update_size,
+        crate::controllers::repositories::get_size,
+        crate::controllers::repositories::transfer_namespace,
+        
+        // Workspaces  
+        crate::controllers::workspaces::get_or_create,
+        crate::controllers::workspaces::get,
+        crate::controllers::workspaces::create,
+        crate::controllers::workspaces::create_with_new_branch,
+        crate::controllers::workspaces::list,
+        crate::controllers::workspaces::clear,
+        crate::controllers::workspaces::delete,
+        crate::controllers::workspaces::mergeability,
+        crate::controllers::workspaces::commit,
+        
+        // Files (Workspace) 
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
         crate::controllers::workspaces::files::delete,
         crate::controllers::workspaces::files::rm_files,
         crate::controllers::workspaces::files::rm_files_from_staged,
+        
+        // Branches 
+        crate::controllers::branches::index,
+        crate::controllers::branches::show,
+        crate::controllers::branches::create,
+        crate::controllers::branches::delete,
+        crate::controllers::branches::update,
+        crate::controllers::branches::maybe_create_merge,
+        crate::controllers::branches::latest_synced_commit,
+        crate::controllers::branches::lock,
+        crate::controllers::branches::unlock,
+        crate::controllers::branches::is_locked,
+        crate::controllers::branches::list_entry_versions,
+
+        // Commits
+        crate::controllers::commits::index,
+        crate::controllers::commits::history,
+        crate::controllers::commits::list_all,
+        crate::controllers::commits::list_missing,
+        crate::controllers::commits::list_missing_files,
+        crate::controllers::commits::mark_commits_as_synced,
+        crate::controllers::commits::show,
+        crate::controllers::commits::parents,
+        crate::controllers::commits::download_commits_db,
+        crate::controllers::commits::download_dir_hashes_db,
+        crate::controllers::commits::download_commit_entries_db,
+        crate::controllers::commits::create,
+        crate::controllers::commits::upload_chunk,
+        crate::controllers::commits::upload_tree,
+        crate::controllers::commits::root_commit,
+        crate::controllers::commits::upload,
+        crate::controllers::commits::complete,
+
+        // Merge
+        crate::controllers::merger::show,
+        crate::controllers::merger::merge,
+        
+        // Diff
+        crate::controllers::diff::commits,
+        crate::controllers::diff::entries,
+        crate::controllers::diff::dir_tree,
+        crate::controllers::diff::dir_entries,
+        crate::controllers::diff::file,
+        crate::controllers::diff::create_df_diff,
+        crate::controllers::diff::update_df_diff,
+        crate::controllers::diff::get_df_diff,
+        crate::controllers::diff::delete_df_diff,
+        crate::controllers::diff::get_derived_df,
+
+        // Fork
+        crate::controllers::fork::fork,
+        crate::controllers::fork::get_status,
+
+        // Files (Repository) 
+        crate::controllers::file::get,
+        crate::controllers::file::put,
+        crate::controllers::file::upload_zip,
+        crate::controllers::file::import,
+
+        // DataFrames
+        crate::controllers::data_frames::get,
+        crate::controllers::data_frames::index,
+        crate::controllers::data_frames::from_directory,
+
+        // Directories 
+        crate::controllers::dir::get,
+        
+        // Metadata 
+        crate::controllers::metadata::file,
+        crate::controllers::metadata::update_metadata,
     ),
     components(
+        // TODO: I'm not sure if these are all necessary to include
         schemas(
+            // Misc 
+            StatusMessage,
+            ParseResourceResponse,
             ImgResize,
-        )
+            // Namespaces Schemas 
+            ListNamespacesResponse,
+            NamespaceResponse,
+            NamespaceView,
+            // Repository Schemas 
+            ListRepositoryResponse, RepositoryResponse, RepositoryView,
+            RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse, 
+            RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, 
+            RepositoryStatsView, DataTypeView, DataTypeCount,
+            RepoNew, User,
+            // Commit Schemas 
+            CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse, 
+            MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit, 
+            CommitStatsResponse, CommitStats, CommitTreeValidationResponse, 
+            // Workspace Schemas 
+            ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse, MergeableResponse,
+            // Merge Schemas
+            MergeSuccessResponse, MergeResult, Mergeable, MergeConflictFile,
+            // Compare Schemas
+            CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
+            CompareTabular, CompareTabularResponse, DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse,
+            TabularCompareBody, TabularCompareTargetBody,
+            // Fork Schemas
+            ForkRequest, ForkStartResponse, ForkStatus,
+            // File/Entry Schemas 
+            CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,            FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
+            // Upload & Request Bodies
+            crate::controllers::workspaces::files::FileUpload,
+            crate::controllers::file::FileUploadBody,
+            crate::controllers::file::ZipUploadBody,
+            crate::controllers::file::ImportFileBody,
+            FromDirectoryRequest, 
+            // Metadata Schemas 
+            EMetadataEntryResponseView,
+            GenericMetadata, MetadataDir, MetadataText, MetadataImage, 
+            MetadataVideo, MetadataAudio, MetadataTabular,
+        ),
     ),
-    tags(
-        (name = "Oxen", description = "Oxen Data Management API")
-    )
+    modifiers(
+        &SecurityAddon
+    ),
+    servers(
+        (url = "https://hub.oxen.ai", description = "Production API"),
+        (url = "http://localhost:3000", description = "Local Development")
+    ),
+    security(
+        ("api_key" = [])
+    ),
 )]
 struct ApiDoc;
 
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.as_mut().unwrap();
+        components.add_security_scheme(
+            "api_key",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+    }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -215,11 +410,11 @@ async fn main() -> std::io::Result<()> {
                                 enable_auth,
                                 HttpAuthentication::bearer(auth::validator::validate),
                             ))
-                            .service(web::scope("/api/repos").configure(routes::config))
                             .service(
                                 SwaggerUi::new("/swagger-ui/{_:.*}")
-                                    .url("/api-docs/openapi.json", openapi.clone()),
+                                    .url("/api/_spec/openapi.json", openapi.clone()),
                             )
+                            .service(web::scope("/api/repos").configure(routes::config))
                             .default_service(web::route().to(controllers::not_found::index))
                             .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
                             .wrap(Logger::default())

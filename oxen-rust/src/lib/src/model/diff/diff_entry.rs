@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
@@ -15,7 +16,7 @@ use super::generic_diff::GenericDiff;
 use super::generic_diff_summary::GenericDiffSummary;
 use super::tabular_diff_summary::TabularDiffWrapper;
 
-#[derive(Default, Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct DiffEntry {
     pub status: String,
     pub data_type: EntryDataType,

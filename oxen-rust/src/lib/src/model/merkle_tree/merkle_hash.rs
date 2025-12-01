@@ -3,12 +3,14 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
+use utoipa::ToSchema;
+
 use crate::error::OxenError;
 
 // The derived serializer here will serialize the hash as a u128. This is used
 // in the binary representation on disk. We define a custom serializer that uses
 // the string representation of the hash below.
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Deserialize, Serialize, ToSchema)]
 pub struct MerkleHash(u128);
 
 impl MerkleHash {

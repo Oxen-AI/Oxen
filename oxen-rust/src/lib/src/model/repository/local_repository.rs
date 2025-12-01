@@ -15,15 +15,18 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LocalRepository {
+    #[schema(value_type = String)]
     pub path: PathBuf,
     // Optional remotes to sync the data to
     remote_name: Option<String>, // name of the current remote ("origin" by default)
     min_version: Option<String>, // write the version if it is past v0.18.4
     remotes: Vec<Remote>,        // List of possible remotes
     vnode_size: Option<u64>,     // Size of the vnodes
+    #[schema(value_type = Option<Vec<String>>)]
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     pub depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
     pub remote_mode: Option<bool>, // Flag for remote repositories
@@ -32,6 +35,7 @@ pub struct LocalRepository {
 
     // Skip this field during serialization/deserialization
     #[serde(skip)]
+    #[schema(ignore)]
     version_store: Option<Arc<dyn VersionStore>>,
 }
 

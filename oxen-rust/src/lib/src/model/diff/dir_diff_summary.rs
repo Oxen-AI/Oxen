@@ -1,17 +1,18 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{
     error::OxenError,
     model::{diff::AddRemoveModifyCounts, merkle_tree::node::DirNode},
 };
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct DirDiffSummary {
     pub dir: DirDiffSummaryImpl,
 }
 
 // Impl is so that we can wrap the json response in the "dir" field to make summaries easier to distinguish
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct DirDiffSummaryImpl {
     pub file_counts: AddRemoveModifyCounts,
 }

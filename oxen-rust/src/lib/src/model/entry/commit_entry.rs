@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use utoipa::ToSchema;
+
 #[derive(Clone, Debug)]
 pub enum Entry {
     CommitEntry(CommitEntry),
@@ -94,9 +96,10 @@ pub struct CommitPath {
     pub path: PathBuf,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct CommitEntry {
     pub commit_id: String,
+    #[schema(value_type = String)]
     pub path: PathBuf,
     pub hash: String,
     pub num_bytes: u64,
