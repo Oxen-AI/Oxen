@@ -94,6 +94,7 @@ pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteReposito
         constants::DEFAULT_NAMESPACE,
         repo.dirname(),
         test_host(),
+        None,
     );
     api::client::repositories::create_from_local(repo, repo_new).await
 }
@@ -106,6 +107,7 @@ pub async fn create_or_clear_remote_repo(
         constants::DEFAULT_NAMESPACE,
         repo.dirname(),
         test_host(),
+        None,
     );
 
     let remote_name = format!("/{}/{}", constants::DEFAULT_NAMESPACE, repo.dirname());
@@ -298,6 +300,9 @@ where
     log::info!("<<<<< run_empty_local_repo_test_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
+    
+    let version_store = repo.version_store()?;
+    version_store.init().await?;
 
     log::info!(">>>>> run_empty_local_repo_test_async running test");
     let result = match test(repo).await {
@@ -711,7 +716,7 @@ where
     log::info!("<<<<< run_no_commit_remote_repo_test start");
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let namespace = constants::DEFAULT_NAMESPACE;
-    let repo_new = RepoNew::from_namespace_name_host(namespace, name, test_host());
+    let repo_new = RepoNew::from_namespace_name_host(namespace, name, test_host(), None);
     let repo = api::client::repositories::create_empty(repo_new).await?;
 
     // Run test to see if it panic'd
@@ -881,7 +886,7 @@ where
         contents: FileContents::Text(format!("# {}\n", &name)),
         user: user.clone(),
     }];
-    let mut repo = RepoNew::from_files(namespace, &name, files);
+    let mut repo = RepoNew::from_files(namespace, &name, files, None);
     repo.host = Some(test_host());
     repo.is_public = Some(true);
     repo.scheme = Some("http".to_string());
@@ -1068,6 +1073,9 @@ where
     log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
+
+    let version_store = repo.version_store()?;
+    version_store.init().await?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
