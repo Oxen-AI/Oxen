@@ -202,6 +202,61 @@ pub async fn put(
     }))
 }
 
+
+/// Remove file in place (rm from temp workspace and commit)
+pub async fn delete(
+    req: HttpRequest,
+    payload: Multipart,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::put path {:?}", req.path());
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    // Parse the resource (branch/commit/path)
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    let (name, email, message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
+
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let paths: Vec<PathBuf> = temp_files.iter().map(|f| f.path.clone()).collect();
+
+    // Stage the files as removed
+    for path in paths {
+        repositories::workspaces::files::rm(&workspace, &path).await?;
+    }
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: name.clone().unwrap_or("".to_string()),
+        email: email.clone().unwrap_or("".to_string()),
+        message: message.clone().unwrap_or(format!(
+            "Auto-commit files to {}",
+            &resource.path.to_string_lossy()
+        )),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+
+    log::debug!("file::delete workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_deleted(),
+        commit,
+    }))
+}
+
+
 pub async fn upload_zip(
     req: HttpRequest,
     payload: Multipart,

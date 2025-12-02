@@ -8,6 +8,7 @@ pub fn file() -> Scope {
         .route("/{resource:.*}", web::get().to(controllers::file::get))
         .route("/{resource:.*}", web::head().to(controllers::file::get))
         .route("/{resource:.*}", web::put().to(controllers::file::put))
+        .route("/{resource:.*}", web::delete().to(controllers::file::delete))
         .route(
             "/upload_zip/{resource:.*}",
             web::post().to(controllers::file::upload_zip),
