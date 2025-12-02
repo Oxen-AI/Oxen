@@ -62,6 +62,8 @@ impl RunCmd for CreateRemoteCmd {
             Arg::new("storage-backend")
                 .long("storage-backend")
                 .help("Set the type of storage backend to save version files.")
+                .default_value("local")
+                .default_missing_value("local")
                 .value_parser(["local", "s3"])
                 .action(clap::ArgAction::Set),
         )
@@ -87,15 +89,6 @@ impl RunCmd for CreateRemoteCmd {
                 "Must supply a namespace/name for the remote repository.",
             ));
         };
-
-        if (args.get_one::<String>("storage-backend-path").is_some()
-            || args.get_one::<String>("storage-backend-bucket").is_some())
-            && args.get_one::<String>("storage-backend").is_none()
-        {
-            return Err(OxenError::basic_str(
-                "storage-backend must be provided when storage-backend-path or storage-backend-bucket is set",
-            ));
-        }
 
         let backend = args.get_one::<String>("storage-backend").map(String::from);
         let path = args

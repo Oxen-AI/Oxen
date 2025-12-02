@@ -6,8 +6,8 @@ use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::{Remote, RemoteRepository, RepoNew};
-use liboxen::opts::{LocalStorageOpts, StorageOpts, S3Opts};
 use liboxen::opts::PaginateOpts;
+use liboxen::opts::StorageOpts;
 use liboxen::{api, repositories};
 
 use std::borrow::Cow;
@@ -132,10 +132,21 @@ impl PyRemoteRepo {
     }
 
     #[pyo3(signature = (empty, is_public, storage_backend=None, storage_backend_path=None, storage_backend_bucket=None))]
-    fn create(&mut self, empty: bool, is_public: bool, storage_backend: Option<String>, storage_backend_path: Option<String>, storage_backend_bucket: Option<String>,) -> Result<PyRemoteRepo, PyOxenError> {
+    fn create(
+        &mut self,
+        empty: bool,
+        is_public: bool,
+        storage_backend: Option<String>,
+        storage_backend_path: Option<String>,
+        storage_backend_bucket: Option<String>,
+    ) -> Result<PyRemoteRepo, PyOxenError> {
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             // parse storage backend options
-            let storage_opts = StorageOpts::from_args(storage_backend, storage_backend_path, storage_backend_bucket)?;
+            let storage_opts = StorageOpts::from_args(
+                storage_backend,
+                storage_backend_path,
+                storage_backend_bucket,
+            )?;
 
             if empty {
                 let mut repo = RepoNew::from_namespace_name_host(
@@ -155,7 +166,8 @@ impl PyRemoteRepo {
                     contents: FileContents::Text(format!("# {}\n", &self.repo.name)),
                     user: user.clone(),
                 }];
-                let mut repo = RepoNew::from_files(&self.repo.namespace, &self.repo.name, files, storage_opts);
+                let mut repo =
+                    RepoNew::from_files(&self.repo.namespace, &self.repo.name, files, storage_opts);
                 repo.host = Some(self.host.clone());
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());

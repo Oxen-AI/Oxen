@@ -42,6 +42,13 @@ pub fn get_repo(
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    name, description, is_public, host,
+    scheme, files, storage_backend=None,
+    storage_backend_path=None, storage_backend_bucket=None
+))]
+// TODO: create a python class for storage opts to reduce the number of arguments
 pub fn create_repo(
     name: String,
     description: String,
@@ -49,8 +56,8 @@ pub fn create_repo(
     host: String,
     scheme: String,
     files: Vec<(String, String)>,
-    storage_backend: Option<String>, 
-    storage_backend_path: Option<String>, 
+    storage_backend: Option<String>,
+    storage_backend_path: Option<String>,
     storage_backend_bucket: Option<String>,
 ) -> Result<PyRemoteRepo, PyOxenError> {
     // Check that name is valid ex: :namespace/:repo_name
@@ -64,9 +71,14 @@ pub fn create_repo(
     pyo3_async_runtimes::tokio::get_runtime().block_on(async {
         let config = UserConfig::get()?;
         let user = config.to_user();
-        let storage_opts = StorageOpts::from_args(storage_backend, storage_backend_path, storage_backend_bucket)?;
+        let storage_opts = StorageOpts::from_args(
+            storage_backend,
+            storage_backend_path,
+            storage_backend_bucket,
+        )?;
         if files.is_empty() {
-            let mut repo = RepoNew::from_namespace_name_host(namespace, repo_name, host.clone(), storage_opts);
+            let mut repo =
+                RepoNew::from_namespace_name_host(namespace, repo_name, host.clone(), storage_opts);
             if !description.is_empty() {
                 repo.description = Some(description);
             }
