@@ -128,6 +128,40 @@ pub async fn get_file_thumbnail(
     .await
 }
 
+/// Delete a file in place (rm from a temp workspace and commit)
+pub async fn delete_file(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let directory = directory.as_ref();
+    let file_path = file_path.as_ref();
+    let uri = format!("/file/{branch}/{directory}");
+    log::debug!("delete_file {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let file_part = Part::file(file_path).await?;
+
+    let mut form = Form::new().part("file", file_part);
+
+    if let Some(body) = commit_body {
+        form = form.text("name", body.author);
+        form = form.text("email", body.email);
+        form = form.text("message", body.message);
+    }
+
+    let req = client.put(&url).multipart(form);
+
+    let res = req.send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: CommitResponse = serde_json::from_str(&body)?;
+    Ok(response)
+}
+
 /// Upload a ZIP file that gets extracted into the workspace directory
 pub async fn upload_zip(
     remote_repo: &RemoteRepository,

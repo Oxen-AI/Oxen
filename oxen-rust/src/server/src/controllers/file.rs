@@ -397,7 +397,7 @@ pub async fn delete(
     let (name, email, message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
-    let paths: Vec<PathBuf> = temp_files.iter().map(|f| f.path.clone()).collect();
+    let paths: Vec<PathBuf> = temp_files.iter().map(|f| resource.path.join(f.path.clone())).collect();
 
     // Stage the files as removed
     for path in paths {
