@@ -363,7 +363,32 @@ class RemoteRepo:
             self._workspace = None
         return commit
 
-    def upload(
+    def delete_file(
+        self,
+        src: str,
+        commit_message: str,
+        file_name: Optional[str] = None,
+        dst_dir: Optional[str] = "",
+        branch: Optional[str] = None,
+    ):
+        """
+        Delete a file from the remote repo.
+
+        Args:
+            src: `str`
+                The path to the local file to remove
+            dst_dir: `str | None`
+                The directory to remove the file from. Defaults to the root dir
+            branch: `str | None`
+                The branch to remove the file from. Defaults to `self.revision`
+        """
+        if branch is None:
+            branch = self.revision
+        user = oxen_user.current_user()
+
+        self._repo.delete_file(branch, dst_dir, src, commit_message, user)
+
+        def upload(
         self,
         src: str,
         commit_message: str,

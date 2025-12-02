@@ -243,7 +243,7 @@ impl PyRemoteRepo {
     fn delete_file(
         &self,
         branch: &str,
-        directory: &str,
+        dir: &str,
         local_path: PathBuf,
         commit_message: &str,
         user: PyUser,
@@ -257,7 +257,7 @@ impl PyRemoteRepo {
             api::client::file::delete_file(
                 &self.repo,
                 &branch,
-                &directory,
+                &dir,
                 &local_path,
                 Some(commit_body),
             )
