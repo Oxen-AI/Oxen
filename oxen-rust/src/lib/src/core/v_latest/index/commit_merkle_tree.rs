@@ -790,6 +790,10 @@ impl CommitMerkleTree {
 
         let vnodes = dir_merkle_node.children;
 
+        if vnodes.is_empty() {
+            log::debug!("dir_merkle_node for path {parent_path:?} has no children, returning None");
+            return Ok(None);
+        }
         // log::debug!("read_file vnodes: {}", vnodes.len());
 
         // Calculate the total number of children in the vnodes
