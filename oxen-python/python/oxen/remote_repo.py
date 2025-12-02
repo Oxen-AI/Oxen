@@ -374,7 +374,9 @@ class RemoteRepo:
 
         Args:
             src: `str`
-                The path to the local file to remove
+                The path to the remote file to remove
+            message: `str`
+                The message to commit with
             branch: `str | None`
                 The branch to remove the file from. Defaults to `self.revision`
         """
@@ -398,6 +400,8 @@ class RemoteRepo:
         Args:
             src: `str`
                 The path to the local file to upload
+            message: `str`
+                The message to commit with
             file_name: `str | None`
                 The name of the file to upload. If None, will use the name of the file in `src`
             dst_dir: `str | None`
