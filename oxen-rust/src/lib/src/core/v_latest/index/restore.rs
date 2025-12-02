@@ -29,64 +29,66 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     // Get the version store from the repository
     let version_store = repo.version_store()?;
 
-    let path = opts.path;
+    let paths = opts.paths;
+    log::debug!("restore::restore got {:?} paths", paths.len());
+
     let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
 
-    let dir = repositories::tree::get_dir_with_children_recursive(repo, &commit, &path, None)?;
+    let repo_path = repo.path.clone();
 
-    match dir {
-        Some(dir) => {
-            log::debug!("restore::restore: restoring directory");
-            restore_dir(repo, dir, &path, &version_store).await
-        }
-        None => {
-            log::debug!("restore::restore: restoring file");
-            match repositories::tree::get_node_by_path_with_children(repo, &commit, &path) {
-                Ok(Some(node)) => {
-                    log::debug!("restore::restore: got merkle tree {:?}", node.node);
-                    if !matches!(&node.node, EMerkleTreeNode::File(_)) {
-                        return Err(OxenError::basic_str("Path is not a file"));
+    for path in paths {
+        let path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        let Some(node) = repositories::tree::get_node_by_path_with_children(repo, &commit, &path)?
+        else {
+            log::error!(
+                "path {:?} not found in tree for commit {:?}",
+                path,
+                commit.id
+            );
+            continue;
+        };
+
+        match &node.node {
+            EMerkleTreeNode::Directory(_dir_node) => {
+                log::debug!("restore::restore: restoring directory");
+                match restore_dir(repo, node, &path, &version_store).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!(
+                            "restore::restore_dir failed for dir {path:?} with error {e:?}"
+                        );
                     }
-
-                    let child_file = node.file().unwrap();
-
-                    restore_file(repo, &child_file, &path, &version_store).await
                 }
-                Ok(None) => Err(OxenError::basic_str(format!(
-                    "Merkle tree for commit {commit:?} not found"
-                ))),
-                Err(OxenError::Basic(msg))
-                    if msg.to_string().contains("Merkle tree hash not found") =>
-                {
-                    log::warn!("restore::restore: No file found at path {path:?}");
-                    println!("No file found at the specified path: {path:?}");
-                    Err(OxenError::basic_str("No file found at the specified path"))
+            }
+            EMerkleTreeNode::File(file_node) => {
+                match restore_file(repo, file_node, &path, &version_store).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!(
+                            "restore::restore_file failed for file {path:?} with error {e:?}"
+                        );
+                    }
                 }
-                Err(e) => Err(e),
+            }
+            _ => {
+                return Err(OxenError::basic_str("Error: Unexpected node type"));
             }
         }
     }
+
+    Ok(())
 }
 
 fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore_staged: start");
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
     if let Some(db) = open_staged_db(&db_path)? {
-        let mut batch = WriteBatch::default();
+        for path in &opts.paths {
+            let mut batch = WriteBatch::default();
 
-        if opts.path == PathBuf::from(".") {
-            // If path is ".", remove all staged entries
-            for result in db.iterator(rocksdb::IteratorMode::Start) {
-                match result {
-                    Ok((key, _)) => batch.delete(key),
-                    Err(e) => return Err(OxenError::basic_str(&e)),
-                }
-            }
-            log::debug!("restore::restore_staged: prepared to clear all staged entries");
-        } else {
             // Remove specific staged entry or entries under a directory
-            let prefix = opts.path.to_string_lossy().into_owned();
+            let prefix = path.to_string_lossy().into_owned();
             for result in db.iterator(rocksdb::IteratorMode::From(
                 prefix.as_bytes(),
                 rocksdb::Direction::Forward,
@@ -144,9 +146,8 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                 parent_path = parent.to_path_buf();
             }
             db.write(parent_batch)?;
+            log::debug!("restore::restore_staged: changes committed to the database");
         }
-
-        log::debug!("restore::restore_staged: changes committed to the database");
     } else {
         log::debug!("restore::restore_staged: no staged database found");
     }
@@ -179,7 +180,7 @@ async fn restore_dir(
         file_nodes_with_paths.len()
     );
 
-    let msg = format!("Restoring Directory: {dir:?}");
+    let msg = format!("Restoring Directory: {path:?}");
     let bar =
         util::progress_bar::oxen_progress_bar_with_msg(file_nodes_with_paths.len() as u64, &msg);
 

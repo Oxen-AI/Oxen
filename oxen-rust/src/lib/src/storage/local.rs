@@ -362,7 +362,7 @@ impl VersionStore for LocalVersionStore {
                 fs::remove_dir_all(&chunks_dir).await?;
             }
         }
-        
+
         Ok(version_path)
     }
 

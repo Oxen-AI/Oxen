@@ -55,6 +55,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -544,9 +545,12 @@ mod tests {
             assert_eq!(status.staged_files.len(), 7);
             assert_eq!(status.removed_files.len(), 0);
 
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("images/*"));
+
             // Restore staged with wildcard
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("images/*"),
+                paths,
                 staged: true,
                 source_ref: None,
                 is_remote: false,
@@ -560,8 +564,11 @@ mod tests {
             assert_eq!(status.removed_files.len(), 7);
             assert_eq!(status.staged_files.len(), 0);
 
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("images/*"));
+
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("images/*"),
+                paths,
                 staged: false,
                 source_ref: None,
                 is_remote: false,
@@ -593,9 +600,12 @@ mod tests {
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 7); // 3 cats, 4 dogs
 
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("train/dog_*.jpg"));
+
             // Restore just the dogs from the stage
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("train/dog_*.jpg"),
+                paths,
                 staged: true,
                 source_ref: None,
                 is_remote: false,
@@ -652,8 +662,11 @@ mod tests {
             assert_eq!(status.staged_schemas.len(), 2);
 
             // Restore *.csv
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("new_annotations").join(PathBuf::from("*.csv")));
+
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("new_annotations").join(PathBuf::from("*.csv")),
+                paths,
                 staged: true,
                 source_ref: None,
                 is_remote: false,

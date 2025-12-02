@@ -7,8 +7,8 @@ use std::env;
 use liboxen::api;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::opts::RestoreOpts;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::cmd::{restore::restore_args, RunCmd};
@@ -35,6 +35,8 @@ impl RunCmd for WorkspaceRestoreCmd {
             })
             .collect::<Result<Vec<PathBuf>, OxenError>>()?;
 
+        let paths: HashSet<PathBuf> = HashSet::from_iter(paths.iter().cloned());
+
         let repo_dir = env::current_dir().unwrap();
         let repository = LocalRepository::from_dir(&repo_dir)?;
 
@@ -47,28 +49,12 @@ impl RunCmd for WorkspaceRestoreCmd {
             UserConfig::identifier()?
         };
 
-        // TODO: Refactor to do the restore for all pathsin 1 API call
+        // TODO: Refactor this to restore all paths in 1 API call
         for path in paths {
-            let opts = if let Some(source) = args.get_one::<String>("source") {
-                RestoreOpts {
-                    path,
-                    staged: args.get_flag("staged"),
-                    is_remote: true,
-                    source_ref: Some(String::from(source)),
-                }
-            } else {
-                RestoreOpts {
-                    path,
-                    staged: args.get_flag("staged"),
-                    is_remote: true,
-                    source_ref: None,
-                }
-            };
-
             api::client::workspaces::data_frames::restore(
                 &remote_repo,
                 &workspace_identifier,
-                opts.path.to_owned(),
+                &path,
             )
             .await?;
         }

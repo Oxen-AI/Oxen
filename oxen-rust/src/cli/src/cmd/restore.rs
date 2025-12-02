@@ -5,7 +5,9 @@ use clap::{Arg, ArgMatches, Command};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::opts::RestoreOpts;
-use liboxen::repositories;
+
+use liboxen::{repositories, util};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::cmd::RunCmd;
@@ -55,30 +57,35 @@ impl RunCmd for RestoreCmd {
             .get_many::<String>("paths")
             .expect("Must supply paths")
             .map(|p| -> Result<PathBuf, OxenError> {
-                let path = PathBuf::from(p);
-                Ok(path)
+                let current_dir = std::env::current_dir().map_err(|e| {
+                    log::warn!("Failed to get current directory: {e}");
+                    OxenError::basic_str(format!("Failed to get current directory: {e}"))
+                })?;
+                let joined_path = current_dir.join(p);
+
+                util::fs::canonicalize(&joined_path).or_else(|_| Ok(joined_path))
             })
             .collect::<Result<Vec<PathBuf>, OxenError>>()?;
 
-        for path in paths {
-            let opts = if let Some(source) = args.get_one::<String>("source") {
-                RestoreOpts {
-                    path,
-                    staged: args.get_flag("staged"),
-                    is_remote: false,
-                    source_ref: Some(String::from(source)),
-                }
-            } else {
-                RestoreOpts {
-                    path,
-                    staged: args.get_flag("staged"),
-                    is_remote: false,
-                    source_ref: None,
-                }
-            };
+        let paths: HashSet<PathBuf> = HashSet::from_iter(paths.iter().cloned());
 
-            repositories::restore::restore(&repository, opts).await?;
-        }
+        let opts = if let Some(source) = args.get_one::<String>("source") {
+            RestoreOpts {
+                paths,
+                staged: args.get_flag("staged"),
+                is_remote: false,
+                source_ref: Some(String::from(source)),
+            }
+        } else {
+            RestoreOpts {
+                paths,
+                staged: args.get_flag("staged"),
+                is_remote: false,
+                source_ref: None,
+            }
+        };
+
+        repositories::restore::restore(&repository, opts).await?;
 
         Ok(())
     }
