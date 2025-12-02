@@ -53,6 +53,13 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     }
 }
 
+pub async fn combine_chunks(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::restore::combine_chunks(repo, opts).await,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -664,6 +671,70 @@ mod tests {
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 0);
             assert_eq!(status.staged_schemas.len(), 0);
+
+            Ok(())
+        })
+        .await
+    }
+
+    // Simulates a scenario where the version chunks for a large file fail to combine on fetch
+    // This should never actually happen and would reflect an error in elsewhere in the codebase
+    #[tokio::test]
+    async fn test_combine_chunks_and_restore_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Add a 'large file' to the repo
+            let file_content = "Theoretically, this would be a file larger than AVG_CHUNK_SIZE";
+            let large_filename = "large.txt";
+            let large_file = repo.path.join(large_filename);
+            util::fs::write_to_path(&large_file, file_content)?;
+
+            repositories::add(&repo, &large_file).await?;
+            let commit = repositories::commit(&repo, "Added a very large file!")?;
+            let file_node =
+                repositories::tree::get_file_by_path(&repo, &commit, large_filename)?.unwrap();
+            let hash = file_node.hash();
+            let hash_str = format!("{hash:?}");
+
+            // Manually split overwrite its contents in version store
+            let version_store = repo.version_store()?;
+            let version_path = version_store.get_version_path(&hash_str)?;
+            util::fs::write_to_path(&version_path, "Incorrect content")?;
+
+            // Write version chunks
+            let chunk_1 = 15;
+            let chunk_2 = 21;
+            let chunk_3 = 26;
+
+            let bytes = file_content.as_bytes();
+
+            let chunk_1_content = &bytes[..chunk_1]; // "Theoretically, "
+            let chunk_2_content = &bytes[chunk_1..(chunk_1 + chunk_2)]; // "this would be a file "
+            let chunk_3_content = &bytes[(chunk_1 + chunk_2)..]; // "larger than AVG_CHUNK_SIZE"
+
+            version_store
+                .store_version_chunk(&hash_str, chunk_1.try_into().unwrap(), chunk_1_content)
+                .await?;
+            version_store
+                .store_version_chunk(&hash_str, chunk_2.try_into().unwrap(), chunk_2_content)
+                .await?;
+            version_store
+                .store_version_chunk(&hash_str, chunk_3.try_into().unwrap(), chunk_3_content)
+                .await?;
+
+            // Remove and restore the file
+            util::fs::remove_file(&large_file)?;
+
+            let restore_opts = RestoreOpts::from_path(large_filename);
+            repositories::restore::combine_chunks(&repo, restore_opts).await?;
+
+            // Assert the file exists, the content matches, and the version chunks are removed
+            assert!(large_file.exists());
+
+            let content = util::fs::read_from_path(&large_file)?;
+            assert_eq!(content, file_content);
+
+            let chunks_dir = version_path.join("chunks");
+            assert!(!chunks_dir.exists());
 
             Ok(())
         })

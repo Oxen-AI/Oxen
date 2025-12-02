@@ -36,6 +36,13 @@ pub fn restore_args() -> Command {
                 .action(clap::ArgAction::SetTrue)
                 .requires("paths"),
         )
+        .arg(
+            Arg::new("combine-chunks")
+                .long("combine-chunks")
+                .help("Build complete file from file chunks and restore to working directory")
+                .action(clap::ArgAction::SetTrue)
+                .requires("paths"),
+        )
 }
 
 #[async_trait]
@@ -49,8 +56,8 @@ impl RunCmd for RestoreCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
-        let repository = LocalRepository::from_current_dir()?;
-        check_repo_migration_needed(&repository)?;
+        let repo = LocalRepository::from_current_dir()?;
+        check_repo_migration_needed(&repo)?;
         let paths: Vec<PathBuf> = args
             .get_many::<String>("paths")
             .expect("Must supply paths")
@@ -63,21 +70,25 @@ impl RunCmd for RestoreCmd {
         for path in paths {
             let opts = if let Some(source) = args.get_one::<String>("source") {
                 RestoreOpts {
-                    path,
+                    path: path.clone(),
                     staged: args.get_flag("staged"),
                     is_remote: false,
                     source_ref: Some(String::from(source)),
                 }
             } else {
                 RestoreOpts {
-                    path,
+                    path: path.clone(),
                     staged: args.get_flag("staged"),
                     is_remote: false,
                     source_ref: None,
                 }
             };
 
-            repositories::restore::restore(&repository, opts).await?;
+            if args.get_flag("combine-chunks") {
+                repositories::restore::combine_chunks(&repo, opts).await?;
+            } else {
+                repositories::restore::restore(&repo, opts).await?;
+            }
         }
 
         Ok(())
