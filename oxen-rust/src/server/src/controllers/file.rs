@@ -412,7 +412,7 @@ pub async fn delete(
         author: name.clone().unwrap_or("".to_string()),
         email: email.clone().unwrap_or("".to_string()),
         message: message.clone().unwrap_or(format!(
-            "Auto-commit files to {}",
+            "Delete files from {}",
             &resource.path.to_string_lossy()
         )),
     };
