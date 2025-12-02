@@ -132,26 +132,29 @@ pub async fn get_file_thumbnail(
 pub async fn delete_file(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
-    directory: impl AsRef<str>,
     file_path: impl AsRef<Path>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
     let branch = branch.as_ref();
-    let directory = directory.as_ref();
     let file_path = file_path.as_ref();
     let Some(file_name) = file_path.file_name() else {
         return Err(OxenError::basic_str("Cannot delete file without file name"));
     };
+
+    let file_name = file_name.to_str().unwrap().to_string();
+    let parents = file_path.parent().unwrap_or(Path::new(""));
+
+    let directory = parents.to_str().unwrap().to_string();
 
     let uri = format!("/file/{branch}/{directory}");
     log::debug!("delete_file {uri:?}, file_path {file_path:?}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
-    let file_part = Part::file(file_path).await?;
-    let file_part = file_part.file_name(file_name.to_str().unwrap().to_string());
+    let file_part = Part::text(file_name.clone());
+    let file_part = file_part.file_name(file_name.clone());
 
-    let mut form = Form::new().part("file", file_part);
+    let mut form = Form::new().part("file_name", file_part);
 
     if let Some(body) = commit_body {
         form = form.text("name", body.author);
@@ -159,7 +162,7 @@ pub async fn delete_file(
         form = form.text("message", body.message);
     }
 
-    let req = client.put(&url).multipart(form);
+    let req = client.delete(&url).multipart(form);
 
     let res = req.send().await?;
     let body = client::parse_json_body(&url, res).await?;

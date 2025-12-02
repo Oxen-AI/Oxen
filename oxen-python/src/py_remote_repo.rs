@@ -243,7 +243,6 @@ impl PyRemoteRepo {
     fn delete_file(
         &self,
         branch: &str,
-        dir: &str,
         local_path: PathBuf,
         commit_message: &str,
         user: PyUser,
@@ -254,14 +253,8 @@ impl PyRemoteRepo {
             email: user.email().to_string(),
         };
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::file::delete_file(
-                &self.repo,
-                &branch,
-                &dir,
-                &local_path,
-                Some(commit_body),
-            )
-            .await
+            api::client::file::delete_file(&self.repo, &branch, &local_path, Some(commit_body))
+                .await
         })?;
 
         Ok(())
