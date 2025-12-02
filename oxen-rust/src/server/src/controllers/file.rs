@@ -376,7 +376,7 @@ pub async fn delete(
     req: HttpRequest,
     payload: Multipart,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    log::debug!("file::put path {:?}", req.path());
+    log::debug!("file::delete path {:?}", req.path());
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -397,7 +397,7 @@ pub async fn delete(
     let (name, email, message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
-    let paths: Vec<PathBuf> = temp_files.iter().map(|f| resource.path.join(f.path.clone())).collect();
+    let paths: Vec<PathBuf> = temp_files.iter().map(|f| f.path.clone()).collect();
 
     // Stage the files as removed
     for path in paths {
@@ -424,6 +424,7 @@ pub async fn delete(
     }))
 }
 
+<<<<<<< HEAD
 /// Upload zip archive
 #[utoipa::path(
     post,
@@ -444,6 +445,8 @@ pub async fn delete(
         (status = 400, description = "Bad Request")
     )
 )]
+=======
+>>>>>>> e9d2181bc (Update delete file endpoint for python method)
 pub async fn upload_zip(
     req: HttpRequest,
     payload: Multipart,

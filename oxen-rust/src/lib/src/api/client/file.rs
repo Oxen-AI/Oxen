@@ -139,12 +139,17 @@ pub async fn delete_file(
     let branch = branch.as_ref();
     let directory = directory.as_ref();
     let file_path = file_path.as_ref();
+    let Some(file_name) = file_path.file_name() else {
+        return Err(OxenError::basic_str("Cannot delete file without file name"));
+    };
+
     let uri = format!("/file/{branch}/{directory}");
     log::debug!("delete_file {uri:?}, file_path {file_path:?}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
     let file_part = Part::file(file_path).await?;
+    let file_part = file_part.file_name(file_name.to_str().unwrap().to_string());
 
     let mut form = Form::new().part("file", file_part);
 
