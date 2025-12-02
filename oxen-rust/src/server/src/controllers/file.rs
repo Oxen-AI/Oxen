@@ -398,7 +398,13 @@ pub async fn delete(
     // Get files to remove from payload
     let (name, email, message, file_names, _temp_files) =
         parse_multipart_fields_for_repo(payload).await?;
+
     let paths: Vec<PathBuf> = file_names.iter().map(|f| resource.path.join(f)).collect();
+    if paths.is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            "No files specified for deletion".into(),
+        ));
+    }
 
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
 

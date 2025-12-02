@@ -346,7 +346,7 @@ mod tests {
             repositories::pull(&local_repo).await?;
 
             // Assert the commit was made and the file is removed
-            assert!(!file_path.exists());
+            assert!(!local_repo.path.join(&file_path).exists());
             let commit = commit_response.commit;
 
             let deleted_file_node =
