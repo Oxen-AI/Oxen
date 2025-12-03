@@ -1962,7 +1962,7 @@ mod tests {
             let remote_repo_clone = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 // Create an empty repo locally
-                let mut local_repo = LocalRepository::new(dir)?;
+                let mut local_repo = LocalRepository::new(dir, None)?;
 
                 // Add and commit a new file
                 let hello_file = local_repo.path.join("dir").join("hello.txt");
