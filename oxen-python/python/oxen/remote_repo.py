@@ -363,28 +363,54 @@ class RemoteRepo:
             self._workspace = None
         return commit
 
-    def delete_file(
+    def delete_entry(
         self,
-        src: str,
-        commit_message: str,
+        file_path: str,
+        commit_message: Optional[str] = None,
         branch: Optional[str] = None,
     ):
         """
-        Delete a file from the remote repo.
-
+        Delete a file from the remote repo
         Args:
-            src: `str`
+            path: `str`
                 The path to the remote file to remove
             message: `str`
-                The message to commit with
+                The message to commit with. Defaults to "Removed '{file_path}'"
             branch: `str | None`
                 The branch to remove the file from. Defaults to `self.revision`
         """
         if branch is None:
             branch = self.revision
+        if commit_message is None:
+            message = f"Removed '{file_path}'"
         user = oxen_user.current_user()
 
-        self._repo.delete_file(branch, src, commit_message, user)
+        self._repo.delete_file(branch, file_path, message, user)
+
+    def delete_dir(
+        self,
+        dir_path: str,
+        commit_message: Optional[str] = None,
+        branch: Optional[str] = None,
+    ):
+        """
+        Delete an entry from the remote repo. This can be a file or a dir
+
+        Args:
+            path: `str`
+                The path to the remote entry to remove
+            message: `str`
+                The message to commit with. Defaults to 'Removed {dir_path}'
+            branch: `str | None`
+                The branch to remove the entry from. Defaults to `self.revision`
+        """
+        if branch is None:
+            branch = self.revision
+        if commit_message is None:
+            message = f"Removed {path}"
+        user = oxen_user.current_user()
+
+        self._repo.delete_dir(branch, dir_path, message, user)
 
     def upload(
         self,
@@ -413,6 +439,8 @@ class RemoteRepo:
             branch = self.revision
         if file_name is None:
             file_name = os.path.basename(src)
+        if commit_message is None:
+            commit_message = f"Removed {os.path(src)}"
         user = oxen_user.current_user()
 
         self._repo.put_file(branch, dst_dir, src, file_name, commit_message, user)

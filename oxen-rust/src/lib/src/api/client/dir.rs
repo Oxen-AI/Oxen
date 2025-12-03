@@ -6,9 +6,13 @@ use crate::constants;
 use crate::error::OxenError;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
+use crate::model::NewCommitBody;
 use crate::model::RemoteRepository;
 use crate::view::entries::EMetadataEntry;
+use crate::view::CommitResponse;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
+use reqwest::multipart::Form;
+use reqwest::multipart::Part;
 
 pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEntries, OxenError> {
     list(
@@ -91,6 +95,47 @@ pub async fn get_dir(
             "api::dir::get_dir error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
+}
+
+pub async fn delete_dir(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    dir_path: impl AsRef<Path>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let dir_path = dir_path.as_ref();
+    let Some(dir_name) = dir_path.file_name() else {
+        return Err(OxenError::basic_str("Cannot delete dir without dir name"));
+    };
+
+    let dir_name = dir_name.to_str().unwrap().to_string();
+    let parents = dir_path.parent().unwrap_or(Path::new(""));
+
+    let directory = parents.to_str().unwrap().to_string();
+
+    let uri = format!("/file/{branch}/{directory}");
+    log::debug!("delete_dir {uri:?}, dir_path {dir_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let dir_part = Part::text(dir_name.clone());
+    let dir_part = dir_part.file_name(dir_name.clone());
+
+    let mut form = Form::new().part("file_name", dir_part);
+
+    if let Some(body) = commit_body {
+        form = form.text("name", body.author);
+        form = form.text("email", body.email);
+        form = form.text("message", body.message);
+    }
+
+    let req = client.delete(&url).multipart(form);
+
+    let res = req.send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: CommitResponse = serde_json::from_str(&body)?;
+    Ok(response)
 }
 
 #[cfg(test)]
