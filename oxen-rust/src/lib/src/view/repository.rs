@@ -59,7 +59,7 @@ pub struct RepositoryCreationView {
     example = json!({
         "namespace": "bessie",
         "name": "my-corn-pics",
-        "size": 1073741824, // 1 GB
+        "size": 1073741824,
         "data_types": [
             { "data_type": "image", "count": 1000 },
             { "data_type": "tabular", "count": 5 }
@@ -136,7 +136,7 @@ pub struct RepositoryCreationResponse {
         "repository": {
             "namespace": "bessie",
             "name": "my-corn-pics",
-            "size": 1073741824,
+            "size": 1074288000,
             "data_types": [
                 { "data_type": "image", "count": 1000 },
                 { "data_type": "tabular", "count": 5 }
@@ -194,7 +194,7 @@ pub struct RepositoryResolveResponse {
         "status": "success",
         "status_message": "resource_found",
         "repository": {
-            "data_size": 1073741824, // 1 GB
+            "data_size": 1074288000,
             "data_types": [
                 { "data_type": "image", "data_size": 524288000, "file_count": 500 },
                 { "data_type": "tabular", "data_size": 550000000, "file_count": 5 },
@@ -229,7 +229,7 @@ pub struct DataTypeView {
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[schema(
     example = json!({
-        "data_size": 1073741824, 
+        "data_size": 1073741824,
         "data_types": [
             { "data_type": "image", "data_size": 524288000, "file_count": 500 },
             { "data_type": "tabular", "data_size": 550000000, "file_count": 5 },

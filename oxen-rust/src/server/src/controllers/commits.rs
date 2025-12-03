@@ -445,7 +445,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
-        (status = 200, description = "Tarball of commits DB", content_type = "application/x-tar"),
+        (status = 200, description = "Tarball of commits DB"),
         (status = 404, description = "Repository not found")
     )
 )]
@@ -496,7 +496,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
         ("base_head" = String, Path, description = "Commit ID range (base..head) or single commit ID", example = "abc1234..84c76a5"),
     ),
     responses(
-        (status = 200, description = "Tarball of dir hashes DB", content_type = "application/x-tar"),
+        (status = 200, description = "Tarball of dir hashes DB"),
         (status = 400, description = "Invalid base_head format"),
         (status = 404, description = "Repository or commit not found")
     )
@@ -547,7 +547,7 @@ pub async fn download_dir_hashes_db(
         ("commit_or_branch" = String, Path, description = "Commit ID or Branch name", example = "main"),
     ),
     responses(
-        (status = 200, description = "Tarball of commit entries DB", content_type = "application/x-tar"),
+        (status = 200, description = "Tarball of commit entries DB"),
         (status = 404, description = "Repository or commit not found")
     )
 )]
@@ -662,14 +662,12 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
         content = Commit,
         description = "Commit object and target branch name.",
         example = json!({
-            "commit": {
-                "author": "Bessie Oxington",
-                "email": "bessie@oxen.ai",
-                "message": "Empty commit for testing",
-                "id": "abc1234567890def1234567890fedcba"
-            },
+            "author": "Bessie Oxington",
+            "email": "bessie@oxen.ai",
+            "message": "Empty commit for testing",
+            "id": "abc1234567890def1234567890fedcba",
             "branch_name": "main"
-        })
+        }),
     ),
     responses(
         (status = 200, description = "Commit created", body = CommitResponse),
@@ -1188,8 +1186,7 @@ pub async fn upload_tree(
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
-        (status = 200, description = "Root commit found", body = RootCommitResponse),
-        (status = 404, description = "Root commit not found (empty repo)")
+        (status = 200, description = "Root commit found (None if empty repository)", body = RootCommitResponse),
     )
 )]
 pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {

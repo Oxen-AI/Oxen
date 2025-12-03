@@ -24,7 +24,7 @@ use uuid::Uuid;
 /// Get data frame slice
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/{resource}",
+    path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}",
     operation_id = "get_data_frame_slice",
     tag = "DataFrames",
     security( ("api_key" = []) ),
@@ -32,7 +32,7 @@ use uuid::Uuid;
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
         ("resource" = String, Path, description = "Path to the tabular file (including branch/commit info)", example = "main/data/labels.csv"),
-        DFOptsQuery // Assumes DFOptsQuery derives IntoParams
+        DFOptsQuery
     ),
     responses(
         (status = 200, description = "Data frame slice found", body = JsonDataFrameViewResponse),
