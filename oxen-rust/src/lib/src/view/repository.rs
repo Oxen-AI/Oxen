@@ -229,7 +229,7 @@ pub struct DataTypeView {
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[schema(
     example = json!({
-        "data_size": 1073741824,
+        "data_size": 1074288000,
         "data_types": [
             { "data_type": "image", "data_size": 524288000, "file_count": 500 },
             { "data_type": "tabular", "data_size": 550000000, "file_count": 5 },
