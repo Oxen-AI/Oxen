@@ -363,58 +363,31 @@ class RemoteRepo:
             self._workspace = None
         return commit
 
-    def delete_entry(
+    def delete_file(
         self,
-        file_path: str,
+        path: str,
         commit_message: Optional[str] = None,
         branch: Optional[str] = None,
     ):
         """
-        Delete a file from the remote repo
+        Delete from the remote repo. This can be used with a committed file or dir
         Args:
             path: `str`
                 The path to the remote file to remove
-            message: `str`
-                The message to commit with. Defaults to "Removed '{file_path}'"
+            commit_message: `str` | None
+                The message to commit with. Defaults to "Removed '{path}'"
             branch: `str | None`
                 The branch to remove the file from. Defaults to `self.revision`
         """
         if branch is None:
             branch = self.revision
         if commit_message is None:
-            message = f"Removed '{file_path}'"
+            message = f"Removed '{path}'"
         else:
             message = commit_message
         user = oxen_user.current_user()
 
-        self._repo.delete_file(branch, file_path, message, user)
-
-    def delete_dir(
-        self,
-        dir_path: str,
-        commit_message: Optional[str] = None,
-        branch: Optional[str] = None,
-    ):
-        """
-        Delete an entry from the remote repo. This can be a file or a dir
-
-        Args:
-            path: `str`
-                The path to the remote entry to remove
-            message: `str`
-                The message to commit with. Defaults to 'Removed {dir_path}'
-            branch: `str | None`
-                The branch to remove the entry from. Defaults to `self.revision`
-        """
-        if branch is None:
-            branch = self.revision
-        if commit_message is None:
-            message = f"Removed {dir_path}"
-        else:
-            message = commit_message
-        user = oxen_user.current_user()
-
-        self._repo.delete_dir(branch, dir_path, message, user)
+        self._repo.delete_file(branch, path, message, user)
 
     def upload(
         self,
@@ -430,7 +403,7 @@ class RemoteRepo:
         Args:
             src: `str`
                 The path to the local file to upload
-            message: `str`
+            commit_message: `str`
                 The message to commit with. Defaults to "Uploaded '{src}'"
             file_name: `str | None`
                 The name of the file to upload. If None, will use the name of the file in `src`
