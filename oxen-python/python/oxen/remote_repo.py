@@ -383,6 +383,8 @@ class RemoteRepo:
             branch = self.revision
         if commit_message is None:
             message = f"Removed '{file_path}'"
+        else:
+            message = commit_message
         user = oxen_user.current_user()
 
         self._repo.delete_file(branch, file_path, message, user)
@@ -407,7 +409,9 @@ class RemoteRepo:
         if branch is None:
             branch = self.revision
         if commit_message is None:
-            message = f"Removed {path}"
+            message = f"Removed {dir_path}"
+        else:
+            message = commit_message
         user = oxen_user.current_user()
 
         self._repo.delete_dir(branch, dir_path, message, user)
@@ -427,7 +431,7 @@ class RemoteRepo:
             src: `str`
                 The path to the local file to upload
             message: `str`
-                The message to commit with
+                The message to commit with. Defaults to "Uploaded '{src}'"
             file_name: `str | None`
                 The name of the file to upload. If None, will use the name of the file in `src`
             dst_dir: `str | None`
@@ -440,7 +444,7 @@ class RemoteRepo:
         if file_name is None:
             file_name = os.path.basename(src)
         if commit_message is None:
-            commit_message = f"Removed {os.path(src)}"
+            commit_message = f"Uploaded {src}"
         user = oxen_user.current_user()
 
         self._repo.put_file(branch, dst_dir, src, file_name, commit_message, user)
