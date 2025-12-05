@@ -1,9 +1,10 @@
 use polars::frame::DataFrame;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{constants::DIFF_STATUS_COL, error::OxenError};
 
-#[derive(Default, Serialize, Deserialize, Debug, Clone)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct AddRemoveModifyCounts {
     pub added: usize,
     pub removed: usize,

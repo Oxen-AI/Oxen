@@ -35,6 +35,24 @@ use crate::params::{
     PageNumQuery,
 };
 
+/// List commits between base and head
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
+    tag = "list_between",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Commits found successfully", body = CompareCommitsResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 pub async fn commits(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -75,6 +93,24 @@ pub async fn commits(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// List file and directory entries changed between base and head
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/entries",
+    tag = "Compare",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 // TODO: Depreciate
 pub async fn entries(
     req: HttpRequest,
@@ -142,6 +178,22 @@ pub async fn entries(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get diff tree
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/tree",
+    tag = "get_diff_tree",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+    ),
+    responses(
+        (status = 200, description = "Directory diff tree found successfully", body = DirTreeDiffResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -172,6 +224,25 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// List file and directory entries changed within a directory between revisions
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/dir/{dir}/entries",
+    tag = "Compare",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("dir" = String, Path, description = "The directory path to list entries for", example = "data/test"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
+        (status = 404, description = "Repository, revision, or directory not found")
+    )
+)]
 pub async fn dir_entries(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -238,6 +309,25 @@ pub async fn dir_entries(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get file diff
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/file/{resource}",
+    tag = "Compare",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("resource" = String, Path, description = "Path to the file (including branch)", example = "data/test/file.txt"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "File diff found successfully", body = CompareEntryResponse),
+        (status = 404, description = "Repository, revision, or file not found")
+    )
+)]
 pub async fn file(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
@@ -252,7 +342,7 @@ pub async fn file(
 
     // Parse the base and head from the base..head/resource string
     // For Example)
-    //   main..feature/add-data/path/to/file.txt
+    //   main..feature/add-data/path/to/file.txt
     let (base_commit, head_commit, resource) = parse_base_head_resource(&repository, &base_head)?;
 
     log::debug!("base_commit: {base_commit:?}");
@@ -289,6 +379,26 @@ pub async fn file(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Create a tabular data frame diff
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+    ),
+    request_body(
+        content = TabularCompareBody,
+        description = "Tabular comparison configuration (files, revisions, keys, targets)",
+    ),
+    responses(
+        (status = 200, description = "Data frame diff created and cached successfully", body = CompareTabularResponse),
+        (status = 400, description = "Bad Request (e.g., failed to parse body)"),
+        (status = 404, description = "Repository, revision, or file not found"),
+    )
+)]
 pub async fn create_df_diff(
     req: HttpRequest,
     _query: web::Query<DFOptsQuery>,
@@ -376,6 +486,27 @@ pub async fn create_df_diff(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Update tabular data frame diff
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session", example = "uuid-1234"),
+    ),
+    request_body(
+        content = TabularCompareBody,
+        description = "Updated tabular comparison configuration",
+    ),
+    responses(
+        (status = 200, description = "Data frame diff updated and cached successfully", body = CompareTabularResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Comparison ID, Repository, revision, or file not found"),
+    )
+)]
 pub async fn update_df_diff(
     req: HttpRequest,
     body: String,
@@ -464,6 +595,27 @@ pub async fn update_df_diff(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get a cached tabular data frame diff
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session", example = "uuid-1234"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+    ),
+    request_body(
+        content = TabularCompareBody,
+        description = "Tabular comparison information needed to fetch the correct cached diff (files, revisions)",
+    ),
+    responses(
+        (status = 200, description = "Cached data frame diff found successfully", body = CompareTabularResponse),
+        (status = 404, description = "Cached diff not found for the given ID and entries")
+    )
+)]
 pub async fn get_df_diff(
     req: HttpRequest,
     body: String,
@@ -532,6 +684,22 @@ pub async fn get_df_diff(
     }
 }
 
+/// Delete DF Diff
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session to delete", example = "uuid-1234"),
+    ),
+    responses(
+        (status = 200, description = "Data frame diff deleted successfully", body = StatusMessage),
+        (status = 404, description = "Repository or comparison ID not found")
+    )
+)]
 pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -544,6 +712,24 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
+/// Get Data Frame from Tabular Diff
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}/diff",
+    tag = "get_data_frame_from_tabular_diff",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session", example = "uuid-1234"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Derived data frame found successfully", body = JsonDataFrameViewResponse),
+        (status = 404, description = "Repository or comparison ID not found"),
+    )
+)]
 pub async fn get_derived_df(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,

@@ -1,6 +1,7 @@
 use polars::prelude::*;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{CommitEntry, LocalRepository, Schema};
@@ -12,12 +13,12 @@ use crate::model::diff::tabular_diff_summary::{
     TabularDiffSummary, TabularDiffSummaryImpl, TabularDiffWrapper,
 };
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffView {
     pub tabular: TabularDiffViewImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffViewImpl {
     #[serde(flatten)]
     pub summary: TabularDiffSummary,

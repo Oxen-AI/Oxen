@@ -1,16 +1,20 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use utoipa::ToSchema;
 
 use super::{workspace::WorkspaceView, Branch, Commit, Workspace};
 
 /// Internal model
-#[derive(Default, Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct ParsedResource {
     pub commit: Option<Commit>,
     pub branch: Option<Branch>,
     pub workspace: Option<Workspace>,
+    #[schema(value_type = String)]
     pub path: PathBuf,
+    #[schema(value_type = String)]
     pub version: PathBuf,
+    #[schema(value_type = String)]
     pub resource: PathBuf,
 }
 
@@ -26,13 +30,16 @@ impl std::fmt::Display for ParsedResource {
 }
 
 /// External (view) model that is returned to the client with fewer fields.
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct ParsedResourceView {
     pub workspace: Option<WorkspaceView>,
     pub commit: Option<Commit>,
     pub branch: Option<Branch>,
+    #[schema(value_type = String)]
     pub path: PathBuf,
+    #[schema(value_type = String)]
     pub version: PathBuf,
+    #[schema(value_type = String)]
     pub resource: PathBuf,
 }
 

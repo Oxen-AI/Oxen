@@ -6,13 +6,14 @@ use std::str;
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use utoipa::ToSchema;
 
 use crate::core::df::tabular;
 use crate::model::DataFrameSize;
 use crate::opts::PaginateOpts;
 use crate::{model::Schema, opts::DFOpts};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrame {
     pub schema: Schema,
     pub view_schema: Schema,

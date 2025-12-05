@@ -1,5 +1,6 @@
 use polars::prelude::DataFrame;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::core::df::tabular;
 use crate::error::OxenError;
@@ -10,18 +11,18 @@ use crate::opts::DFOpts;
 use crate::util;
 
 // THE DIFFERENCE BETWEEN WRAPPER AND SUMMARY IS JUST THE KEY NAME IN THE JSON RESPONSE
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffWrapper {
     pub tabular: TabularDiffSummaryImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffSummary {
     pub summary: TabularDiffSummaryImpl,
 }
 
 // Impl is so that we can wrap the json response in the "tabular" field to make summaries easier to distinguish
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffSummaryImpl {
     pub num_added_rows: usize,
     pub num_added_cols: usize,

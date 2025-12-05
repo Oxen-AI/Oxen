@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-#[derive(Serialize, Deserialize, Debug, Clone)]
+use utoipa::ToSchema;
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Remote {
     pub name: String,
     pub url: String,

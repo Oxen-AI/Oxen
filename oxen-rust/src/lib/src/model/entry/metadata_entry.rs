@@ -6,6 +6,8 @@ use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, EntryDataType, LocalRepository, ParsedResource, StagedEntryStatus};
 use crate::repositories;
 
+use utoipa::ToSchema;
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct CLIMetadataEntry {
     pub filename: String,
@@ -22,7 +24,7 @@ pub struct CLIMetadataEntry {
     pub extension: String,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataEntry {
     pub filename: String,
     pub hash: String,
@@ -43,7 +45,7 @@ pub struct MetadataEntry {
     pub is_queryable: Option<bool>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceMetadataEntry {
     pub filename: String,
     pub hash: String,
@@ -66,7 +68,7 @@ pub struct WorkspaceMetadataEntry {
     pub changes: Option<WorkspaceChanges>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceChanges {
     pub status: StagedEntryStatus,
 }

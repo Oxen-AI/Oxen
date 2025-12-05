@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use actix_web::web;
 use liboxen::opts::DFOpts;
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, ToSchema, IntoParams)]
 pub struct DFOptsQuery {
     pub columns: Option<String>,
     pub delimiter: Option<String>,

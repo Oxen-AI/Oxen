@@ -6,10 +6,11 @@ use crate::model::data_frame::data_frame_size::DataFrameSize;
 use crate::model::data_frame::schema::Schema;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use polars::frame::DataFrame;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct DataFrameSchemaSize {
     pub schema: Schema,
     pub size: DataFrameSize,

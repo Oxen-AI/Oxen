@@ -6,6 +6,7 @@ use std::str;
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use utoipa::ToSchema;
 
 use super::data_frames::DataFrameColumnChange;
 use super::data_frames::DataFrameRowChange;
@@ -22,7 +23,7 @@ use crate::view::entries::ResourceVersion;
 use crate::view::Pagination;
 use crate::{model::Schema, opts::DFOpts};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrameView {
     pub schema: Schema,
     pub size: DataFrameSize,
@@ -32,13 +33,13 @@ pub struct JsonDataFrameView {
     pub opts: DFOptsView,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrameViews {
     pub source: DataFrameSchemaSize,
     pub view: JsonDataFrameView,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrameViewResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -96,7 +97,7 @@ pub struct JsonDataFrameColumnResponse {
     pub resource: Option<ResourceVersion>,
     pub derived_resource: Option<DerivedDFResource>,
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DFResourceType {
     Compare,
@@ -104,7 +105,7 @@ pub enum DFResourceType {
     Query,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct DerivedDFResource {
     pub resource_id: String,
     pub path: String,

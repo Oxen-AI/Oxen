@@ -1,7 +1,8 @@
 use polars::frame::DataFrame;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct DataFrameSize {
     pub height: usize,
     pub width: usize,

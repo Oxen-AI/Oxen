@@ -5,7 +5,19 @@ use liboxen::namespaces;
 use liboxen::view::{ListNamespacesResponse, NamespaceResponse, NamespaceView, StatusMessage};
 
 use actix_web::{HttpRequest, HttpResponse, Result};
+use utoipa;
 
+/// List namespaces
+#[utoipa::path(
+    get,
+    path = "/api/namespaces",
+    operation_id = "list_namespaces",
+    tag = "Namespaces",
+    security( ("api_key" = []) ),
+    responses(
+        (status = 200, description = "List of namespaces", body = ListNamespacesResponse),
+    )
+)]
 pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
@@ -22,6 +34,22 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get namespace
+#[utoipa::path(
+    get,
+    path = "/api/namespaces/{namespace}",
+    operation_id = "get_namespace",
+    tag = "Namespaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Name of the namespace"),
+    ),
+    responses(
+        (status = 200, description = "Namespace details", body = NamespaceResponse),
+        (status = 400, description = "Missing namespace parameter"),
+        (status = 404, description = "Namespace not found"),
+    )
+)]
 pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace: Option<&str> = req.match_info().get("namespace");

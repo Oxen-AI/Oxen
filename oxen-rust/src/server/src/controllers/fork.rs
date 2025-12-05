@@ -7,6 +7,26 @@ use liboxen::repositories;
 use liboxen::view::fork::ForkRequest;
 use liboxen::view::StatusMessage;
 
+/// Fork a repository
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/fork",
+    tag = "Fork",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository to fork", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository to fork", example = "yolov7-repo"),
+    ),
+    request_body(
+        content = ForkRequest,
+        description = "Fork target details, including the new namespace and optional new repository name.",
+    ),
+    responses(
+        (status = 202, description = "Fork initiated successfully", body = StatusMessage),
+        (status = 409, description = "Repository already exists at destination namespace/name", body = StatusMessage),
+        (status = 404, description = "Original repository not found")
+    )
+)]
 pub async fn fork(
     req: HttpRequest,
     body: web::Json<ForkRequest>,
@@ -41,6 +61,21 @@ pub async fn fork(
     }
 }
 
+/// Fork Status
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/fork/status",
+    tag = "Fork",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the forked repository", example = "new-user"),
+        ("repo_name" = String, Path, description = "Name of the forked repository", example = "yolov7-repo"),
+    ),
+    responses(
+        (status = 200, description = "Fork status returned successfully", body = StatusMessage),
+        (status = 404, description = "Fork status not found or repository does not exist")
+    )
+)]
 pub async fn get_status(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
