@@ -400,7 +400,7 @@ async fn main() -> std::io::Result<()> {
                             ))
                             .service(
                                 SwaggerUi::new("/swagger-ui/{_:.*}")
-                                    .url("/api/_spec/openapi.json", openapi.clone()),
+                                    .url("/api/_spec/oxen_server_openapi.json", openapi.clone()),
                             )
                             .service(web::scope("/api/repos").configure(routes::config))
                             .default_service(web::route().to(controllers::not_found::index))
