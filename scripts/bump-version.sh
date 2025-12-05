@@ -141,7 +141,7 @@ git add oxen-python/pyproject.toml
 git add oxen-rust/Cargo.lock
 git add oxen-python/Cargo.lock
 git add oxen-python/uv.lock
-git commit -m "Bump v$VERSION"
+git commit -m "Bump v$VERSION" >&2
 echo "  ✓ Committed changes" >&2
 
 echo "Creating tag v$VERSION..." >&2
