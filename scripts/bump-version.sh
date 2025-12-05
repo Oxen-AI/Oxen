@@ -66,10 +66,10 @@ ARG=$1
 
 # Validate argument
 if [[ -z "$ARG" ]]; then
-  echo "Error: Version argument required"
-  echo "Usage: ./scripts/bump-version.sh <version|major|minor|patch>"
-  echo "Example: ./scripts/bump-version.sh 0.39.0"
-  echo "Example: ./scripts/bump-version.sh patch"
+  echo "Error: Version argument required" >&2
+  echo "Usage: ./scripts/bump-version.sh <version|major|minor|patch>" >&2
+  echo "Example: ./scripts/bump-version.sh 0.39.0" >&2
+  echo "Example: ./scripts/bump-version.sh patch" >&2
   exit 1
 fi
 
@@ -81,9 +81,9 @@ case "$ARG" in
             echo "Error: Could not read current version from oxen-rust/Cargo.toml" >&2
             exit 1
         fi
-        echo "Current version: $CURRENT_VERSION"
+        echo "Current version: $CURRENT_VERSION" >&2
         VERSION=$(bump_version "$CURRENT_VERSION" "$ARG")
-        echo "Bumping $ARG version..."
+        echo "Bumping $ARG version..." >&2
         ;;
     *)
         # Assume it's a version number
@@ -91,42 +91,42 @@ case "$ARG" in
         ;;
 esac
 
-echo "Bumping version to $VERSION"
-echo ""
+echo "Bumping version to $VERSION" >&2
+echo "" >&2
 
 # Update all Cargo.toml files (excluding target directories and dependencies sections)
-echo "Updating Cargo.toml files..."
+echo "Updating Cargo.toml files..." >&2
 find . -name "Cargo.toml" -not -path "*/target/*" -not -path "*/experiments/*" | while read -r file; do
   # Only update the [package] version line, not dependency versions
   sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
-  echo "  ✓ $file"
+  echo "  ✓ $file" >&2
 done
 
 # Update pyproject.toml
-echo "Updating pyproject.toml..."
+echo "Updating pyproject.toml..." >&2
 sed -i '' 's/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/pyproject.toml
-echo "  ✓ oxen-python/pyproject.toml"
+echo "  ✓ oxen-python/pyproject.toml" >&2
 
 # Update lock files (only workspace packages, not all dependencies)
-echo "Updating lock files..."
-echo "  Updating oxen-rust/Cargo.lock..."
+echo "Updating lock files..." >&2
+echo "  Updating oxen-rust/Cargo.lock..." >&2
 (cd oxen-rust && cargo update -p liboxen -p oxen-cli -p oxen-server --quiet)
-echo "  ✓ oxen-rust/Cargo.lock"
+echo "  ✓ oxen-rust/Cargo.lock" >&2
 
-echo "  Updating oxen-python/Cargo.lock and uv.lock..."
+echo "  Updating oxen-python/Cargo.lock and uv.lock..." >&2
 (cd oxen-python && cargo update -p oxen --quiet && uv lock --quiet)
-echo "  ✓ oxen-python/Cargo.lock"
-echo "  ✓ oxen-python/uv.lock"
+echo "  ✓ oxen-python/Cargo.lock" >&2
+echo "  ✓ oxen-python/uv.lock" >&2
 
-echo ""
-echo "Version updated to $VERSION"
-echo ""
-echo "Changed files:"
-git status --short
+echo "" >&2
+echo "Version updated to $VERSION" >&2
+echo "" >&2
+echo "Changed files:" >&2
+git status --short >&2
 
 # Commit changes and create tag
-echo ""
-echo "Committing changes..."
+echo "" >&2
+echo "Committing changes..." >&2
 # Add only the files modified by this script
 find . -name "Cargo.toml" -not -path "*/target/*" -not -path "*/experiments/*" -exec git add {} \;
 git add oxen-python/pyproject.toml
@@ -134,12 +134,15 @@ git add oxen-rust/Cargo.lock
 git add oxen-python/Cargo.lock
 git add oxen-python/uv.lock
 git commit -m "Bump v$VERSION"
-echo "  ✓ Committed changes"
+echo "  ✓ Committed changes" >&2
 
-echo "Creating tag v$VERSION..."
+echo "Creating tag v$VERSION..." >&2
 git tag "v$VERSION"
-echo "  ✓ Created tag v$VERSION"
+echo "  ✓ Created tag v$VERSION" >&2
 
-echo ""
-echo "Next steps:"
-echo "  Push to remote: git push && git push --tags"
+echo "" >&2
+echo "Next steps:" >&2
+echo "  Push to remote: git push && git push --tags" >&2
+
+# Output the version to stdout for capture by automation
+echo "v$VERSION"
