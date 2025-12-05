@@ -98,13 +98,21 @@ echo "" >&2
 echo "Updating Cargo.toml files..." >&2
 find . -name "Cargo.toml" -not -path "*/target/*" -not -path "*/experiments/*" | while read -r file; do
   # Only update the [package] version line, not dependency versions
-  sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
+  else
+    sed -i '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
+  fi
   echo "  ✓ $file" >&2
 done
 
 # Update pyproject.toml
 echo "Updating pyproject.toml..." >&2
-sed -i '' 's/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/pyproject.toml
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' 's/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/pyproject.toml
+else
+  sed -i 's/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/pyproject.toml
+fi
 echo "  ✓ oxen-python/pyproject.toml" >&2
 
 # Update lock files (only workspace packages, not all dependencies)
