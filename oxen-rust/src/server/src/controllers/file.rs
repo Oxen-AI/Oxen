@@ -160,7 +160,8 @@ pub async fn put(
         ));
     }
 
-    let (name, email, message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
+    let (name, email, message, _file_names, temp_files) =
+        parse_multipart_fields_for_repo(payload).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -198,6 +199,67 @@ pub async fn put(
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+/// Remove file in place (rm from temp workspace and commit)
+pub async fn delete(
+    req: HttpRequest,
+    payload: Multipart,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::delete path {:?}", req.path());
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    // Parse the resource (branch/commit/path)
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    // Get files to remove from payload
+    let (name, email, message, file_names, _temp_files) =
+        parse_multipart_fields_for_repo(payload).await?;
+
+    let paths: Vec<PathBuf> = file_names.iter().map(|f| resource.path.join(f)).collect();
+    if paths.is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            "No files specified for deletion".into(),
+        ));
+    }
+
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    // Stage the files as removed
+    for path in paths {
+        repositories::workspaces::files::rm(&workspace, &path).await?;
+    }
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: name.clone().unwrap_or("".to_string()),
+        email: email.clone().unwrap_or("".to_string()),
+        message: message.clone().unwrap_or(format!(
+            "Delete files from {}",
+            &resource.path.to_string_lossy()
+        )),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+
+    log::debug!("file::delete workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_deleted(),
         commit,
     }))
 }
@@ -272,7 +334,8 @@ async fn handle_initial_put_empty_repo(
         .to_string_lossy()
         .to_string();
 
-    let (name, email, _message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
+    let (name, email, _message, _path, temp_files) =
+        parse_multipart_fields_for_repo(payload).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -421,6 +484,7 @@ async fn parse_multipart_fields_for_repo(
         Option<String>,
         Option<String>,
         Option<String>,
+        Vec<PathBuf>,
         Vec<TempFileNew>,
     ),
     OxenHttpError,
@@ -428,6 +492,7 @@ async fn parse_multipart_fields_for_repo(
     let mut name: Option<String> = None;
     let mut email: Option<String> = None;
     let mut message: Option<String> = None;
+    let mut file_names: Vec<PathBuf> = vec![];
     let mut temp_files: Vec<TempFileNew> = vec![];
 
     while let Some(mut field) = payload
@@ -473,6 +538,20 @@ async fn parse_multipart_fields_for_repo(
                     .map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
                 message = Some(value);
             }
+            "file_name" => {
+                let mut bytes = Vec::new();
+                while let Some(chunk) = field
+                    .try_next()
+                    .await
+                    .map_err(OxenHttpError::MultipartError)?
+                {
+                    bytes.extend_from_slice(&chunk);
+                }
+                let value = String::from_utf8(bytes)
+                    .map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
+                let file_name = PathBuf::from(value);
+                file_names.push(file_name);
+            }
             "files[]" | "file" => {
                 let filename = disposition.get_filename().map_or_else(
                     || uuid::Uuid::new_v4().to_string(),
@@ -497,7 +576,7 @@ async fn parse_multipart_fields_for_repo(
         }
     }
 
-    Ok((name, email, message, temp_files))
+    Ok((name, email, message, file_names, temp_files))
 }
 
 async fn parse_multipart_fields_for_upload_zip(
