@@ -31,18 +31,18 @@ impl RunCmd for NodeCmd {
                 Arg::new("node")
                     .long("node")
                     .short('n')
-                    .conflicts_with("file")
-                    .required_unless_present("file")
+                    .conflicts_with("path")
+                    .required_unless_present("path")
                     .help("Node hash to inspect"),
             )
-            // add --file flag
+            // add --path flag
             .arg(
-                Arg::new("file")
-                    .long("file")
-                    .short('f')
+                Arg::new("path")
+                    .long("path")
+                    .short('p')
                     .conflicts_with("node")
                     .required_unless_present("node")
-                    .help("File path to inspect"),
+                    .help("Path to the node to inspect"),
             )
             // add --revision flag
             .arg(
@@ -57,17 +57,18 @@ impl RunCmd for NodeCmd {
         // Find the repository
         let repository = LocalRepository::from_current_dir()?;
 
-        // if the --file flag is set, we need to get the node for the file
-        if let Some(file) = args.get_one::<String>("file") {
+        // if the --path flag is set, get the node by path in the specified revision
+        if let Some(path) = args.get_one::<String>("path") {
             let commit = if let Some(revision) = args.get_one::<String>("revision") {
                 repositories::revisions::get(&repository, revision)?.unwrap()
             } else {
                 repositories::commits::head_commit(&repository)?
             };
-            let Some(node) = repositories::entries::get_file(&repository, &commit, file)? else {
+            let Some(node) = repositories::tree::get_node_by_path(&repository, &commit, path)?
+            else {
                 return Err(OxenError::basic_str(format!(
-                    "Error: file {:?} not found in commit {:?}",
-                    file, commit.id
+                    "Error: path {:?} not found in commit {:?}",
+                    path, commit.id
                 )));
             };
 
