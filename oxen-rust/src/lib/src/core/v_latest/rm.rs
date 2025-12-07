@@ -248,7 +248,6 @@ fn remove_file_inner(
         data_type_counts: HashMap::new(),
     };
 
-    // TODO: This is ugly, but the only current solution to get the stats from the removed file
     match process_remove_file_and_parents(repo, &path, staged_db, file_node) {
         Ok(Some(node)) => {
             if let EMerkleTreeNode::File(file_node) = &node.node.node {
@@ -665,7 +664,6 @@ fn process_remove_dir(
 }
 
 // Recursively remove all files and directories starting from a particular directory
-// WARNING: This function relies on the initial dir having the correct relative path to the repo
 
 // TODO: Refactor to singular match statement/loop
 // TODO: Currently, this function is only called sequentially. Consider using Arc/AtomicU64 to parallelize
