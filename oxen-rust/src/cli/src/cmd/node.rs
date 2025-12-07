@@ -31,6 +31,8 @@ impl RunCmd for NodeCmd {
                 Arg::new("node")
                     .long("node")
                     .short('n')
+                    .conflicts_with("file")
+                    .required_unless_present("file")
                     .help("Node hash to inspect"),
             )
             // add --file flag
@@ -38,6 +40,8 @@ impl RunCmd for NodeCmd {
                 Arg::new("file")
                     .long("file")
                     .short('f')
+                    .conflicts_with("node")
+                    .required_unless_present("node")
                     .help("File path to inspect"),
             )
             // add --revision flag
@@ -60,25 +64,34 @@ impl RunCmd for NodeCmd {
             } else {
                 repositories::commits::head_commit(&repository)?
             };
-            let node = repositories::entries::get_file(&repository, &commit, file)?;
+            let Some(node) = repositories::entries::get_file(&repository, &commit, file)? else {
+                return Err(OxenError::basic_str(format!(
+                    "Error: file {:?} not found in commit {:?}",
+                    file, commit.id
+                )));
+            };
+
             println!("{node:?}");
             return Ok(());
-        }
 
         // otherwise, get the node based on the node hash
-        let node_hash = args.get_one::<String>("node").expect("Must supply node");
-        let node_hash = node_hash.parse()?;
+        } else if let Some(node_hash) = args.get_one::<String>("node") {
+            let node_hash = node_hash.parse()?;
+            let Some(node) = repositories::tree::get_node_by_id(&repository, &node_hash)? else {
+                return Err(OxenError::basic_str(format!(
+                    "Error: node {node_hash:?} not found in repo"
+                )));
+            };
 
-        let node = repositories::tree::get_node_by_id(&repository, &node_hash)?;
-
-        println!("{:?}", node);
-        if args.get_flag("verbose") {
-            if let Some(node) = node {
+            println!("{node:?}");
+            if args.get_flag("verbose") {
                 println!("{} children", node.children.len());
                 for child in node.children {
                     println!("{child:?}");
                 }
             }
+        } else {
+            return Err(OxenError::basic_str("Must supply file path or node hash"));
         }
 
         Ok(())
