@@ -331,6 +331,7 @@ impl StagedData {
 
                 if !dir_row.is_empty() {
                     dirs.push(dir_row.clone());
+                    dir_row.clear();
                 }
             }
         }
