@@ -29,12 +29,14 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
+use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::model::Commit;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, util};
+use ez_ffmpeg::{FfmpegContext, FfmpegScheduler, Input, Output};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
 
@@ -1726,6 +1728,159 @@ pub fn resize_cache_image_version_store(
     resized_img.save(resize_path).unwrap();
     log::debug!("saved {resize_path:?}");
     Ok(())
+}
+
+/// Generate a video thumbnail using ez-ffmpeg library.
+/// This function extracts a frame from the video at the specified timestamp
+/// and saves it as an image thumbnail.
+fn generate_video_thumbnail_version_store(
+    version_store: Arc<dyn VersionStore>,
+    video_hash: &str,
+    _video_path: &Path,
+    thumbnail_path: &Path,
+    thumbnail: VideoThumbnail,
+) -> Result<(), OxenError> {
+    log::debug!("generate thumbnail to path {thumbnail_path:?} from video hash {video_hash}");
+    if thumbnail_path.exists() {
+        return Ok(());
+    }
+
+    // Create parent directory if it doesn't exist
+    let thumbnail_parent = thumbnail_path.parent().unwrap_or(Path::new(""));
+    if !thumbnail_parent.exists() {
+        util::fs::create_dir_all(thumbnail_parent)?;
+    }
+
+    // Get the video file from version store
+    let version_path = version_store.get_version_path(video_hash)?;
+    let version_path_str = version_path
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str("Invalid video path"))?;
+
+    let thumbnail_path_str = thumbnail_path
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str("Invalid thumbnail path"))?;
+
+    // Default timestamp is 1.0 seconds if not specified
+    let timestamp = thumbnail.timestamp.unwrap_or(1.0);
+
+    // Build scale filter string based on provided dimensions
+    // If only one dimension is provided, use -1 for the other to maintain aspect ratio
+    let scale_filter = match (thumbnail.width, thumbnail.height) {
+        (Some(w), Some(h)) => {
+            // Both dimensions provided - exact resize
+            format!("scale={w}:{h}")
+        }
+        (Some(w), None) => {
+            // Only width provided - maintain aspect ratio
+            format!("scale={w}:-1")
+        }
+        (None, Some(h)) => {
+            // Only height provided - maintain aspect ratio
+            format!("scale=-1:{h}")
+        }
+        (None, None) => {
+            // Neither provided - use defaults (320x240)
+            "scale=320:240".to_string()
+        }
+    };
+
+    // Build FFmpeg context to extract frame at timestamp and scale it
+    // Equivalent to: ffmpeg -i input.mp4 -ss 00:00:01.0 -vframes 1 -vf "scale=320:240" -update 1 output.jpg
+    // Convert timestamp from seconds to microseconds
+    let timestamp_us = (timestamp * 1_000_000.0) as i64;
+    // Use a very short duration (1ms) to capture a single frame
+    let recording_time_us = 1_000;
+
+    // For single image output with image2 format, we need to append the update option to the output path
+    // FFmpeg image2 muxer requires -update 1 for single file output
+    // Workaround: use a format that doesn't require update option, or configure via Output methods
+    let context = FfmpegContext::builder()
+        .input(
+            Input::from(version_path_str)
+                .set_start_time_us(timestamp_us)
+                .set_recording_time_us(recording_time_us),
+        )
+        // Scale filter to resize the thumbnail, and select only the first frame
+        .filter_desc(format!("{scale_filter},select=eq(n\\,0)"))
+        .output(Output::from(thumbnail_path_str))
+        .build()
+        .map_err(|e| {
+            OxenError::basic_str(format!(
+                "Failed to build FFmpeg context: {e}. Make sure ffmpeg is installed."
+            ))
+        })?;
+
+    // Execute FFmpeg synchronously
+    FfmpegScheduler::new(context)
+        .start()
+        .map_err(|e| OxenError::basic_str(format!("Failed to start FFmpeg scheduler: {e}")))?
+        .wait()
+        .map_err(|e| OxenError::basic_str(format!("FFmpeg failed to generate thumbnail: {e}")))?;
+
+    log::debug!("saved thumbnail {thumbnail_path:?}");
+    Ok(())
+}
+
+/// Generate the cache path for a video thumbnail based on the video hash and thumbnail parameters.
+pub fn thumbnail_path_for_version_store_file(
+    version_store: Arc<dyn VersionStore>,
+    video_hash: &str,
+    _video_path: &Path,
+    width: Option<u32>,
+    height: Option<u32>,
+    timestamp: Option<f64>,
+) -> Result<PathBuf, OxenError> {
+    let video_version_path = version_store.get_version_path(video_hash)?;
+    let extension = "jpg"; // Always use jpg for thumbnails
+
+    // Build dimension strings for cache path - use "auto" when maintaining aspect ratio
+    let (width_str, height_str) = match (width, height) {
+        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
+        (Some(w), None) => (w.to_string(), "auto".to_string()),
+        (None, Some(h)) => ("auto".to_string(), h.to_string()),
+        (None, None) => ("320".to_string(), "240".to_string()),
+    };
+
+    let timestamp_str = timestamp
+        .map(|t| format!("t{t:.1}"))
+        .unwrap_or_else(|| "t1.0".to_string());
+
+    let thumbnail_path = video_version_path.parent().unwrap().join(format!(
+        "thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"
+    ));
+    Ok(thumbnail_path)
+}
+
+/// Handle video thumbnail generation: determine cache path and generate thumbnail if needed.
+/// Returns the path to the cached thumbnail.
+pub fn handle_video_thumbnail(
+    version_store: Arc<dyn VersionStore>,
+    file_hash: String,
+    file_path: &Path,
+    version_path: &Path,
+    video_thumbnail: VideoThumbnail,
+) -> Result<PathBuf, OxenError> {
+    log::debug!("video_thumbnail {video_thumbnail:?}");
+    let thumbnail_path = thumbnail_path_for_version_store_file(
+        Arc::clone(&version_store),
+        &file_hash,
+        file_path,
+        video_thumbnail.width,
+        video_thumbnail.height,
+        video_thumbnail.timestamp,
+    )?;
+
+    generate_video_thumbnail_version_store(
+        version_store,
+        &file_hash,
+        version_path,
+        &thumbnail_path,
+        video_thumbnail,
+    )?;
+
+    log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+    Ok(thumbnail_path)
 }
 
 pub fn to_unix_str(path: impl AsRef<Path>) -> String {

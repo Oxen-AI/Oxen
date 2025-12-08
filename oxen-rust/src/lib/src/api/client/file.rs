@@ -53,13 +53,50 @@ pub async fn get_file(
     branch: impl AsRef<str>,
     file_path: impl AsRef<Path>,
 ) -> Result<Bytes, OxenError> {
+    get_file_with_params(remote_repo, branch, file_path, None, None, None, None).await
+}
+
+/// Get a file with optional query parameters (for thumbnails, image resizing, etc.)
+pub async fn get_file_with_params(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    thumbnail: Option<bool>,
+    width: Option<u32>,
+    height: Option<u32>,
+    timestamp: Option<f64>,
+) -> Result<Bytes, OxenError> {
     let branch = branch.as_ref();
     let file_path = file_path.as_ref().to_str().unwrap();
     let uri = format!("/file/{branch}/{file_path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
-    let res = client.get(&url).send().await?;
+
+    // Build query string if parameters are provided
+    let url_with_params =
+        if thumbnail.is_some() || width.is_some() || height.is_some() || timestamp.is_some() {
+            let mut query_parts = Vec::new();
+            if let Some(thumb) = thumbnail {
+                query_parts.push(format!("thumbnail={thumb}"));
+            }
+            if let Some(w) = width {
+                query_parts.push(format!("width={w}"));
+            }
+            if let Some(h) = height {
+                query_parts.push(format!("height={h}"));
+            }
+            if let Some(ts) = timestamp {
+                query_parts.push(format!("timestamp={ts}"));
+            }
+            format!("{}?{}", url, query_parts.join("&"))
+        } else {
+            url.to_string()
+        };
+
+    let req = client.get(&url_with_params);
+
+    let res = req.send().await?;
 
     let res = res.error_for_status()?;
     let mut stream = res.bytes_stream();
@@ -71,6 +108,27 @@ pub async fn get_file(
     }
 
     Ok(buffer.freeze())
+}
+
+/// Get a video thumbnail
+pub async fn get_file_thumbnail(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    width: Option<u32>,
+    height: Option<u32>,
+    timestamp: Option<f64>,
+) -> Result<Bytes, OxenError> {
+    get_file_with_params(
+        remote_repo,
+        branch,
+        file_path,
+        Some(true),
+        width,
+        height,
+        timestamp,
+    )
+    .await
 }
 
 /// Upload a ZIP file that gets extracted into the workspace directory
@@ -319,6 +377,100 @@ mod tests {
             assert_eq!(
                 bytes.as_ref().unwrap(),
                 &Bytes::from_static(b"fake png data 1")
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_upload_video_and_get_thumbnail() -> Result<(), OxenError> {
+        test::run_empty_configured_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = DEFAULT_BRANCH_NAME;
+            let directory_name = "videos";
+            let video_file = test::test_video_file_with_name("basketball.mp4");
+
+            // Verify the test video file exists
+            assert!(
+                video_file.exists(),
+                "Test video file should exist at {video_file:?}"
+            );
+
+            let commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Upload test video".to_string(),
+            };
+
+            // Upload the video file
+            let response = api::client::file::put_file(
+                &remote_repo,
+                branch_name,
+                directory_name,
+                &video_file,
+                Some("basketball.mp4"),
+                Some(commit_body),
+            )
+            .await?;
+
+            assert_eq!(response.status.status_message, "resource_created");
+
+            // Download the thumbnail with default settings
+            let thumbnail_path = format!("{directory_name}/basketball.mp4");
+            let thumbnail_bytes = api::client::file::get_file_thumbnail(
+                &remote_repo,
+                branch_name,
+                thumbnail_path.as_str(),
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+            // Verify thumbnail is not empty
+            assert!(!thumbnail_bytes.is_empty(), "Thumbnail should not be empty");
+
+            // Verify it's a JPEG (JPEG files start with FF D8 FF)
+            assert!(
+                thumbnail_bytes.len() >= 3,
+                "Thumbnail should be at least 3 bytes"
+            );
+            assert_eq!(
+                thumbnail_bytes[0], 0xFF,
+                "Thumbnail should start with JPEG magic bytes"
+            );
+            assert_eq!(
+                thumbnail_bytes[1], 0xD8,
+                "Thumbnail should start with JPEG magic bytes"
+            );
+            assert_eq!(
+                thumbnail_bytes[2], 0xFF,
+                "Thumbnail should start with JPEG magic bytes"
+            );
+
+            // Test with custom dimensions
+            let thumbnail_bytes_custom = api::client::file::get_file_thumbnail(
+                &remote_repo,
+                branch_name,
+                thumbnail_path.as_str(),
+                Some(640),
+                Some(480),
+                Some(0.5),
+            )
+            .await?;
+
+            assert!(
+                !thumbnail_bytes_custom.is_empty(),
+                "Custom thumbnail should not be empty"
+            );
+            assert_eq!(
+                thumbnail_bytes_custom[0], 0xFF,
+                "Custom thumbnail should be a JPEG"
+            );
+            assert_eq!(
+                thumbnail_bytes_custom[1], 0xD8,
+                "Custom thumbnail should be a JPEG"
             );
 
             Ok(remote_repo)
