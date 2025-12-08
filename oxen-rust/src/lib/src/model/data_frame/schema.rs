@@ -6,6 +6,7 @@ pub mod staged_schema;
 pub use custom_data_type::CustomDataType;
 pub use data_type::DataType;
 pub use field::Field;
+use utoipa::ToSchema;
 
 use crate::util::hasher;
 use itertools::Itertools;
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, fmt, path::PathBuf};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Schema {
     pub hash: String,
     pub fields: Vec<Field>,

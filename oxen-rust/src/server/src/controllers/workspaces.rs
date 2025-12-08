@@ -12,11 +12,38 @@ use liboxen::view::{
 };
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use utoipa;
 
 pub mod changes;
 pub mod data_frames;
 pub mod files;
 
+/// Get or create workspace
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/get_or_create",
+    operation_id = "get_or_create_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = NewWorkspace,
+        description = "Workspace creation details, including base branch and optional name/ID.",
+        example = json!({
+            "branch_name": "main",
+            "name": "bessie_workspace",
+            "workspace_id": "b3f27f05-0955-4076-805f-39575853b27b"
+        })
+    ),
+    responses(
+        (status = 200, description = "Workspace found or created", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload or branch not found"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn get_or_create(
     req: HttpRequest,
     body: String,
@@ -86,6 +113,23 @@ pub async fn get_or_create(
     }))
 }
 
+/// Get workspace
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
+    operation_id = "get_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+    ),
+    responses(
+        (status = 200, description = "Workspace found", body = WorkspaceResponseView),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -108,6 +152,32 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     }))
 }
 
+/// Create a new workspace
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces",
+    operation_id = "create_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = NewWorkspace,
+        description = "Workspace creation details.",
+        example = json!({
+            "branch_name": "main",
+            "name": "bessie_workspace",
+            "workspace_id": "b3f27f05-0955-4076-805f-39575853b27b"
+        })
+    ),
+    responses(
+        (status = 200, description = "Workspace created", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload or branch not found"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn create(
     req: HttpRequest,
     body: String,
@@ -157,6 +227,32 @@ pub async fn create(
     }))
 }
 
+/// Create workspace from new branch
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/new_branch",
+    operation_id = "create_workspace_new_branch",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = NewWorkspace,
+        description = "Workspace creation details. Creates the branch if it doesn't exist.",
+        example = json!({
+            "branch_name": "daisy-dev",
+            "name": "daisy_workspace",
+            "workspace_id": "4a7f05c3-1d0e-4f0e-8f9f-095a43b27b3f"
+        })
+    ),
+    responses(
+        (status = 200, description = "Workspace created with new branch", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn create_with_new_branch(
     req: HttpRequest,
     body: String,
@@ -205,6 +301,23 @@ pub async fn create_with_new_branch(
     }))
 }
 
+/// List all workspaces
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces",
+    operation_id = "list_workspaces",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        NameParam // Query parameter for optional name filtering
+    ),
+    responses(
+        (status = 200, description = "List of workspaces", body = ListWorkspaceResponseView),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn list(
     req: HttpRequest,
     params: web::Query<NameParam>,
@@ -225,7 +338,7 @@ pub async fn list(
         })
         .filter(|workspace| {
             // TODO: Would be faster to have a map of names to namespaces, but this works for now
-            //       if getting a workspace is slow then we can optimize it
+            //       if getting a workspace is slow then we can optimize it
             if let Some(name) = &params.name {
                 workspace.name == Some(name.to_string())
             } else {
@@ -240,6 +353,22 @@ pub async fn list(
     }))
 }
 
+/// Clear workspaces for repo
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/clear",
+    operation_id = "clear_workspaces",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace for the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    responses(
+        (status = 200, description = "Workspaces cleared", body = StatusMessage),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -249,6 +378,23 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
+/// Delete workspace
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
+    operation_id = "delete_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+    ),
+    responses(
+        (status = 200, description = "Workspace deleted", body = WorkspaceResponseView),
+        (status = 404, description = "Workspace or Repository not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -273,6 +419,24 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     }))
 }
 
+/// Check workspace mergeability
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
+    operation_id = "check_workspace_mergeability",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+        ("branch" = String, Path, description = "Target branch name to merge into", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Mergeability status found", body = MergeableResponse),
+        (status = 404, description = "Workspace or target branch not found")
+    )
+)]
 pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -294,6 +458,34 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// Commit workspace
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/commit/{branch}",
+    operation_id = "commit_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+        ("branch" = String, Path, description = "Target branch name to commit to", example = "main"),
+    ),
+    request_body(
+        content = NewCommitBody,
+        description = "Commit details for the workspace merge.",
+        example = json!({
+            "author": "bessie",
+            "email": "bessie@oxen.ai",
+            "message": "Commit changes from bessie_workspace"
+        })
+    ),
+    responses(
+        (status = 200, description = "Workspace committed successfully", body = CommitResponse),
+        (status = 404, description = "Workspace or branch not found"),
+        (status = 422, description = "Unprocessable Entity, e.g., workspace is behind main branch")
+    )
+)]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 

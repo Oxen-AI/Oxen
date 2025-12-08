@@ -17,10 +17,9 @@ use liboxen::view::{
     StatusMessageDescription,
 };
 
-use actix_web::{web, HttpRequest, HttpResponse};
-
 use actix_multipart::Multipart;
 use actix_web::Error;
+use actix_web::{web, HttpRequest, HttpResponse};
 use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
 use std::io::Read as StdRead;
@@ -29,7 +28,38 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
+use utoipa;
 
+#[derive(utoipa::ToSchema)]
+pub struct FileUpload {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+}
+
+/// Get workspace file
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The path to the file in the workspace", example = "images/train/dog_1.jpg"),
+        ImgResize
+    ),
+    responses(
+        (status = 200, description = "File content returned as a stream", 
+            content_type = "application/octet-stream", 
+            body = Vec<u8>,
+            headers(
+                ("oxen-revision-id" = String, description = "The commit ID of the file version")
+            )
+        ),
+        (status = 404, description = "Workspace or File not found"),
+        (status = 400, description = "Invalid parameters")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<ImgResize>,
@@ -124,6 +154,28 @@ pub async fn get(
         .streaming(stream))
 }
 
+/// Add file to workspace
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The directory to upload the file to", example = "data/train")
+    ),
+    request_body(
+        content_type = "multipart/form-data", 
+        description = "Multipart upload of file. Form field 'file' should be the file content.",
+        content = FileUpload,
+    ),
+    responses(
+        (status = 200, description = "File successfully uploaded to workspace", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found"),
+        (status = 400, description = "Invalid upload request")
+    )
+)]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -175,11 +227,37 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     }))
 }
 
+/// Stage files to workspace
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("directory" = String, Path, description = "The directory to stage the files into", example = "data/train")
+    ),
+    request_body(
+        content = Vec<FileWithHash>,
+        description = "List of files and their pre-calculated hashes (must exist in version store).",
+        example = json!([
+            {
+                "path": "images/train/dog.jpg",
+                "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+        ])
+    ),
+    responses(
+        (status = 200, description = "Files staged successfully", body = ErrorFilesResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn add_version_files(
     req: HttpRequest,
     payload: web::Json<Vec<FileWithHash>>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    // Add version file to staging
+    // Add file to staging
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -212,6 +290,22 @@ pub async fn add_version_files(
     }))
 }
 
+/// Delete file from workspace staging
+#[utoipa::path(
+    delete,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The path to the file to delete (unstage)", example = "images/train/dog_1.jpg")
+    ),
+    responses(
+        (status = 200, description = "File marked for deletion", body = StatusMessage),
+        (status = 404, description = "Workspace or File not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -228,7 +322,28 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     remove_file_from_workspace(&repo, &workspace, &path)
 }
 
-// Stage files as removed
+/// Stage files for removal
+#[utoipa::path(
+    delete,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/versions",
+    tag = "Workspace Files",
+    summary = "Batch delete files (Stage removal)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745")
+    ),
+    request_body(
+        content = Vec<String>,
+        description = "List of paths to remove from the workspace staging area",
+        example = json!(["images/train/dog_1.jpg", "annotations/incorrect.xml"])
+    ),
+    responses(
+        (status = 200, description = "Files successfully removed", body = FilePathsResponse),
+        (status = 206, description = "Some files could not be found/removed (returns paths of files not found)", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn rm_files(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,
@@ -276,7 +391,28 @@ pub async fn rm_files(
     }
 }
 
-// Remove files from staging
+/// Unstage files
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/restore",
+    tag = "Workspace Files",
+    summary = "Unstage files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745")
+    ),
+    request_body(
+        content = Vec<String>,
+        description = "List of paths to restore/unstage from the workspace staging area",
+        example = json!(["images/train/revert_me.jpg", "data/config.json"])
+    ),
+    responses(
+        (status = 200, description = "Files restored from staging", body = StatusMessage),
+        (status = 206, description = "Some files could not be restored (returns paths of files not found)", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn rm_files_from_staged(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,

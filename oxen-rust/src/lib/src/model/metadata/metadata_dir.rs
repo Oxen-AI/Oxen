@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::view::DataTypeCount;
+use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataDir {
     pub dir: MetadataDirImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataDirImpl {
     pub data_types: Vec<DataTypeCount>,
 }

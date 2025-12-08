@@ -1,12 +1,13 @@
 use polars::prelude::PlSmallStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
 use crate::model::data_frame::schema::DataType;
 
 use super::CustomDataType;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Field {
     pub name: String,
     pub dtype: String,
@@ -14,14 +15,14 @@ pub struct Field {
     pub changes: Option<Changes>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct PreviousField {
     pub name: String,
     pub dtype: String,
     pub metadata: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Changes {
     pub status: String,
     pub previous: Option<PreviousField>,

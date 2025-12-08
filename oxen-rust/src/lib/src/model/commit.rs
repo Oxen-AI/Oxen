@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 use super::{MerkleHash, User};
 use crate::config::UserConfig;
@@ -9,7 +10,7 @@ use crate::error::OxenError;
 use crate::view::workspaces::WorkspaceCommit;
 
 /// NewCommitBody is used to parse the json into a Commit from the API
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct NewCommitBody {
     pub message: String,
     pub author: String,
@@ -39,7 +40,19 @@ impl NewCommit {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(
+    example = json!({
+        "id": "a1b2c3d4e5f67890abcdef1234567890",
+        "parent_ids": [
+            "f1e2d3c4b5a67890fedcba9876543210"
+        ],
+        "message": "Refactor data loading pipeline.",
+        "author": "ox",
+        "email": "ox@example.com",
+        "timestamp": "2025-01-01T10:00:00Z"
+    })
+)]
 pub struct Commit {
     pub id: String,
     pub parent_ids: Vec<String>,
@@ -210,7 +223,23 @@ impl NewCommitBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "commit": {
+            "id": "a1b2c3d4e5f67890abcdef1234567890",
+            "parent_ids": [
+                "f1e2d3c4b5a67890fedcba9876543210"
+            ],
+            "message": "Refactor data loading pipeline.",
+            "author": "ox",
+            "email": "ox@example.com",
+            "timestamp": "2025-01-01T10:00:00Z"
+        },
+        "num_entries": 12000,
+        "num_synced_files": 11950,
+    })
+)]
 pub struct CommitStats {
     pub commit: Commit,
     pub num_entries: usize, // this is how many entries are in our commit db

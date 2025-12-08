@@ -1,8 +1,9 @@
 use crate::model::ContentHashable;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
+use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, ToSchema)]
 pub enum StagedEntryStatus {
     Added,
     Modified,
