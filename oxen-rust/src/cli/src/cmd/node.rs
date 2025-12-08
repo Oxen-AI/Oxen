@@ -60,7 +60,8 @@ impl RunCmd for NodeCmd {
         // if the --path flag is set, get the node by path in the specified revision
         if let Some(path) = args.get_one::<String>("path") {
             let commit = if let Some(revision) = args.get_one::<String>("revision") {
-                repositories::revisions::get(&repository, revision)?.unwrap()
+                repositories::revisions::get(&repository, revision)?
+                    .ok_or_else(|| OxenError::basic_str(format!("Revision {revision} not found")))?
             } else {
                 repositories::commits::head_commit(&repository)?
             };
