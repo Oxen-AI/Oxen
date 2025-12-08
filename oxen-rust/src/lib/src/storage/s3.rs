@@ -36,7 +36,7 @@ impl S3VersionStore {
         }
     }
 
-    async fn init_client(&self) -> Result<Arc<Client>, OxenError> {
+    pub async fn init_client(&self) -> Result<Arc<Client>, OxenError> {
         let result_ref = self
             .client
             .get_or_init(|| async {

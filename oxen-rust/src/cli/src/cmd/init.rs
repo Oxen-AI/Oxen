@@ -84,6 +84,11 @@ impl RunCmd for InitCmd {
             .get_one::<String>("storage-backend-bucket")
             .map(String::from);
 
+        if backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some())
+        {
+            return Err(OxenError::basic_str("storage-backend must be specified when storage-backend-path or storage-backend-bucket is provided"));
+        }
+
         let storage_opts =
             StorageOpts::from_args(backend, storage_backend_path, storage_backend_bucket)?;
 
