@@ -9,7 +9,6 @@ use std::io::Cursor;
 use utoipa::ToSchema;
 
 use crate::core::df::tabular;
-use crate::error::OxenError;
 use crate::model::DataFrameSize;
 use crate::opts::PaginateOpts;
 use crate::{model::Schema, opts::DFOpts};
@@ -171,8 +170,6 @@ impl JsonDataFrame {
     fn json_data(df: &mut DataFrame) -> serde_json::Value {
         log::debug!("Serializing df: [{df}]");
 
-        sanitize_df_for_serialization(df).expect("Error cleaning df before serialization");
-
         // TODO: serialize to json
         let data: Vec<u8> = Vec::new();
         let mut buf = BufWriter::new(data);
@@ -185,75 +182,5 @@ impl JsonDataFrame {
         let json_str = str::from_utf8(&buffer).unwrap();
 
         serde_json::from_str(json_str).unwrap()
-    }
-}
-
-fn sanitize_df_for_serialization(df: &mut DataFrame) -> Result<(), OxenError> {
-    let schema = df.schema();
-    let mut updates: Vec<(usize, Column)> = Vec::new();
-
-    // Collect all updates first
-    for (idx, _field) in schema.iter_fields().enumerate() {
-        let series = df.select_at_idx(idx).unwrap();
-
-        if let Some(new_series) = match series.dtype() {
-            DataType::Binary | DataType::BinaryOffset => {
-                Some(cast_binary_to_string_with_fallback(series, "[binary]"))
-            }
-            DataType::Struct(subfields) => {
-                if has_binary_in_struct(subfields) {
-                    Some(cast_binary_to_string_with_fallback(
-                        series,
-                        &format!("struct[{}]", subfields.len()),
-                    ))
-                } else {
-                    None
-                }
-            }
-            DataType::List(subtype) => match **subtype {
-                DataType::Binary | DataType::BinaryOffset => Some(
-                    cast_binary_to_string_with_fallback(series, "[list[binary]]"),
-                ),
-                DataType::Struct(ref subfields) => {
-                    if has_binary_in_struct(subfields) {
-                        Some(cast_binary_to_string_with_fallback(
-                            series,
-                            &format!("[list[struct[{}]]]", subfields.len()),
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            },
-            _ => None,
-        } {
-            updates.push((idx, new_series));
-        }
-    }
-
-    // Apply updates after collecting them all
-    for (idx, new_series) in updates {
-        df.replace_column(idx, new_series)?;
-    }
-
-    Ok(())
-}
-
-fn has_binary_in_struct(subfields: &[Field]) -> bool {
-    subfields.iter().any(|field| {
-        matches!(field.dtype(), DataType::Binary | DataType::BinaryOffset)
-            || field.dtype().to_string().contains("Binary")
-    })
-}
-
-fn cast_binary_to_string_with_fallback(series: &Column, out: &str) -> Column {
-    let res = series.cast(&DataType::String);
-    if let Ok(series) = res {
-        series
-    } else {
-        let mut vec = vec![out];
-        vec.resize(series.len(), out);
-        Column::new(series.name().clone(), vec)
     }
 }
