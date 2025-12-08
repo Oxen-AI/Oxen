@@ -1,7 +1,6 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
-use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::{primitives::ByteStream, Client};
+use aws_sdk_s3::{config::Region, primitives::ByteStream, Client};
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::fs::Metadata;
@@ -18,7 +17,7 @@ use crate::storage::version_store::ReadSeek;
 /// S3 implementation of version storage
 #[derive(Debug)]
 pub struct S3VersionStore {
-    client: Arc<OnceCell<Client>>,
+    client: OnceCell<Result<Arc<Client>, OxenError>>,
     bucket: String,
     prefix: String,
 }
@@ -31,24 +30,53 @@ impl S3VersionStore {
     /// * `prefix` - Prefix for all objects in the bucket
     pub fn new(bucket: impl Into<String>, prefix: impl Into<String>) -> Self {
         Self {
-            client: Arc::new(OnceCell::new()),
+            client: OnceCell::new(),
             bucket: bucket.into(),
             prefix: prefix.into(),
         }
     }
 
-    async fn init_client(&self) -> Client {
-        self.client
+    async fn init_client(&self) -> Result<Arc<Client>, OxenError> {
+        let result_ref = self
+            .client
             .get_or_init(|| async {
-                let region_provider = RegionProviderChain::default_provider().or_else("us-west-1");
-                let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(region_provider)
+                // Create a temp client to get the bucket region
+                let base_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .load()
                     .await;
-                Client::new(&config)
+                let tmp_client = Client::new(&base_config);
+
+                let detected_region =
+                    match tmp_client.head_bucket().bucket(&self.bucket).send().await {
+                        Ok(res) => {
+                            // if head_bucket() succeed, bucket_region must have a value
+                            res.bucket_region()
+                                .map(str::to_owned)
+                                .ok_or(OxenError::basic_str(
+                                    "HeadBucket succeeded but bucket_region is None",
+                                ))?
+                        }
+                        Err(err) => err
+                            .raw_response()
+                            .and_then(|res| res.headers().get("x-amz-bucket-region"))
+                            .map(str::to_owned)
+                            .ok_or(OxenError::basic_str("x-amz-bucket-region header not found"))?,
+                    };
+
+                // Construct the client with the detected bucket region
+                let real_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                    .region(Region::new(detected_region))
+                    .load()
+                    .await;
+
+                Ok::<Arc<Client>, OxenError>(Arc::new(Client::new(&real_config)))
             })
-            .await
-            .clone()
+            .await;
+
+        match result_ref {
+            Ok(client) => Ok(client.clone()),
+            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+        }
     }
 
     /// Get the directory containing a version file
@@ -67,7 +95,7 @@ impl S3VersionStore {
 #[async_trait]
 impl VersionStore for S3VersionStore {
     async fn init(&self) -> Result<(), OxenError> {
-        let client = self.init_client().await;
+        let client = self.init_client().await?;
 
         // Check permission to write to S3
         match client.head_bucket().bucket(&self.bucket).send().await {
@@ -85,12 +113,17 @@ impl VersionStore for S3VersionStore {
                     .await
                 {
                     Ok(_) => {
-                        let _ = client
+                        client
                             .delete_object()
                             .bucket(&self.bucket)
                             .key(&test_key)
                             .send()
-                            .await;
+                            .await
+                            .map_err(|err| {
+                                OxenError::basic_str(format!(
+                                    "Failed to delete _permission_check: {err}"
+                                ))
+                            })?;
                         Ok(())
                     }
                     // Surface the error from S3
@@ -108,7 +141,7 @@ impl VersionStore for S3VersionStore {
 
     async fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
         // get the client
-        let client = self.init_client().await;
+        let client = self.init_client().await?;
         // get file content from the path
         let mut file = std::fs::File::open(file_path).map_err(|e| {
             OxenError::basic_str(format!("Failed to open file {}: {e}", file_path.display()))
@@ -143,7 +176,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
-        let client = self.init_client().await;
+        let client = self.init_client().await?;
         log::debug!("Storing version to S3");
         let key = self.generate_key(hash);
 
