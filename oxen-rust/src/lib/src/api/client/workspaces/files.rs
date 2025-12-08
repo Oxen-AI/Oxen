@@ -1250,6 +1250,7 @@ mod tests {
     use std::path::PathBuf;
 
     use std::path::Path;
+    use tempfile::TempDir;
     use uuid;
 
     #[tokio::test]
@@ -2077,7 +2078,10 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             let bounding_box_path = PathBuf::from("README.md");
-            let output_path = PathBuf::from("output.md");
+
+            // Create a temporary directory for the output file
+            let temp_dir = TempDir::new()?;
+            let output_path = temp_dir.path().join("output.md");
 
             // Download the bounding box from the base repo to a new path
             api::client::workspaces::files::download(
@@ -2090,6 +2094,7 @@ mod tests {
 
             assert!(output_path.exists());
 
+            // TempDir will automatically clean up when it goes out of scope
             Ok(remote_repo)
         })
         .await

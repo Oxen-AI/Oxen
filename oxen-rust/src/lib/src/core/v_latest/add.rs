@@ -978,9 +978,7 @@ pub fn get_status_and_add_file(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
-    if let Some(parent) = dst_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+
     let file_name = dst_path.file_name().unwrap().to_string_lossy();
     let maybe_dir_node = None;
     let file_status =
@@ -1020,10 +1018,6 @@ pub fn stage_file_with_hash(
     let head_commit = &workspace.commit;
 
     let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
-    if let Some(parent) = dst_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
     let metadata = util::fs::metadata(data_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
     let maybe_file_node =
