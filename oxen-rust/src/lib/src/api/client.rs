@@ -93,12 +93,12 @@ fn builder_for_host<S: AsRef<str>>(
         Ok(builder_no_user_agent())
     };
 
+    // If auth_config.toml isn't found, return without authorizing
     let config = match AuthConfig::get() {
         Ok(config) => config,
-        Err(err) => {
-            log::debug!("remote::client::new_for_host error getting config: {err}");
-
-            return Err(OxenError::must_supply_valid_api_key());
+        Err(e) => {
+            log::debug!("remote::client::new_for_host error getting config: {}. No auth token found for host {}", e, host.as_ref());
+            return builder;
         }
     };
     if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
@@ -106,8 +106,8 @@ fn builder_for_host<S: AsRef<str>>(
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
-            Err(err) => {
-                log::debug!("remote::client::new invalid header value: {err}");
+            Err(e) => {
+                log::debug!("remote::client::new invalid header value: {e}");
                 return Err(OxenError::basic_str(
                     "Error setting request auth. Please check your Oxen config.",
                 ));
