@@ -698,27 +698,17 @@ pub fn determine_file_status(
         // first check if the file timestamp is different
         let metadata = util::fs::metadata(data_path)?;
         let mtime = FileTime::from_last_modification_time(&metadata);
+        let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
+        let num_bytes = metadata.len();
+
         previous_oxen_metadata = file_node.metadata();
-        if util::fs::is_modified_from_node(data_path, file_node)? {
-            log::debug!("has_different_modification_time true {file_node}");
-            let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
-            if file_node.hash().to_u128() != hash {
-                log::debug!("has_different_modification_time hash is different true {file_node}");
-                let num_bytes = metadata.len();
-                (
-                    StagedEntryStatus::Modified,
-                    MerkleHash::new(hash),
-                    num_bytes,
-                    mtime,
-                )
-            } else {
-                (
-                    StagedEntryStatus::Unmodified,
-                    MerkleHash::new(hash),
-                    file_node.num_bytes(),
-                    mtime,
-                )
-            }
+        if util::fs::is_modified_from_node_with_metadata(data_path, file_node, Ok(metadata))? {
+            (
+                StagedEntryStatus::Modified,
+                MerkleHash::new(hash),
+                num_bytes,
+                mtime,
+            )
         } else {
             (
                 StagedEntryStatus::Unmodified,
