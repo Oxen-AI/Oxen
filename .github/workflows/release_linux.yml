@@ -104,7 +104,9 @@ jobs:
             openssl-devel \
             cmake \
             clang \
-            rubygems
+            rubygems \
+            ffmpeg-devel \
+            pkg-config
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
