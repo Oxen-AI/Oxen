@@ -195,11 +195,5 @@ name = "benchmark"
 path = "src/benches/benchmark.rs"
 harness = false
 
-# Windows-specific dependency configuration to build FFmpeg from source
-[target.'cfg(windows)'.dependencies]
-ffmpeg-next = { version = "8.0.0", default-features = false, features = ["build"] }
-ffmpeg-sys-next = { version = "8.0.0", default-features = false, features = ["build"] }
-
-
 [package.metadata.cargo-machete]
 ignored = ["astral-tokio-tar", "libduckdb-sys"]

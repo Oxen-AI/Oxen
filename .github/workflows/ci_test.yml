@@ -84,7 +84,13 @@ jobs:
       - name: Install dependencies (Windows)
         if: matrix.platform == 'windows'
         run: |
-          choco install ffmpeg -y
+          # Install vcpkg for FFmpeg development libraries
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          cd C:\vcpkg
+          .\bootstrap-vcpkg.bat
+          .\vcpkg.exe install ffmpeg:x64-windows
+          # Set VCPKG_ROOT for cargo to find FFmpeg libraries
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Install nextest runner
         uses: taiki-e/install-action@nextest
@@ -102,11 +108,6 @@ jobs:
         run: |
           cd ${{ github.workspace }}\oxen-rust
           mkdir .\data\test\runs
-
-      - name: Set FFMPEG_STATIC for Windows
-        if: matrix.platform == 'windows'
-        run: |
-          echo "FFMPEG_STATIC=1" >> $env:GITHUB_ENV
 
       - name: Build oxen-rust
         run: |
