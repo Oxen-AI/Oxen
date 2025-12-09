@@ -134,12 +134,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
-          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          echo "=== After adding user ==="
-          dir
-          echo "=== Checking target\debug\ directory ==="
-          dir .\target\debug\
-          copy .\target\debug\user_config.toml .\data\test\config\user_config.toml
+          Set-Content -Path .\data\test\config\user_config.toml -Value "name = `"Ox`"`nemail = `"ox@oxen.ai`""
 
       - name: Run oxen-rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
