@@ -123,7 +123,7 @@ pub fn parse_glob_paths(
         }
     }
 
-    log::debug!("parse_glob_paths found paths: {expanded_paths:?}");
+    log::debug!("parse_glob_paths found paths: {:?}", expanded_paths.len());
     Ok(expanded_paths)
 }
 

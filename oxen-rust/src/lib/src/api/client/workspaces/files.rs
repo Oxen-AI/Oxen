@@ -19,9 +19,11 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
 use futures::stream;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::util::hasher;
 use flate2::write::GzEncoder;
@@ -274,6 +276,7 @@ async fn parallel_batched_small_file_upload(
     let directory = directory.as_ref().to_str().unwrap_or_default().to_string();
 
     type PieceOfWork = (Vec<(PathBuf, u64)>, String, String, RemoteRepository);
+    type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
 
     // create batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
@@ -316,50 +319,60 @@ async fn parallel_batched_small_file_upload(
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
 
-    // For the operation as a whole
-    let error = Arc::new(Mutex::new(Vec::new()));
+    // For operations as a whole
+    let errors = Arc::new(Mutex::new(Vec::new()));
+
+    let worker_count = concurrency::num_threads_for_items(file_batches.len());
+    let (tx, rx) = mpsc::channel(worker_count);
 
     let progress = Arc::new(PushProgress::new_with_totals(
         small_files.len() as u64,
         total_size,
     ));
-    let worker_count = concurrency::num_threads_for_items(file_batches.len());
-    stream::iter(file_batches)
-        .for_each_concurrent(
-            worker_count,
-            |batch| {
+
+    let producer_errors = Arc::clone(&errors);
+    let maybe_local_repo = local_repo.clone();
+
+    // Initiate the producer
+    let producer_handle = tokio::spawn(async move {
+        stream::iter(file_batches)
+            .for_each_concurrent(worker_count, |batch| {
                 let repo_path_clone = repo_path.clone();
-                let local_repo_clone = local_repo.clone();
                 let head_commit_maybe_clone = head_commit_maybe.clone();
-                let client_clone = client.clone();
-                let err_files = Arc::clone(&err_files);
-                let progress_clone = Arc::clone(&progress);
-                let error = Arc::clone(&error);
+                let local_repo_clone = maybe_local_repo.clone();
+                let errors = Arc::clone(&producer_errors);
+                let tx_clone = tx.clone();
 
                 async move {
                     let repo_path_clone = repo_path_clone.clone();
                     let local_repo_clone = local_repo_clone.clone();
                     let head_commit_maybe_clone = head_commit_maybe_clone.clone();
-                    let client_clone = client_clone.clone();
-                    let err_files_clone = Arc::clone(&err_files);
 
                     let result: Result<(), OxenError> = async move {
-                        let (small_files, workspace_id, directory, remote_repo) = batch;
+                        let (small_files, _workspace_id, _directory, _remote_repo) = batch;
 
                         let mut batch_size = 0;
                         let mut batch_parts = Vec::new();
                         let mut files_to_stage = Vec::new();
 
-                        // Build the multiparts for each file 
+                        // Build the multiparts for each file
+                        log::debug!(
+                            "Starting file processing loop with {:?} files",
+                            small_files.len()
+                        );
                         for (path, size) in small_files {
                             let local_repo_clone = local_repo_clone.clone();
                             let repo_path_clone = repo_path_clone.clone();
                             let head_commit_maybe_clone = head_commit_maybe_clone.clone();
 
-                            let file_data_maybe: Option<(reqwest::multipart::Part, String, PathBuf, u64)> = tokio::task::spawn_blocking(move || {
-                                let relative_path = util::fs::path_relative_to_dir(
-                                    &path, &repo_path_clone
-                                )?;
+                            let file_data_maybe: Option<(
+                                reqwest::multipart::Part,
+                                String,
+                                PathBuf,
+                                u64,
+                            )> = tokio::task::spawn_blocking(move || {
+                                let relative_path =
+                                    util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
 
                                 // In remote-mode repos, skip adding files already present in tree
                                 if let Some(ref head_commit) = head_commit_maybe_clone {
@@ -383,14 +396,19 @@ async fn parallel_batched_small_file_upload(
                                 };
 
                                 let file = std::fs::read(&path).map_err(|e| {
-                                    OxenError::basic_str(format!("Failed to read file '{path:?}': {e}"))
+                                    OxenError::basic_str(format!(
+                                        "Failed to read file '{path:?}': {e}"
+                                    ))
                                 })?;
 
                                 let hash = hasher::hash_buffer(&file);
 
-                                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                                let mut encoder =
+                                    GzEncoder::new(Vec::new(), Compression::default());
                                 std::io::copy(&mut file.as_slice(), &mut encoder).map_err(|e| {
-                                    OxenError::basic_str(format!("Failed to copy file '{path:?}' to encoder: {e}"))
+                                    OxenError::basic_str(format!(
+                                        "Failed to copy file '{path:?}' to encoder: {e}"
+                                    ))
                                 })?;
 
                                 let file_part = {
@@ -398,21 +416,24 @@ async fn parallel_batched_small_file_upload(
                                         Ok(bytes) => bytes,
                                         Err(e) => {
                                             // If compressing a file fails, cancel the operation
-                                            return Err(OxenError::basic_str(format!("Failed to finish gzip for file {}: {}", &hash, e)));
+                                            return Err(OxenError::basic_str(format!(
+                                                "Failed to finish gzip for file {}: {}",
+                                                &hash, e
+                                            )));
                                         }
                                     };
 
-                                    let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+                                    reqwest::multipart::Part::bytes(compressed_bytes)
                                         .file_name(hash.clone())
-                                        .mime_str("application/gzip")?;
-
-                                    file_part
+                                        .mime_str("application/gzip")?
                                 };
 
                                 Ok(Some((file_part, hash, staging_path, size)))
-                            }).await??;
+                            })
+                            .await??;
 
-                            let (file_part, file_hash, file_path, file_size) = match file_data_maybe {
+                            let (file_part, file_hash, file_path, file_size) = match file_data_maybe
+                            {
                                 Some(data) => data,
                                 None => continue,
                             };
@@ -426,109 +447,148 @@ async fn parallel_batched_small_file_upload(
                             batch_size += file_size;
                         }
 
-                        // Once the batch has been processed, upload the multiparts
-                        let mut form = reqwest::multipart::Form::new();
-
-                        let num_entries = batch_parts.len();
-                        for part in batch_parts {
-                            form = form.part("file[]", part);
+                        // Once all the files in the batch are processed,
+                        // Send them to the receiver for upload
+                        let processed_batch: ProcessedBatch =
+                            (batch_parts, files_to_stage, batch_size);
+                        match tx_clone.send(processed_batch).await {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
                         }
-
-                        let client_clone = client_clone.clone();
-                        let remote_repo_clone = remote_repo.clone();
-                        let workspace_id_clone = workspace_id.clone();
-                        let directory_str = directory.clone();
-
-                        let bar = Arc::clone(&progress_clone);
-
-                        // TODO: I think it's going to be possible to clone these via mem_cpy? 
-                        match api::client::versions::workspace_multipart_batch_upload_parts(
-                            &remote_repo_clone,
-                            Arc::clone(&client_clone),
-                            form,
-                        )
-                        .await
-                        {
-                            Ok(upload_err_files) => {
-                                if !upload_err_files.is_empty() {
-                                    let mut err_files = err_files_clone.lock();
-                                    err_files.extend(upload_err_files.clone());
-                                }
-
-                                log::debug!(
-                                    "Version file upload successful. Beginning staging for {:?} files",
-                                    files_to_stage.len()
-                                );
-                                match stage_files_to_workspace_with_retry(
-                                    &remote_repo_clone,
-                                    client_clone,
-                                    &workspace_id_clone,
-                                    Arc::new(files_to_stage.clone()),
-                                    &directory_str,
-                                    upload_err_files,
-                                )
-                                .await
-                                {
-                                    // If the staging operation returned successfully, record the err_files for re-upload
-                                    Ok(staging_err_files) => {
-                                        log::debug!("Successfully staged files to workspace with errs {err_files:?}");
-
-                                        bar.add_bytes(batch_size);
-                                        bar.add_files(num_entries as u64);
-
-                                        if !staging_err_files.is_empty() {
-                                            let mut err_files = err_files_clone.lock();
-                                            err_files.extend(staging_err_files.clone());
-                                        }
-                                    }
-                                    // If staging failed, cancel the operation
-                                    Err(e) => {
-                                        log::error!("failed to stage files to workspace: {e}");
-                                        return Err(OxenError::basic_str(format!(
-                                            "failed to stage to workspace: {e}"
-                                        )));
-                                    }
-                                }
-
-                                files_to_stage.clear();
-                            }
-                            // If uploading the version files fails, cancel the operation
-                            Err(e) => {
-                                log::error!("failed to upload version files to workspace: {e}");
-                                return Err(OxenError::basic_str(format!(
-                                    "failed to upload version files to workspace: {e}"
-                                )));
-                            }
-                        }
-
-                        Ok(())
                     }
                     .await;
 
                     if let Err(e) = result {
-                        error.lock().push(OxenError::basic_str(format!("{:?}", e)));
+                        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
                     }
-
                 }
-            }
-        )
-        .await;
+            })
+            .await;
+    });
 
-    // If the upload loop failed, return an error
-    let maybe_error = {
-        let mut error_guard = error.lock();
-        std::mem::take(&mut *error_guard)
-    };
+    let client_clone = client.clone();
+    let workspace_id_clone = workspace_id.clone();
+    let remote_repo_clone = remote_repo.clone();
+    let directory_clone = directory.clone();
 
-    if !maybe_error.is_empty() {
-        let error_message = maybe_error
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<String>>()
-            .join("\n- ");
+    let consumer_err_files = Arc::clone(&err_files);
+    let consumer_errors = Arc::clone(&errors);
+    let progress_clone = Arc::clone(&progress);
 
-        return Err(OxenError::basic_str(format!("{:?}", error_message)));
-    }
+    // Initiate the receiver
+    let consumer_handle = tokio::spawn(async move {
+        let rx_stream = ReceiverStream::new(rx);
+        rx_stream
+            .for_each_concurrent(
+                worker_count,
+                |processed_batch| {
+                    let client_clone = client_clone.clone();
+                    let remote_repo_clone = remote_repo_clone.clone();
+                    let workspace_id_clone = workspace_id_clone.clone();
+                    let directory_str = directory_clone.clone();
+
+                    let err_files_clone = Arc::clone(&consumer_err_files);
+                    let errors = Arc::clone(&consumer_errors);
+                    
+                    let bar = Arc::clone(&progress_clone);
+                    
+                    async move {
+            
+                        let result: Result<(), OxenError> = async move {
+                            let (current_batch_parts, mut files_to_stage, current_batch_size) = processed_batch;
+                            let num_entries = current_batch_parts.len();
+
+                            // Build the multipart form
+                            let mut form = reqwest::multipart::Form::new();
+                            for part in current_batch_parts {
+                                form = form.part("file[]", part);
+                            }
+
+                            match api::client::versions::workspace_multipart_batch_upload_parts(
+                                &remote_repo_clone,
+                                Arc::clone(&client_clone),
+                                form,
+                            )
+                            .await
+                            {
+                                Ok(upload_err_files) => {
+                                    if !upload_err_files.is_empty() {
+                                        let mut err_files = err_files_clone.lock();
+                                        err_files.extend(upload_err_files.clone());
+                                    }
+
+                                    log::debug!(
+                                        "Version file upload successful with {:?} err files. Beginning staging for {:?} files",
+                                        upload_err_files.len(),
+                                        files_to_stage.len()
+                                    );
+                                    match stage_files_to_workspace_with_retry(
+                                        &remote_repo_clone,
+                                        client_clone,
+                                        &workspace_id_clone,
+                                        Arc::new(files_to_stage.clone()),
+                                        &directory_str,
+                                        upload_err_files,
+                                    )
+                                    .await
+                                    {
+                                        // If the staging operation returned successfully, record the err_files for re-upload
+                                        Ok(staging_err_files) => {
+                                            log::debug!("Successfully staged files to workspace with errs {:?}", staging_err_files.len());
+
+                                            bar.add_bytes(current_batch_size);
+                                            bar.add_files(num_entries as u64);
+
+                                            if !staging_err_files.is_empty() {
+                                                let mut err_files = err_files_clone.lock();
+                                                err_files.extend(staging_err_files.clone());
+                                            }
+                                        }
+                                        // If staging failed, cancel the operation
+                                        Err(e) => {
+                                            log::error!("failed to stage files to workspace: {e}");
+                                            return Err(OxenError::basic_str(format!(
+                                                "failed to stage to workspace: {e}"
+                                            )));
+                                        }
+                                    }
+
+                                    files_to_stage.clear();
+                                    Ok(())
+                                }
+                                // If uploading the version files fails, cancel the operation
+                                Err(e) => {
+                                    let mut err_files = err_files_clone.lock();
+                                    err_files.extend(
+                                        files_to_stage
+                                            .iter()
+                                            .map(|f| ErrorFileInfo {
+                                                hash: f.hash.clone(),
+                                                path: Some(f.path.clone()),
+                                                error: format!("{:?}", e),
+                                            })
+                                            .collect::<Vec<ErrorFileInfo>>()
+                                    );
+
+                                    log::error!("failed to upload version files to workspace: {e}");
+                                    Err(OxenError::basic_str(format!(
+                                        "failed to upload version files to workspace: {e}"
+                                    )))
+                                }
+                            }
+                        }.await;
+
+                        if let Err(e) = result {
+                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                        }
+                    }
+                }
+            )
+            .await;
+    });
+
+    // Join the tasks and run to completion
+    tokio::try_join!(producer_handle, consumer_handle)?;
 
     // Get the err_files from both processes
     let mutex = match Arc::try_unwrap(err_files) {
