@@ -137,7 +137,9 @@ jobs:
           .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           echo "=== After adding user ==="
           dir
-          copy user_config.toml data\test\config\user_config.toml
+          echo "=== Checking target\debug\ directory ==="
+          dir .\target\debug\
+          copy .\target\debug\user_config.toml .\data\test\config\user_config.toml
 
       - name: Run oxen-rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
