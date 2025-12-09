@@ -28,7 +28,10 @@ jobs:
 
           # Remove unnecessary tools and files to free up space
           sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
           sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
 
           # Clean apt cache
@@ -84,6 +87,9 @@ jobs:
       - name: Install dependencies (Windows)
         if: matrix.platform == 'windows'
         run: |
+          echo "=== Before installing dependencies ==="
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{Label="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Label="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}}, @{Label="Total(GB)";Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
+          
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
@@ -91,6 +97,9 @@ jobs:
           .\vcpkg.exe install ffmpeg:x64-windows
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+          
+          echo "=== After installing dependencies ==="
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{Label="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Label="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}}, @{Label="Total(GB)";Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
 
       - name: Install nextest runner
         uses: taiki-e/install-action@nextest
