@@ -4,6 +4,8 @@ use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
+use std::path::Path;
+
 use crate::cmd::RunCmd;
 pub const NAME: &str = "node";
 pub struct NodeCmd;
@@ -65,6 +67,7 @@ impl RunCmd for NodeCmd {
             } else {
                 repositories::commits::head_commit(&repository)?
             };
+            let path = Path::new(path);
             let Some(node) = repositories::tree::get_node_by_path(&repository, &commit, path)?
             else {
                 return Err(OxenError::basic_str(format!(
@@ -74,6 +77,12 @@ impl RunCmd for NodeCmd {
             };
 
             println!("{node:?}");
+            if args.get_flag("verbose") {
+                println!("{} children", node.children.len());
+                for child in node.children {
+                    println!("{child:?}");
+                }
+            }
             return Ok(());
 
         // otherwise, get the node based on the node hash
