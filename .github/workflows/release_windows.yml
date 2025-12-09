@@ -78,6 +78,10 @@ jobs:
         run: |
           choco install -y cmake llvm uv rustup.install
 
+      - name: Set FFMPEG_STATIC for Windows
+        run: |
+          echo "FFMPEG_STATIC=1" >> $env:GITHUB_ENV
+
       - name: Build oxen binaries
         run: |
           refreshenv

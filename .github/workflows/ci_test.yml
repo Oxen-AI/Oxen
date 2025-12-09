@@ -103,6 +103,11 @@ jobs:
           cd ${{ github.workspace }}\oxen-rust
           mkdir .\data\test\runs
 
+      - name: Set FFMPEG_STATIC for Windows
+        if: matrix.platform == 'windows'
+        run: |
+          echo "FFMPEG_STATIC=1" >> $env:GITHUB_ENV
+
       - name: Build oxen-rust
         run: |
           cd ${{ github.workspace }}/oxen-rust
