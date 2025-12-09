@@ -26,8 +26,14 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
             let video_tracks: Vec<&Mp4Track> = video
                 .tracks()
                 .values()
-                .filter(|t| t.track_type().unwrap() == TrackType::Video)
-                .collect();
+                .filter_map(|t| match t.track_type() {
+                    Ok(TrackType::Video) => Some(Ok(t)),
+                    Ok(_) => None,
+                    Err(e) => Some(Err(OxenError::basic_str(format!(
+                        "Could not get track type: {e:?}"
+                    )))),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
             let video = video_tracks
                 .first()
