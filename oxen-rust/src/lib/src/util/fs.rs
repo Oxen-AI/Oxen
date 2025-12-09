@@ -36,7 +36,7 @@ use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, util};
-use ez_ffmpeg::{FfmpegContext, FfmpegScheduler, Input, Output};
+use ffmpeg_next as ffmpeg;
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
 
@@ -1730,7 +1730,7 @@ pub fn resize_cache_image_version_store(
     Ok(())
 }
 
-/// Generate a video thumbnail using ez-ffmpeg library.
+/// Generate a video thumbnail using ffmpeg-next library.
 /// This function extracts a frame from the video at the specified timestamp
 /// and saves it as an image thumbnail.
 fn generate_video_thumbnail_version_store(
@@ -1757,66 +1757,165 @@ fn generate_video_thumbnail_version_store(
         .to_str()
         .ok_or_else(|| OxenError::basic_str("Invalid video path"))?;
 
-    let thumbnail_path_str = thumbnail_path
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str("Invalid thumbnail path"))?;
-
     // Default timestamp is 1.0 seconds if not specified
     let timestamp = thumbnail.timestamp.unwrap_or(1.0);
 
-    // Build scale filter string based on provided dimensions
-    // If only one dimension is provided, use -1 for the other to maintain aspect ratio
-    let scale_filter = match (thumbnail.width, thumbnail.height) {
-        (Some(w), Some(h)) => {
-            // Both dimensions provided - exact resize
-            format!("scale={w}:{h}")
-        }
-        (Some(w), None) => {
-            // Only width provided - maintain aspect ratio
-            format!("scale={w}:-1")
-        }
-        (None, Some(h)) => {
-            // Only height provided - maintain aspect ratio
-            format!("scale=-1:{h}")
-        }
-        (None, None) => {
-            // Neither provided - use defaults (320x240)
-            "scale=320:240".to_string()
-        }
+    // Determine output dimensions
+    let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, 0), // 0 means maintain aspect ratio
+        (None, Some(h)) => (0, h), // 0 means maintain aspect ratio
+        (None, None) => (320, 240),
     };
 
-    // Build FFmpeg context to extract frame at timestamp and scale it
-    // Equivalent to: ffmpeg -i input.mp4 -ss 00:00:01.0 -vframes 1 -vf "scale=320:240" -update 1 output.jpg
-    // Convert timestamp from seconds to microseconds
-    let timestamp_us = (timestamp * 1_000_000.0) as i64;
-    // Use a very short duration (1ms) to capture a single frame
-    let recording_time_us = 1_000;
+    // Initialize FFmpeg
+    ffmpeg::init().map_err(|e| {
+        OxenError::basic_str(format!(
+            "Failed to initialize FFmpeg: {e}. Make sure ffmpeg is installed."
+        ))
+    })?;
 
-    // For single image output with image2 format, we need to append the update option to the output path
-    // FFmpeg image2 muxer requires -update 1 for single file output
-    // Workaround: use a format that doesn't require update option, or configure via Output methods
-    let context = FfmpegContext::builder()
-        .input(
-            Input::from(version_path_str)
-                .set_start_time_us(timestamp_us)
-                .set_recording_time_us(recording_time_us),
-        )
-        // Scale filter to resize the thumbnail, and select only the first frame
-        .filter_desc(format!("{scale_filter},select=eq(n\\,0)"))
-        .output(Output::from(thumbnail_path_str))
-        .build()
-        .map_err(|e| {
-            OxenError::basic_str(format!(
-                "Failed to build FFmpeg context: {e}. Make sure ffmpeg is installed."
-            ))
-        })?;
+    // Open input video
+    let mut ictx = ffmpeg::format::input(version_path_str)
+        .map_err(|e| OxenError::basic_str(format!("Failed to open video file: {e}")))?;
 
-    // Execute FFmpeg synchronously
-    FfmpegScheduler::new(context)
-        .start()
-        .map_err(|e| OxenError::basic_str(format!("Failed to start FFmpeg scheduler: {e}")))?
-        .wait()
-        .map_err(|e| OxenError::basic_str(format!("FFmpeg failed to generate thumbnail: {e}")))?;
+    // Find the best video stream
+    let input = ictx
+        .streams()
+        .best(ffmpeg::media::Type::Video)
+        .ok_or_else(|| OxenError::basic_str("No video stream found in file"))?;
+
+    let video_stream_index = input.index();
+    let time_base = input.time_base();
+
+    // Create decoder context
+    let context_decoder = ffmpeg::codec::context::Context::from_parameters(input.parameters())
+        .map_err(|e| OxenError::basic_str(format!("Failed to create decoder context: {e}")))?;
+    let mut decoder = context_decoder
+        .decoder()
+        .video()
+        .map_err(|e| OxenError::basic_str(format!("Failed to create video decoder: {e}")))?;
+
+    // Get original dimensions
+    let original_width = decoder.width();
+    let original_height = decoder.height();
+
+    let original_format = decoder.format();
+
+    // Calculate output dimensions maintaining aspect ratio if needed
+    let (final_width, final_height) = if output_width == 0 {
+        // Height specified, calculate width
+        let aspect_ratio = original_width as f64 / original_height as f64;
+        ((output_height as f64 * aspect_ratio) as u32, output_height)
+    } else if output_height == 0 {
+        // Width specified, calculate height
+        let aspect_ratio = original_height as f64 / original_width as f64;
+        (output_width, (output_width as f64 * aspect_ratio) as u32)
+    } else {
+        (output_width, output_height)
+    };
+
+    // Set up scaler to convert to RGB24 and resize
+    let mut scaler = ffmpeg::software::scaling::Context::get(
+        original_format,
+        original_width,
+        original_height,
+        ffmpeg::format::Pixel::RGB24,
+        final_width,
+        final_height,
+        ffmpeg::software::scaling::Flags::BILINEAR,
+    )
+    .map_err(|e| OxenError::basic_str(format!("Failed to create scaler: {e}")))?;
+
+    // Seek to the specified timestamp
+    // Convert timestamp to the stream's time base
+    let timestamp_pts =
+        (timestamp / time_base.denominator() as f64 * time_base.numerator() as f64) as i64;
+    ictx.seek(timestamp_pts, timestamp_pts..timestamp_pts + 1)
+        .map_err(|e| OxenError::basic_str(format!("Failed to seek to timestamp: {e}")))?;
+
+    // Decode frames until we get one
+    let mut frame = ffmpeg::frame::Video::empty();
+    let mut rgb_frame = ffmpeg::frame::Video::empty();
+    let mut frame_found = false;
+
+    for (stream, packet) in ictx.packets() {
+        if stream.index() == video_stream_index {
+            decoder.send_packet(&packet).map_err(|e| {
+                OxenError::basic_str(format!("Failed to send packet to decoder: {e}"))
+            })?;
+
+            if decoder.receive_frame(&mut frame).is_ok() {
+                // Scale the frame to RGB24 and desired dimensions
+                scaler
+                    .run(&frame, &mut rgb_frame)
+                    .map_err(|e| OxenError::basic_str(format!("Failed to scale frame: {e}")))?;
+
+                frame_found = true;
+            }
+        }
+        if frame_found {
+            break;
+        }
+    }
+
+    // Flush decoder
+    decoder.send_eof().ok();
+    if !frame_found && decoder.receive_frame(&mut frame).is_ok() {
+        scaler
+            .run(&frame, &mut rgb_frame)
+            .map_err(|e| OxenError::basic_str(format!("Failed to scale frame: {e}")))?;
+        frame_found = true;
+    }
+
+    if !frame_found {
+        return Err(OxenError::basic_str("Failed to extract frame from video"));
+    }
+
+    // Save the frame as an image using the image crate
+    // FFmpeg frames may have padding bytes at the end of each row for alignment.
+    // We need to copy each row individually, skipping padding, to create a contiguous buffer.
+    let width = rgb_frame.width() as usize;
+    let height = rgb_frame.height() as usize;
+    let stride = rgb_frame.stride(0); // Get the stride (may include padding)
+    let bytes_per_pixel = 3; // RGB24 = 3 bytes per pixel
+    let row_size = width * bytes_per_pixel;
+
+    // Create a contiguous buffer without padding
+    let mut image_data = Vec::with_capacity(width * height * bytes_per_pixel);
+
+    // Copy each row individually, skipping padding
+    // We use unsafe only to create properly bounded row slices, then use safe copy operations
+    unsafe {
+        let data_ptr = rgb_frame.data(0).as_ptr();
+        let total_buffer_size = stride * height;
+
+        // Create a slice covering the entire frame buffer
+        let frame_buffer = std::slice::from_raw_parts(data_ptr, total_buffer_size);
+
+        // Copy each row, skipping padding bytes
+        for row_idx in 0..height {
+            let row_start = row_idx * stride;
+            let row_end = row_start + row_size;
+            image_data.extend_from_slice(&frame_buffer[row_start..row_end]);
+        }
+    }
+
+    // Create image from the contiguous RGB data
+    let img = image::RgbImage::from_raw(width as u32, height as u32, image_data)
+        .ok_or_else(|| OxenError::basic_str("Failed to create image from frame data"))?;
+
+    // Determine format from extension
+    let format = match thumbnail_path.extension().and_then(|s| s.to_str()) {
+        Some("jpg") | Some("jpeg") => ImageFormat::Jpeg,
+        Some("png") => ImageFormat::Png,
+        Some("webp") => ImageFormat::WebP,
+        _ => ImageFormat::Jpeg, // Default to JPEG
+    };
+
+    // Save the image
+    img.save_with_format(thumbnail_path, format)
+        .map_err(|e| OxenError::basic_str(format!("Failed to save thumbnail image: {e}")))?;
 
     log::debug!("saved thumbnail {thumbnail_path:?}");
     Ok(())
