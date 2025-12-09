@@ -489,11 +489,9 @@ async fn parallel_batched_small_file_upload(
 
                     let err_files_clone = Arc::clone(&consumer_err_files);
                     let errors = Arc::clone(&consumer_errors);
-                    
                     let bar = Arc::clone(&progress_clone);
-                    
+
                     async move {
-            
                         let result: Result<(), OxenError> = async move {
                             let (current_batch_parts, mut files_to_stage, current_batch_size) = processed_batch;
                             let num_entries = current_batch_parts.len();
@@ -565,7 +563,7 @@ async fn parallel_batched_small_file_upload(
                                             .map(|f| ErrorFileInfo {
                                                 hash: f.hash.clone(),
                                                 path: Some(f.path.clone()),
-                                                error: format!("{:?}", e),
+                                                error: format!("{e:?}"),
                                             })
                                             .collect::<Vec<ErrorFileInfo>>()
                                     );
@@ -604,7 +602,7 @@ async fn parallel_batched_small_file_upload(
     let err_file_paths: Vec<PathBuf> = err_files
         .clone()
         .into_iter()
-        .map(|f| f.path.unwrap())
+        .filter_map(|f| f.path)
         .collect();
 
     // TODO: Should we communicate to the user that we're retrying these files?
