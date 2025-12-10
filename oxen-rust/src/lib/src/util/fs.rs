@@ -36,9 +36,9 @@ use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, util};
-use ez_ffmpeg::{FfmpegContext, FfmpegScheduler, Input, Output};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
+use thumbnails::Thumbnailer;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -1730,9 +1730,10 @@ pub fn resize_cache_image_version_store(
     Ok(())
 }
 
-/// Generate a video thumbnail using ez-ffmpeg library.
-/// This function extracts a frame from the video at the specified timestamp
-/// and saves it as an image thumbnail.
+/// Generate a video thumbnail using thumbnails crate.
+/// This function extracts a frame from the video and saves it as an image thumbnail.
+/// Note: The thumbnails crate extracts from the beginning of the video.
+/// If a specific timestamp is required, it may need to be handled differently.
 fn generate_video_thumbnail_version_store(
     version_store: Arc<dyn VersionStore>,
     video_hash: &str,
@@ -1753,64 +1754,35 @@ fn generate_video_thumbnail_version_store(
 
     // Get the video file from version store
     let version_path = version_store.get_version_path(video_hash)?;
-    let version_path_str = version_path
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str("Invalid video path"))?;
-
-    // Default timestamp is 1.0 seconds if not specified
-    let timestamp = thumbnail.timestamp.unwrap_or(1.0);
 
     // Determine output dimensions
+    // The thumbnails crate maintains aspect ratio, so we use max dimensions
     let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
         (Some(w), Some(h)) => (w, h),
-        (Some(w), None) => (w, 0), // 0 means maintain aspect ratio
-        (None, Some(h)) => (0, h), // 0 means maintain aspect ratio
+        (Some(w), None) => (w, w), // Use width for both if only width specified
+        (None, Some(h)) => (h, h), // Use height for both if only height specified
         (None, None) => (320, 240),
     };
 
-    // Build scale filter string
-    let scale_filter = if output_width == 0 {
-        // Height specified, maintain aspect ratio
-        format!("scale=-1:{output_height}")
-    } else if output_height == 0 {
-        // Width specified, maintain aspect ratio
-        format!("scale={output_width}:-1")
-    } else {
-        format!("scale={output_width}:{output_height}")
-    };
+    // Note: The thumbnails crate doesn't support timestamp selection directly.
+    // It extracts from the beginning of the video.
+    // If timestamp support is needed, we may need to use ffmpeg directly or another approach.
+    let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
 
-    // Build FFmpeg context to extract frame at timestamp
-    // Convert timestamp from seconds to microseconds
-    let timestamp_us = (timestamp * 1_000_000.0) as i64;
-    // Set recording duration to a small value to capture just one frame
-    let capture_duration_us = 1_000_000i64; // 1 second
+    // Create thumbnailer with specified dimensions
+    let thumbnailer = Thumbnailer::new(output_width, output_height);
 
-    let thumbnail_path_str = thumbnail_path
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str("Invalid thumbnail path"))?;
+    // Generate thumbnail from video file
+    let thumb_image = thumbnailer.get(&version_path).map_err(|e| {
+        OxenError::basic_str(format!(
+            "Failed to generate thumbnail: {e}. Make sure ffmpeg is installed."
+        ))
+    })?;
 
-    // Build the context with input seeking, filter, and output
-    let context = FfmpegContext::builder()
-        .input(
-            Input::from(version_path_str)
-                .set_start_time_us(timestamp_us)
-                .set_recording_time_us(capture_duration_us),
-        )
-        .filter_desc(scale_filter.as_str())
-        .output(Output::from(thumbnail_path_str).set_max_video_frames(1))
-        .build()
-        .map_err(|e| {
-            OxenError::basic_str(format!(
-                "Failed to build FFmpeg context: {e}. Make sure ffmpeg is installed."
-            ))
-        })?;
-
-    // Execute FFmpeg to extract the frame
-    FfmpegScheduler::new(context)
-        .start()
-        .map_err(|e| OxenError::basic_str(format!("Failed to start FFmpeg: {e}")))?
-        .wait()
-        .map_err(|e| OxenError::basic_str(format!("Failed to extract frame: {e}")))?;
+    // Save the thumbnail image
+    thumb_image
+        .save(thumbnail_path)
+        .map_err(|e| OxenError::basic_str(format!("Failed to save thumbnail: {e}")))?;
 
     log::debug!("saved thumbnail {thumbnail_path:?}");
     Ok(())
