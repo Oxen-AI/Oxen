@@ -37,7 +37,7 @@ jobs:
       - name: Install system dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev pkg-config
+          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev pkg-config
 
       - name: Cargo Check
         run: |
