@@ -385,6 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "ffmpeg")]
     async fn test_upload_video_and_get_thumbnail() -> Result<(), OxenError> {
         test::run_empty_configured_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
