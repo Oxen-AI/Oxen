@@ -77,12 +77,14 @@ jobs:
           brew update
           brew install ffmpeg@7 imagemagick redis pkg-config
           brew services start redis
+          # Set PKG_CONFIG_PATH so pkg-config can find FFmpeg libraries
+          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (Linux)
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev libavutil-dev pkg-config
+          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
 
       - name: Install dependencies (Windows)
         if: matrix.platform == 'windows'
