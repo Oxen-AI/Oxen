@@ -100,9 +100,35 @@ jobs:
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
           .\bootstrap-vcpkg.bat
+          
+          # Install FFmpeg (includes libavutil, libavcodec, libavformat, libavfilter, libavdevice)
+          # FFmpeg installation provides libavutil.pc and other .pc files needed by pkg-config
           .\vcpkg.exe install ffmpeg:x64-windows-static-md
+          
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+          
+          # Set PKG_CONFIG_PATH so pkg-config can find libavutil.pc and other FFmpeg .pc files
+          # vcpkg installs pkg-config files in the installed/<triplet>/lib/pkgconfig directory
+          # This must be set before cargo build runs, as ffmpeg-sys-next uses pkg-config during build
+          $pkgConfigPath = "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+          echo "PKG_CONFIG_PATH=$pkgConfigPath" >> $env:GITHUB_ENV
+          
+          # Debug: Print contents of PKG_CONFIG_PATH directory
+          echo "=== PKG_CONFIG_PATH directory contents ==="
+          if (Test-Path $pkgConfigPath) {
+            echo "Directory exists: $pkgConfigPath"
+            Get-ChildItem -Path $pkgConfigPath -Filter "*.pc" | ForEach-Object {
+              echo "  - $($_.Name)"
+            }
+            echo "Total .pc files found: $((Get-ChildItem -Path $pkgConfigPath -Filter '*.pc').Count)"
+          } else {
+            echo "WARNING: PKG_CONFIG_PATH directory does not exist: $pkgConfigPath"
+            echo "Searching for .pc files in vcpkg installed directory..."
+            Get-ChildItem -Path "C:\vcpkg\installed" -Recurse -Filter "*.pc" -ErrorAction SilentlyContinue | Select-Object -First 10 | ForEach-Object {
+              echo "  Found: $($_.FullName)"
+            }
+          }
           
           echo "=== After installing dependencies ==="
           Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{Label="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Label="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}}, @{Label="Total(GB)";Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
