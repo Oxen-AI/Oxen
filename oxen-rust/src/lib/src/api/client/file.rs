@@ -73,28 +73,22 @@ pub async fn get_file_with_params(
 
     let client = client::new_for_url(&url)?;
 
-    // Build query string if parameters are provided
-    let url_with_params =
-        if thumbnail.is_some() || width.is_some() || height.is_some() || timestamp.is_some() {
-            let mut query_parts = Vec::new();
-            if let Some(thumb) = thumbnail {
-                query_parts.push(format!("thumbnail={thumb}"));
-            }
-            if let Some(w) = width {
-                query_parts.push(format!("width={w}"));
-            }
-            if let Some(h) = height {
-                query_parts.push(format!("height={h}"));
-            }
-            if let Some(ts) = timestamp {
-                query_parts.push(format!("timestamp={ts}"));
-            }
-            format!("{}?{}", url, query_parts.join("&"))
-        } else {
-            url.to_string()
-        };
+    // Build query parameters only for Some(...) values
+    let mut query_params: Vec<(&str, String)> = Vec::new();
+    if let Some(thumb) = thumbnail {
+        query_params.push(("thumbnail", thumb.to_string()));
+    }
+    if let Some(w) = width {
+        query_params.push(("width", w.to_string()));
+    }
+    if let Some(h) = height {
+        query_params.push(("height", h.to_string()));
+    }
+    if let Some(ts) = timestamp {
+        query_params.push(("timestamp", ts.to_string()));
+    }
 
-    let req = client.get(&url_with_params);
+    let req = client.get(&url).query(&query_params);
 
     let res = req.send().await?;
 

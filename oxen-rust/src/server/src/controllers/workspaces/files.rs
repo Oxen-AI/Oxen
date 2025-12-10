@@ -61,12 +61,11 @@ pub struct WorkspaceFileQueryParams {
         ("path" = String, Path, description = "The path to the file in the workspace", example = "images/train/dog_1.jpg"),
         ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
         ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
-        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from (default: 1.0)", example = 1.0),
+        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from", example = 1.0),
         ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
     ),
     responses(
-        (status = 200, description = "File content returned as a stream", 
-            content_type = "application/octet-stream", 
+        (status = 200, description = "File content returned as a stream. Content-Type varies: matches the file's MIME type for regular files and image resizes, or 'image/jpeg' for video thumbnails",
             body = Vec<u8>,
             headers(
                 ("oxen-revision-id" = String, description = "The commit ID of the file version")
@@ -169,7 +168,7 @@ pub async fn get(
         let video_thumbnail = VideoThumbnail {
             width: query_params.width,
             height: query_params.height,
-            timestamp: query_params.timestamp,
+            timestamp: query_params.timestamp.or(Some(1.0)),
             thumbnail: query_params.thumbnail,
         };
         log::debug!("video_thumbnail {video_thumbnail:?}");
