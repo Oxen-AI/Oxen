@@ -244,7 +244,7 @@ async fn get_commit_missing_hashes(
                 repo.depth().unwrap_or(-1),
             )?
             else {
-                log::warn!("Could not get remote tree for path {:?}", path);
+                log::warn!("Could not get remote tree for path {path:?}");
                 continue;
             };
 
