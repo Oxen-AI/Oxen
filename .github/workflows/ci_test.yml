@@ -75,7 +75,7 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           brew update
-          brew install ffmpeg@7 imagemagick redis
+          brew install ffmpeg@7 imagemagick redis pkg-config
           brew services start redis
 
       - name: Install dependencies (Linux)
