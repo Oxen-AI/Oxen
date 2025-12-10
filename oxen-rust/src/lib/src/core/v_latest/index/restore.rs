@@ -83,8 +83,10 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore_staged: start");
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
+    let repo_path = repo.path.clone();
     if let Some(db) = open_staged_db(&db_path)? {
         for path in &opts.paths {
+            let path = util::fs::path_relative_to_dir(path, &repo_path)?;
             let mut batch = WriteBatch::default();
 
             // Remove specific staged entry or entries under a directory

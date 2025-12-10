@@ -668,16 +668,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_add_and_rm_file_in_dir() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
+            // add a new file in a directory
+            let path = Path::new("dir").join("new_file.txt");
+
+            util::fs::write_to_path(repo.path.join(&path), "this is a new file")?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "first_commit")?;
+
+            // Remove the file and commit
+            let opts = RmOpts::from_path(&path);
+            repositories::rm(&repo, &opts)?;
+            repositories::commit(&repo, "commit_message")?;
+
+            // Add the file again. This should err, but not panic
+            let result = repositories::add(&repo, &path).await;
+            assert!(result.is_err());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_rm_staged_file() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
-            // Stage the README.md file
+            // Stage a file in a directory
             let path = Path::new("README.md");
             repositories::add(&repo, repo.path.join(path)).await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 1);
             assert!(status.staged_files.contains_key(path));
-            log::debug!("here");
             let opts = RmOpts::from_staged_path(path);
             repositories::rm(&repo, &opts)?;
 
