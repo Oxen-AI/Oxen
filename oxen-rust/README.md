@@ -12,11 +12,6 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
 
 # ✅ TODO
 
-- [ ] Hugging face compatible APIs
-  - [ ] Upload model to hub
-  - [ ] Download model with `transformers` library
-  - [ ] Upload dataset to hub
-  - [ ] Download dataset with `datasets` library
 - [ ] Configurable storage backends
   - [x] Local filesystem
   - [ ] S3
@@ -361,3 +356,12 @@ cargo bench -- --save-baseline bench
 ```
 
 Which would then store the benchmark under `target/criterion/add`
+
+## Enable ffmpeg
+
+To enable thumbnailing for videos, you will have to build with ffmpeg enabled
+
+```
+brew install ffmpeg@7
+cargo build --features ffmpeg
+```

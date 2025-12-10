@@ -75,10 +75,14 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           brew update
-          brew install ffmpeg@7 imagemagick redis pkg-config
+          brew install redis pkg-config
           brew services start redis
+          
+          # NOTE: This adds a lot of bloat and takes a long time to build.
+          #       we have ffmpeg disabled by default in the CI pipeline
           # Set PKG_CONFIG_PATH so pkg-config can find FFmpeg libraries
-          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          # brew install ffmpeg@7 imagemagick
+          # echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (Linux)
         if: matrix.platform == 'linux'
@@ -86,52 +90,32 @@ jobs:
           sudo apt-get update
           sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
 
-      - name: Install dependencies (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          echo "=== Before installing dependencies ==="
-          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{Label="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Label="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}}, @{Label="Total(GB)";Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
+      # NOTE: This adds a lot of bloat to the Windows image and takes a long time to build.
+      #       we have ffmpeg disabled by default in the CI pipeline
+      # - name: Install dependencies (Windows)
+      #   if: matrix.platform == 'windows'
+      #   run: |
+      #     # Install clang (via llvm) and pkg-config via Chocolatey
+      #     choco install -y llvm pkgconfiglite
           
-          # Install clang (via llvm) and pkg-config via Chocolatey
-          choco install -y llvm pkgconfiglite
+      #     # Install vcpkg for FFmpeg static development libraries (libavcodec, libavformat, libavutil, libavfilter, libavdevice)
+      #     # Using x64-windows-static-md for static libraries with dynamic MSVC runtime (better compatibility)
+      #     git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+      #     cd C:\vcpkg
+      #     .\bootstrap-vcpkg.bat
           
-          # Install vcpkg for FFmpeg static development libraries (libavcodec, libavformat, libavutil, libavfilter, libavdevice)
-          # Using x64-windows-static-md for static libraries with dynamic MSVC runtime (better compatibility)
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          cd C:\vcpkg
-          .\bootstrap-vcpkg.bat
+      #     # Install FFmpeg (includes libavutil, libavcodec, libavformat, libavfilter, libavdevice)
+      #     # FFmpeg installation provides libavutil.pc and other .pc files needed by pkg-config
+      #     .\vcpkg.exe install ffmpeg:x64-windows-static-md
           
-          # Install FFmpeg (includes libavutil, libavcodec, libavformat, libavfilter, libavdevice)
-          # FFmpeg installation provides libavutil.pc and other .pc files needed by pkg-config
-          .\vcpkg.exe install ffmpeg:x64-windows-static-md
+      #     # Set VCPKG_ROOT for cargo to find FFmpeg libraries
+      #     echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
           
-          # Set VCPKG_ROOT for cargo to find FFmpeg libraries
-          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
-          
-          # Set PKG_CONFIG_PATH so pkg-config can find libavutil.pc and other FFmpeg .pc files
-          # vcpkg installs pkg-config files in the installed/<triplet>/lib/pkgconfig directory
-          # This must be set before cargo build runs, as ffmpeg-sys-next uses pkg-config during build
-          $pkgConfigPath = "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
-          echo "PKG_CONFIG_PATH=$pkgConfigPath" >> $env:GITHUB_ENV
-          
-          # Debug: Print contents of PKG_CONFIG_PATH directory
-          echo "=== PKG_CONFIG_PATH directory contents ==="
-          if (Test-Path $pkgConfigPath) {
-            echo "Directory exists: $pkgConfigPath"
-            Get-ChildItem -Path $pkgConfigPath -Filter "*.pc" | ForEach-Object {
-              echo "  - $($_.Name)"
-            }
-            echo "Total .pc files found: $((Get-ChildItem -Path $pkgConfigPath -Filter '*.pc').Count)"
-          } else {
-            echo "WARNING: PKG_CONFIG_PATH directory does not exist: $pkgConfigPath"
-            echo "Searching for .pc files in vcpkg installed directory..."
-            Get-ChildItem -Path "C:\vcpkg\installed" -Recurse -Filter "*.pc" -ErrorAction SilentlyContinue | Select-Object -First 10 | ForEach-Object {
-              echo "  Found: $($_.FullName)"
-            }
-          }
-          
-          echo "=== After installing dependencies ==="
-          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{Label="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Label="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}}, @{Label="Total(GB)";Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
+      #     # Set PKG_CONFIG_PATH so pkg-config can find libavutil.pc and other FFmpeg .pc files
+      #     # vcpkg installs pkg-config files in the installed/<triplet>/lib/pkgconfig directory
+      #     # This must be set before cargo build runs, as ffmpeg-sys-next uses pkg-config during build
+      #     $pkgConfigPath = "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+      #     echo "PKG_CONFIG_PATH=$pkgConfigPath" >> $env:GITHUB_ENV
 
       - name: Install nextest runner
         uses: taiki-e/install-action@nextest
@@ -166,7 +150,8 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
-          Set-Content -Path .\data\test\config\user_config.toml -Value "name = `"Ox`"`nemail = `"ox@oxen.ai`""
+          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          copy user_config.toml data\test\config\user_config.toml
 
       - name: Run oxen-rust tests (Linux/macOS)
         if: matrix.platform != 'windows'

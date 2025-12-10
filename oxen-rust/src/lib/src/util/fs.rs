@@ -38,6 +38,7 @@ use crate::view::health::DiskUsage;
 use crate::{constants, util};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
+#[cfg(feature = "ffmpeg")]
 use thumbnails::Thumbnailer;
 
 // Deprecated
@@ -1734,6 +1735,7 @@ pub fn resize_cache_image_version_store(
 /// This function extracts a frame from the video and saves it as an image thumbnail.
 /// Note: The thumbnails crate extracts from the beginning of the video.
 /// If a specific timestamp is required, it may need to be handled differently.
+#[cfg(feature = "ffmpeg")]
 fn generate_video_thumbnail_version_store(
     version_store: Arc<dyn VersionStore>,
     video_hash: &str,
@@ -1820,6 +1822,8 @@ pub fn thumbnail_path_for_version_store_file(
 
 /// Handle video thumbnail generation: determine cache path and generate thumbnail if needed.
 /// Returns the path to the cached thumbnail.
+/// Only enabled if the 'ffmpeg' feature is enabled.
+#[allow(unused_variables)]
 pub fn handle_video_thumbnail(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
@@ -1827,26 +1831,44 @@ pub fn handle_video_thumbnail(
     version_path: &Path,
     video_thumbnail: VideoThumbnail,
 ) -> Result<PathBuf, OxenError> {
-    log::debug!("video_thumbnail {video_thumbnail:?}");
-    let thumbnail_path = thumbnail_path_for_version_store_file(
-        Arc::clone(&version_store),
-        &file_hash,
-        file_path,
-        video_thumbnail.width,
-        video_thumbnail.height,
-        video_thumbnail.timestamp,
-    )?;
+    #[cfg(not(feature = "ffmpeg"))]
+    {
+        let _ = (
+            version_store,
+            file_hash,
+            file_path,
+            version_path,
+            video_thumbnail,
+        );
+        Err(OxenError::thumbnailing_not_enabled(
+            "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
+             Build with --features ffmpeg to enable this functionality.",
+        ))
+    }
 
-    generate_video_thumbnail_version_store(
-        version_store,
-        &file_hash,
-        version_path,
-        &thumbnail_path,
-        video_thumbnail,
-    )?;
+    #[cfg(feature = "ffmpeg")]
+    {
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+        let thumbnail_path = thumbnail_path_for_version_store_file(
+            Arc::clone(&version_store),
+            &file_hash,
+            file_path,
+            video_thumbnail.width,
+            video_thumbnail.height,
+            video_thumbnail.timestamp,
+        )?;
 
-    log::debug!("In the thumbnail cache! {thumbnail_path:?}");
-    Ok(thumbnail_path)
+        generate_video_thumbnail_version_store(
+            version_store,
+            &file_hash,
+            version_path,
+            &thumbnail_path,
+            video_thumbnail,
+        )?;
+
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+        Ok(thumbnail_path)
+    }
 }
 
 pub fn to_unix_str(path: impl AsRef<Path>) -> String {
