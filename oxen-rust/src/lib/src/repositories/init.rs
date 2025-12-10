@@ -10,6 +10,7 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
+use crate::opts::StorageOpts;
 
 /// # Initialize an Empty Oxen Repository
 /// ```
@@ -37,7 +38,26 @@ pub fn init_with_version(
     let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::init_with_version(path, version),
+        _ => core::v_latest::init_with_version_default(path, version),
+    }
+}
+
+pub async fn init_with_storage_opts(
+    path: impl AsRef<Path>,
+    storage_opts: Option<StorageOpts>,
+) -> Result<LocalRepository, OxenError> {
+    init_with_version_and_storage_opts(path, MIN_OXEN_VERSION, storage_opts).await
+}
+
+pub async fn init_with_version_and_storage_opts(
+    path: impl AsRef<Path>,
+    version: MinOxenVersion,
+    storage_opts: Option<StorageOpts>,
+) -> Result<LocalRepository, OxenError> {
+    let path = path.as_ref();
+    match version {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::init_with_version_and_storage_opts(path, version, storage_opts).await,
     }
 }
 

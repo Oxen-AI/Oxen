@@ -1,6 +1,8 @@
+use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
+use crate::opts::StorageOpts;
 use crate::util;
 use std::path::Path;
 
@@ -23,7 +25,14 @@ pub fn init_workspace_repo(
     // Copy the config file
     let config_file = oxen_hidden_dir.join(constants::REPO_CONFIG_FILENAME);
     let target_config_file = workspace_hidden_dir.join(constants::REPO_CONFIG_FILENAME);
-    util::fs::copy(config_file, target_config_file)?;
+    util::fs::copy(config_file, &target_config_file)?;
 
-    LocalRepository::new(workspace_dir)
+    // Read the storage config from the config file
+    let config = RepositoryConfig::from_file(&target_config_file)?;
+    let storage_opts = config
+        .storage
+        .map(|s| StorageOpts::from_repo_config(repo, &s))
+        .transpose()?;
+
+    LocalRepository::new(workspace_dir, storage_opts)
 }
