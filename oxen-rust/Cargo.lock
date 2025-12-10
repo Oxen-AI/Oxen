@@ -42,8 +42,6 @@ dependencies = [
  "env_logger",
  "ez-ffmpeg",
  "fd-lock",
- "ffmpeg-next",
- "ffmpeg-sys-next",
  "filetime",
  "flate2",
  "fs_extra",
