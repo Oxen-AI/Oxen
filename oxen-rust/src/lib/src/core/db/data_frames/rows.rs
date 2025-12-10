@@ -95,11 +95,16 @@ pub fn modify_row(
     let maybe_db_data = df_db::select(conn, &select_hash, None)?;
 
     let mut new_row = maybe_db_data.clone().to_owned();
+
     for col in df.get_columns() {
-        // Replace that column in the existing df if it exists
+        // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
         let col_name = col.name();
-        let new_val = df.column(col_name)?.get(0)?;
-        new_row.with_column(Series::new(PlSmallStr::from_str(col_name), vec![new_val]))?;
+        let col_series = df.column(col_name)?;
+        if let Some(col_idx) = new_row.get_column_index(col_name) {
+            new_row.replace_column(col_idx, col_series.clone())?;
+        } else {
+            new_row.with_column(col_series.clone())?;
+        }
     }
 
     // TODO could use a struct to return these more safely
@@ -160,10 +165,14 @@ pub fn modify_rows(
 
         let mut new_row = maybe_db_data.clone().to_owned();
         for col in df.get_columns() {
-            // Replace that column in the existing df if it exists
+            // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
             let col_name = col.name();
-            let new_val = df.column(col_name)?.get(0)?;
-            new_row.with_column(Series::new(PlSmallStr::from_str(col_name), vec![new_val]))?;
+            let col_series = df.column(col_name)?;
+            if let Some(col_idx) = new_row.get_column_index(col_name) {
+                new_row.replace_column(col_idx, col_series.clone())?;
+            } else {
+                new_row.with_column(col_series.clone())?;
+            }
         }
 
         // TODO could use a struct to return these more safely

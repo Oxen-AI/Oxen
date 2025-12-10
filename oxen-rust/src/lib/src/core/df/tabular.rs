@@ -772,6 +772,25 @@ fn any_val_to_json(value: AnyValue) -> Value {
 
                 Value::Array(array)
             }
+            polars::prelude::DataType::Struct(_fields) => {
+                // Convert List(Struct) directly to DataFrame, then to JSON array
+                if let Ok(ca) = l.struct_() {
+                    let series_vec = ca.fields_as_series();
+                    let mut objs = Vec::with_capacity(ca.len());
+
+                    for row_idx in 0..ca.len() {
+                        let mut map = serde_json::Map::new();
+                        for series in series_vec.iter() {
+                            let val = series.get(row_idx).unwrap_or(AnyValue::Null);
+                            map.insert(series.name().to_string(), any_val_to_json(val));
+                        }
+                        objs.push(Value::Object(map));
+                    }
+                    Value::Array(objs)
+                } else {
+                    Value::Null
+                }
+            }
             dtype => {
                 panic!("Unsupported list dtype: {dtype:?}")
             }
@@ -793,8 +812,34 @@ fn any_val_to_json(value: AnyValue) -> Value {
 
             Value::Object(map)
         }
+        AnyValue::Struct(_len, struct_array, fields) => {
+            let json_value = struct_array_to_json(struct_array, fields);
+            json_value
+        }
 
         other => panic!("Unsupported dtype in JSON conversion: {other:?}"),
+    }
+}
+
+fn struct_array_to_json(
+    struct_array: &polars::prelude::StructArray,
+    _fields: &[polars::prelude::Field],
+) -> Value {
+    // Convert StructArray -> DataFrame, then to JSON
+    match DataFrame::try_from(struct_array.clone()) {
+        Ok(df) => {
+            let mut rows = Vec::with_capacity(df.height());
+            for i in 0..df.height() {
+                let mut map = serde_json::Map::new();
+                for col in df.get_columns() {
+                    let val = col.get(i).unwrap_or(AnyValue::Null);
+                    map.insert(col.name().to_string(), any_val_to_json(val));
+                }
+                rows.push(Value::Object(map));
+            }
+            Value::Array(rows)
+        }
+        Err(_) => Value::String(format!("{struct_array:?}")),
     }
 }
 
@@ -844,6 +889,7 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
                     let json_value = any_val_to_json(AnyValue::List(l));
                     json_value
                 }
+                polars::prelude::DataType::Struct(_) => any_val_to_json(AnyValue::List(l)),
                 dtype => {
                     panic!("Unsupported dtype: {dtype:?}")
                 }
