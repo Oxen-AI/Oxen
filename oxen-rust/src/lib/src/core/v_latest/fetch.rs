@@ -110,7 +110,6 @@ pub async fn fetch_remote_branch(
 
     log::debug!("Fetch got {} commits", commits.len());
 
-    // Target 2: Minor: total bytes
     let mut total_bytes = 0;
     let missing_entries = collect_missing_entries(
         repo,

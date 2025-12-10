@@ -30,11 +30,12 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::Commit;
+use crate::model::MerkleHash;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
-use crate::{constants, util};
+use crate::{constants, repositories, util};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
 
@@ -1780,6 +1781,23 @@ pub fn is_modified_from_node_with_metadata(
 
     if file_last_modified == node_last_modified {
         return Ok(false);
+    }
+
+    // Fourth, check the metadata hashes
+    let node_metadata_hash = node.metadata_hash();
+    let file_metadata_hash = {
+        let mime_type = util::fs::file_mime_type(path);
+        let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
+
+        let file_metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
+        util::hasher::maybe_get_metadata_hash(&file_metadata)?
+    };
+
+    if node_metadata_hash.is_some()
+        && file_metadata_hash.is_some()
+        && *node_metadata_hash.unwrap() != MerkleHash::new(file_metadata_hash.unwrap())
+    {
+        return Ok(true);
     }
 
     // Finally, check the hashes
