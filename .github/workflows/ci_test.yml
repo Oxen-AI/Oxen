@@ -92,11 +92,15 @@ jobs:
           echo "=== Before installing dependencies ==="
           Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{Label="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Label="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}}, @{Label="Total(GB)";Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
           
-          # Install vcpkg for FFmpeg development libraries
+          # Install clang (via llvm) and pkg-config via Chocolatey
+          choco install -y llvm pkgconfiglite
+          
+          # Install vcpkg for FFmpeg static development libraries (libavcodec, libavformat, libavutil, libavfilter, libavdevice)
+          # Using x64-windows-static-md for static libraries with dynamic MSVC runtime (better compatibility)
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
           .\bootstrap-vcpkg.bat
-          .\vcpkg.exe install ffmpeg:x64-windows
+          .\vcpkg.exe install ffmpeg:x64-windows-static-md
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
           
@@ -149,22 +153,8 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
-          # Start server and redirect output to log files so we can see what's happening
-          $serverLog = "${{ github.workspace }}\oxen-rust\server.log"
-          $serverErr = "${{ github.workspace }}\oxen-rust\server.err"
-          Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start" -RedirectStandardOutput $serverLog -RedirectStandardError $serverErr
-          # Wait a moment for server to start, then show logs
-          Start-Sleep -Seconds 2
-          Write-Host "=== Server Output ==="
-          Get-Content $serverLog -ErrorAction SilentlyContinue
-          Write-Host "=== Server Errors ==="
-          Get-Content $serverErr -ErrorAction SilentlyContinue
+          Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
           cargo nextest run --profile ci
-          # Show logs again after tests in case there were errors
-          Write-Host "=== Server Output (after tests) ==="
-          Get-Content $serverLog -ErrorAction SilentlyContinue
-          Write-Host "=== Server Errors (after tests) ==="
-          Get-Content $serverErr -ErrorAction SilentlyContinue
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)
