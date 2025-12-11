@@ -786,13 +786,6 @@ impl CommitMerkleTree {
             return Ok(None);
         };
 
-        let EMerkleTreeNode::Directory(dir_node) = &dir_merkle_node.node else {
-            return Err(OxenError::basic_str(format!(
-                "Expected directory node, got {:?}",
-                dir_merkle_node.node.node_type()
-            )));
-        };
-
         // log::debug!("read_file merkle_node: {:?}", dir_merkle_node);
 
         let vnodes = dir_merkle_node.children;
@@ -801,12 +794,9 @@ impl CommitMerkleTree {
 
         // Calculate the total number of children in the vnodes
         // And use this to skip to the correct vnode
-        // log::debug!("read_file dir_node {:?}", dir_node);
-        let total_children = dir_node.num_entries();
         let vnode_size = repo.vnode_size();
-        let num_vnodes = (total_children as f32 / vnode_size as f32).ceil() as u128;
+        let num_vnodes = vnodes.len() as u128;
 
-        log::debug!("read_file total_children: {total_children}");
         log::debug!("read_file vnode_size: {vnode_size}");
         log::debug!("read_file num_vnodes: {num_vnodes}");
 
