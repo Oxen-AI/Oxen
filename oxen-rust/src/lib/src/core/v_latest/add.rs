@@ -226,10 +226,10 @@ pub async fn add_files(
     // TODO: Make rm_with_staged_db return the stats of the files it removes
     if !paths_to_remove.is_empty() {
         match core::v_latest::rm::rm_with_staged_db(&paths_to_remove, repo, &rm_opts, &staged_db) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 return Err(OxenError::basic_str(format!(
-                    "`oxen add` could not remove files: \n{}", e
+                    "`oxen add` could not remove files: \n{e}"
                 )));
             }
         }

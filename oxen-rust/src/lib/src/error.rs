@@ -13,11 +13,11 @@ use std::path::PathBuf;
 use std::path::StripPrefixError;
 use tokio::task::JoinError;
 
+use crate::constants::OXEN_ERROR;
 use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::{Commit, ParsedResource};
 use crate::model::{Remote, RepoNew};
-use crate::constants::OXEN_ERROR;
 
 pub mod path_buf_error;
 pub mod string_error;
