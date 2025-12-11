@@ -466,7 +466,7 @@ fn remove_inner(
 
     // Head commit should always exist here, because we're removing committed files
     let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? else {
-        let error = "Error: head commit not found".to_string();
+        let error = "head commit not found".to_string();
         return Err(OxenError::basic_str(error));
     };
 
@@ -486,7 +486,7 @@ fn remove_inner(
         {
             dir_node
         } else {
-            let error = format!("Error: parent dir not found in tree for {path:?}");
+            let error = format!("parent dir not found in tree for {path:?}");
             return Err(OxenError::basic_str(error));
         };
 
@@ -523,11 +523,11 @@ fn remove_inner(
                     util::fs::remove_file(&full_path)?;
                 }
             } else {
-                let error = "Error: Unexpected file type".to_string();
+                let error = "Unexpected file type".to_string();
                 return Err(OxenError::basic_str(error));
             }
         } else {
-            let error = format!("Error: {path:?} must be committed in order to use `oxen rm`");
+            let error = format!("{path:?} must be committed in order to use `oxen rm`");
             return Err(OxenError::basic_str(error));
         }
     }
@@ -584,7 +584,7 @@ fn remove_dir_inner(
     let dir_node = match CommitMerkleTree::dir_with_children_recursive(repo, commit, path, None)? {
         Some(node) => node,
         None => {
-            let error = format!("Error: {path:?} must be committed in order to use `oxen rm`");
+            let error = format!("{path:?} must be committed in order to use `oxen rm`");
             return Err(OxenError::basic_str(error));
         }
     };
@@ -635,7 +635,7 @@ fn process_remove_dir(
         parent_path = parent.to_path_buf();
 
         let Some(relative_path_str) = relative_path.to_str() else {
-            let error = format!("Error: {relative_path:?} is not a valid string");
+            let error = format!("{relative_path:?} is not a valid string");
             return Err(OxenError::basic_str(error));
         };
 
@@ -722,7 +722,7 @@ fn r_process_remove_dir(
                 }
             }
             _ => {
-                let error = "Error: Unexpected node type".to_string();
+                let error = "Unexpected node type".to_string();
                 return Err(OxenError::basic_str(error));
             }
         }
