@@ -223,3 +223,6 @@ pub const DEFAULT_NOTEBOOK_BASE_IMAGE: &str = "debian:bookworm-slim";
 
 // Oxen stack size
 pub const OXEN_STACK_SIZE: usize = 16_777_216;
+
+// Prefix for error messages
+pub const OXEN_ERROR: &str = "Error: ";

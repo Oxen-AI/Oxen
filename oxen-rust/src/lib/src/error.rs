@@ -17,6 +17,7 @@ use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::{Commit, ParsedResource};
 use crate::model::{Remote, RepoNew};
+use crate::constants::OXEN_ERROR;
 
 pub mod path_buf_error;
 pub mod string_error;
@@ -159,7 +160,8 @@ impl fmt::Display for OxenError {
 
 impl OxenError {
     pub fn basic_str(s: impl AsRef<str>) -> Self {
-        OxenError::Basic(StringError::from(s.as_ref()))
+        let s = format!("{}{}", OXEN_ERROR, s.as_ref());
+        OxenError::Basic(StringError::from(s))
     }
 
     pub fn thumbnailing_not_enabled(s: impl AsRef<str>) -> Self {
