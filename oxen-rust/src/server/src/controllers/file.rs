@@ -117,35 +117,37 @@ pub async fn get(
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let resource = parse_resource(&req, &repo)?;
-    let workspace_ref = resource.workspace.as_ref();
-
-    let repo = if let Some(workspace) = workspace_ref {
-        &workspace.workspace_repo
-    } else {
-        &repo
-    };
-
+    let workspace = resource.workspace.as_ref();
     let path = resource.path.clone();
 
-    // if resource is workspace, get file node from the staged db
-    let entry = match workspace_ref {
-        Some(_workspace_ref) => with_staged_db_manager(repo, |staged_db_manager| {
-            let staged_node = staged_db_manager
-                .read_from_staged_db(&path)?
-                .ok_or_else(|| OxenError::basic_str("File not found in staged DB"))?;
+    // Use workspace_repo for staged DB operations, base_repo for commit tree lookups
+    let (staged_repo, base_repo) = match workspace {
+        Some(ws) => (&ws.workspace_repo, &repo),
+        None => (&repo, &repo),
+    };
 
-            let file_node = match staged_node.node.node {
-                EMerkleTreeNode::File(f) => Ok(f),
-                _ => Err(OxenError::basic_str(
-                    "Only single file download is supported",
-                )),
-            }?;
+    let entry = match workspace {
+        Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
+            // Try staged DB first
+            if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
+                let file_node = match staged_node.node.node {
+                    EMerkleTreeNode::File(f) => Ok(f),
+                    _ => Err(OxenError::basic_str(
+                        "Only single file download is supported",
+                    )),
+                }?;
+                return Ok(file_node);
+            }
+
+            // Fall back to commit tree using workspace's commit
+            let commit = &ws.commit;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.clone()))?;
             Ok(file_node)
         }),
         None => {
-            // Otherwise get file node from commit tree
             let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
-            let file_node = repositories::tree::get_file_by_path(repo, &commit, &path)?
+            let file_node = repositories::tree::get_file_by_path(base_repo, &commit, &path)?
                 .ok_or(OxenError::path_does_not_exist(path.clone()))?;
             Ok(file_node)
         }
