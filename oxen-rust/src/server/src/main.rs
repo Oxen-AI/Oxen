@@ -419,39 +419,49 @@ async fn main() -> std::io::Result<()> {
             }
         }
         Some(("add-user", sub_matches)) => {
-            match (
+            let (email, name, output) = match (
                 sub_matches.get_one::<String>("email"),
                 sub_matches.get_one::<String>("name"),
                 sub_matches.get_one::<String>("output"),
             ) {
-                (Some(email), Some(name), Some(output)) => {
-                    let path = Path::new(&sync_dir);
-                    log::debug!("Saving to sync dir: {path:?}");
-                    if let Ok(keygen) = auth::access_keys::AccessKeyManager::new(path) {
-                        let new_user = User {
-                            name: name.to_string(),
-                            email: email.to_string(),
-                        };
-                        match keygen.create(&new_user) {
-                            Ok((user, token)) => {
-                                let cfg = UserConfig::from_user(&user);
-                                match cfg.save(Path::new(output)) {
-                                    Ok(_) => {
-                                        println!("User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`")
-                                    }
-                                    Err(error) => {
-                                        eprintln!("Err: {error:?}");
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                eprintln!("Err: {err}")
-                            }
-                        }
-                    }
-                }
+                (Some(email), Some(name), Some(output)) => (email, name, output),
                 _ => {
-                    eprintln!("{ADD_USER_USAGE}")
+                    eprintln!("{ADD_USER_USAGE}");
+                    return Ok(());
+                }
+            };
+
+            let path = Path::new(&sync_dir);
+            log::debug!("Saving to sync dir: {path:?}");
+
+            let keygen = match auth::access_keys::AccessKeyManager::new(path) {
+                Ok(keygen) => keygen,
+                Err(err) => {
+                    eprintln!("Failed to create config file: {err}");
+                    return Ok(());
+                }
+            };
+
+            let new_user = User {
+                name: name.to_string(),
+                email: email.to_string(),
+            };
+
+            let (user, token) = match keygen.create(&new_user) {
+                Ok(result) => result,
+                Err(err) => {
+                    eprintln!("Err: {err}");
+                    return Ok(());
+                }
+            };
+
+            let cfg = UserConfig::from_user(&user);
+            match cfg.save(Path::new(output)) {
+                Ok(_) => {
+                    println!("User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`")
+                }
+                Err(error) => {
+                    eprintln!("Err: {error:?}");
                 }
             }
 

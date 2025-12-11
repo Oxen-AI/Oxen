@@ -29,6 +29,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
+use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::model::Commit;
 use crate::model::MerkleHash;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
@@ -38,6 +39,8 @@ use crate::view::health::DiskUsage;
 use crate::{constants, repositories, util};
 use filetime::FileTime;
 use image::{ImageFormat, ImageReader};
+#[cfg(feature = "ffmpeg")]
+use thumbnails::Thumbnailer;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -1727,6 +1730,146 @@ pub fn resize_cache_image_version_store(
     resized_img.save(resize_path).unwrap();
     log::debug!("saved {resize_path:?}");
     Ok(())
+}
+
+/// Generate a video thumbnail using thumbnails crate.
+/// This function extracts a frame from the video and saves it as an image thumbnail.
+/// Note: The thumbnails crate extracts from the beginning of the video.
+/// If a specific timestamp is required, it may need to be handled differently.
+#[cfg(feature = "ffmpeg")]
+fn generate_video_thumbnail_version_store(
+    version_store: Arc<dyn VersionStore>,
+    video_hash: &str,
+    _video_path: &Path,
+    thumbnail_path: &Path,
+    thumbnail: VideoThumbnail,
+) -> Result<(), OxenError> {
+    log::debug!("generate thumbnail to path {thumbnail_path:?} from video hash {video_hash}");
+    if thumbnail_path.exists() {
+        return Ok(());
+    }
+
+    // Create parent directory if it doesn't exist
+    let thumbnail_parent = thumbnail_path.parent().unwrap_or(Path::new(""));
+    if !thumbnail_parent.exists() {
+        util::fs::create_dir_all(thumbnail_parent)?;
+    }
+
+    // Get the video file from version store
+    let version_path = version_store.get_version_path(video_hash)?;
+
+    // Determine output dimensions
+    // The thumbnails crate maintains aspect ratio, so we use max dimensions
+    let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, w), // Use width for both if only width specified
+        (None, Some(h)) => (h, h), // Use height for both if only height specified
+        (None, None) => (320, 240),
+    };
+
+    // Note: The thumbnails crate doesn't support timestamp selection directly.
+    // It extracts from the beginning of the video.
+    // If timestamp support is needed, we may need to use ffmpeg directly or another approach.
+    let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
+
+    // Create thumbnailer with specified dimensions
+    let thumbnailer = Thumbnailer::new(output_width, output_height);
+
+    // Generate thumbnail from video file
+    let thumb_image = thumbnailer.get(&version_path).map_err(|e| {
+        OxenError::basic_str(format!(
+            "Failed to generate thumbnail: {e}. Make sure ffmpeg is installed."
+        ))
+    })?;
+
+    // Save the thumbnail image
+    thumb_image
+        .save(thumbnail_path)
+        .map_err(|e| OxenError::basic_str(format!("Failed to save thumbnail: {e}")))?;
+
+    log::debug!("saved thumbnail {thumbnail_path:?}");
+    Ok(())
+}
+
+/// Generate the cache path for a video thumbnail based on the video hash and thumbnail parameters.
+pub fn thumbnail_path_for_version_store_file(
+    version_store: Arc<dyn VersionStore>,
+    video_hash: &str,
+    _video_path: &Path,
+    width: Option<u32>,
+    height: Option<u32>,
+    timestamp: Option<f64>,
+) -> Result<PathBuf, OxenError> {
+    let video_version_path = version_store.get_version_path(video_hash)?;
+    let extension = "jpg"; // Always use jpg for thumbnails
+
+    // Build dimension strings for cache path - use "auto" when maintaining aspect ratio
+    let (width_str, height_str) = match (width, height) {
+        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
+        (Some(w), None) => (w.to_string(), "auto".to_string()),
+        (None, Some(h)) => ("auto".to_string(), h.to_string()),
+        (None, None) => ("320".to_string(), "240".to_string()),
+    };
+
+    let timestamp_str = timestamp
+        .map(|t| format!("t{t:.1}"))
+        .unwrap_or_else(|| "t1.0".to_string());
+
+    let thumbnail_path = video_version_path.parent().unwrap().join(format!(
+        "thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"
+    ));
+    Ok(thumbnail_path)
+}
+
+/// Handle video thumbnail generation: determine cache path and generate thumbnail if needed.
+/// Returns the path to the cached thumbnail.
+/// Only enabled if the 'ffmpeg' feature is enabled.
+#[allow(unused_variables)]
+pub fn handle_video_thumbnail(
+    version_store: Arc<dyn VersionStore>,
+    file_hash: String,
+    file_path: &Path,
+    version_path: &Path,
+    video_thumbnail: VideoThumbnail,
+) -> Result<PathBuf, OxenError> {
+    #[cfg(not(feature = "ffmpeg"))]
+    {
+        let _ = (
+            version_store,
+            file_hash,
+            file_path,
+            version_path,
+            video_thumbnail,
+        );
+        Err(OxenError::thumbnailing_not_enabled(
+            "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
+             Build with --features ffmpeg to enable this functionality.",
+        ))
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    {
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+        let thumbnail_path = thumbnail_path_for_version_store_file(
+            Arc::clone(&version_store),
+            &file_hash,
+            file_path,
+            video_thumbnail.width,
+            video_thumbnail.height,
+            video_thumbnail.timestamp,
+        )?;
+
+        generate_video_thumbnail_version_store(
+            version_store,
+            &file_hash,
+            version_path,
+            &thumbnail_path,
+            video_thumbnail,
+        )?;
+
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+        Ok(thumbnail_path)
+    }
 }
 
 pub fn to_unix_str(path: impl AsRef<Path>) -> String {

@@ -7,6 +7,7 @@ use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
+use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::LocalRepository;
 use liboxen::model::Workspace;
 use liboxen::repositories;
@@ -22,6 +23,7 @@ use actix_web::Error;
 use actix_web::{web, HttpRequest, HttpResponse};
 use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
+use serde::Deserialize;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,6 +38,17 @@ pub struct FileUpload {
     pub file: Vec<u8>,
 }
 
+/// Combined query parameters for workspace file operations (image resize and video thumbnail)
+#[derive(Deserialize, Debug)]
+pub struct WorkspaceFileQueryParams {
+    // Shared parameters (can be used for both image resize and video thumbnail)
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    // Video thumbnail specific parameters
+    pub timestamp: Option<f64>,
+    pub thumbnail: Option<bool>,
+}
+
 /// Get workspace file
 #[utoipa::path(
     get,
@@ -46,11 +59,13 @@ pub struct FileUpload {
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
         ("path" = String, Path, description = "The path to the file in the workspace", example = "images/train/dog_1.jpg"),
-        ImgResize
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
+        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from", example = 1.0),
+        ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
     ),
     responses(
-        (status = 200, description = "File content returned as a stream", 
-            content_type = "application/octet-stream", 
+        (status = 200, description = "File content returned as a stream. Content-Type varies: matches the file's MIME type for regular files and image resizes, or 'image/jpeg' for video thumbnails",
             body = Vec<u8>,
             headers(
                 ("oxen-revision-id" = String, description = "The commit ID of the file version")
@@ -62,7 +77,7 @@ pub struct FileUpload {
 )]
 pub async fn get(
     req: HttpRequest,
-    query: web::Query<ImgResize>,
+    query: web::Query<WorkspaceFileQueryParams>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -116,16 +131,21 @@ pub async fn get(
     let version_path = version_store.get_version_path(&hash_str)?;
     log::debug!("got workspace file version path {:?}", &version_path);
 
-    // TODO: This probably isn't the best place for the resize logic
-    let img_resize = query.into_inner();
-    if (img_resize.width.is_some() || img_resize.height.is_some())
+    let query_params = query.into_inner();
+
+    // Handle image resize
+    if (query_params.width.is_some() || query_params.height.is_some())
         && mime_type.starts_with("image/")
     {
+        let img_resize = ImgResize {
+            width: query_params.width,
+            height: query_params.height,
+        };
         log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
-            hash_str,
+            hash_str.clone(),
             &PathBuf::from(path),
             &version_path,
             img_resize,
@@ -141,9 +161,39 @@ pub async fn get(
             .content_type(mime_type)
             .insert_header(("oxen-revision-id", last_commit_id.as_str()))
             .streaming(stream));
-    } else {
-        log::debug!("did not hit the resize cache");
     }
+
+    // Handle video thumbnail - requires thumbnail=true parameter
+    if query_params.thumbnail == Some(true) && mime_type.starts_with("video/") {
+        let video_thumbnail = VideoThumbnail {
+            width: query_params.width,
+            height: query_params.height,
+            timestamp: query_params.timestamp.or(Some(1.0)),
+            thumbnail: query_params.thumbnail,
+        };
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+
+        let thumbnail_path = util::fs::handle_video_thumbnail(
+            Arc::clone(&version_store),
+            hash_str,
+            &PathBuf::from(path),
+            &version_path,
+            video_thumbnail,
+        )?;
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+
+        // Generate stream for the thumbnail (always JPEG)
+        let file = File::open(&thumbnail_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        return Ok(HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(stream));
+    }
+
+    log::debug!("did not hit the resize or thumbnail cache");
 
     // Stream the file
     let stream = version_store.get_version_stream(&hash_str).await?;

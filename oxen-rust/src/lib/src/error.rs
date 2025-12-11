@@ -97,6 +97,7 @@ pub enum OxenError {
 
     // Metadata
     ImageMetadataParseError(StringError),
+    ThumbnailingNotEnabled(StringError),
 
     // SQL
     SQLParseError(StringError),
@@ -146,7 +147,9 @@ pub enum OxenError {
 impl fmt::Display for OxenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OxenError::OxenUpdateRequired(err) | OxenError::Basic(err) => write!(f, "{err}"),
+            OxenError::OxenUpdateRequired(err)
+            | OxenError::Basic(err)
+            | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
             _ => {
                 write!(f, "{self:?}")
             }
@@ -157,6 +160,10 @@ impl fmt::Display for OxenError {
 impl OxenError {
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
+    }
+
+    pub fn thumbnailing_not_enabled(s: impl AsRef<str>) -> Self {
+        OxenError::ThumbnailingNotEnabled(StringError::from(s.as_ref()))
     }
 
     pub fn authentication(s: impl AsRef<str>) -> Self {

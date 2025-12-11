@@ -77,6 +77,13 @@ jobs:
       - name: Install dependencies
         run: |
           choco install -y cmake llvm uv rustup.install
+          # Install vcpkg for FFmpeg development libraries
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          cd C:\vcpkg
+          .\bootstrap-vcpkg.bat
+          .\vcpkg.exe install ffmpeg:x64-windows
+          # Set VCPKG_ROOT for cargo to find FFmpeg libraries
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Build oxen binaries
         run: |

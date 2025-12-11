@@ -485,6 +485,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::InternalServerError().json(error_json)
                     }
+                    OxenError::ThumbnailingNotEnabled(error) => {
+                        log::error!("Thumbnailing not enabled: {error}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "thumbnailing_not_enabled",
+                                "title": "Thumbnailing Not Enabled",
+                                "detail": format!("{}", error),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_INTERNAL_SERVER_ERROR,
+                        });
+                        HttpResponse::InternalServerError().json(error_json)
+                    }
                     OxenError::Basic(error) => {
                         let error_json = json!({
                             "error": {
