@@ -109,7 +109,7 @@ impl PyWorkspaceDataFrame {
         let df = _get(&self.workspace.repo.repo, &self.workspace.id, &self.path)?;
         let size = &df.view.size;
         let width = size.width;
-        let height = size.height;
+        let height = df.view.pagination.total_entries;
         self._first_page = df;
         Ok((width, height))
     }
