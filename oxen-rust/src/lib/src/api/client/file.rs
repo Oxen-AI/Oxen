@@ -68,9 +68,9 @@ pub async fn get_file_with_params(
 ) -> Result<Bytes, OxenError> {
     let branch = branch.as_ref();
     let path_ref = file_path.as_ref();
-    let file_path = path_ref.to_str().ok_or_else(|| {
-        OxenError::basic_str(format!("Invalid UTF-8 in file path: {path_ref:?}"))
-    })?;
+    let file_path = path_ref
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str(format!("Invalid UTF-8 in file path: {path_ref:?}")))?;
     let uri = format!("/file/{branch}/{file_path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
