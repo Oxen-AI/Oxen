@@ -105,7 +105,7 @@ jobs:
             cmake \
             clang \
             rubygems \
-            ffmpeg-devel \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             pkg-config
 
       - name: Install uv
