@@ -813,7 +813,7 @@ fn any_val_to_json(value: AnyValue) -> Value {
             Value::Object(map)
         }
         AnyValue::Struct(_len, struct_array, fields) => {
-            struct_array_to_json(struct_array, fields);
+            struct_array_to_json(struct_array, fields)
         }
 
         other => panic!("Unsupported dtype in JSON conversion: {other:?}"),
