@@ -67,43 +67,44 @@ pub fn parse_glob_paths(
         if util::fs::is_glob_path(&glob_path) {
             if *staged_db {
                 // If staged flag set, only match against the staged db
-                let staged_paths = search_staged_db(
-                    path,
-                    repo.expect("Cannot parse staged_db for paths without a repo"),
-                )?;
+                let Some(repo) = repo else {
+                    return Err(OxenError::basic_str(
+                        "Cannot parse staged_db for paths without a repo",
+                    ));
+                };
+
+                let staged_paths = search_staged_db(&glob_path, repo)?;
 
                 expanded_paths.extend(staged_paths);
-            } else {
                 // If the merkle_tree flag is set, match against the merkle tree
-                if *merkle_tree {
-                    if let Some(repo) = repo {
-                        search_merkle_tree(&mut expanded_paths, repo, &glob_path)?;
-                    } else {
-                        return Err(OxenError::basic_str(
-                            "Error: Cannot parse paths from merkle tree without local repository",
-                        ));
-                    }
+            } else if *merkle_tree {
+                if let Some(repo) = repo {
+                    search_merkle_tree(&mut expanded_paths, repo, &glob_path)?;
+                } else {
+                    return Err(OxenError::basic_str(
+                        "Error: Cannot parse paths from merkle tree without local repository",
+                    ));
                 }
+            }
 
-                // If working_dir flag set, match against the working directory
-                if *working_dir {
-                    // If walk_dirs is set, walk directories and recursively collect their childrens' file paths
-                    if *walk_dirs {
-                        walk_working_dir(
-                            &mut expanded_paths,
-                            &repo_path,
-                            &glob_path,
-                            oxenignore.clone(),
-                        )?;
-                    } else {
-                        // Else, collect dir and file paths in the directory itself only
-                        search_working_dir(
-                            &mut expanded_paths,
-                            &repo_path,
-                            &glob_path,
-                            oxenignore.clone(),
-                        )?;
-                    }
+            // If working_dir flag set, match against the working directory
+            if *working_dir {
+                // If walk_dirs is set, walk directories and recursively collect their childrens' file paths
+                if *walk_dirs {
+                    walk_working_dir(
+                        &mut expanded_paths,
+                        &repo_path,
+                        &glob_path,
+                        oxenignore.clone(),
+                    )?;
+                } else {
+                    // Else, collect dir and file paths in the directory itself only
+                    search_working_dir(
+                        &mut expanded_paths,
+                        &repo_path,
+                        &glob_path,
+                        oxenignore.clone(),
+                    )?;
                 }
             }
         } else {
@@ -123,21 +124,26 @@ pub fn parse_glob_paths(
         }
     }
 
-    log::debug!("parse_glob_paths found paths: {expanded_paths:?}");
+    log::debug!("parse_glob_paths found paths: {:?}", expanded_paths.len());
     Ok(expanded_paths)
 }
 
 fn search_staged_db(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
     let mut paths = HashSet::new();
-
-    let path_str = path.to_str().unwrap();
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path"))?;
     let glob_pattern = Pattern::new(path_str)?;
     let staged_data = repositories::status::status(repo)?;
 
     for entry in staged_data.staged_files {
-        let entry_path_str = entry.0.to_str().unwrap();
+        let entry_path_str = entry
+            .0
+            .to_str()
+            .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in entry path"))?;
         if glob_pattern.matches(entry_path_str) {
-            paths.insert(entry.0.to_owned());
+            let entry_path = entry.0.to_owned();
+            paths.insert(entry_path);
         }
     }
 
@@ -279,7 +285,9 @@ fn search_working_dir(
     oxenignore: Option<Gitignore>,
 ) -> Result<(), OxenError> {
     let full_path = repo_path.join(glob_path);
-    let path_str = full_path.to_str().unwrap();
+    let path_str = full_path
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path"))?;
 
     if let Some(oxenignore) = oxenignore {
         let oxenignore = Some(oxenignore);

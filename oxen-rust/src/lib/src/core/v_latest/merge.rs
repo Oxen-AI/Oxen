@@ -990,8 +990,8 @@ pub async fn find_merge_conflicts(
                     lca_file_node,
 
                 );*/
-                if base_file_node.hash() == lca_file_node.hash()
-                    && base_file_node.hash() != merge_file_node.hash()
+                if base_file_node.combined_hash() == lca_file_node.combined_hash()
+                    && base_file_node.combined_hash() != merge_file_node.combined_hash()
                     && write_to_disk
                 {
                     log::debug!("top update entry");
@@ -1011,9 +1011,9 @@ pub async fn find_merge_conflicts(
                 }
 
                 // If all three are different, mark as conflict
-                if base_file_node.hash() != lca_file_node.hash()
-                    && lca_file_node.hash() != merge_file_node.hash()
-                    && base_file_node.hash() != merge_file_node.hash()
+                if base_file_node.combined_hash() != lca_file_node.combined_hash()
+                    && lca_file_node.combined_hash() != merge_file_node.combined_hash()
+                    && base_file_node.combined_hash() != merge_file_node.combined_hash()
                 {
                     conflicts.push(NodeMergeConflict {
                         lca_entry: (lca_file_node.to_owned(), entry_path.to_path_buf()),
@@ -1023,7 +1023,7 @@ pub async fn find_merge_conflicts(
                 }
             } else {
                 // merge entry doesn't exist in LCA, so just check if it's different from base
-                if base_file_node.hash() != merge_file_node.hash() {
+                if base_file_node.combined_hash() != merge_file_node.combined_hash() {
                     conflicts.push(NodeMergeConflict {
                         lca_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
                         base_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
@@ -1051,6 +1051,34 @@ pub async fn find_merge_conflicts(
         let version_store = repo.version_store()?;
         for entry in entries_to_restore.iter() {
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
+
+            // If it's a tabular file, we also need to stage the schema
+            if util::fs::is_tabular(&entry.path) {
+                if let Some(schema) = repositories::data_frames::schemas::get_by_path(
+                    repo,
+                    &merge_commits.merge,
+                    &entry.path,
+                )? {
+                    for field in schema.fields {
+                        if let Some(metadata) = field.metadata {
+                            let _ = repositories::data_frames::schemas::add_column_metadata(
+                                repo,
+                                &entry.path,
+                                &field.name,
+                                &metadata,
+                            )?;
+                        }
+                    }
+
+                    if let Some(metadata) = schema.metadata {
+                        let _ = repositories::data_frames::schemas::add_schema_metadata(
+                            repo,
+                            &entry.path,
+                            &metadata,
+                        )?;
+                    }
+                }
+            }
         }
     } else {
         // If there are conflicts, return an error without restoring anything

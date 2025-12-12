@@ -76,9 +76,7 @@ impl RunCmd for PushCmd {
         } else if let Some(branch) = current_branch {
             branch.name
         } else {
-            return Err(OxenError::basic_str(
-                "Error: Cannot push from non-existant branch",
-            ));
+            return Err(OxenError::basic_str("Cannot push from non-existent branch"));
         };
 
         let opts = PushOpts {
@@ -114,10 +112,7 @@ impl RunCmd for PushCmd {
                     let msg = format!("{branch}\nMake sure you are on the correct branch and have committed your changes.");
                     Err(OxenError::basic_str(msg))
                 }
-                Err(e) => {
-                    println!("Error pushing: {e}");
-                    Err(e)
-                }
+                Err(e) => Err(e),
             }
         }
     }

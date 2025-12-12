@@ -346,23 +346,32 @@ fn sanitize_df_for_serialization(df: &mut DataFrame) -> Result<(), OxenError> {
         let series = df.select_at_idx(idx).unwrap();
 
         if let Some(new_series) = match series.dtype() {
-            DataType::Binary => Some(cast_binary_to_string_with_fallback(series, "[binary]")),
+            DataType::Binary | DataType::BinaryOffset => {
+                Some(cast_binary_to_string_with_fallback(series, "[binary]"))
+            }
             DataType::Struct(subfields) => {
-                let mut cast_series = series.clone();
-                for subfield in subfields {
-                    if let DataType::Binary = subfield.dtype() {
-                        cast_series = cast_binary_to_string_with_fallback(
-                            series,
-                            &format!("struct[{}]", subfields.len()),
-                        );
-                        break;
-                    }
+                if has_binary_in_struct(subfields) {
+                    Some(cast_binary_to_string_with_fallback(
+                        series,
+                        &format!("struct[{}]", subfields.len()),
+                    ))
+                } else {
+                    None
                 }
-                Some(cast_series)
             }
             DataType::List(subtype) => match **subtype {
-                DataType::Binary => {
-                    Some(cast_binary_to_string_with_fallback(series, "List[binary]"))
+                DataType::Binary | DataType::BinaryOffset => Some(
+                    cast_binary_to_string_with_fallback(series, "[list[binary]]"),
+                ),
+                DataType::Struct(ref subfields) => {
+                    if has_binary_in_struct(subfields) {
+                        Some(cast_binary_to_string_with_fallback(
+                            series,
+                            &format!("[list[struct[{}]]]", subfields.len()),
+                        ))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             },
@@ -378,6 +387,13 @@ fn sanitize_df_for_serialization(df: &mut DataFrame) -> Result<(), OxenError> {
     }
 
     Ok(())
+}
+
+fn has_binary_in_struct(subfields: &[Field]) -> bool {
+    subfields.iter().any(|field| {
+        matches!(field.dtype(), DataType::Binary | DataType::BinaryOffset)
+            || field.dtype().to_string().contains("Binary")
+    })
 }
 
 fn cast_binary_to_string_with_fallback(series: &Column, out: &str) -> Column {

@@ -8,6 +8,7 @@ use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew, TempFilePathNew};
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
+use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::{Commit, User};
 use liboxen::repositories::{self, branches};
 use liboxen::util;
@@ -90,6 +91,18 @@ pub struct ImportFileBody {
     pub headers: Option<Value>,
 }
 
+/// Combined query parameters for file operations (image resize and video thumbnail)
+/// Since both ImgResize and VideoThumbnail share width/height fields, we combine them here
+#[derive(Deserialize, Debug)]
+pub struct FileQueryParams {
+    // Shared parameters (can be used for both image resize and video thumbnail)
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    // Video thumbnail specific parameters
+    pub timestamp: Option<f64>,
+    pub thumbnail: Option<bool>,
+}
+
 /// Download File
 #[utoipa::path(
     get,
@@ -100,7 +113,10 @@ pub struct ImportFileBody {
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Voice-Data"),
         ("resource" = String, Path, description = "Path to the file (including branch/commit info)", example = "main/audio/moo.wav"),
-        ImgResize
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
+        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from (default: 1.0)", example = 1.0),
+        ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
     ),
     responses(
         (status = 200, description = "File content stream", content_type = "application/octet-stream", body = Vec<u8>),
@@ -109,7 +125,7 @@ pub struct ImportFileBody {
 )]
 pub async fn get(
     req: HttpRequest,
-    query: web::Query<ImgResize>,
+    query: web::Query<FileQueryParams>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -159,17 +175,21 @@ pub async fn get(
     let last_commit_id = entry.last_commit_id().to_string();
     let version_path = version_store.get_version_path(&hash_str)?;
 
-    // TODO: refactor out of here and check for type,
-    // but seeing if it works to resize the image and cache it to disk if we have a resize query
-    let img_resize = query.into_inner();
-    if (img_resize.width.is_some() || img_resize.height.is_some())
+    let query_params = query.into_inner();
+
+    // Handle image resize
+    if (query_params.width.is_some() || query_params.height.is_some())
         && mime_type.starts_with("image/")
     {
+        let img_resize = ImgResize {
+            width: query_params.width,
+            height: query_params.height,
+        };
         log::debug!("img_resize {img_resize:?}");
 
         let resized_path = util::fs::handle_image_resize(
             Arc::clone(&version_store),
-            hash_str,
+            hash_str.clone(),
             &path,
             &version_path,
             img_resize,
@@ -185,9 +205,39 @@ pub async fn get(
             .content_type(mime_type)
             .insert_header(("oxen-revision-id", last_commit_id.as_str()))
             .streaming(stream));
-    } else {
-        log::debug!("did not hit the resize cache");
     }
+
+    // Handle video thumbnail - requires thumbnail=true parameter
+    if query_params.thumbnail == Some(true) && mime_type.starts_with("video/") {
+        let video_thumbnail = VideoThumbnail {
+            width: query_params.width,
+            height: query_params.height,
+            timestamp: query_params.timestamp,
+            thumbnail: query_params.thumbnail,
+        };
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+
+        let thumbnail_path = util::fs::handle_video_thumbnail(
+            Arc::clone(&version_store),
+            hash_str,
+            &path,
+            &version_path,
+            video_thumbnail,
+        )?;
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+
+        // Generate stream for the thumbnail (always JPEG)
+        let file = File::open(&thumbnail_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        return Ok(HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(stream));
+    }
+
+    log::debug!("did not hit the resize or thumbnail cache");
 
     // Stream the file
     let stream = version_store.get_version_stream(&hash_str).await?;

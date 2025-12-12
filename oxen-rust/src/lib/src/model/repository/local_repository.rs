@@ -487,7 +487,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::{LocalRepository, RepoNew};
     use crate::test;
-    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[test]
     fn test_get_dirname_from_url() -> Result<(), OxenError> {
@@ -536,7 +536,8 @@ mod tests {
     // Do we want to require that?
     #[test]
     fn test_add_workspace() -> Result<(), OxenError> {
-        let repo_path = PathBuf::from("repo_path");
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
         let mut repo = LocalRepository::new(repo_path)?;
 
         let sample_name = "sample";
@@ -553,7 +554,8 @@ mod tests {
 
     #[test]
     fn test_cannot_add_repeat_workspace() -> Result<(), OxenError> {
-        let repo_path = PathBuf::from("repo_path");
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
         let mut repo = LocalRepository::new(repo_path)?;
 
         let sample_name = "sample";
@@ -568,7 +570,8 @@ mod tests {
 
     #[test]
     fn test_delete_workspace() -> Result<(), OxenError> {
-        let repo_path = PathBuf::from("repo_path");
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
         let mut repo = LocalRepository::new(repo_path)?;
 
         let sample_name = "sample";
