@@ -715,7 +715,7 @@ async fn bundle_and_send_small_entries(
                 )
                 .await
                 {
-                    Ok(_err_files) => {
+                    Ok(_) => {
                         bar.add_bytes(chunk_size);
                         bar.add_files(chunk.len() as u64);
                         finished_queue.pop().await;

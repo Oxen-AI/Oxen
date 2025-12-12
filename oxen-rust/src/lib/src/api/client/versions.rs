@@ -463,7 +463,7 @@ pub async fn multipart_batch_upload_with_retry(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+) -> Result<(), OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
@@ -481,7 +481,13 @@ pub async fn multipart_batch_upload_with_retry(
             sleep(Duration::from_millis(wait_time as u64)).await;
         }
     }
-    Ok(files_to_retry)
+    if files_to_retry.is_empty() {
+        Ok(())
+    } else {
+        Err(OxenError::basic_str(format!(
+            "Failed to upload files: {files_to_retry:#?}"
+        )))
+    }
 }
 
 pub async fn multipart_batch_upload(
