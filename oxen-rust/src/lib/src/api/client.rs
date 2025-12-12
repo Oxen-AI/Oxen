@@ -161,7 +161,7 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
             Ok(config) => config,
             Err(err) => {
                 log::debug!("remote::client::new_for_host error getting config: {err}");
-                return Err(OxenError::auth_token_not_set());
+                return Err(OxenError::must_supply_valid_api_key());
             }
         };
     }
@@ -237,7 +237,7 @@ fn parse_status_and_message(
                     Ok(_) => {}
                     Err(err) => {
                         log::debug!("remote::client::new_for_host error getting config: {err}");
-                        return Err(OxenError::auth_token_not_set());
+                        return Err(OxenError::must_supply_valid_api_key());
                     }
                 };
             }
