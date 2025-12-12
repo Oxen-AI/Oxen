@@ -97,7 +97,11 @@ fn builder_for_host<S: AsRef<str>>(
     let config = match AuthConfig::get() {
         Ok(config) => config,
         Err(e) => {
-            log::debug!("remote::client::new_for_host error getting config: {}. No auth token found for host {}", e, host.as_ref());
+            log::debug!(
+                "Error getting config: {}. No auth token found for host {}",
+                e,
+                host.as_ref()
+            );
             return builder;
         }
     };
@@ -107,7 +111,7 @@ fn builder_for_host<S: AsRef<str>>(
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
             Err(e) => {
-                log::debug!("remote::client::new invalid header value: {e}");
+                log::debug!("Invalid header value: {e}");
                 return Err(OxenError::basic_str(
                     "Error setting request auth. Please check your Oxen config.",
                 ));
@@ -160,7 +164,7 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
         let _ = match AuthConfig::get() {
             Ok(config) => config,
             Err(err) => {
-                log::debug!("remote::client::new_for_host error getting config: {err}");
+                log::debug!("Error getting config: {err}");
                 return Err(OxenError::must_supply_valid_api_key());
             }
         };
@@ -170,7 +174,7 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
 }
 
 /// Used to override error message when parsing json body
-pub async fn parse_json_body_with_err_msg(
+async fn parse_json_body_with_err_msg(
     url: &str,
     res: reqwest::Response,
     response_type: Option<&str>,
