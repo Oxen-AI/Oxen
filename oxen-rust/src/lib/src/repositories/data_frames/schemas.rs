@@ -827,7 +827,7 @@ mod tests {
                     });
                     repositories::data_frames::schemas::add_column_metadata(
                         &cloned_repo_a,
-                        &data_filename,
+                        data_filename,
                         column_name,
                         &column_metadata,
                     )?;
@@ -841,7 +841,7 @@ mod tests {
                     let schema = repositories::data_frames::schemas::get_by_path(
                         &cloned_repo_a,
                         &commit,
-                        &data_filename,
+                        data_filename,
                     )?
                     .expect("Schema should exist");
                     println!("User A: Schema: {schema:?}");
@@ -903,7 +903,7 @@ mod tests {
                     let schema = repositories::data_frames::schemas::get_by_path(
                         &cloned_repo_b,
                         &commit,
-                        &data_filename,
+                        data_filename,
                     )?
                     .expect("Schema should exist");
                     println!("User B: Schema: {schema:?}");
