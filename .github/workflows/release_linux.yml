@@ -105,7 +105,7 @@ jobs:
             cmake \
             clang \
             rubygems \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
+            libavcodec-devel libavformat-devel libavutil-devel libavfilter-devel libavdevice-devel \
             pkg-config
 
       - name: Install uv
