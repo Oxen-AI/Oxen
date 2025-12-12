@@ -48,6 +48,12 @@ impl RunCmd for PushCmd {
                     .value_name("COMMIT_ID")
                     .default_missing_value("true")
             )
+            .arg(
+                Arg::new("fix")
+                    .long("fix")
+                    .help("Fix corrupted files on the remote.")
+                    .action(clap::ArgAction::SetTrue)
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -66,6 +72,7 @@ impl RunCmd for PushCmd {
             } else {
                 (false, None)
             };
+        let fix = args.get_flag("fix");
 
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
@@ -85,6 +92,7 @@ impl RunCmd for PushCmd {
             delete,
             missing_files,
             missing_files_commit_id,
+            fix,
         };
 
         // Call into liboxen to push or delete

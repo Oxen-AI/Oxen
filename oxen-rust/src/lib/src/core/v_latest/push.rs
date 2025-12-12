@@ -128,7 +128,7 @@ async fn push_to_existing_branch(
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
-    if remote_branch.commit_id == commit.id && !opts.missing_files {
+    if remote_branch.commit_id == commit.id && !opts.missing_files && !opts.fix {
         println!("Everything is up to date");
         return Ok(());
     }
@@ -164,6 +164,31 @@ async fn push_to_existing_branch(
     };
 
     Ok(())
+}
+
+// delete corrupted version files and push again
+async fn fix_and_push_missing_files(
+    repo: &LocalRepository,
+    opts: &PushOpts,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: &Option<Commit>,
+    commits: &[Commit],
+) -> Result<(), OxenError> {
+    println!("🐂 ox is fixing the repo...");
+    let response = api::client::versions::clean(remote_repo).await?;
+    let fix_result = response.result;
+    println!(
+        "🔍 scanned {} files, found {} corrupted files, cleaned {} of them. Scanning took {}",
+        fix_result.scanned,
+        fix_result.corrupted,
+        fix_result.cleaned,
+        humantime::format_duration(fix_result.elapsed)
+    );
+    println!("🐂 pushing again to fix...");
+    if fix_result.corrupted > fix_result.cleaned || fix_result.errors > fix_result.cleaned {
+        println!("🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again.");
+    }
+    return push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await;
 }
 
 async fn push_missing_files(
@@ -321,6 +346,16 @@ async fn push_commits(
     commits: Vec<Commit>,
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
+    if opts.fix {
+        return fix_and_push_missing_files(
+            repo,
+            opts,
+            remote_repo,
+            &latest_remote_commit,
+            &commits,
+        )
+        .await;
+    }
     if opts.missing_files {
         return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
     }
