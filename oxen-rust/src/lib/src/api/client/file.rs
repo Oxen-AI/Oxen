@@ -152,7 +152,7 @@ pub async fn delete_file(
         .to_string();
 
     let uri = format!("/file/{branch}/{directory}");
-    println!("delete_file {uri:?}, file_path {file_path:?}");
+    log::debug!("delete_file {uri:?}, file_path {file_path:?}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
