@@ -433,7 +433,6 @@ pub async fn delete(
     }))
 }
 
-<<<<<<< HEAD
 /// Upload zip archive
 #[utoipa::path(
     post,
@@ -454,8 +453,6 @@ pub async fn delete(
         (status = 400, description = "Bad Request")
     )
 )]
-=======
->>>>>>> e9d2181bc (Update delete file endpoint for python method)
 pub async fn upload_zip(
     req: HttpRequest,
     payload: Multipart,
