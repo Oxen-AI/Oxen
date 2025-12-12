@@ -670,6 +670,22 @@ pub fn index_file_with_id(
                 "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT *, CAST(uuid() AS VARCHAR) AS {OXEN_ID_COL} FROM read_json('{path_str}');"
             );
             conn.execute(&query, [])?;
+
+            // Convert STRUCT columns to JSON to avoid binding issues
+            let alter_query = format!(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = '{DUCKDB_DF_TABLE_NAME}' AND data_type LIKE 'STRUCT%'"
+            );
+            let mut stmt = conn.prepare(&alter_query)?;
+            let struct_cols: Vec<String> = stmt
+                .query_map([], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for col in struct_cols {
+                let alter =
+                    format!("ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN \"{col}\" TYPE JSON");
+                conn.execute(&alter, [])?;
+            }
         }
         _ => {
             return Err(OxenError::basic_str(
