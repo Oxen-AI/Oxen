@@ -16,6 +16,7 @@ use crate::error::OxenError;
 use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::util;
+use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// Configuration for version storage backend
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -203,6 +204,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
     /// List all versions
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;
+
+    /// Clean corrupted version files
+    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError>;
 
     /// Get the storage type identifier (e.g., "local", "s3")
     fn storage_type(&self) -> &str;
