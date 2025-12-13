@@ -234,17 +234,30 @@ async fn get_commit_missing_hashes(
     if let Some(ref commit) = latest_remote_commit {
         for path in paths {
             let mut starting_node_hashes = HashSet::new();
-            repositories::tree::get_subtree_by_depth_with_unique_children(
+            let Some(root) = repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 commit,
                 path,
-                Some(&base_hashes),
+                None,
                 Some(&mut starting_node_hashes),
                 None,
                 repo.depth().unwrap_or(-1),
-            )?;
+            )?
+            else {
+                log::warn!("Could not get remote tree for path {path:?}");
+                continue;
+            };
 
-            base_hashes.extend(starting_node_hashes.clone());
+            // Collect directory/vnode hashes
+            base_hashes.extend(starting_node_hashes);
+
+            //TODO: collect file hashes during tree loading
+            root.walk_tree(|node: &MerkleTreeNode| {
+                let t = node.node.node_type();
+                if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
+                    base_hashes.insert(*node.node.hash());
+                }
+            });
         }
     }
 
@@ -254,6 +267,7 @@ async fn get_commit_missing_hashes(
 
     for commit in commits.iter().rev() {
         let mut unique_hashes = HashSet::new();
+        let mut file_hashes_seen = HashSet::new();
 
         let mut files: Vec<Entry> = Vec::new();
         let mut dir_nodes: HashSet<MerkleHash> = HashSet::new();
@@ -274,19 +288,27 @@ async fn get_commit_missing_hashes(
                 continue;
             };
 
-            base_hashes.extend(unique_hashes.clone());
-
+            //TODO: Ideally we should be handling it in the tree loading code
+            // but it's easier to do it here for now.
             root.walk_tree(|node: &MerkleTreeNode| {
                 let t = node.node.node_type();
 
                 if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
-                    files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
+                    let file_hash = *node.node.hash();
+                    // Only add files we haven't seen before (not in base_hashes or already collected)
+                    if !base_hashes.contains(&file_hash) && file_hashes_seen.insert(file_hash) {
+                        files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
+                    }
                 } else if !node.node.is_leaf() {
                     let hash = node.node.hash();
                     dir_nodes.insert(*hash);
                 }
             });
         }
+
+        // After processing all paths for this commit, update base_hashes
+        base_hashes.extend(unique_hashes);
+        base_hashes.extend(file_hashes_seen);
 
         // Add the ancestor dirs of each subtree path to dir_nodes
         repositories::tree::get_ancestor_nodes(repo, commit, paths, &mut dir_nodes)?;
