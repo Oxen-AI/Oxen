@@ -789,7 +789,6 @@ impl CommitMerkleTree {
         // log::debug!("read_file merkle_node: {:?}", dir_merkle_node);
 
         let vnodes = dir_merkle_node.children;
-
         // log::debug!("read_file vnodes: {}", vnodes.len());
 
         // Calculate the total number of children in the vnodes
