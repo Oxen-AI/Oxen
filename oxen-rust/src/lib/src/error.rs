@@ -297,10 +297,6 @@ impl OxenError {
         OxenError::user_config_not_found(EMAIL_AND_NAME_NOT_FOUND.to_string().into())
     }
 
-    pub fn auth_token_not_set() -> OxenError {
-        OxenError::basic_str(AUTH_TOKEN_NOT_FOUND)
-    }
-
     pub fn remote_repo_not_found(url: impl AsRef<str>) -> OxenError {
         let err = format!("Remote repository does not exist {}", url.as_ref());
         OxenError::basic_str(err)
