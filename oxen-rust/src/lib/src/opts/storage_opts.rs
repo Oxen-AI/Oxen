@@ -6,7 +6,9 @@ use crate::{constants, util};
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+use utoipa::ToSchema;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct StorageOpts {
     pub type_: String,
     pub local_storage_opts: Option<LocalStorageOpts>,

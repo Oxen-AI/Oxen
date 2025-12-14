@@ -379,7 +379,7 @@ pub async fn save_multiparts(
 
                     // Write data to version store
                     match version_store_copy
-                        .store_version(&upload_filehash, &data_to_store)
+                        .store_version(&upload_filehash, &data_to_store).await
                     {
                         Ok(_) => {
                             // log::info!(

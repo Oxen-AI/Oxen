@@ -27,6 +27,7 @@ pub struct RepoNew {
     pub files: Option<Vec<FileNew>>,
     // Storage backend opts for the repo
     #[serde(default)]
+    #[schema(ignore)]
     pub storage_opts: Option<StorageOpts>,
 }
 
