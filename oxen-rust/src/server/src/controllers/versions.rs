@@ -1,9 +1,9 @@
 pub mod chunks;
-
+use liboxen::model::MerkleHash;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param};
-
+use liboxen::core::node_sync_status;
 use actix_multipart::Multipart;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
 use async_compression::tokio::write::GzipEncoder;
@@ -286,21 +286,20 @@ pub async fn batch_upload(
         err_files,
     }))
 }
-
-// Read the payload files into memory and save to version store
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {oxen_err:?}");
+        log::error!("Failed to get version store: {:?}", oxen_err);
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
+    let json_mime: mime::Mime = "application/json".parse().unwrap();
 
-    let mut save_tasks = JoinSet::new();
-    let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    // let mut synced_nodes: Option<ReceivedMetadata> = None
 
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
@@ -308,7 +307,7 @@ pub async fn save_multiparts(
         };
 
         if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" || name == "file" {
+            if name == "file[]" {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
                 let upload_filehash = content_disposition.get_filename().map_or_else(
                     || {
@@ -318,8 +317,7 @@ pub async fn save_multiparts(
                     },
                     |fhash_os_str| Ok(fhash_os_str.to_string()),
                 )?;
-                // log::debug!("upload file_hash: {upload_filehash:?}");
-                // Read the bytes from the stream
+
                 let mut field_bytes = Vec::new();
                 while let Some(chunk) = field.try_next().await? {
                     field_bytes.extend_from_slice(&chunk);
@@ -333,107 +331,124 @@ pub async fn save_multiparts(
                     .unwrap_or(false);
 
                 let upload_filehash_copy = upload_filehash.clone();
-                let version_store_copy = version_store.clone();
-                let err_files_clone = Arc::clone(&err_files);
-                let write_task = tokio::task::spawn_blocking(move || {
-                    // Decompress the data if it's gzipped
-                    let data_to_store = match if is_gzipped {
-                        // log::debug!(
-                        //     "Decompressing gzipped data for hash: {}",
-                        //     &upload_filehash_copy
-                        // );
 
-                        let mut decoder = GzDecoder::new(&field_bytes[..]);
-                        let mut decompressed_bytes = Vec::new();
-
-                        match decoder.read_to_end(&mut decompressed_bytes) {
-                            Ok(_) => Ok(decompressed_bytes),
-                            Err(e) => Err(OxenError::basic_str(format!(
-                                "Failed to decompress gzipped data: {e}"
-                            ))),
+                // decompress the data if it is gzipped
+                let data_to_store =
+                    match actix_web::web::block(move || -> Result<Vec<u8>, OxenError> {
+                        if is_gzipped {
+                            log::debug!(
+                                "Decompressing gzipped data for hash: {}",
+                                &upload_filehash_copy
+                            );
+                            let mut decoder = GzDecoder::new(&field_bytes[..]);
+                            let mut decompressed_bytes = Vec::new();
+                            decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
+                                OxenError::basic_str(format!(
+                                    "Failed to decompress gzipped data: {}",
+                                    e
+                                ))
+                            })?;
+                            Ok(decompressed_bytes)
+                        } else {
+                            log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
+                            Ok(field_bytes)
                         }
-                    } else {
-                        log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
-
-                        Ok(field_bytes)
-                    } {
-                        Ok(data) => data,
+                    })
+                    .await
+                    {
+                        Ok(Ok(data)) => data,
+                        Ok(Err(e)) => {
+                            log::error!(
+                                "Failed to decompress data for hash {}: {}",
+                                &upload_filehash,
+                                e
+                            );
+                            record_error_file(
+                                &mut err_files,
+                                upload_filehash.clone(),
+                                None,
+                                format!("Failed to decompress data: {}", e),
+                            );
+                            continue;
+                        }
                         Err(e) => {
                             log::error!(
                                 "Failed to execute blocking decompression task for hash {}: {}",
                                 &upload_filehash,
                                 e
                             );
-                            {
-                                let mut err_files_clone = err_files_clone.lock();
-                                record_error_file(
-                                    &mut err_files_clone,
-                                    upload_filehash.clone(),
-                                    None,
-                                    format!("Failed to store version: {e}"),
-                                );
-                            }
-                            return;
+                            record_error_file(
+                                &mut err_files,
+                                upload_filehash.clone(),
+                                None,
+                                format!("Failed to execute blocking decompression: {}", e),
+                            );
+                            continue;
                         }
                     };
 
-                    // Write data to version store
-                    match version_store_copy
-                        .store_version(&upload_filehash, &data_to_store).await
-                    {
-                        Ok(_) => {
-                            // log::info!(
-                            //     "Successfully stored version for hash: {}",
-                            //     &upload_filehash
-                            // );
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Failed to store version for hash {}: {}",
-                                &upload_filehash,
-                                e
-                            );
-                            {
-                                let mut err_files_clone = err_files_clone.lock();
-                                record_error_file(
-                                    &mut err_files_clone,
-                                    upload_filehash.clone(),
-                                    None,
-                                    format!("Failed to store version: {e}"),
-                                );
-                            }
+                match version_store
+                    .store_version(&upload_filehash, &data_to_store)
+                    .await
+                {
+                    Ok(_) => {
+                        log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to store version for hash {}: {}",
+                            &upload_filehash,
+                            e
+                        );
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.clone(),
+                            None,
+                            format!("Failed to store version: {}", e),
+                        );
+                        continue;
+                    }
+                }
+            } else if name == "synced_nodes"
+                && field.content_type().is_some_and(|mime| {
+                    mime.type_() == json_mime.type_() && mime.subtype() == json_mime.subtype()
+                })
+            {
+                let mut field_bytes = Vec::new();
+                while let Some(chunk) = field.try_next().await? {
+                    field_bytes.extend_from_slice(&chunk);
+                }
+
+                let json_string = String::from_utf8(field_bytes.to_vec()).map_err(|e| {
+                    actix_web::error::ErrorBadRequest(format!("Invalid UTF-8 in JSON part: {}", e))
+                })?;
+
+                log::debug!("Received synced_nodes JSON: {}", json_string);
+
+                match serde_json::from_str::<Vec<MerkleHash>>(&json_string) {
+                    Ok(synced_nodes) => {
+                        log::debug!("Successfully parsed synced_nodes: {:?}", synced_nodes);
+
+                        for node_hash in synced_nodes {
+                            // TODO: log::error! with the error if this fails
+                            let _ = node_sync_status::mark_node_as_synced(repo, &node_hash);
                         }
                     }
-                });
-
-                save_tasks.spawn(write_task);
+                    Err(e) => {
+                        log::error!("Failed to parse synced_nodes JSON: {}", e);
+                        return Err(actix_web::error::ErrorBadRequest(format!(
+                            "Invalid JSON for synced_nodes: {}",
+                            e
+                        )));
+                    }
+                }
             }
         }
     }
 
-    while let Some(res) = save_tasks.join_next().await {
-        match res {
-            Ok(_) => {}
-            Err(e) => {
-                // Only log the error here, as err_files are recorded immediately when the error occurs
-                log::error!("A task panicked or was cancelled: {e:?}");
-            }
-        }
-    }
-
-    // Get the err_files from the mutex
-    let mutex = match Arc::try_unwrap(err_files) {
-        Ok(mutex) => mutex,
-        Err(e) => {
-            let err = format!("Couldn't acquire mutex guard for err_files: {e:?}");
-            log::error!("{err}");
-            return Err(actix_web::error::ErrorInternalServerError(err));
-        }
-    };
-
-    let err_files = mutex.into_inner();
     Ok(err_files)
 }
+
 
 // Record the error file info for retry
 fn record_error_file(
