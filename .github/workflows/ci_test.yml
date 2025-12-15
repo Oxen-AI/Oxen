@@ -47,6 +47,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-duration-seconds: 900
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Copy rust-toolchain.toml to root
         if: matrix.platform != 'windows'
         run: |
@@ -226,11 +233,3 @@ jobs:
           .venv\Scripts\Activate.ps1
           maturin develop
           pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
-
-      # S3 version store tests
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_ROLE }}
-          role-duration-seconds: 900
-          aws-region: ${{ env.AWS_REGION }}
