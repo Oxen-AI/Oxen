@@ -763,12 +763,13 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
     while (!files_to_retry.is_empty()) && retry_count < max_retries {
         retry_count += 1;
 
-        let _paths = vec![];
+        let paths = files_to_retry.iter().map(|f| f.path.clone()).collect();
+
         upload_result = match workspace_multipart_batch_upload_versions(
             remote_repo,
             local_repo,
             client.clone(),
-            _paths,
+            paths,
             upload_result,
         )
         .await
@@ -786,8 +787,12 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
             Err(e) => {
                 // TODO: Consider converting this to a debug log
                 log::error!("failed to upload version files after {retry_count} retries: {e:?}");
+
+                // Note: `files_to_add` and `err_files` aren't actually used by
+                // workspace_multipart_batch_upload to process retry files differently
+                // Hence, these fields can be empty
                 UploadResult {
-                    files_to_add: files_to_retry.clone(),
+                    files_to_add: vec![],
                     err_files: vec![],
                 }
             }
