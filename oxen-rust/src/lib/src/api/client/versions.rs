@@ -798,10 +798,16 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
             }
         };
 
-        if !upload_result.err_files.is_empty() {
+        if !files_to_retry.is_empty() {
             let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
             sleep(Duration::from_millis(wait_time as u64)).await;
         }
+    }
+
+    if !files_to_retry.is_empty() {
+        return Err(OxenError::basic_str(format!(
+            "Failed to upload version files after {max_retries} retries"
+        )));
     }
 
     Ok(upload_result.err_files)
