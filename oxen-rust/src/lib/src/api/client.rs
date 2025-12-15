@@ -60,7 +60,7 @@ pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError
 
 fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
     match builder_for_host(host.as_ref(), should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::DEFAULT_TIMEOUT_SECS))
+        .timeout(time::Duration::from_secs(constants::timeout()))
         .build()
     {
         Ok(client) => Ok(client),

@@ -1,6 +1,6 @@
 use crate::api;
 use crate::api::client;
-use crate::constants::{AVG_CHUNK_SIZE, MAX_RETRIES as DEFAULT_MAX_RETRIES, NUM_HTTP_RETRIES};
+use crate::constants::{max_retries, AVG_CHUNK_SIZE, MAX_RETRIES};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
@@ -177,7 +177,7 @@ pub async fn download_data_from_version_paths(
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
-    let total_retries = NUM_HTTP_RETRIES;
+    let total_retries = max_retries().try_into().unwrap_or(MAX_RETRIES as u64);
     let mut num_retries = 0;
 
     while num_retries < total_retries {
@@ -721,77 +721,71 @@ pub async fn workspace_multipart_batch_upload_versions(
     Ok(result)
 }
 
-// /// Multipart batch upload pre-computed multiparts with retry
-// /// Posts a multipart to the server in parallel and retries on failure
-// /// Returns a list of files that failed to upload
-/* pub async fn workspace_multipart_batch_upload_parts_with_retry(
+pub async fn workspace_multipart_batch_upload_parts_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     form: reqwest::multipart::Form,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
-
-    let mut retry_count: usize = 0;
-    let mut err_files: Vec<ErrorFileInfo> = vec![];
-    let max_retries = max_retries();
-
-    while retry_count < max_retries {
-        retry_count += 1;
-
-        // Upload multiparts, returning any that failed for retry
-        match workspace_multipart_batch_upload_parts(
-            remote_repo,
-            client.clone(),
-            form,
-        ).await {
-            Ok(err_files) => {
-                return Ok(err_files);
-            }
-            Err(e) => {
-                log::error!("Error uploading version files: {:?}", e);
-                if retry_count == max_retries {
-                    return Err(OxenError::basic_str(format!("failed to upload version files to workspace after retries: {:?}", e)));
-                }
-            }
-        }
-
-        let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-        sleep(Duration::from_millis(wait_time as u64)).await;
-    }
-
-    Err(OxenError::basic_str("failed to upload version files to workspace after retries"))
-} */
-
-pub async fn workspace_multipart_batch_upload_parts(
-    remote_repo: &RemoteRepository,
-    client: Arc<reqwest::Client>,
-    form: reqwest::multipart::Form,
+    files_to_retry: Vec<FileWithHash>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("Beginning workspace multipart batch upload");
     let uri = ("/versions").to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
+    let mut retry_count: usize = 1;
+    let max_retries = max_retries();
+
+    // Upload the processed version files
     let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let result: ErrorFilesResponse = serde_json::from_str(&body)?;
-
-    Ok(result.err_files)
-}
-
-// Parse the maximum number of retries allowed on upload from environment variable
-// TODO: Should we enforce a limit on this?
-fn max_retries() -> usize {
-    if let Ok(max_retries) = std::env::var("OXEN_MAX_RETRIES") {
-        // If the environment variable is set, use that
-        if let Ok(max_retries) = max_retries.parse::<usize>() {
-            max_retries
-        } else {
-            // If parsing failed, fall back to default
-            DEFAULT_MAX_RETRIES
+    let mut upload_result: UploadResult = match client::parse_json_body(&url, response).await {
+        Ok(body) => {
+            let result: ErrorFilesResponse = serde_json::from_str(&body)?;
+            UploadResult {
+                files_to_add: vec![],
+                err_files: result.err_files,
+            }
         }
-    } else {
-        // Environment variable not set, use default
-        DEFAULT_MAX_RETRIES
+        Err(e) => {
+            log::error!("failed to upload version files: {e:?}");
+            UploadResult {
+                files_to_add: files_to_retry.clone(),
+                err_files: vec![],
+            }
+        }
+    };
+
+    // If files fail, rebuild parts for the err_files and retry
+    while (!files_to_retry.is_empty()) && retry_count < max_retries {
+        retry_count += 1;
+
+        let _paths = vec![];
+        upload_result = match workspace_multipart_batch_upload_versions(
+            remote_repo,
+            local_repo,
+            client.clone(),
+            _paths,
+            upload_result,
+        )
+        .await
+        {
+            Ok(upload_result) => upload_result,
+            Err(e) => {
+                // TODO: Consider converting this to a debug log
+                log::error!("failed to upload version files after {retry_count} retries: {e:?}");
+                UploadResult {
+                    files_to_add: files_to_retry.clone(),
+                    err_files: vec![],
+                }
+            }
+        };
+
+        if !upload_result.err_files.is_empty() {
+            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+            sleep(Duration::from_millis(wait_time as u64)).await;
+        }
     }
+
+    Ok(upload_result.err_files)
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {

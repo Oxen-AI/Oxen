@@ -1,6 +1,5 @@
 use crate::api::client;
-use crate::constants::AVG_CHUNK_SIZE;
-use crate::constants::MAX_RETRIES as DEFAULT_MAX_RETRIES;
+use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
@@ -275,10 +274,13 @@ async fn parallel_batched_small_file_upload(
     let workspace_id = workspace_id.as_ref().to_string();
     let directory = directory.as_ref().to_str().unwrap_or_default().to_string();
 
-    type PieceOfWork = (Vec<(PathBuf, u64)>, String, String, RemoteRepository);
+    // Represents unprocessed batches
+    type PieceOfWork = Vec<(PathBuf, u64)>;
+
+    // Represents processed batches
     type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
 
-    // create batches
+    // Split files into batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
     let mut current_batch: Vec<(PathBuf, u64)> = Vec::new();
     let mut current_batch_size = 0;
@@ -289,12 +291,7 @@ async fn parallel_batched_small_file_upload(
         current_batch_size += file_size;
 
         if current_batch_size > AVG_CHUNK_SIZE || idx >= small_files.len() - 1 {
-            file_batches.push((
-                current_batch.clone(),
-                workspace_id.to_string(),
-                directory.to_string(),
-                remote_repo.clone(),
-            ));
+            file_batches.push(current_batch.clone());
 
             current_batch.clear();
             total_size += current_batch_size;
@@ -349,18 +346,13 @@ async fn parallel_batched_small_file_upload(
                     let head_commit_maybe_clone = head_commit_maybe_clone.clone();
 
                     let result: Result<(), OxenError> = async move {
-                        let (small_files, _workspace_id, _directory, _remote_repo) = batch;
-
                         let mut batch_size = 0;
                         let mut batch_parts = Vec::new();
                         let mut files_to_stage = Vec::new();
 
                         // Build the multiparts for each file
-                        log::debug!(
-                            "Starting file processing loop with {:?} files",
-                            small_files.len()
-                        );
-                        for (path, size) in small_files {
+                        log::debug!("Starting file processing loop with {:?} files", batch.len());
+                        for (path, size) in batch {
                             let local_repo_clone = local_repo_clone.clone();
                             let repo_path_clone = repo_path_clone.clone();
                             let head_commit_maybe_clone = head_commit_maybe_clone.clone();
@@ -470,6 +462,7 @@ async fn parallel_batched_small_file_upload(
     let workspace_id_clone = workspace_id.clone();
     let remote_repo_clone = remote_repo.clone();
     let directory_clone = directory.clone();
+    let local_repo_clone = local_repo.clone();
 
     let consumer_err_files = Arc::clone(&err_files);
     let consumer_errors = Arc::clone(&errors);
@@ -482,10 +475,12 @@ async fn parallel_batched_small_file_upload(
             .for_each_concurrent(
                 worker_count,
                 |processed_batch| {
+
                     let client_clone = client_clone.clone();
                     let remote_repo_clone = remote_repo_clone.clone();
                     let workspace_id_clone = workspace_id_clone.clone();
                     let directory_str = directory_clone.clone();
+                    let local_repo_clone = local_repo_clone.clone();
 
                     let err_files_clone = Arc::clone(&consumer_err_files);
                     let errors = Arc::clone(&consumer_errors);
@@ -493,7 +488,7 @@ async fn parallel_batched_small_file_upload(
 
                     async move {
                         let result: Result<(), OxenError> = async move {
-                            let (current_batch_parts, mut files_to_stage, current_batch_size) = processed_batch;
+                            let (current_batch_parts, files_to_stage, current_batch_size) = processed_batch;
                             let num_entries = current_batch_parts.len();
 
                             // Build the multipart form
@@ -502,10 +497,12 @@ async fn parallel_batched_small_file_upload(
                                 form = form.part("file[]", part);
                             }
 
-                            match api::client::versions::workspace_multipart_batch_upload_parts(
+                            match api::client::versions::workspace_multipart_batch_upload_parts_with_retry(
                                 &remote_repo_clone,
                                 Arc::clone(&client_clone),
                                 form,
+                                files_to_stage.clone(),
+                                &local_repo_clone.clone(),
                             )
                             .await
                             {
@@ -524,7 +521,7 @@ async fn parallel_batched_small_file_upload(
                                         &remote_repo_clone,
                                         client_clone,
                                         &workspace_id_clone,
-                                        Arc::new(files_to_stage.clone()),
+                                        Arc::new(files_to_stage),
                                         &directory_str,
                                         upload_err_files,
                                     )
@@ -551,7 +548,6 @@ async fn parallel_batched_small_file_upload(
                                         }
                                     }
 
-                                    files_to_stage.clear();
                                     Ok(())
                                 }
                                 // If uploading the version files fails, cancel the operation
@@ -1136,23 +1132,6 @@ pub async fn validate_upload_feasibility(
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
     (base_wait_time + n.pow(2) + jitter()).min(max)
-}
-
-// Parse the maximum number of retries allowed on upload from environment variable
-// TODO: Should we enforce a limit on this?
-fn max_retries() -> usize {
-    if let Ok(max_retries) = std::env::var("OXEN_MAX_RETRIES") {
-        // If the environment variable is set, use that
-        if let Ok(max_retries) = max_retries.parse::<usize>() {
-            max_retries
-        } else {
-            // If parsing failed, fall back to default
-            DEFAULT_MAX_RETRIES
-        }
-    } else {
-        // Environment variable not set, use default
-        DEFAULT_MAX_RETRIES
-    }
 }
 
 fn jitter() -> usize {
