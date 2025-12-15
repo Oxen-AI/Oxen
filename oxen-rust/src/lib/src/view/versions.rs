@@ -4,14 +4,15 @@ use crate::model::MerkleHash;
 
 use super::StatusMessage;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct VersionFile {
     pub hash: String,
     pub size: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct VersionFileResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
