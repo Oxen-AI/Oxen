@@ -142,6 +142,12 @@ impl PyRemoteRepo {
     ) -> Result<PyRemoteRepo, PyOxenError> {
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             // parse storage backend options
+            if storage_backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some()) {
+                return Err(OxenError::basic_str(
+                    "storage_backend must be specified when storage_backend_path or storage_backend_bucket is provided"
+                ).into());
+            }
+
             let storage_opts = StorageOpts::from_args(
                 storage_backend,
                 storage_backend_path,
