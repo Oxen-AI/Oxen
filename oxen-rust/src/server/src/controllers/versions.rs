@@ -167,14 +167,12 @@ pub async fn download(
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
     ),
     request_body(
-        content = Vec<String>,
+        content = Vec<u8>,
         content_type = "application/gzip",
-        description = "Gzip compressed, line-delimited list of file content hashes to download.",
+        description = "Gzip compressed binary payload containing a line-delimited list of merkle hashes to download",
     ),
     responses(
         (status = 200, description = "Tarball of all requested files, gzipped.", content_type = "application/gzip"),
-        (status = 400, description = "Invalid payload or decompression failed"),
-        (status = 404, description = "Repository not found or some files missing"),
     )
 )]
 pub async fn batch_download(
