@@ -725,7 +725,7 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     form: reqwest::multipart::Form,
-    files_to_retry: Vec<FileWithHash>,
+    files_to_retry: &mut Vec<FileWithHash>,
     local_repo: &Option<LocalRepository>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("Beginning workspace multipart batch upload");
@@ -740,6 +740,11 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
     let mut upload_result: UploadResult = match client::parse_json_body(&url, response).await {
         Ok(body) => {
             let result: ErrorFilesResponse = serde_json::from_str(&body)?;
+            // Remove successfully uploaded files from files_to_retry
+            let err_file_hashes: Vec<String> =
+                result.err_files.iter().map(|f| f.hash.clone()).collect();
+            files_to_retry.retain(|f| err_file_hashes.contains(&f.hash));
+
             UploadResult {
                 files_to_add: vec![],
                 err_files: result.err_files,
@@ -768,7 +773,16 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
         )
         .await
         {
-            Ok(upload_result) => upload_result,
+            Ok(upload_result) => {
+                let err_file_hashes: Vec<String> = upload_result
+                    .err_files
+                    .iter()
+                    .map(|f| f.hash.clone())
+                    .collect();
+                files_to_retry.retain(|f| err_file_hashes.contains(&f.hash));
+
+                upload_result
+            }
             Err(e) => {
                 // TODO: Consider converting this to a debug log
                 log::error!("failed to upload version files after {retry_count} retries: {e:?}");

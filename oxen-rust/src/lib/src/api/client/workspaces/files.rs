@@ -497,11 +497,12 @@ async fn parallel_batched_small_file_upload(
                                 form = form.part("file[]", part);
                             }
 
+                            let mut files_to_retry = files_to_stage.clone();
                             match api::client::versions::workspace_multipart_batch_upload_parts_with_retry(
                                 &remote_repo_clone,
                                 Arc::clone(&client_clone),
                                 form,
-                                files_to_stage.clone(),
+                                &mut files_to_retry,
                                 &local_repo_clone.clone(),
                             )
                             .await
