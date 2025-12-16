@@ -71,7 +71,7 @@ impl AuthConfig {
                 config_file,
                 std::env::current_dir().unwrap()
             );
-            Err(OxenError::auth_token_not_set())
+            Err(OxenError::must_supply_valid_api_key())
         }
     }
 

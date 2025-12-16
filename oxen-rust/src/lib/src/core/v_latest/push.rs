@@ -152,7 +152,7 @@ async fn push_to_existing_branch(
             } else {
                 //we're behind
                 let err_str = format!(
-                    "Branch {} is behind {} must pull.\n\nRun `oxen pull` to update your local branch",
+                    "Branch {} is behind remote commit {}.\nRun `oxen pull` to update your local branch",
                     remote_branch.name, remote_branch.commit_id
                 );
                 return Err(OxenError::basic_str(err_str));
@@ -737,7 +737,7 @@ async fn bundle_and_send_small_entries(
                 )
                 .await
                 {
-                    Ok(_err_files) => {
+                    Ok(_) => {
                         bar.add_bytes(chunk_size);
                         bar.add_files(chunk.len() as u64);
                         finished_queue.pop().await;

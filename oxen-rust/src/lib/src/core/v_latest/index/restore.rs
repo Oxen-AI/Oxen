@@ -83,8 +83,10 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore_staged: start");
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
+    let repo_path = repo.path.clone();
     if let Some(db) = open_staged_db(&db_path)? {
         for path in &opts.paths {
+            let path = util::fs::path_relative_to_dir(path, &repo_path)?;
             let mut batch = WriteBatch::default();
 
             // Remove specific staged entry or entries under a directory
@@ -280,7 +282,6 @@ pub fn should_restore_file(
 ) -> Result<bool, OxenError> {
     let path = path.as_ref();
     let working_path = repo.path.join(path);
-
     // Check to see if the file has been modified if it exists
     if working_path.exists() {
         // Check metadata for changes first
@@ -289,6 +290,7 @@ pub fn should_restore_file(
 
         // If there are modifications compared to the base node, we should not restore the file
         if let Some(base_node) = base_node {
+            // First, check the modified times
             let node_modified_nanoseconds = std::time::SystemTime::UNIX_EPOCH
                 + std::time::Duration::from_secs(base_node.last_modified_seconds() as u64)
                 + std::time::Duration::from_nanos(base_node.last_modified_nanoseconds() as u64);
@@ -300,11 +302,27 @@ pub fn should_restore_file(
                 return Ok(true);
             }
 
-            // If modified times are different, check hashes
-            let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
+            // Second, check the combined hashes
+            let file_hash = util::hasher::u128_hash_file_contents(&working_path)?;
+            let file_combined_hash = {
+                let mime_type = util::fs::file_mime_type(path);
+                let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
 
-            let base_node_hash = base_node.hash();
-            if hash != *base_node_hash {
+                let file_metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
+                let file_metadata_hash = util::hasher::maybe_get_metadata_hash(&file_metadata)?;
+
+                let combined_hash = util::hasher::get_combined_hash(file_metadata_hash, file_hash)?;
+                MerkleHash::new(combined_hash)
+            };
+
+            let node_combined_hash = file_node.combined_hash();
+            if file_combined_hash != *node_combined_hash {
+                return Ok(true);
+            }
+
+            let base_hash = base_node.combined_hash();
+
+            if file_combined_hash != *base_hash {
                 return Ok(false);
             }
         } else {
@@ -320,9 +338,21 @@ pub fn should_restore_file(
                 return Ok(true);
             }
 
-            // If modified times are different, check hashes
-            let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
-            if hash != *file_node.hash() {
+            // Second, check the combined hashes
+            let file_hash = util::hasher::u128_hash_file_contents(&working_path)?;
+            let file_combined_hash = {
+                let mime_type = util::fs::file_mime_type(path);
+                let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
+
+                let file_metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
+                let file_metadata_hash = util::hasher::maybe_get_metadata_hash(&file_metadata)?;
+
+                let combined_hash = util::hasher::get_combined_hash(file_metadata_hash, file_hash)?;
+                MerkleHash::new(combined_hash)
+            };
+
+            let node_combined_hash = file_node.combined_hash();
+            if file_combined_hash != *node_combined_hash {
                 return Ok(false);
             }
         }

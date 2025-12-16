@@ -165,7 +165,9 @@ pub fn update(
     let mut df = tabular::parse_json_to_df(data)?;
 
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
-
+    if row.height() == 0 {
+        return Err(OxenError::resource_not_found("row not found"));
+    }
     let mut result = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
     })?;

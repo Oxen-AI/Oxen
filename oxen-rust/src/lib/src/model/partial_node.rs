@@ -2,6 +2,8 @@ use crate::model::MerkleHash;
 use crate::util;
 use filetime::FileTime;
 
+// TODO: Either deprecate this struct, or update it to include schema
+
 // Reduced form of the FileNode, used to save space
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]
 pub struct PartialNode {

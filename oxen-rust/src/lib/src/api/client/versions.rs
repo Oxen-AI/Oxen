@@ -463,7 +463,7 @@ pub async fn multipart_batch_upload_with_retry(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+) -> Result<(), OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
@@ -481,7 +481,13 @@ pub async fn multipart_batch_upload_with_retry(
             sleep(Duration::from_millis(wait_time as u64)).await;
         }
     }
-    Ok(files_to_retry)
+    if files_to_retry.is_empty() {
+        Ok(())
+    } else {
+        Err(OxenError::basic_str(format!(
+            "Failed to upload files: {files_to_retry:#?}"
+        )))
+    }
 }
 
 pub async fn multipart_batch_upload(
@@ -715,30 +721,21 @@ pub async fn workspace_multipart_batch_upload_versions(
     Ok(result)
 }
 
-// TODO: How can we implement retry when multiparts can't be cloned?
-// It may be possible to offload the creation of the multiparts from the compressed bytes into a separate blocking pool in the receiver?
-
 // /// Multipart batch upload pre-computed multiparts with retry
 // /// Posts a multipart to the server in parallel and retries on failure
 // /// Returns a list of files that failed to upload
-/*pub async fn workspace_multipart_batch_upload_parts_with_retry(
+/* pub async fn workspace_multipart_batch_upload_parts_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
-    multiparts: Vec<(Vec<u8>, MerkleHash)>,
+    form: reqwest::multipart::Form,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
 
     let mut retry_count: usize = 0;
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     let max_retries = max_retries();
 
-
     while retry_count < max_retries {
         retry_count += 1;
-
-        let mut form = reqwest::multipart::Form::new();
-        for part in multiparts {
-            form = form.part("file", part);
-        }
 
         // Upload multiparts, returning any that failed for retry
         match workspace_multipart_batch_upload_parts(
@@ -762,13 +759,14 @@ pub async fn workspace_multipart_batch_upload_versions(
     }
 
     Err(OxenError::basic_str("failed to upload version files to workspace after retries"))
-}*/
+} */
 
 pub async fn workspace_multipart_batch_upload_parts(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     form: reqwest::multipart::Form,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    log::debug!("Beginning workspace multipart batch upload");
     let uri = ("/versions").to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 

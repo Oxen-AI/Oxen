@@ -83,10 +83,18 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
 
     let repo = match repo {
         Err(e) => {
-            log::error!("Failed to get repo: {e}");
+            log::error!("Failed to get repo: {e}. Comparing files...");
+
+            let path_1 = opts.path_1;
+            let Some(path_2) = opts.path_2 else {
+                return Err(OxenError::basic_str(
+                    "Error: `oxen diff` requires a repo or file paths",
+                ));
+            };
+
             let result = diff_files(
-                opts.path_1,
-                opts.path_2.unwrap(),
+                path_1,
+                path_2,
                 opts.keys.clone(),
                 opts.targets.clone(),
                 vec![],

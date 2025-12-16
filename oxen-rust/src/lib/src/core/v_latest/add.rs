@@ -698,27 +698,17 @@ pub fn determine_file_status(
         // first check if the file timestamp is different
         let metadata = util::fs::metadata(data_path)?;
         let mtime = FileTime::from_last_modification_time(&metadata);
+        let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
+        let num_bytes = metadata.len();
+
         previous_oxen_metadata = file_node.metadata();
-        if util::fs::is_modified_from_node(data_path, file_node)? {
-            log::debug!("has_different_modification_time true {file_node}");
-            let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
-            if file_node.hash().to_u128() != hash {
-                log::debug!("has_different_modification_time hash is different true {file_node}");
-                let num_bytes = metadata.len();
-                (
-                    StagedEntryStatus::Modified,
-                    MerkleHash::new(hash),
-                    num_bytes,
-                    mtime,
-                )
-            } else {
-                (
-                    StagedEntryStatus::Unmodified,
-                    MerkleHash::new(hash),
-                    file_node.num_bytes(),
-                    mtime,
-                )
-            }
+        if util::fs::is_modified_from_node_with_metadata(data_path, file_node, Ok(metadata))? {
+            (
+                StagedEntryStatus::Modified,
+                MerkleHash::new(hash),
+                num_bytes,
+                mtime,
+            )
         } else {
             (
                 StagedEntryStatus::Unmodified,
@@ -978,9 +968,7 @@ pub fn get_status_and_add_file(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
-    if let Some(parent) = dst_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+
     let file_name = dst_path.file_name().unwrap().to_string_lossy();
     let maybe_dir_node = None;
     let file_status =
@@ -1020,10 +1008,6 @@ pub fn stage_file_with_hash(
     let head_commit = &workspace.commit;
 
     let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
-    if let Some(parent) = dst_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
     let metadata = util::fs::metadata(data_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
     let maybe_file_node =

@@ -318,7 +318,7 @@ pub async fn save_multiparts(
                     },
                     |fhash_os_str| Ok(fhash_os_str.to_string()),
                 )?;
-                log::debug!("upload file_hash: {upload_filehash:?}");
+                // log::debug!("upload file_hash: {upload_filehash:?}");
                 // Read the bytes from the stream
                 let mut field_bytes = Vec::new();
                 while let Some(chunk) = field.try_next().await? {
@@ -338,10 +338,10 @@ pub async fn save_multiparts(
                 let write_task = tokio::task::spawn_blocking(move || {
                     // Decompress the data if it's gzipped
                     let data_to_store = match if is_gzipped {
-                        log::debug!(
-                            "Decompressing gzipped data for hash: {}",
-                            &upload_filehash_copy
-                        );
+                        // log::debug!(
+                        //     "Decompressing gzipped data for hash: {}",
+                        //     &upload_filehash_copy
+                        // );
 
                         let mut decoder = GzDecoder::new(&field_bytes[..]);
                         let mut decompressed_bytes = Vec::new();
@@ -382,10 +382,10 @@ pub async fn save_multiparts(
                         .store_version_blocking(&upload_filehash, &data_to_store)
                     {
                         Ok(_) => {
-                            log::info!(
-                                "Successfully stored version for hash: {}",
-                                &upload_filehash
-                            );
+                            // log::info!(
+                            //     "Successfully stored version for hash: {}",
+                            //     &upload_filehash
+                            // );
                         }
                         Err(e) => {
                             log::error!(

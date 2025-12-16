@@ -45,6 +45,7 @@ use crate::model::merkle_tree::node::{CommitNode, DirNode};
 pub struct EntryVNode {
     pub id: MerkleHash,
     pub entries: Vec<StagedMerkleTreeNode>,
+    pub removed_entries: Vec<StagedMerkleTreeNode>,
 }
 
 impl std::fmt::Debug for EntryVNode {
@@ -67,6 +68,7 @@ impl EntryVNode {
         EntryVNode {
             id,
             entries: vec![],
+            removed_entries: vec![],
         }
     }
 }
@@ -584,13 +586,16 @@ fn get_node_dir_children(
 }
 
 // This should return the directory to vnode mapping that we need to update
+// It also maps directories to removed files to update their metadata
+#[allow(clippy::type_complexity)]
 fn split_into_vnodes(
     repo: &LocalRepository,
     entries: &HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     existing_nodes: &HashMap<PathBuf, MerkleTreeNode>,
     new_commit: &NewCommitBody,
-) -> Result<HashMap<PathBuf, Vec<EntryVNode>>, OxenError> {
-    let mut results: HashMap<PathBuf, Vec<EntryVNode>> = HashMap::new();
+) -> Result<HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>, OxenError> {
+    let mut results: HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)> =
+        HashMap::new();
 
     if log::max_level() == log::Level::Debug {
         log::debug!("split_into_vnodes new_commit: {:?}", new_commit.message);
@@ -604,6 +609,7 @@ fn split_into_vnodes(
     // Create the VNode buckets per directory
     for (directory, new_children) in entries {
         let mut children = HashSet::new();
+        let mut removed_children = HashSet::new();
 
         // Lookup children in the existing merkle tree
         if let Some(existing_node) = existing_nodes.get(directory) {
@@ -642,6 +648,7 @@ fn split_into_vnodes(
                                 child.node.maybe_path().unwrap()
                             );
                             children.remove(child);
+                            removed_children.insert(child.to_owned());
                         }
                         _ => {
                             log::debug!(
@@ -674,7 +681,6 @@ fn split_into_vnodes(
         let total_children = children.len();
         let vnode_size = repo.vnode_size();
         let num_vnodes = (total_children as f32 / vnode_size as f32).ceil() as u128;
-
         // Antoher way to do it would be log2(N / 10000) if we wanted it to scale more logarithmically
         // let num_vnodes = (total_children as f32 / 10000_f32).log2();
         // let num_vnodes = 2u128.pow(num_vnodes.ceil() as u32);
@@ -738,7 +744,8 @@ fn split_into_vnodes(
         }
 
         // Sort before we hash
-        results.insert(directory.to_owned(), vnode_children);
+        let removed_children = removed_children.iter().cloned().collect();
+        results.insert(directory.to_owned(), (vnode_children, removed_children));
     }
 
     // Make sure to update all the vnode ids based on all their children
@@ -750,7 +757,7 @@ fn split_into_vnodes(
         new_commit.message
     );
     if log::max_level() == log::Level::Debug {
-        for (dir, vnodes) in results.iter_mut() {
+        for (dir, (vnodes, _)) in results.iter_mut() {
             log::debug!("dir {:?} has {} vnodes", dir, vnodes.len());
             for vnode in vnodes.iter_mut() {
                 log::debug!("  vnode {} has {} entries", vnode.id, vnode.entries.len());
@@ -787,7 +794,7 @@ fn write_commit_entries(
     commit_db: &mut MerkleNodeDB,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
 ) -> Result<(), OxenError> {
     // Write the root dir, then recurse into the vnodes and subdirectories
     let mut total_written = 0;
@@ -823,7 +830,7 @@ fn r_create_dir_node(
     maybe_dir_db: &mut Option<MerkleNodeDB>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     path: impl AsRef<Path>,
     total_written: &mut u64,
 ) -> Result<(), OxenError> {
@@ -832,7 +839,7 @@ fn r_create_dir_node(
     let keys = entries.keys();
     log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
 
-    let Some(vnodes) = entries.get(&path) else {
+    let Some((vnodes, _)) = entries.get(&path) else {
         log::debug!("r_create_dir_node No entries found for directory {path:?}");
         return Ok(());
     };
@@ -997,7 +1004,7 @@ fn r_create_dir_node(
 }
 
 fn get_children(
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     dir_path: impl AsRef<Path>,
 ) -> Result<Vec<PathBuf>, OxenError> {
     let dir_path = dir_path.as_ref().to_path_buf();
@@ -1015,7 +1022,7 @@ fn get_children(
 fn compute_dir_node(
     repo: &LocalRepository,
     commit_id: MerkleHash,
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     path: impl AsRef<Path>,
 ) -> Result<DirNode, OxenError> {
@@ -1029,6 +1036,10 @@ fn compute_dir_node(
     let mut data_type_counts: HashMap<String, u64> = HashMap::new();
     let mut data_type_sizes: HashMap<String, u64> = HashMap::new();
 
+    let children = get_children(entries, &path)?;
+    log::debug!(
+        "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"
+    );
     let head_commit_maybe = repositories::commits::head_commit_maybe(repo)?;
     if let Some(head_commit) = head_commit_maybe {
         if let Ok(Some(old_dir_node)) = repositories::tree::get_dir_without_children(
@@ -1045,13 +1056,8 @@ fn compute_dir_node(
         };
     }
 
-    // Collect the previous commit counts
-    let children = get_children(entries, &path)?;
-    log::debug!(
-        "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"
-    );
     for child in children.iter() {
-        let Some(vnodes) = entries.get(child) else {
+        let Some((vnodes, removed_entries)) = entries.get(child) else {
             let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
             return Err(OxenError::basic_str(err_msg));
         };
@@ -1102,18 +1108,6 @@ fn compute_dir_node(
                                     .entry(file_node.data_type().to_string())
                                     .or_insert(0) += file_node.num_bytes();
                             }
-                            StagedEntryStatus::Removed => {
-                                num_bytes -= file_node.num_bytes();
-                                if path == *child {
-                                    num_entries -= 1;
-                                }
-                                *data_type_counts
-                                    .entry(file_node.data_type().to_string())
-                                    .or_insert(1) -= 1;
-                                *data_type_sizes
-                                    .entry(file_node.data_type().to_string())
-                                    .or_insert(0) -= file_node.num_bytes();
-                            }
                             _ => {
                                 // Do nothing
                             }
@@ -1125,6 +1119,39 @@ fn compute_dir_node(
                             entry.node
                         )));
                     }
+                }
+            }
+        }
+        // Adjust dir node metadata for removed entries
+        for entry in removed_entries.iter() {
+            match &entry.node.node {
+                EMerkleTreeNode::Directory(_) => {
+                    // Do nothing
+                }
+                EMerkleTreeNode::File(file_node) => {
+                    log::debug!(
+                        "Updating hash for file {} -> hash {} status {:?}",
+                        file_node.name(),
+                        file_node.hash(),
+                        entry.status
+                    );
+
+                    match entry.status {
+                        StagedEntryStatus::Removed => {
+                            if path == *child {
+                                num_entries -= 1;
+                            }
+                        }
+                        _ => {
+                            // Do nothing
+                        }
+                    }
+                }
+                _ => {
+                    return Err(OxenError::basic_str(format!(
+                        "compute_dir_node found unexpected node type: {:?}",
+                        entry.node
+                    )));
                 }
             }
         }
