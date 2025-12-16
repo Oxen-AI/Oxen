@@ -305,12 +305,16 @@ pub fn row_from_str_and_schema(
 
 pub fn parse_str_to_df(data: impl AsRef<str>) -> Result<DataFrame, OxenError> {
     let data = data.as_ref();
+
     if data == "{}" {
         return Ok(DataFrame::default());
     }
 
     let cursor = Cursor::new(data.as_bytes());
-    match JsonLineReader::new(cursor).finish() {
+
+    let reader = JsonLineReader::new(cursor);
+
+    match reader.finish() {
         Ok(df) => Ok(df),
         Err(err) => Err(OxenError::basic_str(format!("Error parsing json: {err}"))),
     }
@@ -716,7 +720,7 @@ pub fn any_val_to_bytes(value: &AnyValue) -> Vec<u8> {
     }
 }
 
-fn any_val_to_json(value: AnyValue) -> Value {
+pub fn any_val_to_json(value: AnyValue) -> Value {
     match value {
         AnyValue::Null => Value::Null,
         AnyValue::Boolean(b) => Value::Bool(b),
@@ -820,9 +824,8 @@ fn any_val_to_json(value: AnyValue) -> Value {
 
 fn struct_array_to_json(
     struct_array: &polars::prelude::StructArray,
-    _fields: &[polars::prelude::Field],
+    fields: &[polars::prelude::Field],
 ) -> Value {
-    // Convert StructArray -> DataFrame, then to JSON
     match DataFrame::try_from(struct_array.clone()) {
         Ok(df) => {
             let mut rows = Vec::with_capacity(df.height());
@@ -836,7 +839,47 @@ fn struct_array_to_json(
             }
             Value::Array(rows)
         }
-        Err(_) => Value::String(format!("{struct_array:?}")),
+        Err(e) => {
+            log::warn!("Failed to convert StructArray to DataFrame: {:?}", e);
+            let mut map = serde_json::Map::new();
+            for (i, field) in fields.iter().enumerate() {
+                if let Some(values) = struct_array.values().get(i) {
+                    let len = values.len();
+                    if len > 0 {
+                        let val_str = format!("{:?}", values);
+                        // Look for actual URL or string content
+                        if let Some(start) = val_str.find("https://") {
+                            // Extract URL starting from https://
+                            let rest = &val_str[start..];
+                            if let Some(end) = rest.find('"').or(rest.find(']')) {
+                                let url = &rest[..end];
+                                map.insert(
+                                    field.name().to_string(),
+                                    Value::String(url.to_string()),
+                                );
+                                continue;
+                            }
+                        } else if let Some(start) = val_str.find("http://") {
+                            let rest = &val_str[start..];
+                            if let Some(end) = rest.find('"').or(rest.find(']')) {
+                                let url = &rest[..end];
+                                map.insert(
+                                    field.name().to_string(),
+                                    Value::String(url.to_string()),
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+                map.insert(field.name().to_string(), Value::Null);
+            }
+            if map.is_empty() {
+                Value::Null
+            } else {
+                Value::Object(map)
+            }
+        }
     }
 }
 

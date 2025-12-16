@@ -4,6 +4,7 @@ use polars::prelude::NamedFrom;
 use polars::prelude::PlSmallStr;
 use polars::series::Series;
 use rocksdb::DB;
+use serde_json::json;
 use serde_json::Value;
 
 use crate::constants::DIFF_STATUS_COL;
@@ -40,7 +41,9 @@ pub fn add(
 
     log::debug!("add_row() path: {row_changes_path:?} got db_path: {db_path:?}");
 
-    let df = tabular::parse_json_to_df(data)?;
+    let mut normalized_data = data.clone();
+    maybe_normalize_message_content(&mut normalized_data);
+    let df = tabular::parse_json_to_df(&normalized_data)?;
     log::debug!("add() df: {df:?}");
 
     let mut result = with_df_db_manager(db_path, |manager| {
@@ -168,6 +171,7 @@ pub fn update(
     if row.height() == 0 {
         return Err(OxenError::resource_not_found("row not found"));
     }
+
     let mut result = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
     })?;
@@ -359,4 +363,44 @@ pub async fn restore_row_in_db(
     log::debug!("we're returning this row: {result_row:?}");
 
     Ok(result_row)
+}
+
+fn maybe_normalize_message_content(value: &mut serde_json::Value) {
+    let Some(messages) = value.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+
+    for msg in messages {
+        if !msg.is_object() {
+            continue;
+        }
+
+        let Some(msg_obj) = msg.as_object_mut() else {
+            continue;
+        };
+
+        if let Some(content) = msg_obj.get_mut("content") {
+            // Only process if content is an array (user messages with images/objects)
+            if content.is_array() {
+                // Remove null image_url fields before stringifying
+                if let Some(content_array) = content.as_array_mut() {
+                    for item in content_array.iter_mut() {
+                        if let Some(item_obj) = item.as_object_mut() {
+                            if let Some(image_url_val) = item_obj.get("image_url") {
+                                if image_url_val.is_null() {
+                                    item_obj.remove("image_url");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Stringify the content array
+                if let Ok(content_str) = serde_json::to_string(content) {
+                    *content = json!(content_str);
+                }
+            }
+            // String content stays as-is (simple text messages)
+        }
+    }
 }
