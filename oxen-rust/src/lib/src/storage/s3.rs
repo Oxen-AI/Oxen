@@ -1,5 +1,6 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
+use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{config::Region, primitives::ByteStream, Client};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -41,7 +42,10 @@ impl S3VersionStore {
             .client
             .get_or_init(|| async {
                 // Create a temp client to get the bucket region
+                let region_provider = RegionProviderChain::default_provider().or_else("us-west-1");
+
                 let base_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                    .region(region_provider)
                     .load()
                     .await;
                 let tmp_client = Client::new(&base_config);
