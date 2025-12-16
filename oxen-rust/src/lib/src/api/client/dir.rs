@@ -1,14 +1,15 @@
 use std::path::Path;
+use tokio_util::io::StreamReader;use tokio::fs::File;
+use async_std::prelude::StreamExt;
 
-use crate::api;
 use crate::api::client;
-use crate::constants;
 use crate::error::OxenError;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
 use crate::model::RemoteRepository;
 use crate::view::entries::EMetadataEntry;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
+use crate::{api, constants};
 
 pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEntries, OxenError> {
     list(
@@ -77,7 +78,7 @@ pub async fn get_dir(
 ) -> Result<PaginatedDirEntriesResponse, OxenError> {
     let path_str = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
-    let uri = format!("/dir/{revision}/{path_str}");
+    let uri = format!("/dir/download/{revision}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -90,6 +91,46 @@ pub async fn get_dir(
         Err(err) => Err(OxenError::basic_str(format!(
             "api::dir::get_dir error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
+    }
+}
+
+
+pub async fn download_dir_as_zip(
+    remote_repo: &RemoteRepository,
+    revision: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    local_path: impl AsRef<Path>,
+) -> Result<u64, OxenError> {
+    let revision = revision.as_ref().to_string();
+    let directory = directory.as_ref().to_string_lossy().to_string();
+    let local_path = local_path.as_ref();
+    let uri = format!("/dir/download_zip/{revision}/{directory}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+
+    if let Ok(res) = client.get(&url).send().await {
+        if reqwest::StatusCode::UNAUTHORIZED == res.status() {
+            let e = "Err: unauthorized request to download data".to_string();
+            log::error!("{e}");
+            return Err(OxenError::authentication(e));
+        }
+
+        let stream = res.bytes_stream();
+        
+        let mut reader = StreamReader::new(
+            stream.map(|result| result.map_err(std::io::Error::other)),
+        );
+
+        let mut file = File::create(local_path).await?;
+        let size = tokio::io::copy(&mut reader, &mut file).await?;
+
+        log::debug!("Successfully downloaded {} bytes to: {:?}", size, local_path);
+
+        Ok(size)
+    } else {
+        let err = format!("try_download_dir_as_zip failed to send request {url}");
+        Err(OxenError::basic_str(err))
     }
 }
 

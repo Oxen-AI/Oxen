@@ -139,7 +139,7 @@ tempfile = "3.8.0"
 time = { version = "0.3.28", features = ["serde"] }
 tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-stream = "0.1.17"
-tokio-util = "0.7.8"
+tokio-util = { version = "0.7.8", features = ["compat"] }
 tokio-console = "0.1.13"
 toml = "0.8.19"
 url = "2.4.1"
@@ -152,6 +152,7 @@ xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = "2.4.1"
 pathdiff = "0.2.3"
 async-recursion = "1.1.1"
+async_zip = { version = "0.0.18", features = ["full"] } 
 
 
 [workspace]
