@@ -5,8 +5,8 @@ use crate::params::{app_data, parse_resource, path_param, PageNumVersionQuery};
 
 use liboxen::core::versions::MinOxenVersion;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
-use liboxen::model::merkle_tree::node::FileNode;
 use liboxen::opts::PaginateOpts;
+use liboxen::view::FileWithHash;
 use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
 
@@ -83,34 +83,43 @@ pub async fn download_dir_as_zip(req: HttpRequest) -> Result<HttpResponse, OxenH
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 
     let Some(dir_node) =
-        repositories::tree::get_dir_with_children(&repo, &commit, &directory, None)?
+        repositories::tree::get_dir_with_children_recursive(&repo, &commit, &directory, None)?
     else {
         return Err(OxenHttpError::NotFound);
     };
 
     log::debug!("download_dir_as_zip found dir node: {dir_node:?}");
-    let file_nodes: Vec<FileNode> = repositories::tree::list_files_and_folders(&dir_node)?
-        .into_iter()
-        .filter_map(|node| {
-            if let EMerkleTreeNode::File(file_node) = node.node {
-                Some(file_node)
+    let files = dir_node.list_files()?;
+
+    let total_bytes: u64 = files
+        .iter()
+        .filter_map(|(_, node)| {
+            if let EMerkleTreeNode::File(file_node) = &node.node {
+                Some(file_node.num_bytes())
             } else {
                 None
             }
         })
-        .collect::<Vec<FileNode>>();
-
-    log::debug!("file_nodes: {file_nodes:?}");
-
-    let total_bytes: u64 = file_nodes.iter().map(|node| node.num_bytes()).sum();
-
+        .sum();
     if total_bytes > constants::MAX_ZIP_DOWNLOAD_SIZE {
         return Err(OxenHttpError::BadRequest(format!("Download request exceeded size limit ({} bytes) for zip file downloads: found {} bytes", constants::MAX_ZIP_DOWNLOAD_SIZE, total_bytes).into()));
     }
 
-    let file_hashes: Vec<String> = file_nodes.iter().map(|f| format!("{}", f.hash())).collect();
+    let files_with_hash: Vec<FileWithHash> = files
+        .into_iter()
+        .map(|f| FileWithHash {
+            path: f.0,
+            hash: f.1.hash.to_string(),
+        })
+        .collect();
 
-    let response = controllers::versions::stream_versions_zip(&repo, file_hashes).await?;
+    log::debug!(
+        "download_dir_as_zip found {} files with total size {}",
+        files_with_hash.len(),
+        total_bytes
+    );
+
+    let response = controllers::versions::stream_versions_zip(&repo, files_with_hash).await?;
 
     Ok(response)
 }

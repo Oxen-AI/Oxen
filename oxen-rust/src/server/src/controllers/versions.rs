@@ -18,7 +18,7 @@ use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
-use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, StatusMessage};
+use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
 use mime;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
@@ -292,13 +292,13 @@ pub async fn stream_versions_tar_gz(
 
 pub async fn stream_versions_zip(
     repo: &LocalRepository,
-    file_hashes: Vec<String>,
+    files: Vec<FileWithHash>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let version_store = repo.version_store()?;
     let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
 
     let version_store_clone = version_store.clone();
-    let file_hashes_clone = file_hashes.clone();
+    let files_clone = files.clone();
 
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -307,11 +307,24 @@ pub async fn stream_versions_zip(
         let mut zip_writer = ZipFileWriter::new(compat_writer);
         let mut had_error = false;
 
-        for file_hash in file_hashes_clone.iter() {
-            let metadata = match version_store_clone.get_version_metadata(file_hash).await {
+        for file in files_clone.iter() {
+            let path = file.path.to_str();
+            let path = match path.map(|s| s.to_string()) {
+                Some(path) => path,
+                None => {
+                    let err = "Invalid UTF-8 in path".to_string();
+                    error_tx.send(OxenError::basic_str(err)).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let hash = &file.hash;
+
+            let metadata = match version_store_clone.get_version_metadata(hash).await {
                 Ok(metadata) => metadata,
                 Err(e) => {
-                    log::error!("Failed to get metadata for {file_hash}: {e}");
+                    log::error!("Failed to get metadata for {hash}: {e}");
                     error_tx.send(e).ok();
                     had_error = true;
                     break;
@@ -319,13 +332,13 @@ pub async fn stream_versions_zip(
             };
             let file_size = metadata.len();
 
-            match version_store_clone.get_version_stream(file_hash).await {
+            match version_store_clone.get_version_stream(hash).await {
                 Ok(data) => {
                     let mut reader = StreamReader::new(data);
 
                     let compression = Compression::Deflate;
                     let zip_entry_builder =
-                        async_zip::ZipEntryBuilder::new(file_hash.as_str().into(), compression)
+                        async_zip::ZipEntryBuilder::new(path.into(), compression)
                             .uncompressed_size(file_size as u64)
                             .unix_permissions(0o644);
 
@@ -334,7 +347,7 @@ pub async fn stream_versions_zip(
                     let entry_writer = match zip_writer.write_entry_stream(zip_entry).await {
                         Ok(writer) => writer,
                         Err(e) => {
-                            log::error!("Failed to append {file_hash} to zip: {e}");
+                            log::error!("Failed to append {hash} to zip: {e}");
                             error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                             had_error = true;
                             break;
@@ -343,7 +356,7 @@ pub async fn stream_versions_zip(
 
                     let mut compat_writer = entry_writer.compat_write();
                     if let Err(e) = tokio::io::copy(&mut reader, &mut compat_writer).await {
-                        log::error!("Failed to stream data for {file_hash} into zip: {e}");
+                        log::error!("Failed to stream data for {hash} into zip: {e}");
                         error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                         had_error = true;
                         break;
@@ -351,16 +364,16 @@ pub async fn stream_versions_zip(
 
                     let entry_writer = compat_writer.into_inner();
                     if let Err(e) = entry_writer.close().await {
-                        log::error!("Failed to close zip entry for {file_hash}: {e}");
+                        log::error!("Failed to close zip entry for {hash}: {e}");
                         error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                         had_error = true;
                         break;
                     }
 
-                    log::info!("Successfully appended data to zip for hash: {}", &file_hash);
+                    log::info!("Successfully appended data to zip for hash: {}", &hash);
                 }
                 Err(e) => {
-                    log::error!("Failed to get version {file_hash}: {e}");
+                    log::error!("Failed to get version {hash}: {e}");
                     error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                     had_error = true;
                     break;
