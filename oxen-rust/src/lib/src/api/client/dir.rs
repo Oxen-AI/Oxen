@@ -110,10 +110,17 @@ pub async fn download_dir_as_zip(
     let client = client::new_for_url(&url)?;
 
     if let Ok(res) = client.get(&url).send().await {
-        if reqwest::StatusCode::UNAUTHORIZED == res.status() {
-            let e = "Err: unauthorized request to download data".to_string();
-            log::error!("{e}");
-            return Err(OxenError::authentication(e));
+        let status = res.status();
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let e = "Err: unauthorized request to download data".to_string();
+                log::error!("{e}");
+                return Err(OxenError::authentication(e));
+            }
+
+            return Err(OxenError::basic_str(format!(
+                "download_dir_as_zip failed with status {status} for {url}"
+            )));
         }
 
         let stream = res.bytes_stream();
