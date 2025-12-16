@@ -1,6 +1,6 @@
-use async_std::prelude::StreamExt;
 use std::path::Path;
 use tokio::fs::File;
+use tokio_stream::StreamExt;
 use tokio_util::io::StreamReader;
 
 use crate::api::client;
@@ -129,7 +129,15 @@ pub async fn download_dir_as_zip(
             StreamReader::new(stream.map(|result| result.map_err(std::io::Error::other)));
 
         let mut file = File::create(local_path).await?;
-        let size = tokio::io::copy(&mut reader, &mut file).await?;
+        let size = match tokio::io::copy(&mut reader, &mut file).await {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(local_path).await;
+                return Err(OxenError::basic_str(format!(
+                    "Failed to download ZIP to {local_path:?}: {e}"
+                )));
+            }
+        };
 
         log::debug!("Successfully downloaded {size} bytes to: {local_path:?}");
 
