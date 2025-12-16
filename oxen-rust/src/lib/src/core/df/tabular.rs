@@ -840,13 +840,13 @@ fn struct_array_to_json(
             Value::Array(rows)
         }
         Err(e) => {
-            log::warn!("Failed to convert StructArray to DataFrame: {:?}", e);
+            log::warn!("Failed to convert StructArray to DataFrame: {e:?}");
             let mut map = serde_json::Map::new();
             for (i, field) in fields.iter().enumerate() {
                 if let Some(values) = struct_array.values().get(i) {
                     let len = values.len();
                     if len > 0 {
-                        let val_str = format!("{:?}", values);
+                        let val_str = format!("{values:?}");
                         // Look for actual URL or string content
                         if let Some(start) = val_str.find("https://") {
                             // Extract URL starting from https://
