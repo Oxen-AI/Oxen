@@ -1,6 +1,7 @@
-use std::path::Path;
-use tokio_util::io::StreamReader;use tokio::fs::File;
 use async_std::prelude::StreamExt;
+use std::path::Path;
+use tokio::fs::File;
+use tokio_util::io::StreamReader;
 
 use crate::api::client;
 use crate::error::OxenError;
@@ -31,7 +32,7 @@ pub async fn list(
 ) -> Result<PaginatedDirEntries, OxenError> {
     let revision = revision.as_ref();
     let path = path.as_ref().to_string_lossy();
-    let uri = format!("/dir/{revision}/{path}?page={page}&page_size={page_size}");
+    let uri = format!("/dir/download/{revision}/{path}?page={page}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -94,7 +95,6 @@ pub async fn get_dir(
     }
 }
 
-
 pub async fn download_dir_as_zip(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
@@ -117,15 +117,14 @@ pub async fn download_dir_as_zip(
         }
 
         let stream = res.bytes_stream();
-        
-        let mut reader = StreamReader::new(
-            stream.map(|result| result.map_err(std::io::Error::other)),
-        );
+
+        let mut reader =
+            StreamReader::new(stream.map(|result| result.map_err(std::io::Error::other)));
 
         let mut file = File::create(local_path).await?;
         let size = tokio::io::copy(&mut reader, &mut file).await?;
 
-        log::debug!("Successfully downloaded {} bytes to: {:?}", size, local_path);
+        log::debug!("Successfully downloaded {size} bytes to: {local_path:?}");
 
         Ok(size)
     } else {

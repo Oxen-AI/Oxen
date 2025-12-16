@@ -8,6 +8,8 @@ use actix_multipart::Multipart;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
+use async_zip::base::write::ZipFileWriter;
+use async_zip::Compression;
 use flate2::read::GzDecoder;
 use futures_util::{StreamExt, TryStreamExt as _};
 use liboxen::error::OxenError;
@@ -25,11 +27,9 @@ use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio_tar::Builder;
-use tokio_util::io::{ReaderStream, StreamReader};
-use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tokio_util::compat::FuturesAsyncWriteCompatExt;
-use async_zip::base::write::ZipFileWriter; 
-use async_zip::Compression;
+use tokio_util::compat::TokioAsyncWriteCompatExt;
+use tokio_util::io::{ReaderStream, StreamReader};
 
 const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
@@ -278,12 +278,12 @@ pub async fn stream_versions(
                     had_error = true;
                     break;
                 }
-            
+
             }
         }
 
 
-        // Finish the archive 
+        // Finish the archive
         match content_type {
             "application/gzip" => {
                 if let Err(e) = tar.finish().await {
@@ -374,7 +374,7 @@ pub async fn stream_versions_tar_gz(
     let file_hashes_clone = file_hashes.clone();
 
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
-    
+
     let writer_task = async move {
         let enc = GzipEncoder::new(writer);
         let mut tar = Builder::new(enc);
@@ -476,7 +476,6 @@ pub async fn stream_versions_tar_gz(
         .streaming(stream))
 }
 
-
 pub async fn stream_versions_zip(
     repo: &LocalRepository,
     file_hashes: Vec<String>,
@@ -488,14 +487,14 @@ pub async fn stream_versions_zip(
     let file_hashes_clone = file_hashes.clone();
 
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
-    
+
     let writer_task = async move {
         let compat_writer = writer.compat_write();
         let mut zip_writer = ZipFileWriter::new(compat_writer);
         let mut had_error = false;
 
         for file_hash in file_hashes_clone.iter() {
-            let metadata = match version_store_clone.get_version_metadata(&file_hash).await {
+            let metadata = match version_store_clone.get_version_metadata(file_hash).await {
                 Ok(metadata) => metadata,
                 Err(e) => {
                     log::error!("Failed to get metadata for {file_hash}: {e}");
@@ -509,22 +508,20 @@ pub async fn stream_versions_zip(
             match version_store_clone.get_version_stream(file_hash).await {
                 Ok(data) => {
                     let mut reader = StreamReader::new(data);
-                    
+
                     let compression = Compression::Deflate;
-                    let zip_entry_builder = async_zip::ZipEntryBuilder::new(
-                        file_hash.as_str().into(), 
-                        compression,
-                    )
-                    .uncompressed_size(file_size as u64)
-                    .unix_permissions(0o644);
+                    let zip_entry_builder =
+                        async_zip::ZipEntryBuilder::new(file_hash.as_str().into(), compression)
+                            .uncompressed_size(file_size as u64)
+                            .unix_permissions(0o644);
 
                     let zip_entry = zip_entry_builder.build();
-                    
+
                     let entry_writer = match zip_writer.write_entry_stream(zip_entry).await {
                         Ok(writer) => writer,
                         Err(e) => {
                             log::error!("Failed to append {file_hash} to zip: {e}");
-                            error_tx.send(OxenError::IO(std::io::Error::new(std::io::ErrorKind::Other, e))).ok();
+                            error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                             had_error = true;
                             break;
                         }
@@ -533,7 +530,7 @@ pub async fn stream_versions_zip(
                     let mut compat_writer = entry_writer.compat_write();
                     if let Err(e) = tokio::io::copy(&mut reader, &mut compat_writer).await {
                         log::error!("Failed to stream data for {file_hash} into zip: {e}");
-                        error_tx.send(OxenError::IO(std::io::Error::new(std::io::ErrorKind::Other, e))).ok();
+                        error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                         had_error = true;
                         break;
                     }
@@ -541,19 +538,16 @@ pub async fn stream_versions_zip(
                     let entry_writer = compat_writer.into_inner();
                     if let Err(e) = entry_writer.close().await {
                         log::error!("Failed to close zip entry for {file_hash}: {e}");
-                        error_tx.send(OxenError::IO(std::io::Error::new(std::io::ErrorKind::Other, e))).ok();
+                        error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                         had_error = true;
                         break;
                     }
 
-                    log::info!(
-                        "Successfully appended data to zip for hash: {}",
-                        &file_hash
-                    );
+                    log::info!("Successfully appended data to zip for hash: {}", &file_hash);
                 }
                 Err(e) => {
                     log::error!("Failed to get version {file_hash}: {e}");
-                    error_tx.send(OxenError::IO(std::io::Error::new(std::io::ErrorKind::Other, e))).ok();
+                    error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
                     had_error = true;
                     break;
                 }
@@ -562,17 +556,17 @@ pub async fn stream_versions_zip(
 
         if let Err(e) = zip_writer.close().await {
             log::error!("Failed to finish zip file: {e}");
-            error_tx.send(OxenError::IO(std::io::Error::new(std::io::ErrorKind::Other, e))).ok();
+            error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
             had_error = true;
         } else {
             log::info!("Successfully finished zip file");
         }
-        
+
         // zip.close() typically handles the shutdown, but we check inner writer if needed
         if !had_error {
-             log::info!("Streaming completed successfully");
+            log::info!("Streaming completed successfully");
         } else {
-             log::warn!("Stream closed due to earlier error");
+            log::warn!("Stream closed due to earlier error");
         }
     };
 

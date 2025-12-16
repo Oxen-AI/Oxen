@@ -88,7 +88,7 @@ pub async fn download_dir_as_zip(req: HttpRequest) -> Result<HttpResponse, OxenH
         return Err(OxenHttpError::NotFound);
     };
 
-    log::debug!("download_dir_as_zip found dir node: {:?}", dir_node);
+    log::debug!("download_dir_as_zip found dir node: {dir_node:?}");
     let file_nodes: Vec<FileNode> = repositories::tree::list_files_and_folders(&dir_node)?
         .into_iter()
         .filter_map(|node| {
@@ -108,13 +108,10 @@ pub async fn download_dir_as_zip(req: HttpRequest) -> Result<HttpResponse, OxenH
         return Err(OxenHttpError::BadRequest(format!("Download request exceeded size limit ({} bytes) for zip file downloads: found {} bytes", constants::MAX_ZIP_DOWNLOAD_SIZE, total_bytes).into()));
     }
 
-    let file_hashes: Vec<String> = file_nodes
-        .iter()
-        .map(|f| format!("{}", f.hash()))
-        .collect();
+    let file_hashes: Vec<String> = file_nodes.iter().map(|f| format!("{}", f.hash())).collect();
 
     let response = controllers::versions::stream_versions_zip(&repo, file_hashes).await?;
-    
+
     Ok(response)
 }
 
