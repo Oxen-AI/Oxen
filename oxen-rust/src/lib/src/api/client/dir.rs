@@ -154,8 +154,10 @@ mod tests {
     use crate::util;
     use crate::view::entries::EMetadataEntry;
 
+    use std::io::Read;
     use std::path::Path;
     use std::path::PathBuf;
+    use zip::ZipArchive;
 
     #[tokio::test]
     async fn test_list_dir_has_correct_commits() -> Result<(), OxenError> {
@@ -535,6 +537,76 @@ mod tests {
                     }
                 }
             }
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_download_dir_as_zip() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+            let remote_dir = "annotations";
+            let output_dir = local_repo.path.clone().join("zip_download");
+
+            util::fs::create_dir_all(&output_dir)?;
+            let zip_local_path = output_dir.join("annotations.zip");
+
+            // Download the zip file
+            let _size = api::client::dir::download_dir_as_zip(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                remote_dir,
+                &zip_local_path,
+            )
+            .await?;
+
+            assert!(
+                zip_local_path.exists(),
+                "Downloaded zip file does not exist."
+            );
+
+            let readme_path = PathBuf::from("README.md");
+            let bounding_box_path = PathBuf::from("train").join("bounding_box.csv");
+            let one_shot_path = PathBuf::from("train").join("one_shot.csv");
+            let two_shot_path = PathBuf::from("train").join("two_shot.csv");
+            let annotations_txt = PathBuf::from("train").join("annotations.txt");
+            let annotations_csv = PathBuf::from("test").join("annotations.csv");
+
+            let file_paths = vec![
+                readme_path,
+                bounding_box_path,
+                one_shot_path,
+                two_shot_path,
+                annotations_txt,
+                annotations_csv,
+            ];
+
+            let file = std::fs::File::open(&zip_local_path)?;
+            let mut archive = ZipArchive::new(file).expect("Zip archive failed to open");
+
+            assert_eq!(
+                archive.len(),
+                file_paths.len(),
+                "Zip archive has incorrect number of files"
+            );
+
+            // Compare the files in the archive to the ones in the directory
+            for path in file_paths {
+                let local_content =
+                    std::fs::read(local_repo.path.clone().join("annotations").join(&path))?;
+
+                let mut zip_file = archive
+                    .by_name(path.to_str().unwrap())
+                    .unwrap_or_else(|_| panic!("File {path:?} not found in zip archive"));
+                let mut zip_content: Vec<u8> = vec![];
+                zip_file.read_to_end(&mut zip_content)?;
+
+                assert_eq!(
+                    zip_content, local_content,
+                    "Content mismatch for file: {path:?}"
+                );
+            }
+
             Ok(remote_repo)
         })
         .await
