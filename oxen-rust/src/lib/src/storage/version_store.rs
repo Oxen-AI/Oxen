@@ -206,6 +206,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
 // This only creates a version store struct, it does not initialize it
 pub fn create_version_store(
+    repo_dir: &Path,
     storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     match storage_opts.type_.as_str() {
@@ -214,20 +215,20 @@ pub fn create_version_store(
                 return Err(OxenError::basic_str("local storage opts not found"));
             };
 
-            // If no path is provided, default to the repo root
-            let path = if let Some(path) = &local_storage_opts.path {
-                path.clone()
+            let versions_dir = if let Some(path) = &local_storage_opts.path {
+                if path.starts_with(".oxen") {
+                    // if the path is relative, convert to absolute path
+                    repo_dir.join(path)
+                } else {
+                    path.clone()
+                }
             } else {
-                let repo_dir = util::fs::get_repo_root_from_current_dir().ok_or(
-                    OxenError::basic_str("path to local version store not found"),
-                )?;
-
                 util::fs::oxen_hidden_dir(repo_dir)
                     .join(constants::VERSIONS_DIR)
                     .join(constants::FILES_DIR)
             };
 
-            let store = LocalVersionStore::new(path);
+            let store = LocalVersionStore::new(versions_dir);
 
             Ok(Arc::new(store))
         }
