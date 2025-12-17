@@ -49,9 +49,9 @@ impl RunCmd for PushCmd {
                     .default_missing_value("true")
             )
             .arg(
-                Arg::new("fix")
-                    .long("fix")
-                    .help("Fix corrupted files on the remote.")
+                Arg::new("revalidate")
+                    .long("revalidate")
+                    .help("Revalidate file hashes on remote and push any missing files.")
                     .action(clap::ArgAction::SetTrue)
             )
     }
@@ -72,7 +72,7 @@ impl RunCmd for PushCmd {
             } else {
                 (false, None)
             };
-        let fix = args.get_flag("fix");
+        let revalidate = args.get_flag("revalidate");
 
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
@@ -92,7 +92,7 @@ impl RunCmd for PushCmd {
             delete,
             missing_files,
             missing_files_commit_id,
-            fix,
+            revalidate,
         };
 
         // Call into liboxen to push or delete

@@ -5,5 +5,5 @@ pub struct PushOpts {
     pub delete: bool,
     pub missing_files: bool,
     pub missing_files_commit_id: Option<String>,
-    pub fix: bool,
+    pub revalidate: bool,
 }
