@@ -61,7 +61,7 @@ pub async fn get_slice(
                 .commit
                 .as_ref()
                 .ok_or(OxenError::basic_str("Commit not found"))?;
-            let file_node = repositories::tree::get_file_by_path(base_repo, &commit, &path)?
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
                 .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
             Ok(file_node)
         }
