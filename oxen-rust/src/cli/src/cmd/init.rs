@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use clap::{arg, Arg, Command};
 use liboxen::core::versions::MinOxenVersion;
 use liboxen::error::OxenError;
+use liboxen::opts::StorageOpts;
 
 use crate::cmd::RunCmd;
 use crate::helpers::{check_remote_version, get_scheme_and_host_or_default};
@@ -40,6 +41,28 @@ impl RunCmd for InitCmd {
                     .help("The oxen version to use, if you want to test older CLI versions (default: latest)")
                     .action(clap::ArgAction::Set),
             )
+            .arg(
+                Arg::new("storage-backend")
+                    .long("storage-backend")
+                    .help("Set the type of storage backend to save version files.")
+                    .default_value("local")
+                    .default_missing_value("local")
+                    .value_parser(["local", "s3"])
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-path")
+                    .long("storage-backend-path")
+                    .help("Set the path for local storage backend or the prefix for s3 storage backend.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-bucket")
+                    .long("storage-backend-bucket")
+                    .help("Set the bucket for s3 storage backend.")
+                    .requires_if("s3", "storage-backend")
+                    .action(clap::ArgAction::Set),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -52,6 +75,23 @@ impl RunCmd for InitCmd {
             .map(|s| s.to_string());
         let oxen_version = MinOxenVersion::or_latest(version_str)?;
 
+        // parse storage backend config
+        let backend = args.get_one::<String>("storage-backend").map(String::from);
+        let storage_backend_path = args
+            .get_one::<String>("storage-backend-path")
+            .map(String::from);
+        let storage_backend_bucket = args
+            .get_one::<String>("storage-backend-bucket")
+            .map(String::from);
+
+        if backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some())
+        {
+            return Err(OxenError::basic_str("storage-backend must be specified when storage-backend-path or storage-backend-bucket is provided"));
+        }
+
+        let storage_opts =
+            StorageOpts::from_args(backend, storage_backend_path, storage_backend_bucket)?;
+
         // Make sure the remote version is compatible
         let (scheme, host) = get_scheme_and_host_or_default()?;
 
@@ -59,9 +99,14 @@ impl RunCmd for InitCmd {
 
         // Initialize the repository
         let directory = util::fs::canonicalize(PathBuf::from(&path))?;
-        repositories::init::init_with_version(&directory, oxen_version)?;
+        repositories::init::init_with_version_and_storage_opts(
+            &directory,
+            oxen_version,
+            storage_opts,
+        )
+        .await?;
         println!("🐂 repository initialized at: {directory:?}");
-        println!("{}", AFTER_INIT_MSG);
+        println!("{AFTER_INIT_MSG}");
         Ok(())
     }
 }

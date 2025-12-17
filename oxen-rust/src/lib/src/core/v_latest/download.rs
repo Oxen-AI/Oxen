@@ -24,7 +24,7 @@ pub async fn download_dir(
     log::debug!("downloading dir {remote_path:?}");
     // Initialize temp repo to download node into
     // TODO: Where should this repo be?
-    let tmp_repo = LocalRepository::new(local_path)?;
+    let tmp_repo = LocalRepository::new(local_path, None)?;
 
     // Find and download dir node and its children from remote repo
     let commit_id = &entry.latest_commit.as_ref().unwrap().id;
