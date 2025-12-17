@@ -115,20 +115,6 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
-    // Synchronous method to write to version store, for use in tokio::spawn_blocking threads
-    fn store_version_blocking(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
-        std::fs::create_dir_all(&version_dir)?;
-
-        let version_path = self.version_path(hash);
-
-        if !version_path.exists() {
-            std::fs::write(&version_path, data)?;
-        }
-
-        Ok(())
-    }
-
     fn open_version(
         &self,
         hash: &str,
