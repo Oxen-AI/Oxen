@@ -18,7 +18,7 @@ pub fn versions() -> Scope {
             web::method(Method::from_bytes(b"QUERY").unwrap())
                 .to(controllers::versions::batch_download),
         )
-        .route("", web::put().to(controllers::versions::clean))
+        .route("", web::delete().to(controllers::versions::clean))
         .route(
             "/{version_id}/metadata",
             web::get().to(controllers::versions::metadata),

@@ -90,7 +90,7 @@ pub async fn clean(
     log::debug!("api::client::versions::clean {url}");
 
     let client = client::new_for_url(&url)?;
-    let res = client.put(&url).send().await?;
+    let res = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<CleanCorruptedVersionsResponse, serde_json::Error> =
         serde_json::from_str(&body);
