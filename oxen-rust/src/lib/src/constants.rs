@@ -255,3 +255,19 @@ pub fn timeout() -> u64 {
         DEFAULT_TIMEOUT_SECS
     }
 }
+
+// Parse the timeout for http requests from environment variable
+pub fn chunk_size() -> u64 {
+    if let Ok(chunk_size) = std::env::var("OXEN_AVG_CHUNK_SIZE") {
+        // If the environment variable is set, use that
+        if let Ok(chunk_size) = chunk_size.parse::<u64>() {
+            chunk_size
+        } else {
+            // If parsing failed, fall back to default
+            AVG_CHUNK_SIZE
+        }
+    } else {
+        // Environment variable not set, use default
+        AVG_CHUNK_SIZE
+    }
+}

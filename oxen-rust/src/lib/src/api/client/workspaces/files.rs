@@ -1,5 +1,5 @@
 use crate::api::client;
-use crate::constants::{max_retries, AVG_CHUNK_SIZE};
+use crate::constants::{max_retries, chunk_size};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
@@ -127,7 +127,7 @@ pub async fn upload_single_file(
 
     log::debug!("Uploading file with size: {}", metadata.len());
     // If the file is larger than AVG_CHUNK_SIZE, use the parallel upload strategy
-    if metadata.len() > AVG_CHUNK_SIZE {
+    if metadata.len() > chunk_size() {
         let directory = directory.as_ref();
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
@@ -201,7 +201,7 @@ async fn upload_multiple_files(
         match path.metadata() {
             Ok(metadata) => {
                 let file_size = metadata.len();
-                if file_size > AVG_CHUNK_SIZE {
+                if file_size > chunk_size() {
                     // Large file goes directly to parallel upload
                     large_files.push((path, file_size));
                 } else {
@@ -290,7 +290,7 @@ async fn parallel_batched_small_file_upload(
         current_batch.push((path.clone(), *file_size));
         current_batch_size += file_size;
 
-        if current_batch_size > AVG_CHUNK_SIZE || idx >= small_files.len() - 1 {
+        if current_batch_size > chunk_size() || idx >= small_files.len() - 1 {
             file_batches.push(current_batch.clone());
 
             current_batch.clear();
@@ -596,75 +596,14 @@ async fn parallel_batched_small_file_upload(
     };
 
     let err_files = mutex.into_inner();
-    let err_file_paths: Vec<PathBuf> = err_files
-        .clone()
-        .into_iter()
-        .filter_map(|f| f.path)
-        .collect();
-
-    // TODO: Should we communicate to the user that we're retrying these files?
-    // Should the operation return successfully even if these files don't upload?
-    log::debug!(
-        "Initial batches successfully uploaded. Retrying {} err files: ",
-        err_files.len()
-    );
-
-    if !err_file_paths.is_empty() {
-        match api::client::versions::workspace_multipart_batch_upload_versions_with_retry(
-            remote_repo,
-            local_repo,
-            client.clone(),
-            err_file_paths,
-        )
-        .await
-        {
-            Ok(result) => {
-                match stage_files_to_workspace_with_retry(
-                    remote_repo,
-                    client,
-                    workspace_id,
-                    Arc::new(result.files_to_add),
-                    directory,
-                    Vec::new(),
-                )
-                .await
-                {
-                    Ok(err_files) => {
-                        if err_files.is_empty() {
-                            log::debug!("Successfully added all files to workspace");
-                        } else {
-                            log::error!(
-                                "Failed to stage {} files to workspace: {:?}",
-                                err_files.len(),
-                                err_files
-                            );
-                            return Err(OxenError::basic_str(format!(
-                                "Failed to stage {} files to workspace: {:?}",
-                                err_files.len(),
-                                err_files
-                            )));
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to add version files to workspace: {e}");
-                        return Err(OxenError::basic_str(format!(
-                            "Failed to add version files to workspace: {e}"
-                        )));
-                    }
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to upload batch of files: {e}");
-                return Err(OxenError::basic_str(format!(
-                    "Failed to upload batch of files: {e}"
-                )));
-            }
-        }
-    }
 
     log::debug!("All upload tasks completed");
     progress.finish();
     tokio::time::sleep(Duration::from_millis(100)).await;
+
+    if !err_files.is_empty() {
+        return Err(OxenError::basic_str(format!("Failed to upload {} files after retry", err_files.len())));
+    }
 
     Ok(())
 }
