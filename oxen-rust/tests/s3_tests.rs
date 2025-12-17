@@ -2,7 +2,6 @@ use liboxen::storage::{S3VersionStore, VersionStore};
 
 use aws_sdk_s3::Client;
 use std::sync::Arc;
-use tokio;
 use uuid::Uuid;
 
 pub const DEFAULT_TEST_S3_BUCKET: &str = "oxen-server-s3-integration-test";

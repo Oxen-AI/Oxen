@@ -46,17 +46,17 @@ impl RunCmd for PullCmd {
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
 
-        // Parse args
         // Default to CURRENT branch
         let remote = args
             .get_one::<String>("REMOTE")
             .expect("Must supply a remote");
+
         let branch = if let Some(branch) = args.get_one::<String>("BRANCH") {
-            branch
-        } else if current_branch.is_some() {
-            &current_branch.unwrap().name
+            branch.to_string()
+        } else if let Some(current_branch) = current_branch {
+            current_branch.name
         } else {
-            DEFAULT_BRANCH_NAME
+            DEFAULT_BRANCH_NAME.to_string()
         };
 
         let all = args.get_flag("all");
@@ -67,11 +67,12 @@ impl RunCmd for PullCmd {
         check_remote_version(scheme, host).await?;
 
         let mut fetch_opts = FetchOpts::new();
-        fetch_opts.branch = branch.to_owned();
         fetch_opts.remote = remote.to_owned();
         fetch_opts.depth = repo.depth();
         fetch_opts.subtree_paths = repo.subtree_paths();
+        fetch_opts.branch = branch;
         fetch_opts.all = all;
+
         repositories::pull_remote_branch(&repo, &fetch_opts).await?;
         Ok(())
     }

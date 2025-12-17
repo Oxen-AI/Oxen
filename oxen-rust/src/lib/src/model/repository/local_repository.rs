@@ -555,6 +555,7 @@ mod tests {
         let repo_path = temp_dir.path().to_path_buf();
         let mut repo = LocalRepository::new(repo_path, None)?;
 
+        let sample_name = "sample";
         repo.add_workspace(sample_name);
         assert_eq!(repo.num_workspaces(), 1);
 

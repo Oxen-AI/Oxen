@@ -106,7 +106,7 @@ impl RunCmd for InitCmd {
         )
         .await?;
         println!("🐂 repository initialized at: {directory:?}");
-        println!("{}", AFTER_INIT_MSG);
+        println!("{AFTER_INIT_MSG}");
         Ok(())
     }
 }
