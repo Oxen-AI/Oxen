@@ -15,7 +15,7 @@ use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::util;
-use liboxen::view::versions::{VersionFile, VersionFileResponse};
+use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, StatusMessage};
 use mime;
 use std::io::Read as StdRead;
@@ -52,6 +52,21 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             hash: version_id,
             size: metadata.len() as u64,
         },
+    }))
+}
+
+// Clean corrupted version files for the remote repo
+pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let version_store = repo.version_store()?;
+    let result = version_store.clean_corrupted_versions().await?;
+
+    Ok(HttpResponse::Ok().json(CleanCorruptedVersionsResponse {
+        status: StatusMessage::resource_found(),
+        result,
     }))
 }
 

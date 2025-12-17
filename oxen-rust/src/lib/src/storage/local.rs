@@ -7,12 +7,18 @@ use std::path::{Path, PathBuf};
 use crate::constants::{VERSION_CHUNKS_DIR, VERSION_CHUNK_FILE_NAME, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::storage::version_store::{ReadSeek, VersionStore};
+use crate::util::{concurrency, hasher};
+use crate::view::versions::CleanCorruptedVersionsResult;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 use tokio::io::{BufReader, BufWriter};
+use tokio::sync::Semaphore;
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
@@ -350,6 +356,199 @@ impl VersionStore for LocalVersionStore {
         }
 
         Ok(version_path)
+    }
+
+    // It's left here for a quick fix. TODO: Move the business logic to versions controller.
+    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError> {
+        // Keep record of the stats
+        #[derive(Default)]
+        struct Stats {
+            scanned_objects: AtomicUsize,
+            corrupted_objects: AtomicUsize,
+            io_errors: AtomicUsize,
+            deleted_objects: AtomicUsize,
+        }
+
+        impl Stats {
+            fn incr_scanned(&self) {
+                self.scanned_objects.fetch_add(1, Ordering::Relaxed);
+            }
+            fn incr_corrupted(&self) {
+                self.corrupted_objects.fetch_add(1, Ordering::Relaxed);
+            }
+            fn incr_io_error(&self) {
+                self.io_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            fn incr_deleted(&self) {
+                self.deleted_objects.fetch_add(1, Ordering::Relaxed);
+            }
+
+            fn snapshot(&self) -> (usize, usize, usize, usize) {
+                (
+                    self.scanned_objects.load(Ordering::Relaxed),
+                    self.corrupted_objects.load(Ordering::Relaxed),
+                    self.io_errors.load(Ordering::Relaxed),
+                    self.deleted_objects.load(Ordering::Relaxed),
+                )
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let stats = Arc::new(Stats::default());
+
+        // Limit concurrency
+        let concurrency = concurrency::default_num_threads();
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+
+        // Read prefix dirs
+        let mut prefix_rd = fs::read_dir(&self.root_path).await?;
+        let mut prefix_paths: Vec<PathBuf> = Vec::new();
+        while let Some(entry) = prefix_rd.next_entry().await? {
+            match entry.file_type().await {
+                Ok(ft) if ft.is_dir() => {
+                    prefix_paths.push(entry.path());
+                }
+                _ => {
+                    stats.incr_io_error();
+                }
+            }
+        }
+
+        // Spawn one task per prefix (concurrent)
+        let mut handles = Vec::with_capacity(prefix_paths.len());
+
+        for prefix_path in prefix_paths {
+            let semaphore_cl = semaphore.clone();
+            let stats_cl = stats.clone();
+            let handle = tokio::spawn(async move {
+                let mut suffix_rd = match fs::read_dir(&prefix_path).await {
+                    Ok(rd) => rd,
+                    Err(_) => {
+                        stats_cl.incr_io_error();
+                        return;
+                    }
+                };
+
+                // Process suffix directories sequentially
+                while let Ok(Some(entry)) = suffix_rd.next_entry().await {
+                    // Only process directories
+                    let file_type = match entry.file_type().await {
+                        Ok(ft) => ft,
+                        Err(_) => {
+                            stats_cl.incr_io_error();
+                            continue;
+                        }
+                    };
+                    if !file_type.is_dir() {
+                        continue;
+                    }
+
+                    let suffix_path = entry.path();
+
+                    // hash = prefix+suffix
+                    let prefix_name = match prefix_path.file_name().and_then(|s| s.to_str()) {
+                        Some(p) => p.to_string(),
+                        None => {
+                            stats_cl.incr_io_error();
+                            continue;
+                        }
+                    };
+                    let suffix_name = match suffix_path.file_name().and_then(|s| s.to_str()) {
+                        Some(s) => s.to_string(),
+                        None => {
+                            stats_cl.incr_io_error();
+                            continue;
+                        }
+                    };
+                    let expected_hash = format!("{prefix_name}{suffix_name}");
+
+                    // Acquire concurrency permit for heavy operations (I/O, hashing)
+                    let permit = semaphore_cl.clone().acquire_owned().await.unwrap();
+
+                    {
+                        // First read the data async
+                        let data_path = suffix_path.join("data");
+                        let data = match fs::read(&data_path).await {
+                            Ok(b) => b,
+                            Err(_) => {
+                                // cannot read data - treat as corrupted: delete dir
+                                stats_cl.incr_io_error();
+
+                                if fs::remove_dir_all(&suffix_path).await.is_ok() {
+                                    stats_cl.incr_deleted();
+                                }
+                                drop(permit);
+                                continue;
+                            }
+                        };
+
+                        // increment scanned count
+                        stats_cl.incr_scanned();
+
+                        // Compute hash in blocking thread
+                        let actual_hash =
+                            match tokio::task::spawn_blocking(move || hasher::hash_buffer(&data))
+                                .await
+                            {
+                                Ok(h) => h,
+                                Err(_) => {
+                                    log::debug!(
+                                        "Failed to compute hash for version file {expected_hash}"
+                                    );
+                                    stats_cl.incr_io_error();
+
+                                    if fs::remove_dir_all(&suffix_path).await.is_ok() {
+                                        stats_cl.incr_deleted();
+                                    }
+                                    drop(permit);
+                                    continue;
+                                }
+                            };
+
+                        if actual_hash != expected_hash {
+                            log::debug!("version file {actual_hash} is corrupted!");
+                            // mismatch - delete the corrupted version dir
+                            stats_cl.incr_corrupted();
+                            match fs::remove_dir_all(&suffix_path).await {
+                                Ok(_) => {
+                                    stats_cl.incr_deleted();
+                                    log::debug!("Corrupted version file {actual_hash} deleted");
+                                }
+                                Err(_) => {
+                                    stats_cl.incr_io_error();
+                                    log::debug!(
+                                        "Failed to delete corrupted version file {actual_hash}"
+                                    );
+                                }
+                            }
+                        }
+
+                        // release permit
+                        drop(permit);
+                    }
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // Await all prefix tasks
+        for h in handles {
+            let _ = h.await;
+        }
+
+        // Gather stats and return result
+        let (scanned, corrupted, io_errors, deleted) = stats.snapshot();
+        let elapsed = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);
+        let result = CleanCorruptedVersionsResult {
+            scanned: scanned as u64,
+            corrupted: corrupted as u64,
+            cleaned: deleted as u64,
+            errors: io_errors as u64,
+            elapsed,
+        };
+
+        Ok(result)
     }
 
     fn storage_type(&self) -> &str {

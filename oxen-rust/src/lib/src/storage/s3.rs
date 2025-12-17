@@ -14,6 +14,7 @@ use tokio_stream::Stream;
 use super::version_store::VersionStore;
 use crate::constants::VERSION_FILE_NAME;
 use crate::storage::version_store::ReadSeek;
+use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// S3 implementation of version storage
 #[derive(Debug)]
@@ -299,6 +300,11 @@ impl VersionStore for S3VersionStore {
         _hash: &str,
         _cleanup: bool,
     ) -> Result<PathBuf, OxenError> {
+        // TODO: Implement S3 version chunk combination
+        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    }
+
+    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError> {
         // TODO: Implement S3 version chunk combination
         Err(OxenError::basic_str("S3VersionStore not yet implemented"))
     }

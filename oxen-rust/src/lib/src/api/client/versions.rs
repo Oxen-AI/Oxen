@@ -6,8 +6,9 @@ use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
-    CompleteVersionUploadRequest, CompletedFileUpload, CreateVersionUploadRequest,
-    MultipartLargeFileUpload, MultipartLargeFileUploadStatus, VersionFile, VersionFileResponse,
+    CleanCorruptedVersionsResponse, CompleteVersionUploadRequest, CompletedFileUpload,
+    CreateVersionUploadRequest, MultipartLargeFileUpload, MultipartLargeFileUploadStatus,
+    VersionFile, VersionFileResponse,
 };
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
 
@@ -77,6 +78,26 @@ pub async fn get(
         Ok(version_file) => Ok(Some(version_file.version)),
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::versions::get() Could not deserialize response [{err}]\n{body}"
+        ))),
+    }
+}
+
+pub async fn clean(
+    remote_repo: &RemoteRepository,
+) -> Result<CleanCorruptedVersionsResponse, OxenError> {
+    let uri = "/versions";
+    let url = api::endpoint::url_from_repo(remote_repo, uri)?;
+    log::debug!("api::client::versions::clean {url}");
+
+    let client = client::new_for_url(&url)?;
+    let res = client.delete(&url).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<CleanCorruptedVersionsResponse, serde_json::Error> =
+        serde_json::from_str(&body);
+    match response {
+        Ok(response) => Ok(response),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "api::client::versions::clean() Could not deserialize response [{err}]\n{body}"
         ))),
     }
 }

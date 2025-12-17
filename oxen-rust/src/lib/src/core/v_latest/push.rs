@@ -128,7 +128,7 @@ async fn push_to_existing_branch(
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
-    if remote_branch.commit_id == commit.id && !opts.missing_files {
+    if remote_branch.commit_id == commit.id && !opts.missing_files && !opts.revalidate {
         println!("Everything is up to date");
         return Ok(());
     }
@@ -164,6 +164,42 @@ async fn push_to_existing_branch(
     };
 
     Ok(())
+}
+
+// delete corrupted version files and push again
+async fn revalidate_and_push_missing_files(
+    repo: &LocalRepository,
+    opts: &PushOpts,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: &Option<Commit>,
+    commits: &[Commit],
+) -> Result<(), OxenError> {
+    println!("🐂 revalidating the remote repo...");
+    let response = api::client::versions::clean(remote_repo).await?;
+    let clean_result = response.result;
+    if clean_result.corrupted > 0 {
+        println!(
+            "🔍 scanned {} files, found {} corrupted files, cleaned {} of them. Scanning took {}",
+            clean_result.scanned,
+            clean_result.corrupted,
+            clean_result.cleaned,
+            humantime::format_duration(clean_result.elapsed)
+        );
+        println!("🐂 pushing missing files...");
+        if clean_result.corrupted > clean_result.cleaned
+            || clean_result.errors > clean_result.cleaned
+        {
+            println!("🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again.");
+        }
+        return push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await;
+    } else {
+        println!(
+            "🔍 scanned {} files, no corrupted files found. Scanning took {}",
+            clean_result.scanned,
+            humantime::format_duration(clean_result.elapsed)
+        );
+        Ok(())
+    }
 }
 
 async fn push_missing_files(
@@ -343,6 +379,16 @@ async fn push_commits(
     commits: Vec<Commit>,
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
+    if opts.revalidate {
+        return revalidate_and_push_missing_files(
+            repo,
+            opts,
+            remote_repo,
+            &latest_remote_commit,
+            &commits,
+        )
+        .await;
+    }
     if opts.missing_files {
         return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
     }
