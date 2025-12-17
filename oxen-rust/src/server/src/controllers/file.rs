@@ -352,6 +352,76 @@ pub async fn put(
     }))
 }
 
+/// Delete file
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file to be deleted (including branch)", example = "main/train/images/n01440764_10026.JPEG"),
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        content = FileUploadBody,
+    ),
+    responses(
+        (status = 200, description = "File removed successfully", body = CommitResponse),
+        (status = 404, description = "Branch or path not found")
+    )
+)]
+pub async fn delete(
+    req: HttpRequest,
+    payload: Multipart,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::delete path {:?}", req.path());
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    // Parse the resource (branch/commit/path)
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
+    let path = resource.path;
+
+    // Get the commit info from the payload
+    let (name, email, message, _temp_files) = parse_multipart_fields_for_repo(payload).await?;
+
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    // Stage the path as removed
+    repositories::workspaces::files::rm(&workspace, &path).await?;
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: name.clone().unwrap_or("".to_string()),
+        email: email.clone().unwrap_or("".to_string()),
+        message: message
+            .clone()
+            .unwrap_or(format!("Remove {}", &path.to_string_lossy())),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+
+    log::debug!("file::delete workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_deleted(),
+        commit,
+    }))
+}
+
 /// Upload zip archive
 #[utoipa::path(
     post,

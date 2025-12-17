@@ -128,6 +128,39 @@ pub async fn get_file_thumbnail(
     .await
 }
 
+/// Delete a file in place (rm from a temp workspace and commit)
+pub async fn delete_file(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let file_path = file_path.as_ref();
+
+    let file_path = file_path.to_string_lossy().to_string();
+
+    let uri = format!("/file/{branch}/{file_path}");
+    log::debug!("delete_file {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let mut form = Form::new();
+
+    if let Some(body) = commit_body {
+        form = form.text("name", body.author);
+        form = form.text("email", body.email);
+        form = form.text("message", body.message);
+    }
+
+    let req = client.delete(&url).multipart(form);
+
+    let res = req.send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: CommitResponse = serde_json::from_str(&body)?;
+    Ok(response)
+}
+
 /// Upload a ZIP file that gets extracted into the workspace directory
 pub async fn upload_zip(
     remote_repo: &RemoteRepository,
@@ -271,6 +304,50 @@ mod tests {
 
             assert!(bytes.is_ok());
             assert!(!bytes.unwrap().is_empty());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_delete_file() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let prev_commits = repositories::commits::list_all(&local_repo)?;
+
+            let branch_name = "main";
+            let file_path = test::test_bounding_box_csv();
+
+            let commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "remove file".to_string(),
+            };
+
+            // Delete the file on the remote repo
+            let _commit_response = api::client::file::delete_file(
+                &remote_repo,
+                &branch_name,
+                &file_path,
+                Some(commit_body),
+            )
+            .await?;
+
+            // Pull the change
+            repositories::pull(&local_repo).await?;
+
+            // Assert the commit was made and the file is removed
+            assert!(!local_repo.path.join(&file_path).exists());
+
+            /*
+            let commit = commit_response.commit;
+            let deleted_file_node =
+                repositories::tree::get_node_by_path(&local_repo, &commit, &file_path)?;
+            assert!(deleted_file_node.is_none());
+            */
+
+            let new_commits = repositories::commits::list_all(&local_repo)?;
+            assert_eq!(new_commits.len(), prev_commits.len() + 1);
 
             Ok(remote_repo)
         })

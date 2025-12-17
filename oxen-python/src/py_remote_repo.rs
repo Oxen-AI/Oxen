@@ -264,6 +264,26 @@ impl PyRemoteRepo {
         Ok(())
     }
 
+    fn delete_file(
+        &self,
+        branch: &str,
+        file_path: PathBuf,
+        commit_message: Option<&str>,
+        user: PyUser,
+    ) -> Result<(), PyOxenError> {
+        let commit_body = commit_message.map(|commit_message| NewCommitBody {
+            message: commit_message.to_string(),
+            author: user.name().to_string(),
+            email: user.email().to_string(),
+        });
+
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::file::delete_file(&self.repo, &branch, &file_path, commit_body).await
+        })?;
+
+        Ok(())
+    }
+
     #[pyo3(signature = (revision="main", path=None, page_num=1, page_size=10))]
     fn log(
         &self,
