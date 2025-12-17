@@ -118,14 +118,14 @@ impl RunCmd for EmbeddingsQueryCmd {
         let start = std::time::Instant::now();
         let mut df =
             liboxen::repositories::workspaces::data_frames::embeddings::query(&workspace, &opts)?;
-        println!("{}", df);
+        println!("{df}");
         println!("Query took: {:?}", start.elapsed());
 
         let Some(output) = args.get_one::<String>("output") else {
             return Ok(());
         };
 
-        println!("Writing to {}", output);
+        println!("Writing to {output}");
         tabular::write_df(&mut df, output)?;
 
         Ok(())

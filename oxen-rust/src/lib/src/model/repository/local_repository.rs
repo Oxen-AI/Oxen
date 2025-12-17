@@ -74,10 +74,8 @@ impl LocalRepository {
         } else {
             StorageOpts::from_path(&repo.path, true)
         };
-
         let store = create_version_store(&storage_opts)?;
         repo.version_store = Some(store);
-
         Ok(repo)
     }
 
@@ -89,23 +87,9 @@ impl LocalRepository {
         }
     }
 
-    /// Initialize the version store if not already set
-    pub fn init_version_store(&mut self) -> Result<(), OxenError> {
-        if self.version_store.is_none() {
-            // Load config to get storage settings
-            let config_path = util::fs::config_filepath(&self.path);
-            let config = RepositoryConfig::from_file(&config_path)?;
-
-            let storage_opts = if let Some(storage_config) = config.storage {
-                StorageOpts::from_repo_config(self, &storage_config)?
-            } else {
-                StorageOpts::from_path(&self.path, true)
-            };
-
-            // Create and initialize the store
-            let store = create_version_store(&storage_opts)?;
-            self.version_store = Some(store);
-        }
+    pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+        let store = create_version_store(storage_opts)?;
+        self.version_store = Some(store);
         Ok(())
     }
 
@@ -121,8 +105,9 @@ impl LocalRepository {
     }
 
     /// Initialize local version store at a new location
-    pub fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+    pub async fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
         let version_store = create_version_store(storage_opts)?;
+        version_store.init().await?;
         self.version_store = Some(version_store);
 
         Ok(())
@@ -140,7 +125,10 @@ impl LocalRepository {
     /// Instantiate a new repository at a given path
     /// Note: Does not create the repository on disk, or read the config file, just instantiates the struct
     /// To load the repository, use `LocalRepository::from_dir` or `LocalRepository::from_current_dir`
-    pub fn new(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
+    pub fn new(
+        path: impl AsRef<Path>,
+        storage_opts: Option<StorageOpts>,
+    ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
             // No remotes are set yet
@@ -158,7 +146,11 @@ impl LocalRepository {
             workspaces: None,
         };
 
-        repo.init_default_version_store()?;
+        if let Some(storage_opts) = storage_opts {
+            repo.init_version_store(&storage_opts)?;
+        } else {
+            repo.init_default_version_store()?;
+        }
         Ok(repo)
     }
 
@@ -166,6 +158,7 @@ impl LocalRepository {
     pub fn new_from_version(
         path: impl AsRef<Path>,
         min_version: impl AsRef<str>,
+        storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
@@ -182,7 +175,11 @@ impl LocalRepository {
             workspaces: None,
         };
 
-        repo.init_default_version_store()?;
+        if let Some(storage_opts) = storage_opts {
+            repo.init_version_store(&storage_opts)?;
+        } else {
+            repo.init_default_version_store()?;
+        }
         Ok(repo)
     }
 
@@ -538,7 +535,7 @@ mod tests {
     fn test_add_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path)?;
+        let mut repo = LocalRepository::new(repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -556,12 +553,9 @@ mod tests {
     fn test_cannot_add_repeat_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path)?;
+        let mut repo = LocalRepository::new(repo_path, None)?;
 
         let sample_name = "sample";
-        repo.add_workspace(sample_name);
-
-        // Add the same workspace again
         repo.add_workspace(sample_name);
         assert_eq!(repo.num_workspaces(), 1);
 
@@ -572,7 +566,7 @@ mod tests {
     fn test_delete_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path)?;
+        let mut repo = LocalRepository::new(repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);

@@ -129,8 +129,8 @@ impl RunCmd for LsCmd {
                 .to_string()
                 .normal();
 
-        println!("{}", remote_mode_message);
-        println!("{}", remote_mode_sub_message);
+        println!("{remote_mode_message}");
+        println!("{remote_mode_sub_message}");
 
         let opts = StagedDataOpts::default();
         Self::ls_files_and_folders(&directory, status, &dir_children, &opts);

@@ -14,9 +14,10 @@ pub fn get_repo(
 ) -> Result<LocalRepository, OxenHttpError> {
     let repo = repositories::get_by_namespace_and_name(path, &namespace, &name)?;
     let Some(repo) = repo else {
-        return Err(
-            OxenError::repo_not_found(RepoNew::from_namespace_name(&namespace, &name)).into(),
-        );
+        return Err(OxenError::repo_not_found(RepoNew::from_namespace_name(
+            &namespace, &name, None,
+        ))
+        .into());
     };
 
     Ok(repo)
