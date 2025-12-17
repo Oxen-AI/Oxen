@@ -32,7 +32,7 @@ impl RunCmd for DbCountCmd {
 
         let count = command::db::count(PathBuf::from(path))?;
 
-        println!("There are {} entries in the database", count);
+        println!("There are {count} entries in the database");
 
         Ok(())
     }

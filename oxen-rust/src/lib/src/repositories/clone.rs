@@ -446,6 +446,7 @@ mod tests {
                     constants::DEFAULT_NAMESPACE,
                     repo_name,
                     test::test_host(),
+                    None,
                 );
                 api::client::repositories::create_from_local(&cloned_repo, repo_new).await?;
 
@@ -522,6 +523,7 @@ mod tests {
                     constants::DEFAULT_NAMESPACE,
                     repo_name,
                     test::test_host(),
+                    None,
                 );
                 api::client::repositories::create_empty(repo_new).await?;
 

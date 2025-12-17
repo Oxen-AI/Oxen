@@ -127,8 +127,8 @@ impl RunCmd for RemoteModeStatusCmd {
                 .to_string()
                 .normal();
 
-        println!("{}", remote_mode_message);
-        println!("{}", remote_mode_sub_message);
+        println!("{remote_mode_message}");
+        println!("{remote_mode_sub_message}");
 
         repo_status.print_with_params(&opts);
 

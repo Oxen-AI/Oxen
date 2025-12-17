@@ -165,17 +165,17 @@ impl RunCmd for NotebookCmd {
             .unwrap();
         let build_script = args.get_one::<String>("build_script");
 
-        log::debug!("{:?} notebook with:", action);
-        log::debug!("  Notebook: {}", notebook);
-        log::debug!("  Branch: {}", branch);
-        log::debug!("  Base Image: {}", base_image);
-        log::debug!("  Mode: {:?}", mode);
-        log::debug!("  Script Args: {:?}", args_vec);
-        log::debug!("  GPU Model: {:?}", gpu_model);
-        log::debug!("  CPU Cores: {}", cpu_cores);
-        log::debug!("  Memory MB: {}", memory_mb);
-        log::debug!("  Timeout Secs: {}", timeout_secs);
-        log::debug!("  Build Script: {:?}", build_script);
+        log::debug!("{action:?} notebook with:");
+        log::debug!("  Notebook: {notebook}");
+        log::debug!("  Branch: {branch}");
+        log::debug!("  Base Image: {base_image}");
+        log::debug!("  Mode: {mode:?}");
+        log::debug!("  Script Args: {args_vec:?}");
+        log::debug!("  GPU Model: {gpu_model:?}");
+        log::debug!("  CPU Cores: {cpu_cores}");
+        log::debug!("  Memory MB: {memory_mb}");
+        log::debug!("  Timeout Secs: {timeout_secs}");
+        log::debug!("  Build Script: {build_script:?}");
 
         let repository = LocalRepository::from_current_dir()?;
 
@@ -208,7 +208,7 @@ impl RunCmd for NotebookCmd {
             },
         };
 
-        log::debug!("notebook opts: {:?}", opts);
+        log::debug!("notebook opts: {opts:?}");
 
         match action {
             NotebookAction::Start => {

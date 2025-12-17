@@ -9,6 +9,7 @@ use liboxen::constants::{DEFAULT_HOST, DEFAULT_SCHEME};
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::RepoNew;
+use liboxen::opts::StorageOpts;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "create-remote";
@@ -57,6 +58,28 @@ impl RunCmd for CreateRemoteCmd {
                 .help("If present, it will create a public remote repository.")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("storage-backend")
+                .long("storage-backend")
+                .help("Set the type of storage backend to save version files.")
+                .default_value("local")
+                .default_missing_value("local")
+                .value_parser(["local", "s3"])
+                .action(clap::ArgAction::Set),
+        )
+        .arg(
+            Arg::new("storage-backend-path")
+                .long("storage-backend-path")
+                .help("Set the path for local storage backend or the prefix for s3 storage backend.")
+                .action(clap::ArgAction::Set),
+        )
+        .arg(
+            Arg::new("storage-backend-bucket")
+                .long("storage-backend-bucket")
+                .help("Set the bucket for s3 storage backend.")
+                .requires_if("s3", "storage-backend")
+                .action(clap::ArgAction::Set),
+        )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -66,6 +89,17 @@ impl RunCmd for CreateRemoteCmd {
                 "Must supply a namespace/name for the remote repository.",
             ));
         };
+
+        let backend = args.get_one::<String>("storage-backend").map(String::from);
+        let path = args
+            .get_one::<String>("storage-backend-path")
+            .map(String::from);
+        let bucket = args
+            .get_one::<String>("storage-backend-bucket")
+            .map(String::from);
+
+        let storage_opts = StorageOpts::from_args(backend, path, bucket)?;
+
         // Default the host to the oxen.ai hub
         let host = args
             .get_one::<String>("host")
@@ -91,7 +125,7 @@ impl RunCmd for CreateRemoteCmd {
         let is_public = args.get_flag("is_public");
 
         if empty {
-            let mut repo_new = RepoNew::from_namespace_name(namespace, name);
+            let mut repo_new = RepoNew::from_namespace_name(namespace, name, storage_opts);
             repo_new.host = Some(host);
             repo_new.is_public = Some(is_public);
             repo_new.scheme = Some(scheme);
@@ -150,7 +184,7 @@ Happy Mooooooving of data 🐂
                 contents: FileContents::Text(format!("# {name}\n{readme_body}")),
                 user,
             }];
-            let mut repo = RepoNew::from_files(namespace, name, files);
+            let mut repo = RepoNew::from_files(namespace, name, files, storage_opts);
             repo.host = Some(host);
             repo.is_public = Some(is_public);
             repo.scheme = Some(scheme);
