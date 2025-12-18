@@ -159,7 +159,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    log::debug!("update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?}");
+    log::debug!("update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?} with json data {data:?}");
 
     let modified_row = repositories::workspaces::data_frames::rows::update(
         &repo, &workspace, &file_path, &row_id, data,

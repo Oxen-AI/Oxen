@@ -39,10 +39,9 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    log::debug!("add_row() path: {row_changes_path:?} got db_path: {db_path:?}");
-
     let mut normalized_data = data.clone();
     maybe_normalize_message_content(&mut normalized_data);
+    log::debug!("add() normalized_data: {normalized_data:?}");
     let df = tabular::parse_json_to_df(&normalized_data)?;
     log::debug!("add() df: {df:?}");
 
@@ -165,8 +164,11 @@ pub fn update(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut df = tabular::parse_json_to_df(data)?;
-
+    let mut normalized_data = data.clone();
+    maybe_normalize_message_content(&mut normalized_data);
+    log::debug!("update() normalized_data: {normalized_data:?}");
+    let mut df = tabular::parse_json_to_df(&normalized_data)?;
+    log::debug!("update() df: {df:?}");
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
     if row.height() == 0 {
         return Err(OxenError::resource_not_found("row not found"));
