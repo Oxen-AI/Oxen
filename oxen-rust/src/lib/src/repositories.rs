@@ -221,7 +221,7 @@ pub async fn create(
     // Create oxen hidden dir
     let hidden_dir = util::fs::oxen_hidden_dir(&repo_dir);
     log::debug!("repositories::create hidden dir: {hidden_dir:?}");
-    util::fs::create_dir_all(&hidden_dir)?;
+    util::fs::create_dir_all(&hidden)?;
 
     // Create config file
     let local_repo = LocalRepository::new(&repo_dir, new_repo.storage_opts)?;
@@ -233,7 +233,7 @@ pub async fn create(
 
     // Create history dir
     let history_dir = util::fs::oxen_hidden_dir(&repo_dir).join(constants::HISTORY_DIR);
-    util::fs::create_dir_all(history_dir)?;
+    util::fs::create_dir_all(history)?;
 
     // Create HEAD file and point it to DEFAULT_BRANCH_NAME
     with_ref_manager(&local_repo, |manager| {
