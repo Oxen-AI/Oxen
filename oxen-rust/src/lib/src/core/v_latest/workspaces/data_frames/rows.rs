@@ -39,16 +39,13 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut normalized_data = data.clone();
-    maybe_normalize_message_content(&mut normalized_data);
-    log::debug!("add() normalized_data: {normalized_data:?}");
-    let df = tabular::parse_json_to_df(&normalized_data)?;
+    let df = tabular::parse_json_to_df(&data)?;
     log::debug!("add() df: {df:?}");
 
     let mut result = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::append_row(conn, &df))
     })?;
-
+    println!("this is the result {result:?}");
     let oxen_id_col = result
         .column("_oxen_id")
         .expect("Column _oxen_id not found");
@@ -164,10 +161,7 @@ pub fn update(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut normalized_data = data.clone();
-    maybe_normalize_message_content(&mut normalized_data);
-    log::debug!("update() normalized_data: {normalized_data:?}");
-    let mut df = tabular::parse_json_to_df(&normalized_data)?;
+    let mut df = tabular::parse_json_to_df(&data)?;
     log::debug!("update() df: {df:?}");
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
     if row.height() == 0 {
@@ -365,44 +359,4 @@ pub async fn restore_row_in_db(
     log::debug!("we're returning this row: {result_row:?}");
 
     Ok(result_row)
-}
-
-fn maybe_normalize_message_content(value: &mut serde_json::Value) {
-    let Some(messages) = value.get_mut("messages").and_then(|m| m.as_array_mut()) else {
-        return;
-    };
-
-    for msg in messages {
-        if !msg.is_object() {
-            continue;
-        }
-
-        let Some(msg_obj) = msg.as_object_mut() else {
-            continue;
-        };
-
-        if let Some(content) = msg_obj.get_mut("content") {
-            // Only process if content is an array (user messages with images/objects)
-            if content.is_array() {
-                // Remove null image_url fields before stringifying
-                if let Some(content_array) = content.as_array_mut() {
-                    for item in content_array.iter_mut() {
-                        if let Some(item_obj) = item.as_object_mut() {
-                            if let Some(image_url_val) = item_obj.get("image_url") {
-                                if image_url_val.is_null() {
-                                    item_obj.remove("image_url");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Stringify the content array
-                if let Ok(content_str) = serde_json::to_string(content) {
-                    *content = json!(content_str);
-                }
-            }
-            // String content stays as-is (simple text messages)
-        }
-    }
 }
