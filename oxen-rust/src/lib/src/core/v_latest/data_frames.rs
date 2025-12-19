@@ -1,10 +1,13 @@
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::df::tabular::transform_new;
 use crate::core::df::{sql, tabular};
+use crate::core::staged::with_staged_db_manager;
 use crate::error::OxenError;
 use crate::model::data_frame::{DataFrameSchemaSize, DataFrameSlice, DataFrameSliceSchemas};
+use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::metadata_tabular::MetadataTabularImpl;
+use crate::model::ParsedResource;
 use crate::model::{Commit, DataFrameSize, LocalRepository, Schema, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
@@ -16,13 +19,53 @@ pub mod schemas;
 
 pub async fn get_slice(
     repo: &LocalRepository,
-    commit: &Commit,
+    resource: &ParsedResource,
     path: impl AsRef<Path>,
     opts: &DFOpts,
 ) -> Result<DataFrameSlice, OxenError> {
-    // Get the file node
-    let file_node = repositories::tree::get_file_by_path(repo, commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+    let workspace = resource.workspace.as_ref();
+    let commit = match workspace {
+        Some(ws) => ws.commit.clone(),
+        None => resource
+            .commit
+            .clone()
+            .ok_or(OxenError::basic_str("Commit not found"))?,
+    };
+
+    let (staged_repo, base_repo) = match workspace {
+        Some(ws) => (&ws.workspace_repo, repo),
+        None => (repo, repo),
+    };
+
+    let file_node = match workspace {
+        Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
+            // Try staged DB first
+            if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
+                let file_node = match staged_node.node.node {
+                    EMerkleTreeNode::File(f) => Ok(f),
+                    _ => Err(OxenError::basic_str(
+                        "Only single file download is supported",
+                    )),
+                }?;
+                return Ok(file_node);
+            }
+
+            // Fall back to commit tree using workspace's commit
+            let commit = &ws.commit;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+            Ok(file_node)
+        }),
+        None => {
+            let commit = resource
+                .commit
+                .as_ref()
+                .ok_or(OxenError::basic_str("Commit not found"))?;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+            Ok(file_node)
+        }
+    }?;
 
     log::debug!("get_slice file_node {file_node:?}");
 
@@ -46,7 +89,7 @@ pub async fn get_slice(
         height: metadata.height,
     };
 
-    let handle_sql_result = handle_sql_querying(repo, commit, path, opts, &data_frame_size).await;
+    let handle_sql_result = handle_sql_querying(repo, &commit, path, opts, &data_frame_size).await;
     if let Ok(response) = handle_sql_result {
         return Ok(response);
     }

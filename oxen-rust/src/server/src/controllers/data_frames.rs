@@ -48,7 +48,11 @@ pub async fn get(
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let resource = parse_resource(&req, &repo)?;
-    let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+
+    let commit = match &resource.workspace {
+        Some(workspace) => workspace.commit.clone(),
+        None => resource.commit.clone().ok_or(OxenHttpError::NotFound)?,
+    };
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);
@@ -79,7 +83,8 @@ pub async fn get(
 
     opts.path = Some(resource.path.clone());
     let data_frame_slice =
-        repositories::data_frames::get_slice(&repo, &commit, &resource.path, &opts).await?;
+        repositories::data_frames::get_slice(&repo, &resource.clone(), &resource.path, &opts)
+            .await?;
 
     let mut df = data_frame_slice.slice;
     let view_height = if opts.has_filter_transform() {

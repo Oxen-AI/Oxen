@@ -38,15 +38,13 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    log::debug!("add_row() path: {row_changes_path:?} got db_path: {db_path:?}");
-
     let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {df:?}");
 
     let mut result = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::append_row(conn, &df))
     })?;
-
+    println!("this is the result {result:?}");
     let oxen_id_col = result
         .column("_oxen_id")
         .expect("Column _oxen_id not found");
@@ -163,11 +161,12 @@ pub fn update(
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
     let mut df = tabular::parse_json_to_df(data)?;
-
+    log::debug!("update() df: {df:?}");
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
     if row.height() == 0 {
         return Err(OxenError::resource_not_found("row not found"));
     }
+
     let mut result = with_df_db_manager(db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
     })?;
