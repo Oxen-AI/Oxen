@@ -38,7 +38,7 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let df = tabular::parse_json_to_df(&data)?;
+    let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {df:?}");
 
     let mut result = with_df_db_manager(db_path, |manager| {
@@ -160,7 +160,7 @@ pub fn update(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut df = tabular::parse_json_to_df(&data)?;
+    let mut df = tabular::parse_json_to_df(data)?;
     log::debug!("update() df: {df:?}");
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
     if row.height() == 0 {
