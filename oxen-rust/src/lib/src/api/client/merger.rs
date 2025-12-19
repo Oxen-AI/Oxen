@@ -260,8 +260,9 @@ mod tests {
                 ..Default::default()
             };
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
+
             // Merge the head branch into base
-            api::client::merger::merge(&remote_repo, base, head).await?;
+            let merge_result = api::client::merger::merge(&remote_repo, base, head).await?;
 
             repositories::checkout::checkout(&local_repo, base).await?;
             let commits_before = repositories::commits::list(&local_repo)?;
@@ -273,6 +274,10 @@ mod tests {
 
             let path = local_repo.path.join(new_file_name);
             assert!(path.exists());
+
+            // Check that the branch was updated
+            let new_head = repositories::branches::current_branch(&local_repo)?.unwrap();
+            assert_eq!(new_head.commit_id, merge_result.merge.id);
 
             Ok(remote_repo)
         })

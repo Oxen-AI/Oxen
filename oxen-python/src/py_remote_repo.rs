@@ -7,6 +7,7 @@ use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::{Remote, RemoteRepository, RepoNew};
 use liboxen::opts::PaginateOpts;
+use liboxen::opts::StorageOpts;
 use liboxen::{api, repositories};
 
 use std::borrow::Cow;
@@ -130,13 +131,35 @@ impl PyRemoteRepo {
             .collect())
     }
 
-    fn create(&mut self, empty: bool, is_public: bool) -> Result<PyRemoteRepo, PyOxenError> {
+    #[pyo3(signature = (empty, is_public, storage_backend=None, storage_backend_path=None, storage_backend_bucket=None))]
+    fn create(
+        &mut self,
+        empty: bool,
+        is_public: bool,
+        storage_backend: Option<String>,
+        storage_backend_path: Option<String>,
+        storage_backend_bucket: Option<String>,
+    ) -> Result<PyRemoteRepo, PyOxenError> {
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            // parse storage backend options
+            if storage_backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some()) {
+                return Err(OxenError::basic_str(
+                    "storage_backend must be specified when storage_backend_path or storage_backend_bucket is provided"
+                ));
+            }
+
+            let storage_opts = StorageOpts::from_args(
+                storage_backend,
+                storage_backend_path,
+                storage_backend_bucket,
+            )?;
+
             if empty {
                 let mut repo = RepoNew::from_namespace_name_host(
                     self.repo.namespace.clone(),
                     self.repo.name.clone(),
                     self.host.clone(),
+                    storage_opts,
                 );
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());
@@ -149,7 +172,8 @@ impl PyRemoteRepo {
                     contents: FileContents::Text(format!("# {}\n", &self.repo.name)),
                     user: user.clone(),
                 }];
-                let mut repo = RepoNew::from_files(&self.repo.namespace, &self.repo.name, files);
+                let mut repo =
+                    RepoNew::from_files(&self.repo.namespace, &self.repo.name, files, storage_opts);
                 repo.host = Some(self.host.clone());
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());
@@ -235,6 +259,26 @@ impl PyRemoteRepo {
                 Some(commit_body),
             )
             .await
+        })?;
+
+        Ok(())
+    }
+
+    fn delete_file(
+        &self,
+        branch: &str,
+        file_path: PathBuf,
+        commit_message: Option<&str>,
+        user: PyUser,
+    ) -> Result<(), PyOxenError> {
+        let commit_body = commit_message.map(|commit_message| NewCommitBody {
+            message: commit_message.to_string(),
+            author: user.name().to_string(),
+            email: user.email().to_string(),
+        });
+
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::file::delete_file(&self.repo, &branch, &file_path, commit_body).await
         })?;
 
         Ok(())

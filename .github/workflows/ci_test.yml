@@ -19,6 +19,14 @@ jobs:
             platform: windows
       fail-fast: false
 
+    env:
+      AWS_REGION: us-west-1
+      AWS_ROLE: arn:aws:iam::213020545630:role/ci-test-integration-role
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       - name: Free up disk space
         if: matrix.platform == 'linux'
@@ -42,6 +50,13 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Copy rust-toolchain.toml to root
         if: matrix.platform != 'windows'
@@ -77,40 +92,40 @@ jobs:
           brew update
           brew install redis pkg-config
           brew services start redis
-          
+
           # NOTE: This adds a lot of bloat and takes a long time to build.
           #       we have ffmpeg disabled by default in the CI pipeline
           # Set PKG_CONFIG_PATH so pkg-config can find FFmpeg libraries
           # brew install ffmpeg@7 imagemagick
           # echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
-      - name: Install dependencies (Linux)
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
-
       # NOTE: This adds a lot of bloat to the Windows image and takes a long time to build.
       #       we have ffmpeg disabled by default in the CI pipeline
+      # - name: Install dependencies (Linux)
+      #   if: matrix.platform == 'linux'
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
+
       # - name: Install dependencies (Windows)
       #   if: matrix.platform == 'windows'
       #   run: |
       #     # Install clang (via llvm) and pkg-config via Chocolatey
       #     choco install -y llvm pkgconfiglite
-          
+
       #     # Install vcpkg for FFmpeg static development libraries (libavcodec, libavformat, libavutil, libavfilter, libavdevice)
       #     # Using x64-windows-static-md for static libraries with dynamic MSVC runtime (better compatibility)
       #     git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
       #     cd C:\vcpkg
       #     .\bootstrap-vcpkg.bat
-          
+
       #     # Install FFmpeg (includes libavutil, libavcodec, libavformat, libavfilter, libavdevice)
       #     # FFmpeg installation provides libavutil.pc and other .pc files needed by pkg-config
       #     .\vcpkg.exe install ffmpeg:x64-windows-static-md
-          
+
       #     # Set VCPKG_ROOT for cargo to find FFmpeg libraries
       #     echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
-          
+
       #     # Set PKG_CONFIG_PATH so pkg-config can find libavutil.pc and other FFmpeg .pc files
       #     # vcpkg installs pkg-config files in the installed/<triplet>/lib/pkgconfig directory
       #     # This must be set before cargo build runs, as ffmpeg-sys-next uses pkg-config during build

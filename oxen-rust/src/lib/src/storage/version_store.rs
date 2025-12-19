@@ -16,6 +16,7 @@ use crate::error::OxenError;
 use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::util;
+use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// Configuration for version storage backend
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -76,13 +77,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash that identifies this version
     /// * `data` - The raw bytes to store
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
-
-    /// Synchronous method to store a version file from bytes
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash that identifies this version
-    /// * `data` - The raw bytes to store
-    fn store_version_blocking(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
 
     /// Store a chunk of a version file
     ///
@@ -204,6 +198,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// List all versions
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;
 
+    /// Clean corrupted version files
+    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError>;
+
     /// Get the storage type identifier (e.g., "local", "s3")
     fn storage_type(&self) -> &str;
 
@@ -211,30 +208,8 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     fn storage_settings(&self) -> HashMap<String, String>;
 }
 
-/// Factory method to create the appropriate async version store (sync wrapper)
-/// TODO: Review this function when implementing S3 version store
+// This only creates a version store struct, it does not initialize it
 pub fn create_version_store(
-    storage_opts: &StorageOpts,
-) -> Result<Arc<dyn VersionStore>, OxenError> {
-    // Handle async initialization in sync context
-    let storage_opts_clone = storage_opts.clone();
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // Use thread spawn - works in both single and multi-threaded runtimes
-        std::thread::spawn(move || handle.block_on(create_version_store_async(&storage_opts_clone)))
-            .join()
-            .map_err(|_| OxenError::basic_str("Failed to join thread"))?
-    } else {
-        // If not in tokio runtime, use futures' block_on
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(create_version_store_async(storage_opts))
-    }
-}
-
-/// Async implementation of create_version_store
-pub async fn create_version_store_async(
     storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     match storage_opts.type_.as_str() {
@@ -257,7 +232,7 @@ pub async fn create_version_store_async(
             };
 
             let store = LocalVersionStore::new(path);
-            store.init().await?;
+
             Ok(Arc::new(store))
         }
         "s3" => {
@@ -267,9 +242,8 @@ pub async fn create_version_store_async(
 
             let bucket = s3_opts.bucket.clone();
             let prefix = s3_opts.prefix.clone().unwrap_or("versions".to_string());
-
             let store = S3VersionStore::new(bucket, prefix);
-            store.init().await?;
+
             Ok(Arc::new(store))
         }
         _ => Err(OxenError::basic_str(format!(

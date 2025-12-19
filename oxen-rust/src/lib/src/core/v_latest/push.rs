@@ -128,7 +128,7 @@ async fn push_to_existing_branch(
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
-    if remote_branch.commit_id == commit.id && !opts.missing_files {
+    if remote_branch.commit_id == commit.id && !opts.missing_files && !opts.revalidate {
         println!("Everything is up to date");
         return Ok(());
     }
@@ -164,6 +164,42 @@ async fn push_to_existing_branch(
     };
 
     Ok(())
+}
+
+// delete corrupted version files and push again
+async fn revalidate_and_push_missing_files(
+    repo: &LocalRepository,
+    opts: &PushOpts,
+    remote_repo: &RemoteRepository,
+    latest_remote_commit: &Option<Commit>,
+    commits: &[Commit],
+) -> Result<(), OxenError> {
+    println!("🐂 revalidating the remote repo...");
+    let response = api::client::versions::clean(remote_repo).await?;
+    let clean_result = response.result;
+    if clean_result.corrupted > 0 {
+        println!(
+            "🔍 scanned {} files, found {} corrupted files, cleaned {} of them. Scanning took {}",
+            clean_result.scanned,
+            clean_result.corrupted,
+            clean_result.cleaned,
+            humantime::format_duration(clean_result.elapsed)
+        );
+        println!("🐂 pushing missing files...");
+        if clean_result.corrupted > clean_result.cleaned
+            || clean_result.errors > clean_result.cleaned
+        {
+            println!("🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again.");
+        }
+        return push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await;
+    } else {
+        println!(
+            "🔍 scanned {} files, no corrupted files found. Scanning took {}",
+            clean_result.scanned,
+            humantime::format_duration(clean_result.elapsed)
+        );
+        Ok(())
+    }
 }
 
 async fn push_missing_files(
@@ -234,17 +270,30 @@ async fn get_commit_missing_hashes(
     if let Some(ref commit) = latest_remote_commit {
         for path in paths {
             let mut starting_node_hashes = HashSet::new();
-            repositories::tree::get_subtree_by_depth_with_unique_children(
+            let Some(root) = repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 commit,
                 path,
-                Some(&base_hashes),
+                None,
                 Some(&mut starting_node_hashes),
                 None,
                 repo.depth().unwrap_or(-1),
-            )?;
+            )?
+            else {
+                log::warn!("Could not get remote tree for path {path:?}");
+                continue;
+            };
 
-            base_hashes.extend(starting_node_hashes.clone());
+            // Collect directory/vnode hashes
+            base_hashes.extend(starting_node_hashes);
+
+            //TODO: collect file hashes during tree loading
+            root.walk_tree(|node: &MerkleTreeNode| {
+                let t = node.node.node_type();
+                if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
+                    base_hashes.insert(*node.node.hash());
+                }
+            });
         }
     }
 
@@ -254,6 +303,7 @@ async fn get_commit_missing_hashes(
 
     for commit in commits.iter().rev() {
         let mut unique_hashes = HashSet::new();
+        let mut file_hashes_seen = HashSet::new();
 
         let mut files: Vec<Entry> = Vec::new();
         let mut dir_nodes: HashSet<MerkleHash> = HashSet::new();
@@ -274,19 +324,27 @@ async fn get_commit_missing_hashes(
                 continue;
             };
 
-            base_hashes.extend(unique_hashes.clone());
-
+            //TODO: Ideally we should be handling it in the tree loading code
+            // but it's easier to do it here for now.
             root.walk_tree(|node: &MerkleTreeNode| {
                 let t = node.node.node_type();
 
                 if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
-                    files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
+                    let file_hash = *node.node.hash();
+                    // Only add files we haven't seen before (not in base_hashes or already collected)
+                    if !base_hashes.contains(&file_hash) && file_hashes_seen.insert(file_hash) {
+                        files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
+                    }
                 } else if !node.node.is_leaf() {
                     let hash = node.node.hash();
                     dir_nodes.insert(*hash);
                 }
             });
         }
+
+        // After processing all paths for this commit, update base_hashes
+        base_hashes.extend(unique_hashes);
+        base_hashes.extend(file_hashes_seen);
 
         // Add the ancestor dirs of each subtree path to dir_nodes
         repositories::tree::get_ancestor_nodes(repo, commit, paths, &mut dir_nodes)?;
@@ -321,6 +379,16 @@ async fn push_commits(
     commits: Vec<Commit>,
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
+    if opts.revalidate {
+        return revalidate_and_push_missing_files(
+            repo,
+            opts,
+            remote_repo,
+            &latest_remote_commit,
+            &commits,
+        )
+        .await;
+    }
     if opts.missing_files {
         return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
     }
@@ -417,6 +485,16 @@ async fn push_commits(
             },
         )
         .await;
+
+    let errors = errors.lock().await;
+    if !errors.is_empty() {
+        let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        return Err(OxenError::basic_str(format!(
+            "Failed to push {} commit(s):\n{}",
+            errors.len(),
+            error_messages.join("\n")
+        )));
+    }
 
     Ok(())
 }
@@ -715,7 +793,7 @@ async fn bundle_and_send_small_entries(
                 )
                 .await
                 {
-                    Ok(_err_files) => {
+                    Ok(_) => {
                         bar.add_bytes(chunk_size);
                         bar.add_files(chunk.len() as u64);
                         finished_queue.pop().await;

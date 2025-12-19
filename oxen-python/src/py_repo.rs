@@ -205,8 +205,7 @@ impl PyRepo {
                         remote: remote.to_string(),
                         branch: branch.to_string(),
                         delete,
-                        missing_files_commit_id: None,
-                        missing_files: false,
+                        ..Default::default()
                     };
                     // Push to the remote branch
                     repositories::push::push_remote_branch(&repo, &opts).await

@@ -223,3 +223,51 @@ pub const DEFAULT_NOTEBOOK_BASE_IMAGE: &str = "debian:bookworm-slim";
 
 // Oxen stack size
 pub const OXEN_STACK_SIZE: usize = 16_777_216;
+
+// Parse the maximum number of retries allowed on upload from environment variable
+pub fn max_retries() -> usize {
+    if let Ok(max_retries) = std::env::var("OXEN_MAX_RETRIES") {
+        // If the environment variable is set, use that
+        if let Ok(max_retries) = max_retries.parse::<usize>() {
+            max_retries
+        } else {
+            // If parsing failed, fall back to default
+            MAX_RETRIES
+        }
+    } else {
+        // Environment variable not set, use default
+        MAX_RETRIES
+    }
+}
+
+// Parse the timeout for http requests from environment variable
+pub fn timeout() -> u64 {
+    if let Ok(timeout) = std::env::var("OXEN_TIMEOUT_SECS") {
+        // If the environment variable is set, use that
+        if let Ok(timeout) = timeout.parse::<u64>() {
+            timeout
+        } else {
+            // If parsing failed, fall back to default
+            DEFAULT_TIMEOUT_SECS
+        }
+    } else {
+        // Environment variable not set, use default
+        DEFAULT_TIMEOUT_SECS
+    }
+}
+
+// Parse the timeout for http requests from environment variable
+pub fn chunk_size() -> u64 {
+    if let Ok(chunk_size) = std::env::var("OXEN_AVG_CHUNK_SIZE") {
+        // If the environment variable is set, use that
+        if let Ok(chunk_size) = chunk_size.parse::<u64>() {
+            chunk_size
+        } else {
+            // If parsing failed, fall back to default
+            AVG_CHUNK_SIZE
+        }
+    } else {
+        // Environment variable not set, use default
+        AVG_CHUNK_SIZE
+    }
+}

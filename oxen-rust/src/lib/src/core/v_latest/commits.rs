@@ -184,23 +184,28 @@ fn root_commit_recursive(
     commit_id: MerkleHash,
     seen: &mut HashSet<String>,
 ) -> Result<Commit, OxenError> {
-    // Check if we've already seen this commit
-    if !seen.insert(commit_id.to_string()) {
-        return Err(OxenError::basic_str("Cycle detected in commit history"));
-    }
+    let mut current_id = commit_id;
 
-    if let Some(commit) = get_by_hash(repo, &commit_id)? {
-        if commit.parent_ids.is_empty() {
-            return Ok(commit);
+    loop {
+        // Check if we've already seen this commit
+        if !seen.insert(current_id.to_string()) {
+            return Err(OxenError::basic_str("Cycle detected in commit history"));
         }
 
-        // Only need to check the first parent, as all paths lead to the root
-        if let Some(parent_id) = commit.parent_ids.first() {
-            let parent_id = parent_id.parse()?;
-            return root_commit_recursive(repo, parent_id, seen);
+        if let Some(commit) = get_by_hash(repo, &current_id)? {
+            if commit.parent_ids.is_empty() {
+                return Ok(commit);
+            }
+
+            // Only need to check the first parent, as all paths lead to the root
+            if let Some(parent_id) = commit.parent_ids.first() {
+                current_id = parent_id.parse()?;
+                continue;
+            }
         }
+
+        return Err(OxenError::basic_str("No root commit found"));
     }
-    Err(OxenError::basic_str("No root commit found"))
 }
 
 pub fn get_by_id(
@@ -299,6 +304,7 @@ fn list_recursive(
 
 // post-order traversal of the commit tree
 // returns a Topological sort with priority to timestamp in case of multiple parents
+// Uses iterative approach to avoid stack overflow in debug builds
 fn recurse_commit(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -306,31 +312,51 @@ fn recurse_commit(
     stop_at_base: Option<&Commit>,
     visited: &mut HashSet<String>,
 ) -> Result<(), OxenError> {
-    // Check if we've already visited this commit
-    if !visited.insert(head_commit.id.clone()) {
-        return Ok(());
-    }
+    // Stack to simulate recursion: (commit, processing_state)
+    // processing_state: false = need to process children, true = children processed, add to results
+    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
 
-    if let Some(base) = stop_at_base {
-        if head_commit.id == base.id {
-            results.push(head_commit.clone());
-            return Ok(());
+    while let Some((commit, children_processed)) = stack.pop() {
+        // Check if we've already visited this commit
+        if visited.contains(&commit.id) {
+            continue;
+        }
+
+        if children_processed {
+            // All children have been processed, now add this commit to results
+            visited.insert(commit.id.clone());
+            results.push(commit);
+        } else {
+            // Check if this is the base commit we should stop at
+            if let Some(base) = stop_at_base {
+                if commit.id == base.id {
+                    visited.insert(commit.id.clone());
+                    results.push(commit);
+                    continue;
+                }
+            }
+
+            // Mark this commit for re-processing after children
+            stack.push((commit.clone(), true));
+
+            // Get and sort parent commits
+            let mut parent_commits: Vec<Commit> = Vec::new();
+            for parent_id in commit.parent_ids.clone() {
+                let parent_id = parent_id.parse()?;
+                if let Some(c) = get_by_hash(repo, &parent_id)? {
+                    parent_commits.push(c);
+                }
+            }
+
+            // Sort by timestamp and push in reverse order (so they're processed in correct order)
+            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
+            for parent_commit in parent_commits {
+                if !visited.contains(&parent_commit.id) {
+                    stack.push((parent_commit, false));
+                }
+            }
         }
     }
-
-    let mut parent_commits: Vec<Commit> = Vec::new();
-    for parent_id in head_commit.parent_ids.clone() {
-        let parent_id = parent_id.parse()?;
-        if let Some(c) = get_by_hash(repo, &parent_id)? {
-            parent_commits.push(c);
-        }
-    }
-
-    parent_commits.sort_by_key(|c| c.timestamp);
-    for parent_commit in parent_commits {
-        recurse_commit(repo, parent_commit, results, stop_at_base, visited)?;
-    }
-    results.push(head_commit.clone());
 
     Ok(())
 }
@@ -382,11 +408,23 @@ fn list_all_recursive(
     commit: Commit,
     commits: &mut HashSet<Commit>,
 ) -> Result<(), OxenError> {
-    commits.insert(commit.clone());
-    for parent_id in commit.parent_ids {
-        let parent_id = parent_id.parse()?;
-        if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
-            list_all_recursive(repo, parent_commit, commits)?;
+    let mut stack = vec![commit];
+
+    while let Some(current_commit) = stack.pop() {
+        // Skip if already processed
+        if commits.contains(&current_commit) {
+            continue;
+        }
+
+        commits.insert(current_commit.clone());
+
+        for parent_id in current_commit.parent_ids {
+            let parent_id = parent_id.parse()?;
+            if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
+                if !commits.contains(&parent_commit) {
+                    stack.push(parent_commit);
+                }
+            }
         }
     }
     Ok(())
@@ -436,21 +474,25 @@ fn list_recursive_with_depth(
     results: &mut HashMap<Commit, usize>,
     depth: usize,
 ) -> Result<(), OxenError> {
-    // Check if we've already visited this commit at a shallower or equal depth
-    if let Some(&existing_depth) = results.get(&commit) {
-        if existing_depth <= depth {
-            // We've already processed this commit, skip it
-            return Ok(());
+    let mut stack = vec![(commit, depth)];
+
+    while let Some((current_commit, current_depth)) = stack.pop() {
+        // Check if we've already visited this commit at a shallower or equal depth
+        if let Some(&existing_depth) = results.get(&current_commit) {
+            if existing_depth <= current_depth {
+                // We've already processed this commit, skip it
+                continue;
+            }
         }
-    }
 
-    // Insert or update with the current (shallower) depth
-    results.insert(commit.clone(), depth);
+        // Insert or update with the current (shallower) depth
+        results.insert(current_commit.clone(), current_depth);
 
-    for parent_id in commit.parent_ids {
-        let parent_id = parent_id.parse()?;
-        if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
-            list_recursive_with_depth(repo, parent_commit, results, depth + 1)?;
+        for parent_id in current_commit.parent_ids {
+            let parent_id = parent_id.parse()?;
+            if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
+                stack.push((parent_commit, current_depth + 1));
+            }
         }
     }
     Ok(())
@@ -514,35 +556,41 @@ fn list_by_path_recursive_impl(
     commits: &mut Vec<Commit>,
     visited: &mut HashSet<String>,
 ) -> Result<(), OxenError> {
-    let node = repositories::tree::get_node_by_path(repo, commit, path)?;
+    let mut stack = vec![commit.clone()];
 
-    let last_commit = if let Some(node) = node {
-        let last_commit_id = node.latest_commit_id()?;
+    while let Some(current_commit) = stack.pop() {
+        let node = repositories::tree::get_node_by_path(repo, &current_commit, path)?;
 
-        // Check if the commit already exists in the commits vector, if so, skip it
-        if visited.contains(&last_commit_id.to_string()) {
-            return Ok(());
-        }
+        let last_commit = if let Some(node) = node {
+            let last_commit_id = node.latest_commit_id()?;
 
-        repositories::revisions::get(repo, last_commit_id.to_string())?.ok_or_else(|| {
-            OxenError::basic_str(format!(
-                "Commit not found for last_commit_id: {last_commit_id}"
-            ))
-        })?
-    } else {
-        return Ok(());
-    };
+            // Check if the commit already exists in the commits vector, if so, skip it
+            if visited.contains(&last_commit_id.to_string()) {
+                continue;
+            }
 
-    // Mark last_commit as visited and add to results
-    visited.insert(last_commit.id.clone());
-    commits.push(last_commit.clone());
+            repositories::revisions::get(repo, last_commit_id.to_string())?.ok_or_else(|| {
+                OxenError::basic_str(format!(
+                    "Commit not found for last_commit_id: {last_commit_id}"
+                ))
+            })?
+        } else {
+            continue;
+        };
 
-    let parent_ids = last_commit.parent_ids;
+        // Mark last_commit as visited and add to results
+        visited.insert(last_commit.id.clone());
+        commits.push(last_commit.clone());
 
-    for parent_id in parent_ids {
-        let parent_commit = repositories::revisions::get(repo, parent_id)?;
-        if let Some(parent_commit_obj) = parent_commit {
-            list_by_path_recursive_impl(repo, path, &parent_commit_obj, commits, visited)?;
+        let parent_ids = last_commit.parent_ids;
+
+        for parent_id in parent_ids {
+            let parent_commit = repositories::revisions::get(repo, parent_id)?;
+            if let Some(parent_commit_obj) = parent_commit {
+                if !visited.contains(&parent_commit_obj.id) {
+                    stack.push(parent_commit_obj);
+                }
+            }
         }
     }
 
