@@ -10,7 +10,7 @@ use liboxen::constants::{self, TABLE_NAME};
 use liboxen::core::db::data_frames::df_db::with_df_db_manager;
 use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use liboxen::error::OxenError;
-use liboxen::model::Schema;
+use liboxen::model::{ParsedResource, Schema};
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
 use liboxen::util::paginate;
@@ -113,9 +113,41 @@ pub async fn get(
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
     if !is_indexed {
+        let commit = workspace.commit.clone();
+        let resource: ParsedResource = ParsedResource {
+            path: file_path.clone(),
+            version: PathBuf::from(commit.id.to_string()),
+            resource: file_path.clone(),
+            workspace: None,
+            commit: Some(commit.clone()),
+            branch: None,
+        };
+
+        let data_frame_slice =
+            repositories::data_frames::get_slice(&repo, &resource.clone(), &resource.path, &opts)
+                .await?;
+
+        let df = data_frame_slice.slice;
+        let count = if opts.has_filter_transform() {
+            data_frame_slice.total_entries
+        } else {
+            data_frame_slice.schemas.slice.size.height
+        };
+
+        let df_schema = if let Some(schema) =
+            repositories::data_frames::schemas::get_by_path(&repo, &commit, &file_path)?
+        {
+            schema
+        } else {
+            Schema::from_polars(df.schema())
+        };
+
+        let df_views =
+            JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
+
         let response = WorkspaceJsonDataFrameViewResponse {
             status: StatusMessage::resource_found(),
-            data_frame: None,
+            data_frame: Some(df_views),
             resource: None,
             commit: None, // Not at a committed state
             derived_resource: None,
