@@ -1,5 +1,5 @@
 use crate::api::client;
-use crate::constants::{max_retries, chunk_size};
+use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};
@@ -602,7 +602,10 @@ async fn parallel_batched_small_file_upload(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     if !err_files.is_empty() {
-        return Err(OxenError::basic_str(format!("Failed to upload {} files after retry", err_files.len())));
+        return Err(OxenError::basic_str(format!(
+            "Failed to upload {} files after retry",
+            err_files.len()
+        )));
     }
 
     Ok(())
