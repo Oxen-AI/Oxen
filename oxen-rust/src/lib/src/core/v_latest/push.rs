@@ -486,6 +486,16 @@ async fn push_commits(
         )
         .await;
 
+    let errors = errors.lock().await;
+    if !errors.is_empty() {
+        let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        return Err(OxenError::basic_str(format!(
+            "Failed to push {} commit(s):\n{}",
+            errors.len(),
+            error_messages.join("\n")
+        )));
+    }
+
     Ok(())
 }
 
