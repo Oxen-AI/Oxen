@@ -4,7 +4,6 @@ use polars::prelude::NamedFrom;
 use polars::prelude::PlSmallStr;
 use polars::series::Series;
 use rocksdb::DB;
-use serde_json::json;
 use serde_json::Value;
 
 use crate::constants::DIFF_STATUS_COL;
