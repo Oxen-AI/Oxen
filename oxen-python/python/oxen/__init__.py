@@ -13,7 +13,6 @@ from .oxen import (
     __version__,
 )
 from .oxen import util
-from .oxen import py_notebooks
 
 # Python classes
 from oxen.repo import Repo
@@ -22,8 +21,6 @@ from oxen.workspace import Workspace
 from oxen.data_frame import DataFrame
 from oxen import auth
 from oxen import datasets
-from oxen.notebooks import start as start_notebook
-from oxen.notebooks import stop as stop_notebook
 from oxen.clone import clone
 from oxen.diff.diff import diff
 from oxen.init import init
@@ -38,9 +35,6 @@ __all__ = [
     "diff",
     "init",
     "is_configured",
-    "notebooks",
-    "start_notebook",
-    "stop_notebook",
     "OxenFS",
     "PyColumn",
     "PyCommit",
@@ -53,7 +47,6 @@ __all__ = [
     "RemoteRepo",
     "Repo",
     "util",
-    "py_notebooks",
     "clone",
     "datasets",
     "Workspace",
