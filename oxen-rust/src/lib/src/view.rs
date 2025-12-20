@@ -19,7 +19,6 @@ pub mod merge;
 pub mod message;
 pub mod mime_type_count;
 pub mod namespace;
-pub mod notebook;
 pub mod oxen_response;
 pub mod oxen_version;
 pub mod pagination;
