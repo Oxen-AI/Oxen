@@ -8,8 +8,8 @@ use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNodeWithDir, MerkleTreeNode};
-use crate::model::{Branch, Commit, CommitEntry};
+use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
+use crate::model::{Branch, Commit, CommitEntry, MerkleHash};
 use crate::model::{LocalRepository, RemoteBranch, RemoteRepository};
 use crate::repositories;
 use crate::storage::VersionStore;
@@ -253,6 +253,8 @@ fn collect_missing_entries(
             HashSet::new()
         };
 
+    let mut file_hashes_seen = HashSet::new();
+
     for commit in commits {
         if let Some(subtree_paths) = subtree_paths {
             log::debug!(
@@ -278,8 +280,8 @@ fn collect_missing_entries(
 
                 collect_missing_entries_for_subtree(
                     &tree,
-                    subtree_path,
                     &mut missing_entries,
+                    &mut file_hashes_seen,
                     total_bytes,
                 )?;
             }
@@ -303,8 +305,8 @@ fn collect_missing_entries(
 
             collect_missing_entries_for_subtree(
                 &tree,
-                &PathBuf::from(""),
                 &mut missing_entries,
+                &mut file_hashes_seen,
                 total_bytes,
             )?;
         }
@@ -314,23 +316,24 @@ fn collect_missing_entries(
 
 fn collect_missing_entries_for_subtree(
     tree: &MerkleTreeNode,
-    subtree_path: &PathBuf,
     missing_entries: &mut HashSet<Entry>,
+    file_hashes_seen: &mut HashSet<MerkleHash>,
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
-    let files: HashSet<FileNodeWithDir> = repositories::tree::list_all_files(tree, subtree_path)?;
-
-    for file in files {
-        *total_bytes += file.file_node.num_bytes();
-        missing_entries.insert(Entry::CommitEntry(CommitEntry {
-            commit_id: file.file_node.last_commit_id().to_string(),
-            path: file.dir.join(file.file_node.name()),
-            hash: file.file_node.hash().to_string(),
-            num_bytes: file.file_node.num_bytes(),
-            last_modified_seconds: file.file_node.last_modified_seconds(),
-            last_modified_nanoseconds: file.file_node.last_modified_nanoseconds(),
-        }));
-    }
+    use crate::model::MerkleTreeNodeType;
+    
+    tree.walk_tree(|node: &MerkleTreeNode| {
+        let t = node.node.node_type();
+        if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
+            let file_hash = *node.node.hash();
+            // Only add files we haven't seen before
+            if file_hashes_seen.insert(file_hash) {
+                let entry = Entry::CommitEntry(CommitEntry::from_node(&node.node));
+                *total_bytes += entry.num_bytes();
+                missing_entries.insert(entry);
+            }
+        }
+    });
     Ok(())
 }
 
