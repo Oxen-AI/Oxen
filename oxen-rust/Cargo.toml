@@ -149,7 +149,7 @@ utoipa-swagger-ui = { version = "9", features = ["actix-web"] }
 uuid = { version = "1.4.1", features = ["serde", "v4"] }
 walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
-zip = "2.4.1"
+zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
 pathdiff = "0.2.3"
 async-recursion = "1.1.1"
 async_zip = { version = "0.0.18", features = ["full"] } 
