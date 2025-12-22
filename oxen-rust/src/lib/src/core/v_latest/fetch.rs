@@ -321,7 +321,7 @@ fn collect_missing_entries_for_subtree(
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
     use crate::model::MerkleTreeNodeType;
-    
+
     tree.walk_tree(|node: &MerkleTreeNode| {
         let t = node.node.node_type();
         if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
