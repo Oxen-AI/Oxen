@@ -56,7 +56,7 @@ pub fn get_root_with_children(
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
 /// Otherwise it will return None
-/// Also gathers all loaded dir and vnode hashes into `shared_hashes`  
+/// Also gathers all loaded dir and vnode hashes into `shared_hashes`
 pub fn get_root_with_children_and_node_hashes(
     repo: &LocalRepository,
     commit: &Commit,
@@ -78,7 +78,7 @@ pub fn get_root_with_children_and_node_hashes(
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
 /// Otherwise it will return None
-/// Also gathers all loaded dir and vnode hashes into `node_hashes`, and all loaded file nodes as partial nodes  
+/// Also gathers all loaded dir and vnode hashes into `node_hashes`, and all loaded file nodes as partial nodes
 pub fn get_root_with_children_and_partial_nodes(
     repo: &LocalRepository,
     commit: &Commit,
@@ -886,7 +886,7 @@ pub fn cp_dir_hashes_to(
 }
 
 pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
     compress_full_tree(repository, &mut tar)?;
     tar.finish()?;
@@ -927,7 +927,7 @@ pub fn compress_nodes(
     hashes: &HashSet<MerkleHash>,
 ) -> Result<Vec<u8>, OxenError> {
     // zip up the node directories for each commit tree
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
 
     log::debug!("Compressing {} unique nodes...", hashes.len());
@@ -961,7 +961,7 @@ pub fn compress_node(
     let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
     // zip up the node directory
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
     let node_dir = node_db_path(repository, hash);
 
@@ -987,7 +987,7 @@ pub fn compress_commits(
     commits: &Vec<Commit>,
 ) -> Result<Vec<u8>, OxenError> {
     // zip up the node directory
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
 
     for commit in commits {
