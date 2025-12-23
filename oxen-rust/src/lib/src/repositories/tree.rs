@@ -100,6 +100,30 @@ pub fn get_root_with_children_and_partial_nodes(
     }
 }
 
+/// This will return the MerkleTreeNode with type CommitNode if the Commit exists
+/// Otherwise it will return None
+/// Also gathers all loaded dir and vnode hashes into `node_hashes`, and all loaded file nodes  
+pub fn get_root_with_children_and_file_nodes(
+    repo: &LocalRepository,
+    commit: &Commit,
+    base_hashes: Option<&HashSet<MerkleHash>>,
+    unique_hashes: Option<&mut HashSet<MerkleHash>>,
+    shared_hashes: Option<&mut HashSet<MerkleHash>>,
+    file_nodes: &mut HashMap<PathBuf, MerkleTreeNode>,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_with_children(repo, commit),
+        _ => CommitMerkleTreeLatest::root_with_children_and_file_nodes(
+            repo,
+            commit,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            file_nodes,
+        ),
+    }
+}
+
 /// If passed in a commit node, will return the root directory node
 /// Will error if the node is not a commit node, because only CommitNodes have a root directory
 pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError> {
@@ -384,6 +408,33 @@ pub fn get_subtree_by_depth_with_unique_children(
             base_hashes,
             unique_hashes,
             shared_hashes,
+            depth,
+        ),
+    }
+}
+
+pub fn get_subtree_by_depth_with_unique_file_nodes(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+    base_hashes: Option<&HashSet<MerkleHash>>,
+    unique_hashes: Option<&mut HashSet<MerkleHash>>,
+    shared_hashes: Option<&mut HashSet<MerkleHash>>,
+    file_nodes: &mut HashMap<PathBuf, MerkleTreeNode>,
+    depth: i32,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_19_0 => {
+            CommitMerkleTreeV0_19_0::from_path_depth(repo, commit, path, depth)
+        }
+        _ => CommitMerkleTreeLatest::read_depth_from_path_and_collect_file_nodes(
+            repo,
+            commit,
+            path,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            file_nodes,
             depth,
         ),
     }

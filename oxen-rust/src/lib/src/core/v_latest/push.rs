@@ -302,21 +302,23 @@ async fn get_commit_missing_hashes(
     let mut result = HashMap::new();
 
     for commit in commits.iter().rev() {
-        let mut unique_hashes = HashSet::new();
         let mut file_hashes_seen = HashSet::new();
-
+        let mut dir_node_hashes: HashSet<MerkleHash> = HashSet::new();
         let mut files: Vec<Entry> = Vec::new();
-        let mut dir_nodes: HashSet<MerkleHash> = HashSet::new();
 
         for path in paths {
             log::debug!("push_commits adding candidate nodes for commit: {commit}");
-            let Some(root) = repositories::tree::get_subtree_by_depth_with_unique_children(
+            let mut unique_hashes = HashSet::new();
+            let mut file_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
+
+            let Some(_root) = repositories::tree::get_subtree_by_depth_with_unique_file_nodes(
                 repo,
                 commit,
                 path,
                 Some(&base_hashes),
                 Some(&mut unique_hashes),
                 None,
+                &mut file_nodes,
                 repo.depth().unwrap_or(-1),
             )?
             else {
@@ -324,38 +326,26 @@ async fn get_commit_missing_hashes(
                 continue;
             };
 
-            //TODO: Ideally we should be handling it in the tree loading code
-            // but it's easier to do it here for now.
-            root.walk_tree(|node: &MerkleTreeNode| {
-                let t = node.node.node_type();
-
-                if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
-                    let file_hash = *node.node.hash();
-                    // Only add files we haven't seen before (not in base_hashes or already collected)
-                    if !base_hashes.contains(&file_hash) && file_hashes_seen.insert(file_hash) {
-                        files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
-                    }
-                } else if !node.node.is_leaf() {
-                    let hash = node.node.hash();
-                    dir_nodes.insert(*hash);
+            for (_path, node) in file_nodes {
+                if file_hashes_seen.insert(node.node.hash().clone()) {
+                    files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
                 }
-            });
+            }
+
+            base_hashes.extend(unique_hashes.clone());
+            dir_node_hashes.extend(unique_hashes);
         }
 
-        // After processing all paths for this commit, update base_hashes
-        base_hashes.extend(unique_hashes);
-        base_hashes.extend(file_hashes_seen);
-
         // Add the ancestor dirs of each subtree path to dir_nodes
-        repositories::tree::get_ancestor_nodes(repo, commit, paths, &mut dir_nodes)?;
+        repositories::tree::get_ancestor_nodes(repo, commit, paths, &mut dir_node_hashes)?;
 
-        dir_nodes.insert(commit.hash()?);
+        dir_node_hashes.insert(commit.hash()?);
 
-        log::debug!("push_commits dir nodes: {dir_nodes:?}");
+        log::debug!("push_commits dir node hashes: {dir_node_hashes:?}");
         let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
 
         let push_commit_info = PushCommitInfo {
-            unique_dir_nodes: dir_nodes,
+            unique_dir_nodes: dir_node_hashes,
             unique_file_hashes: files,
             total_bytes,
         };

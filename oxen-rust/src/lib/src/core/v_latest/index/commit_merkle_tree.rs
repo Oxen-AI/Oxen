@@ -652,6 +652,58 @@ impl CommitMerkleTree {
         Ok(Some(root))
     }
 
+    pub fn read_depth_from_path_and_collect_file_nodes(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        file_nodes: &mut HashMap<PathBuf, MerkleTreeNode>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let mut node_path = path.as_ref().to_path_buf();
+        if node_path == PathBuf::from(".") {
+            node_path = PathBuf::from("");
+        }
+
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        let root = if let Some(node_hash) = dir_hashes.get(&node_path).cloned() {
+            // We are reading a node with children
+            let Some(root) = CommitMerkleTree::read_depth_and_collect_file_nodes(
+                repo,
+                &node_hash,
+                base_hashes,
+                unique_hashes,
+                shared_hashes,
+                file_nodes,
+                depth,
+            )?
+            else {
+                return Err(OxenError::basic_str(format!(
+                    "Merkle tree hash not found for dir: '{}' in commit: {:?}",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )));
+            };
+
+            root
+        } else {
+            // We are skipping to a file in the tree using the dir_hashes db
+            log::debug!("Look up file 📄 {node_path:?}");
+            CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
+                OxenError::basic_str(format!(
+                    "Merkle tree hash not found for file: '{}' in commit: '{}'",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )),
+            )?
+        };
+
+        Ok(Some(root))
+    }
+
+
     pub fn dir_without_children(
         repo: &LocalRepository,
         commit: &Commit,
@@ -1003,7 +1055,7 @@ impl CommitMerkleTree {
         Ok(())
     }
 
-    // TODO: The (MerkkleHash, MerkleTreeNodeType) keys are a bit strange
+    // TODO: The (MerkleHash, MerkleTreeNodeType) keys are a bit strange
     // Consider refactoring to eliminate the need for them
     #[allow(clippy::too_many_arguments)]
     fn load_children_and_collect_paths(
