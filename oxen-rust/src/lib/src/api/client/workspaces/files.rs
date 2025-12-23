@@ -585,6 +585,14 @@ async fn parallel_batched_small_file_upload(
     // Join the tasks and run to completion
     tokio::try_join!(producer_handle, consumer_handle)?;
 
+    // Get process errors from the producer and consumer tasks
+    let mut error_messages: Vec<String> = vec![];
+
+    let errors = errors.lock().await;
+    if !errors.is_empty() {
+        error_messages = errors.iter().map(|e| e.to_string()).collect();
+    }
+
     // Get the err_files from both processes
     let mutex = match Arc::try_unwrap(err_files) {
         Ok(mutex) => mutex,
@@ -601,9 +609,41 @@ async fn parallel_batched_small_file_upload(
     progress.finish();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    if !err_files.is_empty() {
+    // If errors occured, surface them to the user
+    match (err_files.is_empty(), error_messages.is_empty()) {
+        (false, false) => {},
+        (true, false) => {
+            return Err(OxenError::basic_str(format!(
+                "oxen workspace add failed with {} error(s):\n{}",
+                errors.len(),
+                error_messages.join("\n")
+            )));
+        }
+        (false, true) => {
+            // Write the err_files to a temp file
+            let err_files: String = 
+
+            let err_file_path = repo_path.join("err_files.txt");
+            util::fs::write_to_path(err_files)?;
+
+            return Err(OxenError::basic_str(format!(
+                "Failed to upload {} files after retry\nErr files are written to ",
+                err_files.len()
+            )));
+        }
+        (false, false) => {
+            // If there are both err_files and process errors, surface the process errors
+            return Err(OxenError::basic_str(format!(
+                "oxen workspace add failed with {} error(s):\n{}",
+                errors.len(),
+                error_messages.join("\n")
+            )));
+        }
+    }
+
+    if !err_files.is_empty() ||| !error_messages.is_empty() {
         return Err(OxenError::basic_str(format!(
-            "Failed to upload {} files after retry",
+            "Failed to upload {} files after retry\n",
             err_files.len()
         )));
     }
@@ -1048,6 +1088,20 @@ pub async fn download(
         return Err(OxenError::basic_str(format!(
             "Error: Could not remove paths {body:?}"
         )));
+    }
+
+    Ok(())
+}
+
+fn save_errors_to_jsonl(errors: &Vec<ErrorFileInfo>, filename: &str) -> serde_json::Result<()> {
+    let file = util::fs::create_file(filename)?;
+    let mut writer = BufWriter::new(file);
+
+    for info in errors {
+        // Serialize the struct to a JSON string
+        let mut json = serde_json::to_string(&info)?;
+        json.push('\n'); // Add the newline
+        match writer.write_all(json.as_bytes()).expect("Unable to write data");
     }
 
     Ok(())
