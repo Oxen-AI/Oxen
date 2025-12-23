@@ -182,8 +182,9 @@ pub const MAX_RETRIES: usize = 5;
 // Allow up to N concurrent upload tasks
 /// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
-// Retry and back off of requests N times
-/// Retry and back off of requests N times
+// Limit zip file downloads to batches of size N
+/// Limit zip file downloads to batches of size N
+pub const MAX_ZIP_DOWNLOAD_SIZE: u64 = 1024 * 1024 * 100;
 #[cfg(test)]
 pub const NUM_HTTP_RETRIES: u64 = 1;
 #[cfg(not(test))]

@@ -246,6 +246,32 @@ class RemoteRepo:
             self._repo.download(src, dst, self.revision)
         else:
             self._repo.download(src, dst, revision)
+        
+    def download_zip(
+        self, src: str, dst: Optional[str] = None, revision: Optional[str] = None
+    ):
+        """
+        Download the contents of a directory as a zip file
+
+        Args:
+            src: `str`
+                The path to the remote dir to download files from. This must be a directory
+            dst: `str | None`
+                The path to the local file. If None, will download to `{src}.zip`
+            revision: `str | None`
+                The branch or commit id to download. Defaults to `self.revision`
+        """
+        if dst is None:
+            dst = f"{src}.zip"
+            # create parent dir if it does not exist
+            directory = os.path.dirname(dst)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+
+        if revision is None:
+            self._repo.download_zip(src, dst, self.revision)
+        else:
+            self._repo.download_zip(src, dst, revision)
 
     def get_file(self, src: str, revision: Optional[str] = None):
         """
