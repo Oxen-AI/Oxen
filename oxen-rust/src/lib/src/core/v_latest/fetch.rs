@@ -1,5 +1,5 @@
 use futures::future;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -238,20 +238,20 @@ fn collect_missing_entries(
 ) -> Result<HashSet<Entry>, OxenError> {
     let mut missing_entries = HashSet::new();
 
-    let mut shared_hashes =
-        if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
-            let mut starting_node_hashes = HashSet::new();
-            repositories::tree::populate_starting_hashes(
-                repo,
-                &head_commit,
-                &None,
-                &None,
-                &mut starting_node_hashes,
-            )?;
-            starting_node_hashes
-        } else {
-            HashSet::new()
-        };
+    let mut base_hashes = if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)?
+    {
+        let mut starting_node_hashes = HashSet::new();
+        repositories::tree::populate_starting_hashes(
+            repo,
+            &head_commit,
+            &None,
+            &None,
+            &mut starting_node_hashes,
+        )?;
+        starting_node_hashes
+    } else {
+        HashSet::new()
+    };
 
     let mut file_hashes_seen = HashSet::new();
 
@@ -262,13 +262,15 @@ fn collect_missing_entries(
             );
             for subtree_path in subtree_paths {
                 let mut unique_hashes = HashSet::new();
-                let Some(tree) = repositories::tree::get_subtree_by_depth_with_unique_children(
+                let mut file_nodes = HashMap::new();
+                let Some(_tree) = repositories::tree::get_subtree_by_depth_with_unique_file_nodes(
                     repo,
                     commit,
                     subtree_path,
-                    Some(&shared_hashes),
+                    Some(&base_hashes),
                     Some(&mut unique_hashes),
                     None,
+                    &mut file_nodes,
                     depth.unwrap_or(-1),
                 )?
                 else {
@@ -276,24 +278,26 @@ fn collect_missing_entries(
                     continue;
                 };
 
-                shared_hashes.extend(unique_hashes);
+                base_hashes.extend(unique_hashes);
 
                 collect_missing_entries_for_subtree(
-                    &tree,
                     &mut missing_entries,
+                    &file_nodes,
                     &mut file_hashes_seen,
                     total_bytes,
                 )?;
             }
         } else {
             let mut unique_hashes = HashSet::new();
-            let Some(tree) = repositories::tree::get_subtree_by_depth_with_unique_children(
+            let mut file_nodes = HashMap::new();
+            let Some(_tree) = repositories::tree::get_subtree_by_depth_with_unique_file_nodes(
                 repo,
                 commit,
                 PathBuf::from("."),
-                Some(&shared_hashes),
+                Some(&base_hashes),
                 Some(&mut unique_hashes),
                 None,
+                &mut file_nodes,
                 depth.unwrap_or(-1),
             )?
             else {
@@ -301,11 +305,11 @@ fn collect_missing_entries(
                 continue;
             };
 
-            shared_hashes.extend(unique_hashes);
+            base_hashes.extend(unique_hashes);
 
             collect_missing_entries_for_subtree(
-                &tree,
                 &mut missing_entries,
+                &file_nodes,
                 &mut file_hashes_seen,
                 total_bytes,
             )?;
@@ -315,25 +319,19 @@ fn collect_missing_entries(
 }
 
 fn collect_missing_entries_for_subtree(
-    tree: &MerkleTreeNode,
     missing_entries: &mut HashSet<Entry>,
+    file_nodes: &HashMap<PathBuf, MerkleTreeNode>,
     file_hashes_seen: &mut HashSet<MerkleHash>,
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
-    use crate::model::MerkleTreeNodeType;
-
-    tree.walk_tree(|node: &MerkleTreeNode| {
-        let t = node.node.node_type();
-        if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
-            let file_hash = *node.node.hash();
-            // Only add files we haven't seen before
-            if file_hashes_seen.insert(file_hash) {
-                let entry = Entry::CommitEntry(CommitEntry::from_node(&node.node));
-                *total_bytes += entry.num_bytes();
-                missing_entries.insert(entry);
-            }
+    for node in file_nodes.values() {
+        if file_hashes_seen.insert(*node.node.hash()) {
+            let entry = Entry::CommitEntry(CommitEntry::from_node(&node.node));
+            *total_bytes += entry.num_bytes();
+            missing_entries.insert(entry);
         }
-    });
+    }
+
     Ok(())
 }
 
