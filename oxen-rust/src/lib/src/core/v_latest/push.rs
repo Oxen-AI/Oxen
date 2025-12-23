@@ -327,7 +327,7 @@ async fn get_commit_missing_hashes(
             };
 
             for (_path, node) in file_nodes {
-                if file_hashes_seen.insert(node.node.hash().clone()) {
+                if file_hashes_seen.insert(*node.node.hash()) {
                     files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
                 }
             }

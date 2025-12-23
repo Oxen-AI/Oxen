@@ -413,6 +413,7 @@ pub fn get_subtree_by_depth_with_unique_children(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn get_subtree_by_depth_with_unique_file_nodes(
     repo: &LocalRepository,
     commit: &Commit,

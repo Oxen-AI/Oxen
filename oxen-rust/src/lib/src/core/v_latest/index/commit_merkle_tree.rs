@@ -652,6 +652,7 @@ impl CommitMerkleTree {
         Ok(Some(root))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn read_depth_from_path_and_collect_file_nodes(
         repo: &LocalRepository,
         commit: &Commit,
@@ -702,7 +703,6 @@ impl CommitMerkleTree {
 
         Ok(Some(root))
     }
-
 
     pub fn dir_without_children(
         repo: &LocalRepository,
@@ -1364,7 +1364,6 @@ impl CommitMerkleTree {
 
         Ok(())
     }
-
 
     pub fn walk_tree(&self, f: impl FnMut(&MerkleTreeNode)) {
         self.root.walk_tree(f);
