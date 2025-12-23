@@ -776,16 +776,16 @@ pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
 }
 
 
-/// Wrapper around the std::fs::create command
+/// Wrapper around the std::fs::File::create command
 /// creates a file if it doesn't exist
-pub fn create_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn create_file(src: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
     if src.as_ref().exists() {
-        return Ok(());
+        util::fs::remove_file(&src)?;
     }
 
     let src = src.as_ref();
-    match std::fs::create(src) {
-        Ok(_) => Ok(()),
+    match std::fs::File::create(src) {
+        Ok(file) => Ok(file),
         Err(err) => {
             log::error!("create_dir {src:?} {err}");
             Err(OxenError::file_error(src, err))

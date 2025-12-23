@@ -17,6 +17,7 @@ use rand::{thread_rng, Rng};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::io::{BufWriter, Write};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
@@ -329,12 +330,13 @@ async fn parallel_batched_small_file_upload(
 
     let producer_errors = Arc::clone(&errors);
     let maybe_local_repo = local_repo.clone();
+    let repo_path_clone = repo_path.clone();
 
     // Initiate the producer
     let producer_handle = tokio::spawn(async move {
         stream::iter(file_batches)
             .for_each_concurrent(worker_count, |batch| {
-                let repo_path_clone = repo_path.clone();
+                let repo_path_clone = repo_path_clone.clone();
                 let head_commit_maybe_clone = head_commit_maybe.clone();
                 let local_repo_clone = maybe_local_repo.clone();
                 let errors = Arc::clone(&producer_errors);
@@ -587,10 +589,11 @@ async fn parallel_batched_small_file_upload(
 
     // Get process errors from the producer and consumer tasks
     let mut error_messages: Vec<String> = vec![];
-
-    let errors = errors.lock().await;
-    if !errors.is_empty() {
-        error_messages = errors.iter().map(|e| e.to_string()).collect();
+    {
+        let errors = errors.lock();
+        if !errors.is_empty() {
+            error_messages = errors.iter().map(|e| e.to_string()).collect();
+        }
     }
 
     // Get the err_files from both processes
@@ -611,20 +614,18 @@ async fn parallel_batched_small_file_upload(
 
     // If errors occured, surface them to the user
     match (err_files.is_empty(), error_messages.is_empty()) {
-        (false, false) => {},
+        (true, true) => {},
         (true, false) => {
             return Err(OxenError::basic_str(format!(
                 "oxen workspace add failed with {} error(s):\n{}",
-                errors.len(),
+                error_messages.len(),
                 error_messages.join("\n")
             )));
         }
         (false, true) => {
             // Write the err_files to a temp file
-            let err_files: String = 
-
-            let err_file_path = repo_path.join("err_files.txt");
-            util::fs::write_to_path(err_files)?;
+            let err_files_path = repo_path.join("err_files.json");
+            save_errors_to_jsonl(&err_files, &err_files_path)?;
 
             return Err(OxenError::basic_str(format!(
                 "Failed to upload {} files after retry\nErr files are written to ",
@@ -635,13 +636,13 @@ async fn parallel_batched_small_file_upload(
             // If there are both err_files and process errors, surface the process errors
             return Err(OxenError::basic_str(format!(
                 "oxen workspace add failed with {} error(s):\n{}",
-                errors.len(),
+                error_messages.len(),
                 error_messages.join("\n")
             )));
         }
     }
 
-    if !err_files.is_empty() ||| !error_messages.is_empty() {
+    if !err_files.is_empty() || !error_messages.is_empty() {
         return Err(OxenError::basic_str(format!(
             "Failed to upload {} files after retry\n",
             err_files.len()
@@ -1093,15 +1094,20 @@ pub async fn download(
     Ok(())
 }
 
-fn save_errors_to_jsonl(errors: &Vec<ErrorFileInfo>, filename: &str) -> serde_json::Result<()> {
+fn save_errors_to_jsonl(errors: &Vec<ErrorFileInfo>, filename: &PathBuf) -> Result<(), OxenError> {
     let file = util::fs::create_file(filename)?;
     let mut writer = BufWriter::new(file);
 
-    for info in errors {
+    for err_file in errors {
         // Serialize the struct to a JSON string
-        let mut json = serde_json::to_string(&info)?;
+        let mut json = serde_json::to_string(&err_file)?;
         json.push('\n'); // Add the newline
-        match writer.write_all(json.as_bytes()).expect("Unable to write data");
+        match writer.write_all(json.as_bytes()) {
+            Ok(_) => {},
+            Err(e) => {
+                return Err(OxenError::basic_str(format!("Could not write err_file: {:?}", e)));
+            }
+        }
     }
 
     Ok(())
