@@ -775,7 +775,6 @@ pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
     }
 }
 
-
 /// Wrapper around the std::fs::File::create command
 /// creates a file if it doesn't exist
 pub fn create_file(src: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {

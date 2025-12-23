@@ -15,9 +15,9 @@ use parking_lot::Mutex;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::io::{BufWriter, Write};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
@@ -614,7 +614,7 @@ async fn parallel_batched_small_file_upload(
 
     // If errors occured, surface them to the user
     match (err_files.is_empty(), error_messages.is_empty()) {
-        (true, true) => {},
+        (true, true) => {}
         (true, false) => {
             return Err(OxenError::basic_str(format!(
                 "oxen workspace add failed with {} error(s):\n{}",
@@ -1103,9 +1103,11 @@ fn save_errors_to_jsonl(errors: &Vec<ErrorFileInfo>, filename: &PathBuf) -> Resu
         let mut json = serde_json::to_string(&err_file)?;
         json.push('\n'); // Add the newline
         match writer.write_all(json.as_bytes()) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
-                return Err(OxenError::basic_str(format!("Could not write err_file: {:?}", e)));
+                return Err(OxenError::basic_str(format!(
+                    "Could not write err_file: {e:?}"
+                )));
             }
         }
     }
