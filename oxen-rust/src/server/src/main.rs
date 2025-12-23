@@ -49,6 +49,7 @@ use liboxen::view::repository::{
     RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView,
 };
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
+use liboxen::view::versions::{VersionFile, VersionFileResponse};
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
 use liboxen::view::{
     CommitEntryVersion, CommitResponse, CommitStatsResponse, DataTypeCount, ErrorFileInfo,
@@ -181,6 +182,11 @@ const SUPPORT: &str = "
         // Metadata
         crate::controllers::metadata::file,
         crate::controllers::metadata::update_metadata,
+        // Versions
+        crate::controllers::versions::metadata,
+        crate::controllers::versions::download,
+        crate::controllers::versions::batch_download,
+        crate::controllers::versions::batch_upload,
     ),
     components(
         // TODO: I'm not sure if these are all necessary to include
@@ -225,6 +231,8 @@ const SUPPORT: &str = "
             EMetadataEntryResponseView,
             GenericMetadata, MetadataDir, MetadataText, MetadataImage,
             MetadataVideo, MetadataAudio, MetadataTabular,
+            // Version Schemas,
+            VersionFile, VersionFileResponse,
         ),
     ),
     modifiers(

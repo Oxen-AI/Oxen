@@ -26,9 +26,25 @@ use tokio::io::BufReader;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio_tar::Builder;
 use tokio_util::io::{ReaderStream, StreamReader};
+use utoipa::ToSchema;
 
 const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
+/// Get version file metadata
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/versions/{version_id}/metadata",
+    tag = "Version Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("version_id" = String, Path, description = "The hash ID of the file version", example = "1eb45ac94f3eab120f3a"),
+    ),
+    responses(
+        (status = 200, description = "File metadata found", body = VersionFileResponse),
+        (status = 404, description = "Version file not found"),
+    )
+)]
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -71,6 +87,27 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 }
 
 // TODO: Refactor places that call /file/{resource:*} to use this new version store download endpoint
+/// Download version file
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/versions/{resource}",
+    tag = "Version Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "The resource identifier (e.g., 'main/path/to/file.ext' or a commit ID/branch name followed by the file path)", example = "main/images/dog_1.jpg"),
+        ImgResize
+    ),
+    responses(
+        (status = 200, description = "File content returned as a stream. Content-Type matches the file's MIME type (e.g., image/jpeg), or the resized image's MIME type.",
+            body = Vec<u8>,
+            headers(
+                ("oxen-revision-id" = String, description = "The commit ID of the file version")
+            )
+        ),
+        (status = 404, description = "Repository, commit, or file not found"),
+    )
+)]
 pub async fn download(
     req: HttpRequest,
     query: web::Query<ImgResize>,
@@ -133,6 +170,25 @@ pub async fn download(
         .streaming(stream))
 }
 
+/// Batch download version files
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/versions/batch-download",
+    tag = "Version Files",
+    summary = "Batch download files (Tarball)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = Vec<u8>,
+        content_type = "application/gzip",
+        description = "Gzip compressed binary payload containing a line-delimited list of merkle hashes to download",
+    ),
+    responses(
+        (status = 200, description = "Tarball of all requested files, gzipped.", content_type = "application/gzip"),
+    )
+)]
 pub async fn batch_download(
     req: HttpRequest,
     mut body: web::Payload,
@@ -283,6 +339,33 @@ pub async fn batch_download(
         .streaming(stream))
 }
 
+#[derive(ToSchema)]
+pub struct UploadVersionFile {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+}
+
+/// Batch upload version files
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/versions",
+    tag = "Version Files",
+    summary = "Batch upload files (Multipart)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content_type = "multipart/form-data", 
+        description = "Multipart upload of files. Each form field 'file[]' or 'file' should contain the file content (optionally gzip compressed), and the filename should be the content hash (e.g., 'file.jpg' is not used, the hash is the identifier).",
+        content = UploadVersionFile,
+    ),
+    responses(
+        (status = 200, description = "Files successfully uploaded (check err_files for failures)", body = ErrorFilesResponse),
+        (status = 400, description = "Invalid multipart request"),
+        (status = 404, description = "Repository not found"),
+    )
+)]
 pub async fn batch_upload(
     req: HttpRequest,
     payload: Multipart,
