@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::{config::Region, primitives::ByteStream, Client};
 use bytes::Bytes;
+use image::DynamicImage;
 use std::collections::HashMap;
-use std::fs::Metadata;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,7 +13,6 @@ use tokio_stream::Stream;
 
 use super::version_store::VersionStore;
 use crate::constants::VERSION_FILE_NAME;
-use crate::storage::version_store::ReadSeek;
 use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// S3 implementation of version storage
@@ -44,6 +43,11 @@ impl S3VersionStore {
             .get_or_init(|| async {
                 // Create a temp client to get the bucket region
                 let region_provider = RegionProviderChain::default_provider().or_else("us-west-1");
+                let region = region_provider
+                    .region()
+                    .await
+                    .map(|r| r.as_ref().to_string())
+                    .ok_or_else(|| OxenError::basic_str("Failed to resolve AWS region"))?;
 
                 let base_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .region(region_provider)
@@ -51,22 +55,21 @@ impl S3VersionStore {
                     .await;
                 let tmp_client = Client::new(&base_config);
 
-                let detected_region =
-                    match tmp_client.head_bucket().bucket(&self.bucket).send().await {
-                        Ok(res) => {
-                            // if head_bucket() succeed, bucket_region must have a value
-                            res.bucket_region()
-                                .map(str::to_owned)
-                                .ok_or(OxenError::basic_str(
-                                    "HeadBucket succeeded but bucket_region is None",
-                                ))?
-                        }
-                        Err(err) => err
-                            .raw_response()
-                            .and_then(|res| res.headers().get("x-amz-bucket-region"))
-                            .map(str::to_owned)
-                            .ok_or(OxenError::basic_str("x-amz-bucket-region header not found"))?,
-                    };
+                let detected_region = match tmp_client
+                    .get_bucket_location()
+                    .bucket(&self.bucket)
+                    .send()
+                    .await
+                {
+                    Ok(_res) => region,
+                    Err(err) => err
+                        .raw_response()
+                        .and_then(|res| res.headers().get("x-amz-bucket-region"))
+                        .map(str::to_owned)
+                        .ok_or(OxenError::basic_str(&format!(
+                            "x-amz-bucket-region header not found: {err:?}"
+                        )))?,
+                };
 
                 // Construct the client with the detected bucket region
                 let real_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
@@ -198,31 +201,108 @@ impl VersionStore for S3VersionStore {
         Ok(())
     }
 
-    fn open_version(
+    async fn store_version_derived(
         &self,
-        _hash: &str,
-    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, OxenError> {
-        // TODO: Implement S3 version opening
-        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+        _derived_image: DynamicImage,
+        image_buf: Vec<u8>,
+        derived_path: &Path,
+    ) -> Result<(), OxenError> {
+        let client = self.init_client().await?;
+        let key = derived_path.to_string_lossy().into_owned();
+
+        client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .body(ByteStream::from(image_buf))
+            .send()
+            .await
+            .map_err(|e| {
+                OxenError::basic_str(&format!("failed to store derived version file in S3: {e}"))
+            })?;
+        log::debug!("Saved derived version file {derived_path:?}");
+
+        Ok(())
     }
 
-    async fn get_version_metadata(&self, _hash: &str) -> Result<Metadata, OxenError> {
-        // TODO: Implement S3 version retrieval
-        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
+        let client = self.init_client().await?;
+        let key = self.generate_key(hash);
+
+        let resp = client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(&format!("S3 head_object failed: {e}")))?;
+
+        let size = resp.content_length().unwrap_or(0) as u64;
+        Ok(size)
     }
 
-    async fn get_version(&self, _hash: &str) -> Result<Vec<u8>, OxenError> {
-        // TODO: Implement S3 version retrieval
-        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+    async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
+        let client = self.init_client().await?;
+        let key = self.generate_key(hash);
+
+        let resp = client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {}", e)))?;
+
+        let data = resp
+            .body
+            .collect()
+            .await
+            .map_err(|e| OxenError::basic_str(&format!("S3 read body failed: {}", e)))?
+            .into_bytes()
+            .to_vec();
+
+        Ok(data)
     }
 
     async fn get_version_stream(
         &self,
-        _hash: &str,
+        hash: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
-        // TODO: Implement S3 version stream retrieval
-        Err(OxenError::basic_str("S3VersionStore not yet implemented"))
+        let client = self.init_client().await?;
+        let key = self.generate_key(hash);
+
+        let resp = client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
+
+        let adapter = ByteStreamAdapter { inner: resp.body };
+
+        Ok(Box::new(adapter) as Box<_>)
+    }
+
+    async fn get_version_derived_stream(
+        &self,
+        derived_path: &Path,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
+    {
+        let client = self.init_client().await?;
+        let key = derived_path.to_string_lossy().into_owned();
+
+        let resp = client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
+
+        let adapter = ByteStreamAdapter { inner: resp.body };
+        Ok(Box::new(adapter) as Box<_>)
     }
 
     fn get_version_path(&self, _hash: &str) -> Result<PathBuf, OxenError> {
@@ -318,5 +398,29 @@ impl VersionStore for S3VersionStore {
         settings.insert("bucket".to_string(), self.bucket.clone());
         settings.insert("prefix".to_string(), self.prefix.clone());
         settings
+    }
+}
+
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+pub struct ByteStreamAdapter {
+    inner: ByteStream,
+}
+
+impl Stream for ByteStreamAdapter {
+    type Item = Result<Bytes, io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => Poll::Ready(Some(Ok(bytes))),
+            Poll::Ready(Some(Err(e))) => {
+                let err = io::Error::new(io::ErrorKind::Other, format!("{e}"));
+                Poll::Ready(Some(Err(err)))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }

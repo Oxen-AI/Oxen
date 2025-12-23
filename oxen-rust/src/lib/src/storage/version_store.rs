@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::fs::Metadata;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 use tokio_stream::Stream;
@@ -91,6 +91,18 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         data: &[u8],
     ) -> Result<(), OxenError>;
 
+    /// Store a derived version file (resized, video thumbnail etc.)
+    ///
+    /// # Arguments
+    /// * `data` - The raw bytes to store
+    /// * `derived_path` - Path/key to the derived version file
+    async fn store_version_derived(
+        &self,
+        derived_image: DynamicImage,
+        image_buf: Vec<u8>,
+        derived_path: &Path,
+    ) -> Result<(), OxenError>;
+
     /// Get a writer for a chunk of a version file
     ///
     /// # Arguments
@@ -143,17 +155,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn combine_version_chunks(&self, hash: &str, cleanup: bool)
         -> Result<PathBuf, OxenError>;
 
-    /// Open a version file for async reading
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash of the version to retrieve
-    fn open_version(&self, hash: &str) -> Result<Box<dyn ReadSeek + Send + Sync>, OxenError>;
-
     /// Get metadata of a version file
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
-    async fn get_version_metadata(&self, hash: &str) -> Result<Metadata, OxenError>;
+    async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError>;
 
     /// Retrieve a version file's contents as bytes (less efficient for large files)
     ///
@@ -168,6 +174,15 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn get_version_stream(
         &self,
         hash: &str,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+
+    /// Get stream of a derived version file (resized, video thumbnail etc.)
+    ///
+    /// # Arguments
+    /// * `derived_path` - Path/key to the derived version file
+    async fn get_version_derived_stream(
+        &self,
+        derived_path: &Path,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
 
     /// Get the path to a version file (sync operation)

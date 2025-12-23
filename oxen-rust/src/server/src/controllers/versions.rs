@@ -21,11 +21,10 @@ use mime;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio_tar::Builder;
-use tokio_util::io::{ReaderStream, StreamReader};
+use tokio_util::io::StreamReader;
 
 const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
@@ -42,15 +41,12 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Err(OxenHttpError::NotFound);
     }
 
-    let metadata = repo
-        .version_store()?
-        .get_version_metadata(&version_id)
-        .await?;
+    let file_size = repo.version_store()?.get_version_size(&version_id).await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
             hash: version_id,
-            size: metadata.len() as u64,
+            size: file_size,
         },
     }))
 }
@@ -105,23 +101,19 @@ pub async fn download(
     {
         log::debug!("img_resize {img_resize:?}");
 
-        let resized_path = util::fs::handle_image_resize(
+        let file_stream = util::fs::handle_image_resize(
             Arc::clone(&version_store),
             hash_str,
             &path,
             &version_path,
             img_resize,
-        )?;
-
-        // Generate stream for the resized image
-        let file = File::open(&resized_path).await?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
+        )
+        .await?;
 
         return Ok(HttpResponse::Ok()
             .content_type(mime_type)
             .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-            .streaming(stream));
+            .streaming(file_stream));
     } else {
         log::debug!("did not hit the resize cache");
     }
@@ -187,16 +179,15 @@ pub async fn batch_download(
         for file_hash in file_hashes_clone.iter() {
             match version_store_clone.get_version_stream(file_hash).await {
                 Ok(data) => {
-                    let metadata = match version_store_clone.get_version_metadata(file_hash).await {
-                        Ok(metadata) => metadata,
+                    let file_size = match version_store_clone.get_version_size(file_hash).await {
+                        Ok(size) => size,
                         Err(e) => {
-                            log::error!("Failed to get metadata for {file_hash}: {e}");
+                            log::error!("Failed to get version file size for {file_hash}: {e}");
                             error_tx.send(e).ok();
                             had_error = true;
                             break;
                         }
                     };
-                    let file_size = metadata.len();
 
                     let mut header = tokio_tar::Header::new_gnu();
                     header.set_size(file_size as u64);

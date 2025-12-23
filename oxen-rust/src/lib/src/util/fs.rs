@@ -2,6 +2,9 @@
 //! and eventually abstract away the fs implementation
 //!
 
+use async_std::pin::Pin;
+use bytes::Bytes;
+use futures::StreamExt;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use jwalk::WalkDir;
@@ -12,11 +15,12 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::Cursor;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::SeekFrom;
+use tokio_stream::Stream;
 
 use crate::constants::CACHE_DIR;
 use crate::constants::CHUNKS_DIR;
@@ -87,13 +91,13 @@ pub fn commit_content_is_valid_path(repo: &LocalRepository, commit: &Commit) -> 
         .join(CONTENT_IS_VALID)
 }
 
-pub fn handle_image_resize(
+pub async fn handle_image_resize(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
     file_path: &Path,
     version_path: &Path,
     img_resize: ImgResize,
-) -> Result<PathBuf, OxenError> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
     log::debug!("img_resize {img_resize:?}");
     let resized_path = resized_path_for_version_store_file(
         Arc::clone(&version_store),
@@ -103,16 +107,17 @@ pub fn handle_image_resize(
         img_resize.height,
     )?;
 
-    resize_cache_image_version_store(
+    let stream = resize_cache_image_version_store(
         version_store,
         &file_hash,
         version_path,
         &resized_path,
         img_resize,
-    )?;
+    )
+    .await?;
+    log::debug!("Got the resize image! {resized_path:?}");
 
-    log::debug!("In the resize cache! {resized_path:?}");
-    Ok(resized_path)
+    Ok(stream)
 }
 
 // TODO: Change the resized path from version store to a server location
@@ -1649,53 +1654,67 @@ pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
     }
 }
 
-fn detect_image_format_from_version(
+async fn detect_image_format_from_version(
     versioned_store: Arc<dyn VersionStore>,
     hash: &str,
 ) -> Result<ImageFormat, OxenError> {
-    let mut file = versioned_store.open_version(hash)?;
+    let mut stream = versioned_store.get_version_stream(hash).await?;
 
-    let mut header = [0u8; 10];
-    let n = file
-        .read(&mut header)
-        .map_err(|e| OxenError::basic_str(format!("Failed to read version file {hash}: {e}")))?;
-    // Set the pointer back to the front
-    file.seek(SeekFrom::Start(0))
-        .map_err(|e| OxenError::basic_str(format!("Failed to seek version file {hash}: {e}")))?;
+    let mut header = Vec::with_capacity(16);
+    while header.len() < 16 {
+        if let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
+            })?;
+            let to_take = 16 - header.len();
+            header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
+        } else {
+            break; // EOF
+        }
+    }
 
-    // detect format
-    let format = image::guess_format(&header[..n])
+    if header.is_empty() {
+        return Err(OxenError::basic_str(format!(
+            "Version file {hash} is empty"
+        )));
+    }
+
+    let format = image::guess_format(&header)
         .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
 
     Ok(format)
 }
 
 // Caller must provide out path because it differs between remote staged vs. committed files
-pub fn resize_cache_image_version_store(
+pub async fn resize_cache_image_version_store(
     version_store: Arc<dyn VersionStore>,
     img_hash: &str,
     image_path: &Path,
     resize_path: &Path,
     resize: ImgResize,
-) -> Result<(), OxenError> {
-    log::debug!("resize to path {resize_path:?} from {image_path:?}");
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
     if resize_path.exists() {
-        return Ok(());
+        log::debug!("In the resize cache! {resize_path:?}");
+        let stream = version_store
+            .get_version_derived_stream(resize_path)
+            .await?;
+        return Ok(stream.boxed());
     }
 
-    let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash);
+    log::debug!("resize to path {resize_path:?} from {image_path:?}");
+    let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash).await;
+    let image_data = version_store.get_version(img_hash).await?;
+
     let img = match image_format {
         Ok(format) => {
-            let reader = version_store.open_version(img_hash)?;
-            image::load(BufReader::new(reader), format)?
+            let reader = Cursor::new(&image_data);
+            image::load(reader, format)?
         }
         Err(_) => {
             log::debug!("Could not detect image format, opening file without format");
-            let reader = version_store.open_version(img_hash)?;
+            let reader = Cursor::new(&image_data);
 
-            ImageReader::new(BufReader::new(reader))
-                .with_guessed_format()?
-                .decode()?
+            ImageReader::new(reader).with_guessed_format()?.decode()?
         }
     };
 
@@ -1722,14 +1741,19 @@ pub fn resize_cache_image_version_store(
     };
     log::debug!("about to save {resize_path:?}");
 
-    let resize_parent = resize_path.parent().unwrap_or(Path::new(""));
-    if !resize_parent.exists() {
-        util::fs::create_dir_all(resize_parent)?;
-    }
-
-    resized_img.save(resize_path).unwrap();
     log::debug!("saved {resize_path:?}");
-    Ok(())
+
+    let image_format = ImageFormat::from_path(resize_path)?;
+    let mut buf = Vec::new();
+    resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+    version_store
+        .store_version_derived(resized_img, buf.clone(), resize_path)
+        .await?;
+
+    let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        futures::stream::once(async move { Ok(Bytes::from(buf)) }).boxed();
+
+    Ok(stream)
 }
 
 /// Generate a video thumbnail using thumbnails crate.
