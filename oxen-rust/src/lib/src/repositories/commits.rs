@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub mod commit_writer;
+pub mod squash;
 
 /// # Commit the staged files in the repo
 ///

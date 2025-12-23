@@ -34,7 +34,7 @@ use bytesize::ByteSize;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use futures_util::stream::StreamExt as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::io::Read;
@@ -1319,4 +1319,145 @@ fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
     Err(OxenError::basic_str(format!(
         "Could not get hash for file: {path:?}"
     )))
+}
+
+#[derive(Deserialize, IntoParams)]
+pub struct SquashCommitsQuery {
+    #[param(example = 2)]
+    pub n: usize,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct CommitGroup {
+    pub commits: Vec<Commit>,
+    pub message: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SquashMetrics {
+    pub total_commits_before: usize,
+    pub total_commits_after: usize,
+    pub commits_removed: usize,
+    pub squashable_groups: usize,
+    pub commits_in_squashable_groups: usize,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SquashAnalysisResponse {
+    pub status: StatusMessage,
+    pub squash_groups: Vec<CommitGroup>,
+    pub metrics: SquashMetrics,
+}
+
+/// Analyze squashable commits
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/squash/analyze",
+    operation_id = "analyze_squashable_commits",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        SquashCommitsQuery
+    ),
+    responses(
+        (status = 200, description = "Analysis of squashable commits", body = SquashAnalysisResponse),
+        (status = 404, description = "Repository not found")
+    )
+)]
+pub async fn analyze_squashable(
+    req: HttpRequest,
+    query: web::Query<SquashCommitsQuery>,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let all_commits = repositories::commits::list(&repo)
+        .map_err(|e| OxenHttpError::BadRequest(liboxen::error::StringError::new(e.to_string())))?;
+
+    let total_commits_before = all_commits.len();
+
+    let squash_groups = repositories::commits::squash::analyze_squashable_commits(&repo, query.n)
+        .map_err(|e| {
+        OxenHttpError::BadRequest(liboxen::error::StringError::new(e.to_string()))
+    })?;
+
+    let squashable_groups = squash_groups.len();
+    let commits_in_squashable_groups: usize = squash_groups.iter().map(|g| g.len()).sum();
+    let commits_removed = if commits_in_squashable_groups > 0 {
+        commits_in_squashable_groups - squashable_groups
+    } else {
+        0
+    };
+    let total_commits_after = total_commits_before - commits_removed;
+
+    let response_groups: Vec<CommitGroup> = squash_groups
+        .into_iter()
+        .map(|commits| {
+            let messages: Vec<String> = commits.iter().map(|c| c.message.clone()).collect();
+            let combined_message = messages.join(", ");
+            CommitGroup {
+                commits,
+                message: combined_message,
+            }
+        })
+        .collect();
+
+    let metrics = SquashMetrics {
+        total_commits_before,
+        total_commits_after,
+        commits_removed,
+        squashable_groups,
+        commits_in_squashable_groups,
+    };
+
+    Ok(HttpResponse::Ok().json(SquashAnalysisResponse {
+        status: StatusMessage::resource_found(),
+        squash_groups: response_groups,
+        metrics,
+    }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SquashExecuteResponse {
+    pub status: StatusMessage,
+    pub squashed_commits: Vec<Commit>,
+}
+
+/// Execute squash operation
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/commits/squash/execute",
+    operation_id = "execute_squash_commits",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        SquashCommitsQuery
+    ),
+    responses(
+        (status = 200, description = "Squashed commits", body = SquashExecuteResponse),
+        (status = 404, description = "Repository not found")
+    )
+)]
+pub async fn execute_squash(
+    req: HttpRequest,
+    query: web::Query<SquashCommitsQuery>,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let squashed_commits = repositories::commits::squash::execute_squash(&repo, query.n)
+        .map_err(|e| OxenHttpError::BadRequest(liboxen::error::StringError::new(e.to_string())))?;
+
+    Ok(HttpResponse::Ok().json(SquashExecuteResponse {
+        status: StatusMessage::resource_found(),
+        squashed_commits,
+    }))
 }
