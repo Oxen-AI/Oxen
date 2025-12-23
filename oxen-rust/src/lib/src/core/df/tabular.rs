@@ -305,12 +305,16 @@ pub fn row_from_str_and_schema(
 
 pub fn parse_str_to_df(data: impl AsRef<str>) -> Result<DataFrame, OxenError> {
     let data = data.as_ref();
+
     if data == "{}" {
         return Ok(DataFrame::default());
     }
 
     let cursor = Cursor::new(data.as_bytes());
-    match JsonLineReader::new(cursor).finish() {
+
+    let reader = JsonLineReader::new(cursor);
+
+    match reader.finish() {
         Ok(df) => Ok(df),
         Err(err) => Err(OxenError::basic_str(format!("Error parsing json: {err}"))),
     }
@@ -716,7 +720,7 @@ pub fn any_val_to_bytes(value: &AnyValue) -> Vec<u8> {
     }
 }
 
-fn any_val_to_json(value: AnyValue) -> Value {
+pub fn any_val_to_json(value: AnyValue) -> Value {
     match value {
         AnyValue::Null => Value::Null,
         AnyValue::Boolean(b) => Value::Bool(b),
@@ -772,6 +776,25 @@ fn any_val_to_json(value: AnyValue) -> Value {
 
                 Value::Array(array)
             }
+            polars::prelude::DataType::Struct(_fields) => {
+                // Convert List(Struct) directly to DataFrame, then to JSON array
+                if let Ok(ca) = l.struct_() {
+                    let series_vec = ca.fields_as_series();
+                    let mut objs = Vec::with_capacity(ca.len());
+
+                    for row_idx in 0..ca.len() {
+                        let mut map = serde_json::Map::new();
+                        for series in series_vec.iter() {
+                            let val = series.get(row_idx).unwrap_or(AnyValue::Null);
+                            map.insert(series.name().to_string(), any_val_to_json(val));
+                        }
+                        objs.push(Value::Object(map));
+                    }
+                    Value::Array(objs)
+                } else {
+                    Value::Null
+                }
+            }
             dtype => {
                 panic!("Unsupported list dtype: {dtype:?}")
             }
@@ -793,8 +816,70 @@ fn any_val_to_json(value: AnyValue) -> Value {
 
             Value::Object(map)
         }
+        AnyValue::Struct(_len, struct_array, fields) => struct_array_to_json(struct_array, fields),
 
         other => panic!("Unsupported dtype in JSON conversion: {other:?}"),
+    }
+}
+
+fn struct_array_to_json(
+    struct_array: &polars::prelude::StructArray,
+    fields: &[polars::prelude::Field],
+) -> Value {
+    match DataFrame::try_from(struct_array.clone()) {
+        Ok(df) => {
+            let mut rows = Vec::with_capacity(df.height());
+            for i in 0..df.height() {
+                let mut map = serde_json::Map::new();
+                for col in df.get_columns() {
+                    let val = col.get(i).unwrap_or(AnyValue::Null);
+                    map.insert(col.name().to_string(), any_val_to_json(val));
+                }
+                rows.push(Value::Object(map));
+            }
+            Value::Array(rows)
+        }
+        Err(e) => {
+            log::warn!("Failed to convert StructArray to DataFrame: {e:?}");
+            let mut map = serde_json::Map::new();
+            for (i, field) in fields.iter().enumerate() {
+                if let Some(values) = struct_array.values().get(i) {
+                    let len = values.len();
+                    if len > 0 {
+                        let val_str = format!("{values:?}");
+                        // Look for actual URL or string content
+                        if let Some(start) = val_str.find("https://") {
+                            // Extract URL starting from https://
+                            let rest = &val_str[start..];
+                            if let Some(end) = rest.find('"').or(rest.find(']')) {
+                                let url = &rest[..end];
+                                map.insert(
+                                    field.name().to_string(),
+                                    Value::String(url.to_string()),
+                                );
+                                continue;
+                            }
+                        } else if let Some(start) = val_str.find("http://") {
+                            let rest = &val_str[start..];
+                            if let Some(end) = rest.find('"').or(rest.find(']')) {
+                                let url = &rest[..end];
+                                map.insert(
+                                    field.name().to_string(),
+                                    Value::String(url.to_string()),
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+                map.insert(field.name().to_string(), Value::Null);
+            }
+            if map.is_empty() {
+                Value::Null
+            } else {
+                Value::Object(map)
+            }
+        }
     }
 }
 
@@ -844,6 +929,7 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
                     let json_value = any_val_to_json(AnyValue::List(l));
                     json_value
                 }
+                polars::prelude::DataType::Struct(_) => any_val_to_json(AnyValue::List(l)),
                 dtype => {
                     panic!("Unsupported dtype: {dtype:?}")
                 }

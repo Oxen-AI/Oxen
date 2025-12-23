@@ -385,7 +385,7 @@ impl MerkleTreeNode {
         for child in &self.children {
             if let EMerkleTreeNode::Directory(dir) = &child.node {
                 let new_path = current_path.join(dir.name());
-                nodes.insert(new_path.clone(), self.clone());
+                nodes.insert(new_path.clone(), child.clone());
 
                 child.list_files_and_dirs_helper(&new_path, nodes)?;
             } else {
