@@ -11,7 +11,7 @@ use crate::util;
 use crate::view::RepositoryView;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -74,7 +74,7 @@ impl LocalRepository {
         } else {
             StorageOpts::from_path(&repo.path, true)
         };
-        let store = create_version_store(&storage_opts)?;
+        let store = create_version_store(&repo.path, &storage_opts)?;
         repo.version_store = Some(store);
         Ok(repo)
     }
@@ -88,7 +88,7 @@ impl LocalRepository {
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
-        let store = create_version_store(storage_opts)?;
+        let store = create_version_store(&self.path, storage_opts)?;
         self.version_store = Some(store);
         Ok(())
     }
@@ -99,14 +99,14 @@ impl LocalRepository {
         let storage_opts = StorageOpts::from_path(&self.path, true);
 
         // Create and initialize the store
-        let store = create_version_store(&storage_opts)?;
+        let store = create_version_store(&self.path, &storage_opts)?;
         self.version_store = Some(store);
         Ok(())
     }
 
     /// Initialize local version store at a new location
     pub async fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
-        let version_store = create_version_store(storage_opts)?;
+        let version_store = create_version_store(&self.path, storage_opts)?;
         version_store.init().await?;
         self.version_store = Some(version_store);
 
@@ -304,10 +304,32 @@ impl LocalRepository {
         let config_path = util::fs::config_filepath(&self.path);
 
         // Determine the current storage type and settings using the trait methods
-        let storage = self.version_store.as_ref().map(|store| StorageConfig {
-            type_: store.storage_type().to_string(),
-            settings: store.storage_settings(),
-        });
+        let storage = self
+            .version_store
+            .as_ref()
+            .map(|store| -> Result<StorageConfig, OxenError> {
+                let settings = store.storage_settings();
+                let path = settings
+                    .get("path")
+                    .ok_or_else(|| OxenError::basic_str("Storage settings missing 'path' key"))?;
+                let storage_path =
+                    if util::fs::is_relative_to_dir(path, util::fs::oxen_hidden_dir(&self.path)) {
+                        // If path is within .oxen (default location), use the relative path in case the repo was moved
+                        util::fs::path_relative_to_dir(path, &self.path)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned()
+                    } else {
+                        // Otherwise, use the absolute path
+                        path.clone()
+                    };
+
+                Ok(StorageConfig {
+                    type_: store.storage_type().to_string(),
+                    settings: HashMap::from([("path".to_string(), storage_path)]),
+                })
+            })
+            .transpose()?;
 
         let config = RepositoryConfig {
             remote_name: self.remote_name.clone(),
