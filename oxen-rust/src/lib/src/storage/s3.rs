@@ -43,11 +43,6 @@ impl S3VersionStore {
             .get_or_init(|| async {
                 // Create a temp client to get the bucket region
                 let region_provider = RegionProviderChain::default_provider().or_else("us-west-1");
-                let region = region_provider
-                    .region()
-                    .await
-                    .map(|r| r.as_ref().to_string())
-                    .ok_or_else(|| OxenError::basic_str("Failed to resolve AWS region"))?;
 
                 let base_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .region(region_provider)
@@ -55,21 +50,17 @@ impl S3VersionStore {
                     .await;
                 let tmp_client = Client::new(&base_config);
 
-                let detected_region = match tmp_client
+                let detected_region = tmp_client
                     .get_bucket_location()
                     .bucket(&self.bucket)
                     .send()
                     .await
-                {
-                    Ok(_res) => region,
-                    Err(err) => err
-                        .raw_response()
-                        .and_then(|res| res.headers().get("x-amz-bucket-region"))
-                        .map(str::to_owned)
-                        .ok_or(OxenError::basic_str(&format!(
-                            "x-amz-bucket-region header not found: {err:?}"
-                        )))?,
-                };
+                    .map_err(|err| {
+                        OxenError::basic_str(&format!("Failed to get bucket location: {err:?}"))
+                    })?
+                    .location_constraint()
+                    .map(|loc| loc.as_str().to_string())
+                    .unwrap_or("us-west-1".to_string());
 
                 // Construct the client with the detected bucket region
                 let real_config = aws_config::defaults(aws_config::BehaviorVersion::latest())

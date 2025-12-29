@@ -317,7 +317,7 @@ pub async fn batch_download(
     tokio::spawn(writer_task);
 
     // convert reader to stream
-    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
+    let stream = ReaderStream::new(reader).map(move |chunk| {
         if let Ok(err) = error_rx.try_recv() {
             log::error!("Stream error: {err}");
             return Err(OxenHttpError::from(err));

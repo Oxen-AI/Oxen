@@ -132,7 +132,7 @@ impl VersionStore for LocalVersionStore {
         if !derived_parent.exists() {
             util::fs::create_dir_all(derived_parent)?;
         }
-        derived_image.save(derived_path).unwrap();
+        derived_image.save(derived_path)?;
         log::debug!("Saved derived version file {derived_path:?}");
 
         Ok(())
