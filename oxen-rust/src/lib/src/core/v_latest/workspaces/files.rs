@@ -16,7 +16,7 @@ use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager, stage_file_with_hash,
+    process_add_file_with_staged_db_manager, stage_file_with_hash_and_db_manager, stage_file_with_db_manager,
 };
 use crate::core::{self, db};
 use crate::error::OxenError;
@@ -105,7 +105,7 @@ pub fn add_version_file_with_hash(
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        stage_file_with_hash(
+        stage_file_with_hash_and_db_manager(
             workspace,
             version_path,
             dst_path,
@@ -136,10 +136,11 @@ pub fn add_version_files(
             let version_path = version_store.get_version_path(&item.hash)?;
             let target_path = PathBuf::from(directory).join(&item.path);
 
-            match get_status_and_add_file(
+            match stage_file_with_db_manager(
                 workspace_repo,
                 &version_path,
                 &target_path,
+                &item.hash,
                 staged_db_manager,
                 &seen_dirs,
             ) {
