@@ -416,6 +416,8 @@ async fn main() -> std::io::Result<()> {
                             .wrap(Logger::default())
                             .wrap(Logger::new("user agent is %a %{User-Agent}i"))
                     })
+                    .keep_alive(std::time::Duration::from_secs(600))
+                    .client_request_timeout(std::time::Duration::from_secs(600))
                     .bind((host.to_owned(), port))?
                     .run()
                     .await
