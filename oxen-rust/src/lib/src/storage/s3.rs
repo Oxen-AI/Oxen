@@ -1,6 +1,8 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::{config::Region, primitives::ByteStream, Client};
 use bytes::Bytes;
 use image::DynamicImage;
@@ -230,7 +232,10 @@ impl VersionStore for S3VersionStore {
             .await
             .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
 
-        let size = resp.content_length().unwrap_or(0) as u64;
+        let size = resp
+            .content_length()
+            .ok_or_else(|| OxenError::basic_str("S3 object missing content_length"))?
+            as u64;
         Ok(size)
     }
 
@@ -365,11 +370,30 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
-    fn version_exists(&self, _hash: &str) -> Result<bool, OxenError> {
-        // TODO: Implement S3 version existence check
-        Err(OxenError::basic_str(
-            "S3VersionStore version_exists not yet implemented",
-        ))
+    async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
+        let client = self.init_client().await?;
+        let key = self.generate_key(hash);
+
+        match client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+
+            Err(SdkError::ServiceError(err)) => match err.err() {
+                HeadObjectError::NotFound(_) => Ok(false),
+                err => Err(OxenError::basic_str(format!(
+                    "version_exists failed with S3 head_object error: {err:?}"
+                ))),
+            },
+
+            Err(err) => Err(OxenError::basic_str(format!(
+                "version_exists failed with S3 head_object error: {err:?}"
+            ))),
+        }
     }
 
     async fn delete_version(&self, _hash: &str) -> Result<(), OxenError> {

@@ -202,7 +202,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash to check
-    fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
+    async fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
 
     /// Delete a version
     ///

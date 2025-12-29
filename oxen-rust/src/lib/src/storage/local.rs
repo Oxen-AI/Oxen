@@ -185,7 +185,7 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
-    fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
+    async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
         Ok(self.version_path(hash).exists())
     }
 
@@ -655,11 +655,11 @@ mod tests {
         let data = b"test data";
 
         // Check non-existent version
-        assert!(!store.version_exists(hash).unwrap());
+        assert!(!store.version_exists(hash).await.unwrap());
 
         // Store and check again
         store.store_version(hash, data).await.unwrap();
-        assert!(store.version_exists(hash).unwrap());
+        assert!(store.version_exists(hash).await.unwrap());
     }
 
     #[tokio::test]
@@ -670,11 +670,11 @@ mod tests {
 
         // Store and verify
         store.store_version(hash, data).await.unwrap();
-        assert!(store.version_exists(hash).unwrap());
+        assert!(store.version_exists(hash).await.unwrap());
 
         // Delete and verify
         store.delete_version(hash).await.unwrap();
-        assert!(!store.version_exists(hash).unwrap());
+        assert!(!store.version_exists(hash).await.unwrap());
         assert!(!store.version_dir(hash).exists());
     }
 

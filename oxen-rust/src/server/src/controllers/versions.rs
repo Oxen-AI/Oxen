@@ -52,7 +52,7 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
-    let exists = repo.version_store()?.version_exists(&version_id)?;
+    let exists = repo.version_store()?.version_exists(&version_id).await?;
     if !exists {
         return Err(OxenHttpError::NotFound);
     }
