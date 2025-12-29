@@ -69,7 +69,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     Ok((repo, workspace, dir))
 }
 
-pub fn workspace_add_benchmark(c: &mut Criterion) {
+pub fn workspace_add_benchmark(c: &mut Criterion, data_path: Option<String>) {
 
     // Create the benchmark dir
     let bench_id = Uuid::new_v4().to_string();
@@ -88,8 +88,8 @@ pub fn workspace_add_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("workspace_add");
     group.sample_size(50);
 
-    let params = [10000];
-
+    let params = [100000];
+    use walkdir::WalkDir;
     for &num_files in params.iter() {
         // Write the files for this benchmark
         util::fs::remove_dir_all(base_dir.join("files"));
@@ -97,18 +97,34 @@ pub fn workspace_add_benchmark(c: &mut Criterion) {
         let files_dir = base_dir.join("files");
         util::fs::create_dir_all(&files_dir).unwrap();
 
-        let mut files_dirs: Vec<PathBuf> = (0..(num_files / 100))
-            .map(|_| {
-                let depth = rng.gen_range(1..=4);
-                (0..depth).fold(files_dir.clone(), |path, _| {
-                    path.join(generate_random_string(10))
-                })
-            })
-            .collect();
+        let files: Vec<FileWithHash> = if let Some(ref data_path) = data_path { 
+        
+            let mut files = vec![];
+            for entry in WalkDir::new(&data_path).into_iter().filter_map(|e| e.ok()) {
+                    // Walkdir outputs full paths
+                    let entry_path = entry.path().to_path_buf();
+                    let hash = util::hasher::hash_file_contents(&entry_path).unwrap();
 
-        files_dirs.push(files_dir);
+                    files.push(FileWithHash {path: entry_path, hash});
+                    
+                }
 
-        let files: Vec<FileWithHash> = {
+            files
+            
+        // Otherwise, generate new test files
+        } else {
+            let mut files_dirs: Vec<PathBuf> = 
+                (0..(num_files / 100))
+                    .map(|_| {
+                        let depth = rng.gen_range(1..=4);
+                        (0..depth).fold(files_dir.clone(), |path, _| {
+                            path.join(generate_random_string(10))
+                        })
+                    })
+                    .collect();
+            
+            files_dirs.push(files_dir);
+
             (0..num_files)
                 .map(|i| {
                     let dir = &files_dirs[rng.gen_range(0..files_dirs.len())];

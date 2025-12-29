@@ -25,7 +25,7 @@ fn main() {
             "add" => add::add_benchmark(&mut c, data_path, Some(iters)),
             "push" => push::push_benchmark(&mut c, data_path, Some(iters)),
             "workspace_add" => {
-                workspace_add::workspace_add_benchmark(&mut c)
+                workspace_add::workspace_add_benchmark(&mut c, data_path)
             }
             "fetch" => fetch::fetch_benchmark(&mut c, data_path, Some(iters)),
             "download" => download::download_benchmark(&mut c, data_path, Some(iters)),
