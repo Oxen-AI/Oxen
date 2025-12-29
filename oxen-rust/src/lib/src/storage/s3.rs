@@ -56,7 +56,7 @@ impl S3VersionStore {
                     .send()
                     .await
                     .map_err(|err| {
-                        OxenError::basic_str(&format!("Failed to get bucket location: {err:?}"))
+                        OxenError::basic_str(format!("Failed to get bucket location: {err:?}"))
                     })?
                     .location_constraint()
                     .map(|loc| loc.as_str().to_string())
@@ -209,7 +209,7 @@ impl VersionStore for S3VersionStore {
             .send()
             .await
             .map_err(|e| {
-                OxenError::basic_str(&format!("failed to store derived version file in S3: {e}"))
+                OxenError::basic_str(format!("failed to store derived version file in S3: {e}"))
             })?;
         log::debug!("Saved derived version file {derived_path:?}");
 
@@ -226,7 +226,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(&format!("S3 head_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
 
         let size = resp.content_length().unwrap_or(0) as u64;
         Ok(size)
@@ -242,13 +242,13 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {}", e)))?;
+            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
 
         let data = resp
             .body
             .collect()
             .await
-            .map_err(|e| OxenError::basic_str(&format!("S3 read body failed: {}", e)))?
+            .map_err(|e| OxenError::basic_str(format!("S3 read body failed: {e}")))?
             .into_bytes()
             .to_vec();
 
@@ -269,7 +269,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
 
@@ -290,7 +290,7 @@ impl VersionStore for S3VersionStore {
             .key(key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
         Ok(Box::new(adapter) as Box<_>)
@@ -407,7 +407,7 @@ impl Stream for ByteStreamAdapter {
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => Poll::Ready(Some(Ok(bytes))),
             Poll::Ready(Some(Err(e))) => {
-                let err = io::Error::new(io::ErrorKind::Other, format!("{e}"));
+                let err = io::Error::other(format!("{e}"));
                 Poll::Ready(Some(Err(err)))
             }
             Poll::Ready(None) => Poll::Ready(None),
