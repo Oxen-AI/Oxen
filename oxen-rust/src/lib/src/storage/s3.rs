@@ -8,7 +8,7 @@ use bytes::Bytes;
 use image::DynamicImage;
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
@@ -62,7 +62,7 @@ impl S3VersionStore {
                     })?
                     .location_constraint()
                     .map(|loc| loc.as_str().to_string())
-                    .unwrap_or("us-west-1".to_string());
+                    .unwrap_or("us-east-1".to_string());
 
                 // Construct the client with the detected bucket region
                 let real_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
@@ -203,7 +203,14 @@ impl VersionStore for S3VersionStore {
         derived_path: &Path,
     ) -> Result<(), OxenError> {
         let client = self.init_client().await?;
-        let key = derived_path.to_string_lossy().into_owned();
+        let key = derived_path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(c) => Some(c.to_string_lossy()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
 
         client
             .put_object()
@@ -289,7 +296,14 @@ impl VersionStore for S3VersionStore {
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
         let client = self.init_client().await?;
-        let key = derived_path.to_string_lossy().into_owned();
+        let key = derived_path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(c) => Some(c.to_string_lossy()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
 
         let resp = client
             .get_object()
