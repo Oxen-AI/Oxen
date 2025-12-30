@@ -691,6 +691,7 @@ async fn list_missing_file_hashes_from_hashes(
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let mut results = HashSet::new();
     let version_store = repo.version_store()?;
+    // Todo: Parallelize for S3
     for hash in hashes {
         if !version_store.version_exists(&hash.to_string()).await? {
             results.insert(*hash);

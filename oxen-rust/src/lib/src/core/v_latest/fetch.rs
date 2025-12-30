@@ -1025,6 +1025,7 @@ async fn get_missing_entries_for_pull(
     entries: &[Entry],
 ) -> Result<Vec<Entry>, OxenError> {
     let mut missing_entries: Vec<Entry> = vec![];
+    // TODO: parallelize for S3
     for entry in entries {
         if !version_store.version_exists(&entry.hash()).await? {
             missing_entries.push(entry.to_owned())

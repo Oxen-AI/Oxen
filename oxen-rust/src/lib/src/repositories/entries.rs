@@ -16,7 +16,7 @@ use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
-use futures::{stream, StreamExt};
+use futures::{stream, StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -309,21 +309,21 @@ pub async fn list_missing_files_in_commit_range(
             all_entries.dedup_by(|a, b| a.path == b.path);
 
             let worker_count = concurrency::num_threads_for_items(all_entries.len());
-            let missing_files: Vec<CommitEntry> = stream::iter(all_entries)
+            let missing_files = stream::iter(all_entries)
                 .map(|entry| {
                     let version_store = &version_store;
                     async move {
                         match version_store.version_exists(&entry.hash).await {
-                            Ok(true) => None,
-                            Ok(false) => Some(entry),
-                            Err(_) => None,
+                            Ok(true) => Ok(None),
+                            Ok(false) => Ok(Some(entry)),
+                            Err(e) => Err(e),
                         }
                     }
                 })
                 .buffer_unordered(worker_count)
-                .filter_map(|x| async move { x })
-                .collect()
-                .await;
+                .try_filter_map(|x| async move { Ok(x) })
+                .try_collect::<Vec<_>>()
+                .await?;
 
             Ok(missing_files)
         }
@@ -332,21 +332,21 @@ pub async fn list_missing_files_in_commit_range(
             let entries = list_for_commit(repo, head_commit)?;
 
             let worker_count = concurrency::num_threads_for_items(entries.len());
-            let missing_files: Vec<CommitEntry> = stream::iter(entries)
+            let missing_files = stream::iter(entries)
                 .map(|entry| {
                     let version_store = &version_store;
                     async move {
                         match version_store.version_exists(&entry.hash).await {
-                            Ok(true) => None,
-                            Ok(false) => Some(entry),
-                            Err(_) => None,
+                            Ok(true) => Ok(None),
+                            Ok(false) => Ok(Some(entry)),
+                            Err(e) => Err(e),
                         }
                     }
                 })
                 .buffer_unordered(worker_count)
-                .filter_map(|x| async move { x })
-                .collect()
-                .await;
+                .try_filter_map(|x| async move { Ok(x) })
+                .try_collect::<Vec<_>>()
+                .await?;
 
             Ok(missing_files)
         }

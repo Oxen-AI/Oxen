@@ -94,7 +94,8 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// Store a derived version file (resized, video thumbnail etc.)
     ///
     /// # Arguments
-    /// * `data` - The raw bytes to store
+    /// * `derived_image` - The derived image to store, used for local processing
+    /// * `image_buf` - The raw bytes to store, used for S3
     /// * `derived_path` - Path/key to the derived version file
     async fn store_version_derived(
         &self,

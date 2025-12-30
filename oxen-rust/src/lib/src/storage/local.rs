@@ -128,14 +128,20 @@ impl VersionStore for LocalVersionStore {
         derived_path: &Path,
     ) -> Result<(), OxenError> {
         let path = PathBuf::from(derived_path);
-        let derived_parent = path.parent().unwrap_or(Path::new(""));
-        if !derived_parent.exists() {
-            util::fs::create_dir_all(derived_parent)?;
-        }
-        derived_image.save(derived_path)?;
-        log::debug!("Saved derived version file {derived_path:?}");
+        // Todo: optimize for high concurrency writes
+        tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+            let derived_parent = path.parent().unwrap_or(Path::new(""));
 
-        Ok(())
+            if !derived_parent.exists() {
+                util::fs::create_dir_all(derived_parent)?;
+            }
+
+            derived_image.save(&path)?;
+
+            log::debug!("Saved derived version file {path:?}");
+            Ok(())
+        })
+        .await?
     }
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
