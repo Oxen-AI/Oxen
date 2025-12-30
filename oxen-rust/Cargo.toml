@@ -20,6 +20,7 @@ categories = [
 default = ["duckdb/bundled"]
 docs = ["duckdb"]
 ffmpeg = ["thumbnails"]
+perf-logging = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

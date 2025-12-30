@@ -9,6 +9,7 @@ use liboxen::core::commit_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
+use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::branch::BranchName;
@@ -117,6 +118,9 @@ pub async fn history(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    let _perf = perf_guard!("commits::history_endpoint");
+
+    let _perf_parse = perf_guard!("commits::history_parse_params");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -134,9 +138,11 @@ pub async fn history(
             Pagination::empty(pagination),
         )));
     }
+    drop(_perf_parse);
 
     log::debug!("commit_history resource_param: {resource_param:?}");
 
+    let _perf_resource = perf_guard!("commits::history_parse_resource");
     // This checks if the parameter received from the client is two commits split by "..", in this case we don't parse the resource
     let (resource, revision, commit) = if resource_param.contains("..") {
         (None, Some(resource_param), None)
@@ -145,10 +151,12 @@ pub async fn history(
         let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
         (Some(resource), None, Some(commit))
     };
+    drop(_perf_resource);
 
     match &resource {
         Some(resource) if resource.path != Path::new("") => {
             log::debug!("commit_history resource_param: {resource:?}");
+            let _perf_list = perf_guard!("commits::history_list_by_path");
             let commits = repositories::commits::list_by_path_from_paginated(
                 &repo,
                 commit.as_ref().unwrap(), // Safe unwrap: `commit` is Some if `resource` is Some
@@ -163,6 +171,7 @@ pub async fn history(
             log::debug!("commit_history revision: {revision:?}");
             let revision_id = revision.as_ref().or_else(|| commit.as_ref().map(|c| &c.id));
             if let Some(revision_id) = revision_id {
+                let _perf_list = perf_guard!("commits::history_list_from_revision");
                 let commits =
                     repositories::commits::list_from_paginated(&repo, revision_id, pagination)?;
                 log::debug!("commit_history got {} commits", commits.commits.len());

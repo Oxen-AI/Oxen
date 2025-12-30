@@ -102,9 +102,12 @@ pub fn list_directory_w_workspace(
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
+
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
+            let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
             let revision_str = revision.as_ref().to_string();
             let version_str = if let Some(workspace) = workspace.clone() {
                 workspace.id.clone()
@@ -122,6 +125,8 @@ pub fn list_directory_w_workspace(
                 version: PathBuf::from(&version_str),
                 resource: PathBuf::from(&version_str).join(directory.as_ref()),
             };
+            drop(_perf_setup);
+
             core::v_latest::entries::list_directory(
                 repo,
                 directory,

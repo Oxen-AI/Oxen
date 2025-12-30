@@ -9,6 +9,7 @@ pub mod image;
 pub mod logging;
 pub mod oxen_version;
 pub mod paginate;
+pub mod perf;
 pub mod progress_bar;
 pub mod read_progress;
 pub mod str;
