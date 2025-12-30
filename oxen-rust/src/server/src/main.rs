@@ -21,6 +21,7 @@ pub mod test;
 extern crate log;
 extern crate lru;
 
+use actix_web::http::KeepAlive;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
@@ -426,7 +427,9 @@ async fn main() -> std::io::Result<()> {
                             .wrap(Logger::default())
                             .wrap(Logger::new("user agent is %a %{User-Agent}i"))
                     })
-                    .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
+                    .keep_alive(KeepAlive::Timeout(std::time::Duration::from_secs(
+                        keep_alive_secs,
+                    )))
                     .client_request_timeout(std::time::Duration::from_secs(
                         client_request_timeout_secs,
                     ))
