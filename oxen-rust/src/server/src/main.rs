@@ -21,6 +21,7 @@ pub mod test;
 extern crate log;
 extern crate lru;
 
+use actix_web::http::KeepAlive;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
@@ -281,6 +282,16 @@ async fn main() -> std::io::Result<()> {
         Err(_) => String::from("data"),
     };
 
+    let keep_alive_secs = env::var("OXEN_KEEP_ALIVE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
+
+    let client_request_timeout_secs = env::var("OXEN_CLIENT_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
+
     let command = Command::new("oxen-server")
         .version(VERSION)
         .about(ABOUT)
@@ -416,6 +427,12 @@ async fn main() -> std::io::Result<()> {
                             .wrap(Logger::default())
                             .wrap(Logger::new("user agent is %a %{User-Agent}i"))
                     })
+                    .keep_alive(KeepAlive::Timeout(std::time::Duration::from_secs(
+                        keep_alive_secs,
+                    )))
+                    .client_request_timeout(std::time::Duration::from_secs(
+                        client_request_timeout_secs,
+                    ))
                     .bind((host.to_owned(), port))?
                     .run()
                     .await
