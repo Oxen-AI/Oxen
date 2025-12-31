@@ -471,16 +471,20 @@ impl MerkleTreeNode {
     }
 
     /// List missing file hashes
-    pub fn list_missing_file_hashes(
+    pub async fn list_missing_file_hashes(
         &self,
         repo: &LocalRepository,
     ) -> Result<HashSet<MerkleHash>, OxenError> {
         let mut missing_hashes = HashSet::new();
         let version_store = repo.version_store()?;
+        // Todo: parallelize for S3
         for child in &self.children {
             if let EMerkleTreeNode::File(_) = &child.node {
                 // Check if the file exists in the version store
-                if !version_store.version_exists(&child.hash.to_string())? {
+                if !version_store
+                    .version_exists(&child.hash.to_string())
+                    .await?
+                {
                     missing_hashes.insert(child.hash);
                 }
             }

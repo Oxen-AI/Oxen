@@ -514,7 +514,7 @@ pub fn list_missing_node_hashes(
 }
 
 // TODO: Deduplicate functionality with model::MerkleTreeNode
-pub fn list_missing_file_hashes(
+pub async fn list_missing_file_hashes(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
@@ -522,17 +522,17 @@ pub fn list_missing_file_hashes(
         let Some(node) = CommitMerkleTreeV0_19_0::read_depth(repo, hash, 1)? else {
             return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
-        node.list_missing_file_hashes(repo)
+        node.list_missing_file_hashes(repo).await
     } else {
         let Some(node) = CommitMerkleTreeLatest::read_depth(repo, hash, 1)? else {
             return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
-        node.list_missing_file_hashes(repo)
+        node.list_missing_file_hashes(repo).await
     }
 }
 
 /// Given a set of commit ids, return the hashes that are missing from the tree
-pub fn list_missing_file_hashes_from_commits(
+pub async fn list_missing_file_hashes_from_commits(
     repo: &LocalRepository,
     commit_ids: &HashSet<MerkleHash>,
     subtree_paths: &Option<Vec<PathBuf>>,
@@ -586,7 +586,7 @@ pub fn list_missing_file_hashes_from_commits(
         "list_missing_file_hashes_from_commits candidate_hashes count: {}",
         candidate_hashes.len()
     );
-    list_missing_file_hashes_from_hashes(repo, &candidate_hashes)
+    list_missing_file_hashes_from_hashes(repo, &candidate_hashes).await
 }
 
 pub fn dir_entries_with_paths(
@@ -685,14 +685,15 @@ pub fn list_unsynced_commit_hashes(
     Ok(results)
 }
 
-fn list_missing_file_hashes_from_hashes(
+async fn list_missing_file_hashes_from_hashes(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let mut results = HashSet::new();
     let version_store = repo.version_store()?;
+    // Todo: Parallelize for S3
     for hash in hashes {
-        if !version_store.version_exists(&hash.to_string())? {
+        if !version_store.version_exists(&hash.to_string()).await? {
             results.insert(*hash);
         }
     }
