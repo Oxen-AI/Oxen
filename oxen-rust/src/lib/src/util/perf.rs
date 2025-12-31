@@ -1,6 +1,6 @@
-//! Performance instrumentation module
+//! Performance instrumentation
 //!
-//! This module provides zero-cost performance logging when compiled without the `perf-logging` feature.
+//! This provides zero-cost performance logging when compiled without the `perf-logging` feature.
 //! When the feature is enabled, it provides detailed timing information for instrumented operations.
 //!
 //! # Usage
@@ -21,11 +21,6 @@
 //! ```bash
 //! cargo build --features perf-logging
 //! ```
-//!
-//! Build without (default - zero cost):
-//! ```bash
-//! cargo build
-//! ```
 
 #[cfg(feature = "perf-logging")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,8 +28,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "perf-logging")]
 use std::time::Instant;
 
-/// Global flag to enable/disable performance logging at runtime
-/// This can be controlled via the OXEN_PERF_LOGGING environment variable
 #[cfg(feature = "perf-logging")]
 static PERF_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -130,7 +123,7 @@ impl PerfGuard {
 
 #[cfg(feature = "perf-logging")]
 impl Drop for PerfGuard {
-    fn drop(&mut self) {
+    fn drop(&mut self) { //explicitly calling drop to ensure timing is logged
         if let Some(start) = self.start {
             let elapsed = start.elapsed();
             log::info!("[PERF] {} took {:?}", self.name, elapsed);
@@ -146,7 +139,7 @@ impl Drop for PerfGuard {
     }
 }
 
-/// Convenience macro to create a performance guard with the current function name
+/// macro to create a performance guard with the current function name
 ///
 /// # Example
 ///
@@ -165,7 +158,7 @@ macro_rules! perf_guard {
     };
 }
 
-/// Convenience macro to create a performance guard with an automatically generated name
+/// macro to create a performance guard with an automatically generated name
 ///
 /// # Example
 ///
