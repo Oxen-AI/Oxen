@@ -28,6 +28,7 @@ WORKDIR /usr/src/oxen-server
 COPY --from=planner /usr/src/oxen-server/recipe.json recipe.json
 
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+
 RUN cargo chef cook --bin oxen-server --features ffmpeg,perf-logging --recipe-path recipe.json
 
 COPY . .

@@ -309,25 +309,35 @@ impl LocalRepository {
             .as_ref()
             .map(|store| -> Result<StorageConfig, OxenError> {
                 let settings = store.storage_settings();
-                let path = settings
-                    .get("path")
-                    .ok_or_else(|| OxenError::basic_str("Storage settings missing 'path' key"))?;
-                let storage_path =
-                    if util::fs::is_relative_to_dir(path, util::fs::oxen_hidden_dir(&self.path)) {
-                        // If path is within .oxen (default location), use the relative path in case the repo was moved
-                        util::fs::path_relative_to_dir(path, &self.path)
-                            .unwrap()
-                            .to_string_lossy()
-                            .into_owned()
-                    } else {
-                        // Otherwise, use the absolute path
-                        path.clone()
-                    };
+                match store.storage_type() {
+                    "local" => {
+                        let path = settings.get("path").ok_or_else(|| {
+                            OxenError::basic_str("Storage settings missing 'path' key")
+                        })?;
+                        let storage_path = if util::fs::is_relative_to_dir(
+                            path,
+                            util::fs::oxen_hidden_dir(&self.path),
+                        ) {
+                            // If path is within .oxen (default location), use the relative path in case the repo was moved
+                            util::fs::path_relative_to_dir(path, &self.path)
+                                .unwrap()
+                                .to_string_lossy()
+                                .into_owned()
+                        } else {
+                            // Otherwise, use the absolute path
+                            path.clone()
+                        };
 
-                Ok(StorageConfig {
-                    type_: store.storage_type().to_string(),
-                    settings: HashMap::from([("path".to_string(), storage_path)]),
-                })
+                        Ok(StorageConfig {
+                            type_: store.storage_type().to_string(),
+                            settings: HashMap::from([("path".to_string(), storage_path)]),
+                        })
+                    }
+                    _ => Ok(StorageConfig {
+                        type_: store.storage_type().to_string(),
+                        settings,
+                    }),
+                }
             })
             .transpose()?;
 

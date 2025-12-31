@@ -102,10 +102,7 @@ impl PerfGuard {
                 start: Some(Instant::now()),
             }
         } else {
-            Self {
-                name,
-                start: None,
-            }
+            Self { name, start: None }
         }
     }
 

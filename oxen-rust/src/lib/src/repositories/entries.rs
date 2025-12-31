@@ -8,6 +8,7 @@ use crate::model::entry::commit_entry::{Entry, SchemaEntry};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::PaginateOpts;
 use crate::repositories;
+use crate::util::concurrency;
 use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
@@ -15,6 +16,7 @@ use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
+use futures::{stream, StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -291,7 +293,7 @@ pub fn group_schemas_to_parent_dirs(
     results
 }
 
-pub fn list_missing_files_in_commit_range(
+pub async fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
     base_commit: &Option<Commit>,
     head_commit: &Commit,
@@ -311,21 +313,46 @@ pub fn list_missing_files_in_commit_range(
             all_entries.sort_by(|a, b| a.path.cmp(&b.path));
             all_entries.dedup_by(|a, b| a.path == b.path);
 
-            let missing_files: Vec<CommitEntry> = all_entries
-                .into_par_iter()
-                .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(true))
-                .collect();
+            let worker_count = concurrency::num_threads_for_items(all_entries.len());
+            let missing_files = stream::iter(all_entries)
+                .map(|entry| {
+                    let version_store = &version_store;
+                    async move {
+                        match version_store.version_exists(&entry.hash).await {
+                            Ok(true) => Ok(None),
+                            Ok(false) => Ok(Some(entry)),
+                            Err(e) => Err(e),
+                        }
+                    }
+                })
+                .buffer_unordered(worker_count)
+                .try_filter_map(|x| async move { Ok(x) })
+                .try_collect::<Vec<_>>()
+                .await?;
 
             Ok(missing_files)
         }
         None => {
             // we only receive a head commit, so we need to find all the commits between the head and the first commit
-
             let entries = list_for_commit(repo, head_commit)?;
-            let missing_files: Vec<CommitEntry> = entries
-                .into_par_iter()
-                .filter(|entry| !version_store.version_exists(&entry.hash).unwrap_or(false))
-                .collect();
+
+            let worker_count = concurrency::num_threads_for_items(entries.len());
+            let missing_files = stream::iter(entries)
+                .map(|entry| {
+                    let version_store = &version_store;
+                    async move {
+                        match version_store.version_exists(&entry.hash).await {
+                            Ok(true) => Ok(None),
+                            Ok(false) => Ok(Some(entry)),
+                            Err(e) => Err(e),
+                        }
+                    }
+                })
+                .buffer_unordered(worker_count)
+                .try_filter_map(|x| async move { Ok(x) })
+                .try_collect::<Vec<_>>()
+                .await?;
+
             Ok(missing_files)
         }
     }

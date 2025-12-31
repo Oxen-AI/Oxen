@@ -187,24 +187,19 @@ pub async fn get(
         };
         log::debug!("img_resize {img_resize:?}");
 
-        let resized_path = util::fs::handle_image_resize(
+        let file_stream = util::fs::handle_image_resize(
             Arc::clone(&version_store),
             hash_str.clone(),
             &path,
             &version_path,
             img_resize,
-        )?;
-        log::debug!("In the resize cache! {resized_path:?}");
-
-        // Generate stream for the resized image
-        let file = File::open(&resized_path).await?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
+        )
+        .await?;
 
         return Ok(HttpResponse::Ok()
             .content_type(mime_type)
             .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-            .streaming(stream));
+            .streaming(file_stream));
     }
 
     // Handle video thumbnail - requires thumbnail=true parameter
@@ -1087,8 +1082,11 @@ mod tests {
         )?
         .unwrap();
         let version_store = repo.version_store()?;
-        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
-        assert!(version_path.exists());
+        assert!(
+            version_store
+                .version_exists(&entry.hash().to_string())
+                .await?
+        );
 
         // cleanup
         test::cleanup_sync_dir(&sync_dir)?;

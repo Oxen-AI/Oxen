@@ -68,7 +68,7 @@ glob-match = "0.2.1"
 http = "1.1.0"
 humantime = "2.1.0"
 ignore = "0.4"
-image = "0.25.2"
+image = { version = "0.25.2", features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 indicatif = "0.17.1"
 infer = "0.16.0"
 itertools = "0.13.0"

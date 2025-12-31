@@ -314,7 +314,8 @@ pub async fn list_missing_files(
         &repo,
         &base_commit,
         &head_commit,
-    )?;
+    )
+    .await?;
 
     let response = ListCommitEntryResponse {
         status: StatusMessage::resource_found(),

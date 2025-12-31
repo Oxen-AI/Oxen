@@ -294,8 +294,8 @@ async fn prune_versions(
             stats.versions_removed += 1;
 
             // Get the size before deleting
-            if let Ok(metadata) = version_store.get_version_metadata(&version_hash).await {
-                stats.bytes_freed += metadata.len();
+            if let Ok(file_size) = version_store.get_version_size(&version_hash).await {
+                stats.bytes_freed += file_size;
             }
 
             if dry_run {
