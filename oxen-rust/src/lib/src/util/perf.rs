@@ -123,7 +123,8 @@ impl PerfGuard {
 
 #[cfg(feature = "perf-logging")]
 impl Drop for PerfGuard {
-    fn drop(&mut self) { //explicitly calling drop to ensure timing is logged
+    fn drop(&mut self) {
+        //explicitly calling drop to ensure timing is logged
         if let Some(start) = self.start {
             let elapsed = start.elapsed();
             log::info!("[PERF] {} took {:?}", self.name, elapsed);
