@@ -276,6 +276,7 @@ async fn main() -> std::io::Result<()> {
     }
 
     util::logging::init_logging();
+    util::perf::init_perf_logging();
 
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => dir,
