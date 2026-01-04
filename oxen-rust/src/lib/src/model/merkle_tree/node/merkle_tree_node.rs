@@ -565,7 +565,7 @@ impl MerkleTreeNode {
             // log::debug!(
             //     "get_by_path_helper {} is file! [{:?}] {:?} {:?}",
             //     self,
-            //     self.node.dtype(),
+            //     self.node.node_type(),
             //     file_path,
             //     path
             // );

@@ -355,6 +355,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_delete_file_after_upload() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+            let branch_name = "main";
+
+            // Find a file (not a directory) to delete
+            // Files in train directory: dog_1.jpg, dog_2.jpg, dog_3.jpg, dog_4.jpg, cat_1.jpg, cat_2.jpg, cat_3.jpg
+            let file_to_delete = "train/dog_1.jpg";
+
+            // Verify the file exists before deletion
+            let file_path = local_repo.path.join(file_to_delete);
+            assert!(file_path.exists(), "File should exist before deletion");
+
+            // Delete the file
+            let delete_commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Delete existing file from training data".to_string(),
+            };
+
+            let delete_response = api::client::file::delete_file(
+                &remote_repo,
+                branch_name,
+                &file_to_delete,
+                Some(delete_commit_body),
+            )
+            .await?;
+
+            assert_eq!(delete_response.status.status_message, "resource_deleted");
+            assert!(delete_response
+                .commit
+                .message
+                .contains("Delete existing file from training data"));
+
+            // Pull the deletion
+            repositories::pull(&local_repo).await?;
+
+            // Verify the file is deleted
+            assert!(!file_path.exists(), "File should be deleted after deletion");
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_get_file_with_workspace() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let base_dir = "annotations";
