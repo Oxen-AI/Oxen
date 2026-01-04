@@ -400,8 +400,7 @@ pub async fn delete(
 
     // Stage the path as removed
     log::debug!("file::delete staging path {path:?}");
-    let err_files = repositories::workspaces::files::rm(&workspace, &path).await?;
-    log::debug!("file::delete err_files: {err_files:?}");
+    repositories::workspaces::files::rm(&workspace, &path).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
