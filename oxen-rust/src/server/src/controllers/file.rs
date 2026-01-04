@@ -395,10 +395,13 @@ pub async fn delete(
     // Get the commit info from the payload
     let (name, email, message, _temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
+    log::debug!("file::delete creating workspace for commit: {commit}");
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
 
     // Stage the path as removed
-    repositories::workspaces::files::rm(&workspace, &path).await?;
+    log::debug!("file::delete staging path {path:?}");
+    let err_files = repositories::workspaces::files::rm(&workspace, &path).await?;
+    log::debug!("file::delete err_files: {err_files:?}");
 
     // Commit workspace
     let commit_body = NewCommitBody {
