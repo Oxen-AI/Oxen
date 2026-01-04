@@ -45,6 +45,8 @@ pub fn list_directory(
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    let _perf = crate::perf_guard!("core::entries::list_directory");
+
     let directory = directory.as_ref();
     let revision = parsed_resource.version.to_str().unwrap_or("").to_string();
     let page = paginate_opts.page_num;
@@ -64,8 +66,10 @@ pub fn list_directory(
 
     log::debug!("list_directory commit {commit}");
 
+    let _perf_get_dir = crate::perf_guard!("core::entries::get_dir_with_children");
     let dir = repositories::tree::get_dir_with_children(repo, &commit, directory, None)?
         .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
+    drop(_perf_get_dir);
 
     log::debug!("list_directory dir {dir}");
 
@@ -78,6 +82,8 @@ pub fn list_directory(
     // Found commits is used to cache the commits so that we don't have
     // to read them from disk again while looping over entries
     let mut found_commits: HashMap<MerkleHash, Commit> = HashMap::new();
+
+    let _perf_dir_entry = crate::perf_guard!("core::entries::dir_node_to_metadata");
     let dir_entry =
         dir_node_to_metadata_entry(repo, &dir, parsed_resource, &mut found_commits, false)?;
     let dir_entry = dir_entry.map(|dir_entry| {
@@ -85,14 +91,22 @@ pub fn list_directory(
             dir_entry,
         ))
     });
+    drop(_perf_dir_entry);
+
     log::debug!("list_directory dir_entry {dir_entry:?}");
+
+    let _perf_entries = crate::perf_guard!("core::entries::collect_dir_entries");
     let entries: Vec<MetadataEntry> =
         dir_entries(repo, &dir, directory, parsed_resource, &mut found_commits)?;
     log::debug!("list_directory got {} entries", entries.len());
+    drop(_perf_entries);
 
+    let _perf_paginate = crate::perf_guard!("core::entries::paginate_entries");
     let (entries, pagination) = util::paginate(entries, page, page_size);
     let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
+    drop(_perf_paginate);
 
+    let _perf_workspace = crate::perf_guard!("core::entries::populate_workspace_data");
     let entries: Vec<EMetadataEntry> = if parsed_resource.workspace.is_some() {
         repositories::workspaces::populate_entries_with_workspace_data(
             repo,
@@ -106,6 +120,7 @@ pub fn list_directory(
             .map(EMetadataEntry::MetadataEntry)
             .collect()
     };
+    drop(_perf_workspace);
 
     Ok(PaginatedDirEntries {
         dir: dir_entry,
@@ -171,6 +186,8 @@ pub fn dir_entries(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
+    let _perf = crate::perf_guard!("core::entries::dir_entries");
+
     log::debug!(
         "dir_entries search_directory {:?} dir {}",
         search_directory.as_ref(),
@@ -178,6 +195,8 @@ pub fn dir_entries(
     );
     let mut entries: Vec<MetadataEntry> = Vec::new();
     let current_directory = search_directory.as_ref();
+
+    let _perf_recurse = crate::perf_guard!("core::entries::p_dir_entries_recurse");
     p_dir_entries(
         repo,
         dir,
@@ -187,15 +206,18 @@ pub fn dir_entries(
         found_commits,
         &mut entries,
     )?;
+    drop(_perf_recurse);
 
     log::debug!("dir_entries got {} entries", entries.len());
 
+    let _perf_sort = crate::perf_guard!("core::entries::sort_entries");
     // Sort entries by is_dir first, then by filename
     entries.sort_by(|a, b| {
         b.is_dir
             .cmp(&a.is_dir)
             .then_with(|| a.filename.cmp(&b.filename))
     });
+    drop(_perf_sort);
 
     Ok(entries)
 }
@@ -209,6 +231,8 @@ fn dir_node_to_metadata_entry(
     // but when we recurse we do
     should_append_resource: bool,
 ) -> Result<Option<MetadataEntry>, OxenError> {
+    let _perf = crate::perf_guard!("core::entries::dir_node_to_metadata_entry");
+
     let EMerkleTreeNode::Directory(dir_node) = &node.node else {
         return Ok(None);
     };
@@ -216,6 +240,7 @@ fn dir_node_to_metadata_entry(
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(*dir_node.last_commit_id())
     {
+        let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
         let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?.ok_or(
             OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string()),
         )?;
@@ -252,9 +277,12 @@ fn file_node_to_metadata_entry(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
 ) -> Result<Option<MetadataEntry>, OxenError> {
+    let _perf = crate::perf_guard!("core::entries::file_node_to_metadata_entry");
+
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(*file_node.last_commit_id())
     {
+        let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
         let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?.ok_or(
             OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string()),
         )?;
@@ -274,6 +302,7 @@ fn file_node_to_metadata_entry(
         parsed_resource.path = parsed_resource.path.join(file_node.name());
     }
 
+    let _perf_indexed = crate::perf_guard!("core::entries::check_if_indexed");
     let is_indexed = if *data_type == EntryDataType::Tabular {
         Some(
             core::v_latest::workspaces::data_frames::is_queryable_data_frame_indexed_from_file_node(
@@ -283,6 +312,7 @@ fn file_node_to_metadata_entry(
     } else {
         None
     };
+    drop(_perf_indexed);
 
     Ok(Some(MetadataEntry {
         filename: file_node.name().to_string(),

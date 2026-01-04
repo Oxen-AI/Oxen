@@ -4,6 +4,7 @@ use crate::params::{app_data, parse_resource, path_param, PageNumVersionQuery};
 
 use liboxen::core::versions::MinOxenVersion;
 use liboxen::opts::PaginateOpts;
+use liboxen::perf_guard;
 use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
 
@@ -32,6 +33,9 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<PageNumVersionQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let _perf = perf_guard!("dir::get_endpoint");
+
+    let _perf_parse = perf_guard!("dir::get_parse_params");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -41,6 +45,7 @@ pub async fn get(
     let page: usize = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size: usize = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
     let api_version = MinOxenVersion::or_latest(query.api_version.clone())?;
+    drop(_perf_parse);
 
     log::debug!(
         "{} resource {namespace}/{repo_name}/{resource}",
@@ -53,6 +58,7 @@ pub async fn get(
         resource.version.to_str().unwrap_or_default().to_string()
     };
 
+    let _perf_list = perf_guard!("dir::get_list_directory");
     let paginated_entries = repositories::entries::list_directory_w_workspace(
         &repo,
         &resource.path,
@@ -64,7 +70,9 @@ pub async fn get(
         },
         api_version,
     )?;
+    drop(_perf_list);
 
+    let _perf_serialize = perf_guard!("dir::get_serialize_response");
     let view = PaginatedDirEntriesResponse::ok_from(paginated_entries);
     Ok(HttpResponse::Ok().json(view))
 }
