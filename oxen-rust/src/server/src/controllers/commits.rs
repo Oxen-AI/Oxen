@@ -178,7 +178,7 @@ pub async fn history(
 /// Get commit history count
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/commits/history/{resource}/count",
+    path = "/api/repos/{namespace}/{repo_name}/commits/count/{resource}",
     operation_id = "get_commit_history_count",
     tag = "Commits",
     security( ("api_key" = []) ),
