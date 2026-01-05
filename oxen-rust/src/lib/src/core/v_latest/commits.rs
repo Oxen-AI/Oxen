@@ -17,7 +17,10 @@ use crate::{repositories, util};
 use std::path::PathBuf;
 use std::str;
 
+use crate::constants::COMMIT_COUNT_DIR;
+use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
     repositories::commits::commit_writer::commit(repo, message)
@@ -496,6 +499,62 @@ fn list_recursive_with_depth(
         }
     }
     Ok(())
+}
+
+/// Open the commit count cache database
+fn open_commit_count_db(
+    repo: &LocalRepository,
+) -> Result<DBWithThreadMode<MultiThreaded>, OxenError> {
+    let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
+    let opts = crate::core::db::key_val::opts::default();
+    Ok(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?)
+}
+
+/// Get cached commit count from the database
+fn get_cached_count(
+    db: &DBWithThreadMode<MultiThreaded>,
+    commit_id: &str,
+) -> Result<Option<usize>, OxenError> {
+    str_val_db::get(db, commit_id)
+}
+
+/// Cache a commit count in the database
+fn cache_count(
+    db: &DBWithThreadMode<MultiThreaded>,
+    commit_id: &str,
+    count: usize,
+) -> Result<(), OxenError> {
+    str_val_db::put(db, commit_id, &count)
+}
+
+/// Get the number of commits in the history from a given revision (including the commit itself)
+/// This function uses a cache to avoid recomputing counts for commits we've already seen
+pub fn count_from(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+) -> Result<(usize, bool), OxenError> {
+    let revision = revision.as_ref();
+
+    // Get the commit from the revision
+    let commit = repositories::revisions::get(repo, revision)?
+        .ok_or_else(|| OxenError::revision_not_found(revision.into()))?;
+
+    // Open the cache database
+    let db = open_commit_count_db(repo)?;
+
+    // Check if we have this count cached
+    if let Some(cached_count) = get_cached_count(&db, &commit.id)? {
+        return Ok((cached_count, true));
+    }
+
+    // Not cached, compute the count using list_from
+    let commits = list_from(repo, &commit.id)?;
+    let count = commits.len();
+
+    // Cache the result
+    cache_count(&db, &commit.id, count)?;
+
+    Ok((count, false))
 }
 
 /// List the history between two commits

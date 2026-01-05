@@ -311,6 +311,18 @@ pub fn list_by_path_from_paginated(
     }
 }
 
+/// Get the number of commits in the history from a given revision (including the commit itself)
+/// Returns a tuple of (count, cached) where cached is true if the result was from cache
+pub fn count_from(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+) -> Result<(usize, bool), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
+        _ => core::v_latest::commits::count_from(repo, revision),
+    }
+}
+
 pub fn commit_history_is_complete(
     repo: &LocalRepository,
     commit: &Commit,

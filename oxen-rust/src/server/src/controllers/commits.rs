@@ -16,8 +16,8 @@ use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::{
-    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
-    StatusMessage,
+    CommitCountResponse, CommitResponse, ListCommitResponse, PaginatedCommits, Pagination,
+    RootCommitResponse, StatusMessage,
 };
 use os_path::OsPath;
 
@@ -173,6 +173,56 @@ pub async fn history(
             }
         }
     }
+}
+
+/// Get commit history count
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/commits/history/{resource}/count",
+    operation_id = "get_commit_history_count",
+    tag = "Commits",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Commit ID, Branch name, or path to a file/directory", example = "main"),
+    ),
+    responses(
+        (status = 200, description = "Number of commits in history (including the commit itself)", body = CommitCountResponse),
+        (status = 404, description = "Repository or resource not found")
+    )
+)]
+pub async fn history_count(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let resource_param = path_param(&req, "resource")?;
+
+    if repositories::is_empty(&repo)? {
+        return Ok(HttpResponse::Ok().json(CommitCountResponse {
+            status: StatusMessage::resource_found(),
+            count: 0,
+            commit_id: String::new(),
+            cached: false,
+        }));
+    }
+
+    log::debug!("commit_history_count resource_param: {resource_param:?}");
+
+    // Parse the resource to get the commit
+    let resource = parse_resource(&req, &repo)?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    // Get the count from the repository
+    let (count, cached) = repositories::commits::count_from(&repo, &commit.id)?;
+
+    Ok(HttpResponse::Ok().json(CommitCountResponse {
+        status: StatusMessage::resource_found(),
+        count,
+        commit_id: commit.id,
+        cached,
+    }))
 }
 
 /// List all commits
