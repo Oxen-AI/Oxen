@@ -784,8 +784,8 @@ pub async fn create(
         ChunkedDataUploadQuery
     ),
     request_body(
-        content_type = "application/octet-stream", 
-        description = "Chunk of data (binary bytes)", 
+        content_type = "application/octet-stream",
+        description = "Chunk of data (binary bytes)",
         content = Vec<u8>
     ),
     responses(
@@ -1061,8 +1061,8 @@ async fn unpack_compressed_data(
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     request_body(
-        content_type = "application/octet-stream", 
-        description = "Compressed commit database (tar.gz)", 
+        content_type = "application/octet-stream",
+        description = "Compressed commit database (tar.gz)",
         content = Vec<u8>
     ),
     responses(
@@ -1178,8 +1178,8 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
         ("commit_id" = String, Path, description = "Client head commit ID", example = "84c76a5b2e9a2637f9091991475c404d"),
     ),
     request_body(
-        content_type = "application/octet-stream", 
-        description = "Compressed tree data (tar.gz)", 
+        content_type = "application/octet-stream",
+        description = "Compressed tree data (tar.gz)",
         content = Vec<u8>
     ),
     responses(

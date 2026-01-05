@@ -28,7 +28,7 @@ pub const HISTORY_DIR: &str = "history";
 /// commits/ is a key-value database of commit ids to commit objects
 pub const COMMITS_DIR: &str = "commits";
 /// commit_count/ is a cache of commit ids to their history count
-pub const COMMIT_COUNT_DIR: &str = "commit_count";
+pub const COMMIT_COUNT_DIR: &str = "cache/commit_count";
 /// name of the schema db
 pub const SCHEMAS_DIR: &str = "schemas";
 /// schemas node in merkle tree
