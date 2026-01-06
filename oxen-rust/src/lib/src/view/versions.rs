@@ -28,12 +28,13 @@ pub enum MultipartLargeFileUploadStatus {
 
 #[derive(Clone)]
 pub struct MultipartLargeFileUpload {
-    pub local_path: PathBuf,      // Path to the file on the local filesystem
-    pub dst_dir: Option<PathBuf>, // Path to upload the file to on the server
-    pub hash: MerkleHash,         // Unique identifier for the file
-    pub size: u64,                // Size of the file in bytes
+    pub local_path: PathBuf,       // Path to the file on the local filesystem
+    pub dst_dir: Option<PathBuf>,  // Path to upload the file to on the server
+    pub hash: MerkleHash,          // Unique identifier for the file
+    pub size: u64,                 // Size of the file in bytes
+    pub upload_id: Option<String>, // ID for the S3 multipart upload session
     pub status: MultipartLargeFileUploadStatus, // Status of the upload
-    pub reason: Option<String>,   // Reason for the upload failure
+    pub reason: Option<String>,    // Reason for the upload failure
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,6 +46,15 @@ pub struct CompletedFileUpload {
     // so that we can verify the upload results and re-upload
     // the file if there were any failures
     pub upload_results: Vec<HashMap<String, String>>,
+    // The upload ID for the S3 multipart upload session
+    pub upload_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CompleteFileChunk {
+    pub offset: Option<u64>,
+    pub chunk_number: Option<i32>,
+    pub etag: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -61,6 +71,12 @@ pub struct CreateVersionUploadRequest {
     pub file_name: String,
     pub size: u64,
     pub dst_dir: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateVersionUploadResponse {
+    pub status: StatusMessage,
+    pub upload_id: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
