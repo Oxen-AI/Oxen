@@ -398,7 +398,11 @@ pub async fn delete(
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
 
     // Stage the path as removed
-    repositories::workspaces::files::rm(&workspace, &path).await?;
+    let err_files = repositories::workspaces::files::rm(&workspace, &path).await?;
+    if !err_files.is_empty() {
+        let err_file = err_files[0].clone(); 
+        return Err(OxenHttpError::BadRequest(err_file.error.into()));
+    }
 
     // Commit workspace
     let commit_body = NewCommitBody {
