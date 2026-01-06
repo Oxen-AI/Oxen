@@ -282,38 +282,20 @@ impl VersionStore for LocalVersionStore {
 
     async fn get_version_chunk_writer(
         &self,
-        _hash: &str,
+        hash: &str,
         _upload_id: Option<&str>,
-        _offset: u64,
+        offset: u64,
         _chunk_number: Option<i32>,
         _chunk_size: Option<u64>,
     ) -> Result<Box<dyn VersionWriter>, OxenError> {
-        // let chunk_dir = self.version_chunk_dir(hash, offset);
-        // fs::create_dir_all(&chunk_dir).await?;
+        let chunk_dir = self.version_chunk_dir(hash, offset);
+        fs::create_dir_all(&chunk_dir).await?;
 
-        // let chunk_path = self.version_chunk_file(hash, offset);
-        // let file = File::create(&chunk_path).await?;
-        // let writer = BufWriter::new(file);
-        // futures::pin_mut!(body);
-        // Write chunks in stream
+        let chunk_path = self.version_chunk_file(hash, offset);
+        let file = File::create(&chunk_path).await?;
+        let writer = BufWriter::new(file);
 
-        // tokio::io::copy(&mut body, &mut writer).await?;
-        // while let Some(chunk) = body.next().await {
-        //     writer
-        //         .write_all(&chunk)
-        //         .await
-        //         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-        // }
-
-        // writer
-        //     .flush()
-        //     .await
-        //     .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-
-        // Ok(Box::new(writer))
-        Err(OxenError::basic_str(
-            "S3VersionStore store_version_chunk_stream not yet implemented",
-        ))
+        Ok(Box::new(LocalVersionWriter { writer }))
     }
 
     async fn get_version_chunk(

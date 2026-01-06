@@ -181,11 +181,7 @@ async fn create_multipart_large_file_upload(
         .body(body)
         .send()
         .await?;
-    eprintln!("create multipart {response:?}");
-    // let resp_body = response.text().await?;
     let resp_json: CreateVersionUploadResponse = response.json().await?;
-    eprintln!("create multipart resp_json {resp_json:?}");
-    // let resp_body = response.text().await?;
     let upload_id = resp_json.upload_id;
 
     Ok(MultipartLargeFileUpload {
@@ -193,7 +189,7 @@ async fn create_multipart_large_file_upload(
         dst_dir: dst_dir.map(|d| d.as_ref().to_path_buf()),
         hash: hash.parse()?,
         size: file_size,
-        upload_id: upload_id,
+        upload_id,
         status: MultipartLargeFileUploadStatus::Pending,
         reason: None,
     })

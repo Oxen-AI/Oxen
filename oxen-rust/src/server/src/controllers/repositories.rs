@@ -341,8 +341,7 @@ async fn handle_json_creation(
         Err(err) => {
             println!("Err repositories::create: {err:?}");
             log::error!("Err repositories::create: {err:?}");
-            Ok(HttpResponse::InternalServerError()
-                .json(StatusMessage::error("Repo creation failed.")))
+            Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
 }
