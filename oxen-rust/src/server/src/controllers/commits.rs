@@ -1268,7 +1268,6 @@ async fn unpack_entry_tarball_async(
     compressed_data: &[u8],
 ) -> Result<(), OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let version_store = repo.version_store()?;
 
     // Create async gzip decoder and tar archive
     let reader = Cursor::new(compressed_data);
@@ -1280,56 +1279,13 @@ async fn unpack_entry_tarball_async(
     let mut entries = archive.entries()?;
     while let Some(entry) = entries.next().await {
         let mut file = entry?;
-        let path = file
-            .path()
-            .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {e}")))?;
 
-        if path.starts_with("versions") && path.to_string_lossy().contains("files") {
-            // Handle version files with streaming
-            let hash = extract_hash_from_path(&path)?;
-
-            // Convert futures::io::AsyncRead to tokio::io::AsyncRead using compat
-            // let mut tokio_reader = file.compat();
-
-            // Use streaming storage - no memory buffering needed!
-            version_store
-                .store_version_from_reader(&hash, &mut file)
-                .await?;
-        } else {
-            // For non-version files, unpack to hidden dir
-            file.unpack_in(&hidden_dir)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
-        }
+        // Unpack to hidden dir
+        file.unpack_in(&hidden_dir)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
     }
 
     log::debug!("Done decompressing with async streaming.");
     Ok(())
-}
-
-// Helper function to extract the content hash from a version file path
-fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
-    // Path structure is: versions/files/XX/YYYYYYYY/data
-    // where XXYYYYYYYY is the content hash
-
-    // Split the path and look for the pattern
-    let parts: Vec<_> = path.components().map(|comp| comp.as_os_str()).collect();
-    if parts.len() >= 5 && parts[0] == "versions" && parts[1] == "files" {
-        // The hash is composed of the directory names: XX/YYYYYYYY
-        let top_dir = parts[2];
-        let sub_dir = parts[3];
-
-        // Ensure we have a valid hash structure
-        if top_dir.len() == 2 && !sub_dir.is_empty() {
-            return Ok(format!(
-                "{}{}",
-                top_dir.to_string_lossy(),
-                sub_dir.to_string_lossy()
-            ));
-        }
-    }
-
-    Err(OxenError::basic_str(format!(
-        "Could not get hash for file: {path:?}"
-    )))
 }
