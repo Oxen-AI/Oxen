@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::fs::File;
-use tokio::io::BufReader;
 
 use crate::constants::STAGED_DIR;
 use crate::core;
@@ -364,11 +362,10 @@ async fn compute_staged_merkle_tree_node(
 
     // Copy file to the version store
     log::debug!("compute_staged_merkle_tree_node writing file to version store");
-    let file = File::open(path).await?;
-    let mut reader = BufReader::new(file);
+
     let version_store = workspace.base_repo.version_store()?;
     version_store
-        .store_version_from_reader(&hash.to_string(), &mut reader)
+        .store_version_from_path(&hash.to_string(), path)
         .await?;
 
     let file_extension = path.extension().unwrap_or_default().to_string_lossy();

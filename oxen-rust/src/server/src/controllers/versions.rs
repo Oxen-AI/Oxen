@@ -393,18 +393,46 @@ pub async fn save_multiparts(
         let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
-
+        let raw_header = field.headers();
+        eprintln!("raw header: {raw_header:?}");
         if let Some(name) = content_disposition.get_name() {
             if name == "file[]" || name == "file" {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-                let upload_filehash = content_disposition.get_filename().map_or_else(
-                    || {
-                        Err(actix_web::error::ErrorBadRequest(
-                            "Missing hash in multipart request",
-                        ))
-                    },
-                    |fhash_os_str| Ok(fhash_os_str.to_string()),
-                )?;
+                let upload_filehash = content_disposition.get_filename();
+                let Some(upload_filehash) = upload_filehash else {
+                    log::error!("Missing hash in multipart request");
+                    record_error_file(
+                        &mut err_files,
+                        "".to_string(),
+                        None,
+                        "Missing hash in multipart request".to_string(),
+                    );
+                    continue;
+                };
+
+                // Get file size from header
+                let file_size = raw_header
+                    .get("X-Oxen-File-Size")
+                    .and_then(|val| val.to_str().ok())
+                    .and_then(|s| s.parse::<usize>().ok());
+
+                let size = match file_size {
+                    Some(size) => {
+                        log::debug!("versions::save_multiparts got file_size from header: {size}");
+                        size
+                    }
+                    None => {
+                        log::error!("Failed to get file size for hash {upload_filehash}");
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.to_string(),
+                            None,
+                            format!("Failed to get file size"),
+                        );
+                        continue;
+                    }
+                };
+
                 log::debug!("upload file_hash: {upload_filehash:?}");
 
                 let is_gzipped = field
@@ -420,7 +448,7 @@ pub async fn save_multiparts(
                     field_bytes.extend_from_slice(&chunk);
                 }
 
-                let mut reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
+                let reader: Box<dyn AsyncRead + Send + Sync + Unpin> = if is_gzipped {
                     // async decompression
                     let cursor = std::io::Cursor::new(field_bytes);
                     let buf_reader = BufReader::new(cursor);
@@ -431,7 +459,7 @@ pub async fn save_multiparts(
                 };
 
                 match version_store
-                    .store_version_from_reader(&upload_filehash, &mut reader)
+                    .store_version_from_reader_with_size(&upload_filehash, reader, size as u64)
                     .await
                 {
                     Ok(_) => {
@@ -441,7 +469,7 @@ pub async fn save_multiparts(
                         log::error!("Failed to store version for hash {upload_filehash}: {e}");
                         record_error_file(
                             &mut err_files,
-                            upload_filehash.clone(),
+                            upload_filehash.to_string(),
                             None,
                             format!("Failed to store version: {e}"),
                         );
