@@ -1,12 +1,9 @@
-use crate::controllers;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param, PageNumVersionQuery};
 
 use liboxen::core::versions::MinOxenVersion;
-use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::opts::PaginateOpts;
-use liboxen::view::FileWithHash;
 use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
 
@@ -70,58 +67,6 @@ pub async fn get(
 
     let view = PaginatedDirEntriesResponse::ok_from(paginated_entries);
     Ok(HttpResponse::Ok().json(view))
-}
-
-pub async fn download_dir_as_zip(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
-
-    let resource = parse_resource(&req, &repo)?;
-    let directory = resource.path.clone();
-    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
-
-    let Some(dir_node) =
-        repositories::tree::get_dir_with_children_recursive(&repo, &commit, &directory, None)?
-    else {
-        return Err(OxenHttpError::NotFound);
-    };
-
-    log::debug!("download_dir_as_zip found dir node: {dir_node:?}");
-    let files = dir_node.list_files()?;
-
-    let total_bytes: u64 = files
-        .iter()
-        .filter_map(|(_, node)| {
-            if let EMerkleTreeNode::File(file_node) = &node.node {
-                Some(file_node.num_bytes())
-            } else {
-                None
-            }
-        })
-        .sum();
-    if total_bytes > constants::MAX_ZIP_DOWNLOAD_SIZE {
-        return Err(OxenHttpError::BadRequest(format!("Download request exceeded size limit ({} bytes) for zip file downloads: found {} bytes", constants::MAX_ZIP_DOWNLOAD_SIZE, total_bytes).into()));
-    }
-
-    let files_with_hash: Vec<FileWithHash> = files
-        .into_iter()
-        .map(|f| FileWithHash {
-            path: f.0,
-            hash: f.1.hash.to_string(),
-        })
-        .collect();
-
-    log::debug!(
-        "download_dir_as_zip found {} files with total size {}",
-        files_with_hash.len(),
-        total_bytes
-    );
-
-    let response = controllers::versions::stream_versions_zip(&repo, files_with_hash).await?;
-
-    Ok(response)
 }
 
 #[cfg(test)]
