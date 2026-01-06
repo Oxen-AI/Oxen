@@ -281,7 +281,7 @@ async fn prune_versions(
     dry_run: bool,
 ) -> Result<(), OxenError> {
     let storage_opts = StorageOpts::from_path(&repo.path, true);
-    let version_store = create_version_store(&storage_opts)?;
+    let version_store = create_version_store(&repo.path, &storage_opts)?;
 
     let all_versions = version_store.list_versions().await?;
     stats.versions_scanned = all_versions.len();
@@ -294,8 +294,8 @@ async fn prune_versions(
             stats.versions_removed += 1;
 
             // Get the size before deleting
-            if let Ok(metadata) = version_store.get_version_metadata(&version_hash).await {
-                stats.bytes_freed += metadata.len();
+            if let Ok(file_size) = version_store.get_version_size(&version_hash).await {
+                stats.bytes_freed += file_size;
             }
 
             if dry_run {

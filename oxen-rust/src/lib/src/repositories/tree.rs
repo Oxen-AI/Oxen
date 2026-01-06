@@ -56,7 +56,7 @@ pub fn get_root_with_children(
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
 /// Otherwise it will return None
-/// Also gathers all loaded dir and vnode hashes into `shared_hashes`  
+/// Also gathers all loaded dir and vnode hashes into `shared_hashes`
 pub fn get_root_with_children_and_node_hashes(
     repo: &LocalRepository,
     commit: &Commit,
@@ -78,7 +78,7 @@ pub fn get_root_with_children_and_node_hashes(
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
 /// Otherwise it will return None
-/// Also gathers all loaded dir and vnode hashes into `node_hashes`, and all loaded file nodes as partial nodes  
+/// Also gathers all loaded dir and vnode hashes into `node_hashes`, and all loaded file nodes as partial nodes
 pub fn get_root_with_children_and_partial_nodes(
     repo: &LocalRepository,
     commit: &Commit,
@@ -264,6 +264,8 @@ pub fn get_dir_with_children(
     path: impl AsRef<Path>,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
+    let _perf = crate::perf_guard!("tree::get_dir_with_children");
+
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::dir_with_children(repo, commit, path),
         _ => CommitMerkleTreeLatest::dir_with_children(repo, commit, path, dir_hashes),
@@ -514,7 +516,7 @@ pub fn list_missing_node_hashes(
 }
 
 // TODO: Deduplicate functionality with model::MerkleTreeNode
-pub fn list_missing_file_hashes(
+pub async fn list_missing_file_hashes(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
@@ -522,17 +524,17 @@ pub fn list_missing_file_hashes(
         let Some(node) = CommitMerkleTreeV0_19_0::read_depth(repo, hash, 1)? else {
             return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
-        node.list_missing_file_hashes(repo)
+        node.list_missing_file_hashes(repo).await
     } else {
         let Some(node) = CommitMerkleTreeLatest::read_depth(repo, hash, 1)? else {
             return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
-        node.list_missing_file_hashes(repo)
+        node.list_missing_file_hashes(repo).await
     }
 }
 
 /// Given a set of commit ids, return the hashes that are missing from the tree
-pub fn list_missing_file_hashes_from_commits(
+pub async fn list_missing_file_hashes_from_commits(
     repo: &LocalRepository,
     commit_ids: &HashSet<MerkleHash>,
     subtree_paths: &Option<Vec<PathBuf>>,
@@ -586,7 +588,7 @@ pub fn list_missing_file_hashes_from_commits(
         "list_missing_file_hashes_from_commits candidate_hashes count: {}",
         candidate_hashes.len()
     );
-    list_missing_file_hashes_from_hashes(repo, &candidate_hashes)
+    list_missing_file_hashes_from_hashes(repo, &candidate_hashes).await
 }
 
 pub fn dir_entries_with_paths(
@@ -685,14 +687,15 @@ pub fn list_unsynced_commit_hashes(
     Ok(results)
 }
 
-fn list_missing_file_hashes_from_hashes(
+async fn list_missing_file_hashes_from_hashes(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let mut results = HashSet::new();
     let version_store = repo.version_store()?;
+    // Todo: Parallelize for S3
     for hash in hashes {
-        if !version_store.version_exists(&hash.to_string())? {
+        if !version_store.version_exists(&hash.to_string()).await? {
             results.insert(*hash);
         }
     }
@@ -886,7 +889,7 @@ pub fn cp_dir_hashes_to(
 }
 
 pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
     compress_full_tree(repository, &mut tar)?;
     tar.finish()?;
@@ -927,7 +930,7 @@ pub fn compress_nodes(
     hashes: &HashSet<MerkleHash>,
 ) -> Result<Vec<u8>, OxenError> {
     // zip up the node directories for each commit tree
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
 
     log::debug!("Compressing {} unique nodes...", hashes.len());
@@ -961,7 +964,7 @@ pub fn compress_node(
     let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
     // zip up the node directory
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
     let node_dir = node_db_path(repository, hash);
 
@@ -987,7 +990,7 @@ pub fn compress_commits(
     commits: &Vec<Commit>,
 ) -> Result<Vec<u8>, OxenError> {
     // zip up the node directory
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
+    let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
 
     for commit in commits {

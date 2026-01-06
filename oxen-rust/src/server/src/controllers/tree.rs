@@ -93,7 +93,8 @@ pub async fn list_missing_file_hashes_from_commits(
         &request.hashes,
         &subtree_paths,
         &query.depth,
-    )?;
+    )
+    .await?;
     log::debug!(
         "list_missing_file_hashes_from_commits found {} missing node ids",
         hashes.len()
@@ -114,7 +115,7 @@ pub async fn list_missing_file_hashes(
     let hash_str = path_param(&req, "hash")?;
     let hash = hash_str.parse()?;
 
-    let hashes = repositories::tree::list_missing_file_hashes(&repository, &hash)?;
+    let hashes = repositories::tree::list_missing_file_hashes(&repository, &hash).await?;
     log::debug!(
         "list_missing_file_hashes {} got {} hashes",
         hash,

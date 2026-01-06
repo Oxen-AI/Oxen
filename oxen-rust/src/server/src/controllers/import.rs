@@ -401,7 +401,9 @@ mod tests {
     use liboxen::view::CommitResponse;
     use liboxen::{repositories, util};
 
-    use actix_web::web;
+    use liboxen::error::OxenError;
+
+    use actix_web::{web, App};
     use std::path::PathBuf;
 
     #[actix_web::test]
