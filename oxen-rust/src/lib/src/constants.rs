@@ -226,11 +226,11 @@ pub fn max_retries() -> usize {
             max_retries
         } else {
             // If parsing failed, fall back to default
-            NUM_HTTP_RETRIES
+            NUM_HTTP_RETRIES.try_into().unwrap()
         }
     } else {
         // Environment variable not set, use default
-        NUM_HTTP_RETRIES
+        NUM_HTTP_RETRIES.try_into().unwrap()
     }
 }
 
