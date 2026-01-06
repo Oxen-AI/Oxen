@@ -400,7 +400,7 @@ pub async fn delete(
     // Stage the path as removed
     let err_files = repositories::workspaces::files::rm(&workspace, &path).await?;
     if !err_files.is_empty() {
-        let err_file = err_files[0].clone(); 
+        let err_file = err_files[0].clone();
         return Err(OxenHttpError::BadRequest(err_file.error.into()));
     }
 
