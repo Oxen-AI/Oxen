@@ -206,7 +206,7 @@ impl VersionStore for S3VersionStore {
             .map(|result| {
                 result
                     .map(Frame::data)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    .map_err(std::io::Error::other)
             });
 
         let sdk_body = SdkBody::from_body_1_x(http_body_util::StreamBody::new(stream));
@@ -444,8 +444,8 @@ impl VersionStore for S3VersionStore {
 
         let stream = ReaderStream::new(rx).map(|result| {
             result
-                .map(|bytes| Frame::data(bytes))
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                .map(Frame::data)
+                .map_err(std::io::Error::other)
         });
 
         let sdk_body = SdkBody::from_body_1_x(http_body_util::StreamBody::new(stream));
@@ -458,7 +458,7 @@ impl VersionStore for S3VersionStore {
                 .bucket(bucket)
                 .key(key)
                 .upload_id(upload_id)
-                .part_number(chunk_number as i32 + 1)
+                .part_number(chunk_number + 1)
                 .content_length(chunk_size as i64)
                 .body(byte_stream)
                 .send()
@@ -469,7 +469,7 @@ impl VersionStore for S3VersionStore {
 
         Ok(Box::new(S3VersionWriter {
             writer: tx,
-            upload_handle: upload_handle,
+            upload_handle,
         }))
     }
 
@@ -483,7 +483,7 @@ impl VersionStore for S3VersionStore {
         let key = self.generate_key(hash);
 
         let end = offset + size - 1;
-        let range = format!("bytes={}-{}", offset, end);
+        let range = format!("bytes={offset}-{end}");
 
         let resp = client
             .get_object()
@@ -512,7 +512,7 @@ impl VersionStore for S3VersionStore {
         let key = self.generate_key(hash);
 
         let end = offset + size - 1;
-        let range = format!("bytes={}-{}", offset, end);
+        let range = format!("bytes={offset}-{end}");
 
         let resp = client
             .get_object()
@@ -602,19 +602,21 @@ impl VersionStore for S3VersionStore {
             self.list_version_chunks(hash, &Some(upload_id.clone()))
                 .await?
         };
+        // Validate all chunks have chunk number and etag
+        for chunk in &chunks {
+            if chunk.chunk_number.is_none() || chunk.etag.is_none() {
+                return Err(OxenError::basic_str(
+                    "S3 combine_version_chunks missing chunk_number or etag",
+                ));
+            }
+        }
         chunks.sort_by_key(|p| p.chunk_number.unwrap());
 
         let completed_parts: Vec<CompletedPart> = chunks
             .into_iter()
             .map(|chunk| {
-                let part_number = chunk.chunk_number.ok_or_else(|| {
-                    OxenError::basic_str("Missing chunk_number in CompleteFileChunk")
-                })?;
-
-                let etag = chunk
-                    .etag
-                    .ok_or_else(|| OxenError::basic_str("Missing etag in CompleteFileChunk"))?;
-
+                let part_number = chunk.chunk_number.unwrap();
+                let etag = chunk.etag.unwrap();
                 Ok(CompletedPart::builder()
                     .part_number(part_number)
                     .e_tag(etag)
@@ -636,9 +638,6 @@ impl VersionStore for S3VersionStore {
             .map_err(|e| OxenError::basic_str(format!("complete_multipart_upload failed: {e}")))?;
 
         Ok(())
-        // Err(OxenError::basic_str(
-        //     "S3VersionStore combine_version_chunks not yet implemented",
-        // ))
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
@@ -757,7 +756,7 @@ impl VersionStore for S3VersionStore {
                     if let Some(rest) = key.strip_prefix(prefix) {
                         let mut parts = rest.split('/');
                         if let (Some(a), Some(b)) = (parts.next(), parts.next()) {
-                            versions.push(format!("{}{}", a, b));
+                            versions.push(format!("{a}{b}"));
                         }
                     }
                 }

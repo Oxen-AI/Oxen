@@ -427,7 +427,7 @@ pub async fn save_multiparts(
                             &mut err_files,
                             upload_filehash.to_string(),
                             None,
-                            format!("Failed to get file size"),
+                            "Failed to get file size".to_string(),
                         );
                         continue;
                     }
@@ -459,7 +459,7 @@ pub async fn save_multiparts(
                 };
 
                 match version_store
-                    .store_version_from_reader_with_size(&upload_filehash, reader, size as u64)
+                    .store_version_from_reader_with_size(upload_filehash, reader, size as u64)
                     .await
                 {
                     Ok(_) => {
