@@ -178,9 +178,6 @@ pub const EVAL_DURATION_COL: &str = "_oxen_eval_duration";
 pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 10;
 // Retry and back off of upload tasks N times
 /// Retry and back off of upload tasks N times
-pub const MAX_RETRIES: usize = 5;
-// Allow up to N concurrent upload tasks
-/// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
 // Retry and back off of requests N times
 /// Retry and back off of requests N times
@@ -223,17 +220,17 @@ pub const OXEN_STACK_SIZE: usize = 16_777_216;
 
 // Parse the maximum number of retries allowed on upload from environment variable
 pub fn max_retries() -> usize {
-    if let Ok(max_retries) = std::env::var("OXEN_MAX_RETRIES") {
+    if let Ok(max_retries) = std::env::var("OXEN_NUM_RETRIES") {
         // If the environment variable is set, use that
         if let Ok(max_retries) = max_retries.parse::<usize>() {
             max_retries
         } else {
             // If parsing failed, fall back to default
-            MAX_RETRIES
+            NUM_HTTP_RETRIES
         }
     } else {
         // Environment variable not set, use default
-        MAX_RETRIES
+        NUM_HTTP_RETRIES
     }
 }
 
