@@ -1,6 +1,6 @@
 [package]
 name = "Oxen"
-version = "0.42.2"
+version = "0.42.4"
 edition = "2021"
 license-file = "LICENSE"
 description = "Oxen is a fast, unstructured data version control, to help version large machine learning datasets written in Rust."
@@ -20,6 +20,7 @@ categories = [
 default = ["duckdb/bundled"]
 docs = ["duckdb"]
 ffmpeg = ["thumbnails"]
+perf-logging = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

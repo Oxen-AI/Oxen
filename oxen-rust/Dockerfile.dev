@@ -28,10 +28,11 @@ WORKDIR /usr/src/oxen-server
 COPY --from=planner /usr/src/oxen-server/recipe.json recipe.json
 
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
-RUN cargo chef cook --bin oxen-server --features ffmpeg --recipe-path recipe.json
+
+RUN cargo chef cook --bin oxen-server --features ffmpeg,perf-logging --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --bin oxen-server --features ffmpeg
+RUN cargo build --bin oxen-server --features ffmpeg,perf-logging
 
 FROM debian:bookworm-slim AS runtime
 
@@ -55,6 +56,7 @@ ENV RUST_MIN_STACK=50000000
 ENV RUST_LOG=info
 ENV SYNC_DIR=/var/oxen/data
 ENV REDIS_URL=redis://localhost:6379
+ENV OXEN_PERF_LOGGING=1
 
 EXPOSE 3000
 CMD ["oxen-server", "start", "-p", "3000"]

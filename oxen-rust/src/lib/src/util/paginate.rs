@@ -38,6 +38,7 @@ pub fn paginate_with_total<T: Clone>(
         page_number,
         total_pages,
         total_entries,
+        count_cached: None,
     };
 
     if start < entries.len() && end > entries.len() {
@@ -70,6 +71,7 @@ pub fn paginate_dirs_and_files<T: Clone>(
             page_number,
             total_pages,
             total_entries,
+            count_cached: None,
         };
         return (Vec::new(), pagination);
     }
@@ -98,6 +100,7 @@ pub fn paginate_dirs_and_files<T: Clone>(
         page_number,
         total_pages,
         total_entries,
+        count_cached: None,
     };
 
     (result, pagination)
@@ -122,6 +125,7 @@ pub fn paginate_dirs_assuming_files<T: Clone>(
             page_number,
             total_pages,
             total_entries,
+            count_cached: None,
         };
         return (Vec::new(), pagination);
     }
@@ -138,6 +142,7 @@ pub fn paginate_dirs_assuming_files<T: Clone>(
         page_number,
         total_pages,
         total_entries,
+        count_cached: None,
     };
 
     (result, pagination)
@@ -162,6 +167,7 @@ pub fn paginate_files_assuming_dirs<T: Clone>(
             page_number,
             total_pages,
             total_entries,
+            count_cached: None,
         };
         return (Vec::new(), pagination);
     }
@@ -184,6 +190,7 @@ pub fn paginate_files_assuming_dirs<T: Clone>(
         page_number,
         total_pages,
         total_entries,
+        count_cached: None,
     };
 
     (result, pagination)

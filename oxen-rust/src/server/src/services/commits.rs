@@ -33,10 +33,6 @@ pub fn commits() -> Scope {
             web::post().to(controllers::commits::complete),
         )
         .route(
-            "/count/{resource:.*}",
-            web::get().to(controllers::commits::history_count),
-        )
-        .route(
             "/history/{resource:.*}",
             web::get().to(controllers::commits::history),
         )

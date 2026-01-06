@@ -187,7 +187,8 @@ impl ListCommitResponse {
         "page_number": 1,
         "page_size": 10,
         "total_pages": 5,
-        "total_entries": 45
+        "total_entries": 45,
+        "count_cached": true
     })
 )]
 pub struct PaginatedCommits {
@@ -205,7 +206,8 @@ pub struct PaginatedCommits {
             "page_number": 1,
             "page_size": 10,
             "total_pages": 5,
-            "total_entries": 45
+            "total_entries": 45,
+            "count_cached": true
         })
     )]
     pub pagination: Pagination,
@@ -219,26 +221,4 @@ impl PaginatedCommits {
             pagination,
         }
     }
-}
-
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
-#[schema(
-    example = json!({
-        "status": "success",
-        "status_message": "resource_found",
-        "count": 42,
-        "commit_id": "a1b2c3d4e5f67890abcdef1234567890",
-        "cached": true
-    })
-)]
-pub struct CommitCountResponse {
-    #[serde(flatten)]
-    #[schema(
-        value_type = StatusMessage,
-        example = json!({"status": "success", "status_message": "resource_found"})
-    )]
-    pub status: StatusMessage,
-    pub count: usize,
-    pub commit_id: String,
-    pub cached: bool,
 }

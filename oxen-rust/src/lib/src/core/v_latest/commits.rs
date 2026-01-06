@@ -438,8 +438,11 @@ pub fn list_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
 ) -> Result<Vec<Commit>, OxenError> {
+    let _perf = crate::perf_guard!("core::commits::list_from");
+
     let revision = revision.as_ref();
     if revision.contains("..") {
+        let _perf_between = crate::perf_guard!("core::commits::list_between_range");
         let split: Vec<&str> = revision.split("..").collect();
         let base = split[0];
         let head = split[1];
@@ -449,9 +452,14 @@ pub fn list_from(
             .ok_or(OxenError::revision_not_found(head.into()))?;
         return list_between(repo, &base_commit, &head_commit);
     }
-    let mut results = vec![];
+
+    let _perf_get = crate::perf_guard!("core::commits::get_revision");
     let commit = repositories::revisions::get(repo, revision)?;
+    drop(_perf_get);
+
+    let mut results = vec![];
     if let Some(commit) = commit {
+        let _perf_recursive = crate::perf_guard!("core::commits::list_recursive");
         list_recursive(repo, commit, &mut results, None, &mut HashSet::new())?;
     }
 
@@ -663,7 +671,10 @@ pub fn list_by_path_from_paginated(
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    let _perf = crate::perf_guard!("core::commits::list_by_path_from_paginated");
+
     // Check if the path is a directory or file
+    let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
         OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
     )?;
@@ -677,6 +688,9 @@ pub fn list_by_path_from_paginated(
         }
     };
     let last_commit_id = last_commit_id.to_string();
+    drop(_perf_node);
+
+    let _perf_recursive = crate::perf_guard!("core::commits::list_by_path_recursive");
     let mut commits: Vec<Commit> = Vec::new();
     list_by_path_recursive(repo, path, commit, &mut commits)?;
     log::info!(
@@ -684,7 +698,12 @@ pub fn list_by_path_from_paginated(
         last_commit_id,
         commits.len()
     );
+    drop(_perf_recursive);
+
+    let _perf_paginate = crate::perf_guard!("core::commits::paginate_path_commits");
     let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
+    drop(_perf_paginate);
+
     Ok(PaginatedCommits {
         status: StatusMessage::resource_found(),
         commits,

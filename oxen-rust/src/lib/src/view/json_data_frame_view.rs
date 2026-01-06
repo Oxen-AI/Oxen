@@ -179,6 +179,7 @@ impl JsonDataFrameView {
                 page_size,
                 total_pages,
                 total_entries: full_height,
+                count_cached: None,
             },
             opts: opts_view,
         }
@@ -224,6 +225,7 @@ impl JsonDataFrameView {
                 page_size,
                 total_pages,
                 total_entries: og_height,
+                count_cached: None,
             },
             opts: opts_view,
         }
@@ -305,6 +307,7 @@ impl JsonDataFrameView {
                 page_size: 0,
                 total_pages: 0,
                 total_entries,
+                count_cached: None,
             },
             opts: DFOptsView::from_df_opts(opts),
         }

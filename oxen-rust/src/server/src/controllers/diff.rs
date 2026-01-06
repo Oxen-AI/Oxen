@@ -822,6 +822,7 @@ pub async fn get_derived_df(
                         page_size,
                         total_pages,
                         total_entries: view_height,
+                        count_cached: None,
                     }
                 },
                 opts: opts_view,

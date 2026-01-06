@@ -283,13 +283,21 @@ pub fn list_from_paginated(
     revision: &str,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    let _perf = crate::perf_guard!("commits::list_from_paginated");
+
+    let _perf_list = crate::perf_guard!("commits::list_from_revision");
     let commits = list_from(repo, revision)?;
     log::info!(
         "list_from_paginated {} got {} commits before pagination",
         revision,
         commits.len()
     );
+    drop(_perf_list);
+
+    let _perf_paginate = crate::perf_guard!("commits::paginate_commits");
     let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
+    drop(_perf_paginate);
+
     Ok(PaginatedCommits {
         status: StatusMessage::resource_found(),
         commits,
@@ -304,6 +312,8 @@ pub fn list_by_path_from_paginated(
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    let _perf = crate::perf_guard!("commits::list_by_path_from_paginated");
+
     log::info!("list_by_path_from_paginated: {commit:?} {path:?}");
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),

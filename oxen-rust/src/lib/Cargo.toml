@@ -1,6 +1,6 @@
 [package]
 name = "liboxen"
-version = "0.42.2"
+version = "0.42.4"
 edition = "2021"
 license-file = "LICENSE"
 description = "Oxen is a fast, unstructured data version control, to help version datasets, written in Rust."
@@ -20,6 +20,7 @@ categories = [
 default = ["duckdb/bundled"]
 docs = ["duckdb"]
 ffmpeg = ["thumbnails"]
+perf-logging = []
 
 [dependencies]
 actix-web = { version = "4", features = ["rustls"] }
