@@ -4,8 +4,9 @@ use actix_web::Scope;
 use crate::controllers;
 
 pub fn export() -> Scope {
-    web::scope("/export").route(
-        "/download_zip/{resource:.*}",
+    web::scope("/export")    
+        .route(
+        "/download/{resource:.*}",
         web::get().to(controllers::export::download_zip),
     )
 }

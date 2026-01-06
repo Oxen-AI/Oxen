@@ -32,7 +32,7 @@ pub async fn list(
 ) -> Result<PaginatedDirEntries, OxenError> {
     let revision = revision.as_ref();
     let path = path.as_ref().to_string_lossy();
-    let uri = format!("/dir/download/{revision}/{path}?page={page}&page_size={page_size}");
+    let uri = format!("/dir/{revision}/{path}?page={page}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -104,7 +104,7 @@ pub async fn download_dir_as_zip(
     let revision = revision.as_ref().to_string();
     let directory = directory.as_ref().to_string_lossy().to_string();
     let local_path = local_path.as_ref();
-    let uri = format!("/export/download_zip/{revision}/{directory}");
+    let uri = format!("/export/download/{revision}/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
