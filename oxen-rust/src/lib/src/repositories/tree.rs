@@ -264,6 +264,8 @@ pub fn get_dir_with_children(
     path: impl AsRef<Path>,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
+    let _perf = crate::perf_guard!("tree::get_dir_with_children");
+
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::dir_with_children(repo, commit, path),
         _ => CommitMerkleTreeLatest::dir_with_children(repo, commit, path, dir_hashes),

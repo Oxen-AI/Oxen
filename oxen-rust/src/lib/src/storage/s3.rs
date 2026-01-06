@@ -183,6 +183,7 @@ impl VersionStore for S3VersionStore {
         _hash: &str,
         _reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
     ) -> Result<(), OxenError> {
+<<<<<<< HEAD
         Err(OxenError::basic_str(
             "S3VersionStore store_version_from_reader not yet implemented",
         ))
@@ -223,6 +224,12 @@ impl VersionStore for S3VersionStore {
             .map_err(|e| OxenError::basic_str(format!("Failed to store version in S3: {e}")))?;
 
         Ok(())
+=======
+        // TODO: Implement S3 version storage from reader
+        Err(OxenError::basic_str(
+            "S3VersionStore store_version_from_reader not yet implemented",
+        ))
+>>>>>>> main
     }
 
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
@@ -362,6 +369,7 @@ impl VersionStore for S3VersionStore {
 
         let adapter = ByteStreamAdapter { inner: resp.body };
         Ok(Box::new(adapter) as Box<_>)
+<<<<<<< HEAD
     }
 
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
@@ -407,6 +415,20 @@ impl VersionStore for S3VersionStore {
             .ok_or_else(|| OxenError::basic_str("Missing upload_id"))?;
 
         Ok(Some(upload_id.to_string()))
+=======
+    }
+
+    fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
+        let key = self.generate_key(hash);
+        Ok(PathBuf::from(key))
+    }
+
+    async fn copy_version_to_path(&self, _hash: &str, _dest_path: &Path) -> Result<(), OxenError> {
+        // TODO: Implement S3 version copying to path
+        Err(OxenError::basic_str(
+            "S3VersionStore copy_version_to_path not yet implemented",
+        ))
+>>>>>>> main
     }
 
     async fn store_version_chunk(
@@ -417,6 +439,10 @@ impl VersionStore for S3VersionStore {
         _chunk_number: Option<i32>,
         _data: &[u8],
     ) -> Result<(), OxenError> {
+<<<<<<< HEAD
+=======
+        // TODO: Implement S3 version chunk storage
+>>>>>>> main
         Err(OxenError::basic_str(
             "S3VersionStore store_version_chunk not yet implemented",
         ))
@@ -427,6 +453,7 @@ impl VersionStore for S3VersionStore {
         hash: &str,
         upload_id: Option<&str>,
         _offset: u64,
+<<<<<<< HEAD
         chunk_number: Option<i32>,
         chunk_size: Option<u64>,
     ) -> Result<Box<dyn VersionWriter>, OxenError> {
@@ -471,6 +498,13 @@ impl VersionStore for S3VersionStore {
             writer: tx,
             upload_handle: upload_handle,
         }))
+=======
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
+        // TODO: Implement S3 version chunk stream storage
+        Err(OxenError::basic_str(
+            "S3VersionStore get_version_chunk_writer not yet implemented",
+        ))
+>>>>>>> main
     }
 
     async fn get_version_chunk(
@@ -479,6 +513,7 @@ impl VersionStore for S3VersionStore {
         offset: u64,
         size: u64,
     ) -> Result<Vec<u8>, OxenError> {
+<<<<<<< HEAD
         let client = self.init_client().await?;
         let key = self.generate_key(hash);
 
@@ -499,6 +534,12 @@ impl VersionStore for S3VersionStore {
         reader.read_to_end(&mut buf).await?;
 
         Ok(buf)
+=======
+        // TODO: Implement S3 version chunk retrieval
+        Err(OxenError::basic_str(
+            "S3VersionStore get_version_chunk not yet implemented",
+        ))
+>>>>>>> main
     }
 
     async fn get_version_chunk_stream(
@@ -508,6 +549,7 @@ impl VersionStore for S3VersionStore {
         size: u64,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
+<<<<<<< HEAD
         let client = self.init_client().await?;
         let key = self.generate_key(hash);
 
@@ -580,6 +622,59 @@ impl VersionStore for S3VersionStore {
         }
 
         Ok(parts)
+=======
+        // TODO: Implement S3 version chunk stream retrieval
+        Err(OxenError::basic_str(
+            "S3VersionStore get_version_chunk_stream not yet implemented",
+        ))
+    }
+
+    async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u64>, OxenError> {
+        // TODO: Implement S3 version chunk listing
+        Err(OxenError::basic_str(
+            "S3VersionStore list_version_chunks not yet implemented",
+        ))
+    }
+
+    async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
+        let client = self.init_client().await?;
+        let key = self.generate_key(hash);
+
+        match client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+
+            Err(SdkError::ServiceError(err)) => match err.err() {
+                HeadObjectError::NotFound(_) => Ok(false),
+                err => Err(OxenError::basic_str(format!(
+                    "version_exists failed with S3 head_object error: {err:?}"
+                ))),
+            },
+
+            Err(err) => Err(OxenError::basic_str(format!(
+                "version_exists failed with S3 head_object error: {err:?}"
+            ))),
+        }
+    }
+
+    async fn delete_version(&self, _hash: &str) -> Result<(), OxenError> {
+        // TODO: Implement S3 version deletion
+        Err(OxenError::basic_str(
+            "S3VersionStore delete_version not yet implemented",
+        ))
+    }
+
+    async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
+        // TODO: Implement S3 version listing
+        Err(OxenError::basic_str(
+            "S3VersionStore list_versions not yet implemented",
+        ))
+>>>>>>> main
     }
 
     async fn combine_version_chunks(
@@ -588,6 +683,7 @@ impl VersionStore for S3VersionStore {
         chunks: Option<Vec<CompleteFileChunk>>,
         upload_id: &Option<String>,
         _cleanup: bool,
+<<<<<<< HEAD
     ) -> Result<(), OxenError> {
         let client = self.init_client().await?;
         let key = self.generate_key(hash);
@@ -773,6 +869,13 @@ impl VersionStore for S3VersionStore {
         versions.sort_unstable();
         versions.dedup();
         Ok(versions)
+=======
+    ) -> Result<PathBuf, OxenError> {
+        // TODO: Implement S3 version chunk combination
+        Err(OxenError::basic_str(
+            "S3VersionStore combine_version_chunks not yet implemented",
+        ))
+>>>>>>> main
     }
 
     async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError> {
@@ -794,7 +897,15 @@ impl VersionStore for S3VersionStore {
     }
 }
 
+<<<<<<< HEAD
 struct ByteStreamAdapter {
+=======
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+pub struct ByteStreamAdapter {
+>>>>>>> main
     inner: ByteStream,
 }
 
@@ -813,6 +924,7 @@ impl Stream for ByteStreamAdapter {
         }
     }
 }
+<<<<<<< HEAD
 
 pub struct S3VersionWriter {
     writer: tokio::io::DuplexStream,
@@ -853,3 +965,5 @@ impl AsyncWrite for S3VersionWriter {
         Pin::new(&mut self.writer).poll_shutdown(cx)
     }
 }
+=======
+>>>>>>> main

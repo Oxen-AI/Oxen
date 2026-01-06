@@ -113,7 +113,20 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         data: &[u8],
     ) -> Result<(), OxenError>;
 
-    /// Store a chunk of a version file in stream
+    /// Store a derived version file (resized, video thumbnail etc.)
+    ///
+    /// # Arguments
+    /// * `derived_image` - The derived image to store, used for local processing
+    /// * `image_buf` - The raw bytes to store, used for S3
+    /// * `derived_path` - Path/key to the derived version file
+    async fn store_version_derived(
+        &self,
+        derived_image: DynamicImage,
+        image_buf: Vec<u8>,
+        derived_path: &Path,
+    ) -> Result<(), OxenError>;
+
+    /// Get a writer for a chunk of a version file
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
