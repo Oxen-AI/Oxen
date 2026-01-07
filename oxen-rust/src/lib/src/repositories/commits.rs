@@ -320,7 +320,6 @@ pub fn list_from_paginated(
                 page_number: pagination.page_num,
                 total_pages,
                 total_entries,
-                count_cached: Some(cached),
             };
 
             Ok(PaginatedCommits {

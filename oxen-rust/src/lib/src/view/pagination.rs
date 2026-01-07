@@ -8,8 +8,6 @@ pub struct Pagination {
     pub page_number: usize,
     pub total_pages: usize,
     pub total_entries: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count_cached: Option<bool>,
 }
 
 // Add default values
@@ -20,7 +18,6 @@ impl Pagination {
             page_size: paginate_opts.page_size,
             total_pages: 1,
             total_entries: 0,
-            count_cached: None,
         }
     }
 }

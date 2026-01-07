@@ -112,7 +112,6 @@ pub async fn get(
                     page_size: page_opts.page_size,
                     total_pages,
                     total_entries: data_frame_slice.total_entries,
-                    count_cached: None,
                 },
                 opts: opts_view,
             },

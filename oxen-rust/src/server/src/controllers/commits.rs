@@ -118,88 +118,51 @@ pub async fn history(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    log::info!("🚀 Starting history() API endpoint");
     let _perf = perf_guard!("commits::history_endpoint");
 
     let _perf_parse = perf_guard!("commits::history_parse_params");
-    log::debug!("📋 Parsing request parameters");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    log::info!("📂 Repository: {}/{}", namespace, repo_name);
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    log::debug!(
-        "✅ Repository loaded successfully from path: {:?}",
-        repo.path
-    );
     let resource_param = path_param(&req, "resource")?;
-    log::info!("🔍 Resource parameter: {}", resource_param);
 
     let pagination = PaginateOpts {
         page_num: query.page.unwrap_or(constants::DEFAULT_PAGE_NUM),
         page_size: query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE),
     };
-    log::info!(
-        "📄 Pagination: page={}, page_size={}",
-        pagination.page_num,
-        pagination.page_size
-    );
 
-    log::debug!("🔎 Checking if repository is empty");
     if repositories::is_empty(&repo)? {
-        log::warn!("⚠️  Repository is empty, returning empty commit list");
         return Ok(HttpResponse::Ok().json(PaginatedCommits::success(
             vec![],
             Pagination::empty(pagination),
         )));
     }
-    log::debug!("✅ Repository is not empty, proceeding");
     drop(_perf_parse);
 
     log::debug!("commit_history resource_param: {resource_param:?}");
 
     let _perf_resource = perf_guard!("commits::history_parse_resource");
-    log::debug!("🔍 Parsing resource parameter");
     // This checks if the parameter received from the client is two commits split by "..", in this case we don't parse the resource
     let (resource, revision, commit) = if resource_param.contains("..") {
-        log::info!("🔀 Detected commit range with '..' - treating as revision range");
         (None, Some(resource_param), None)
     } else {
-        log::debug!("📝 Parsing as single resource (commit/branch/path)");
         let resource = parse_resource(&req, &repo)?;
-        log::debug!("✅ Resource parsed successfully: path={:?}", resource.path);
         let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
-        log::info!(
-            "💾 Commit resolved: id={}, message={:?}",
-            commit.id,
-            commit.message
-        );
         (Some(resource), None, Some(commit))
     };
     drop(_perf_resource);
 
     match &resource {
         Some(resource) if resource.path != Path::new("") => {
-            log::info!(
-                "📁 Processing history for specific path: {:?}",
-                resource.path
-            );
             log::debug!("commit_history resource_param: {resource:?}");
             let _perf_list = perf_guard!("commits::history_list_by_path");
-            log::debug!("🔎 Querying commits by path from database");
-            let mut commits = repositories::commits::list_by_path_from_paginated(
+            let commits = repositories::commits::list_by_path_from_paginated(
                 &repo,
                 commit.as_ref().unwrap(), // Safe unwrap: `commit` is Some if `resource` is Some
                 &resource.path,
                 pagination,
             )?;
-
-            // Get count cache status
-            if let Some(commit_ref) = commit.as_ref() {
-                if let Ok((_, cached)) = repositories::commits::count_from(&repo, &commit_ref.id) {
-                    commits.pagination.count_cached = Some(cached);
-                }
-            }
 
             log::debug!("commit_history got {} commits", commits.commits.len());
 
@@ -207,24 +170,17 @@ pub async fn history(
         }
         _ => {
             // Handling the case where resource is None or its path is empty
-            log::info!("🌳 Processing history for branch/commit (no specific path)");
             log::debug!("commit_history revision: {revision:?}");
             let revision_id = revision.as_ref().or_else(|| commit.as_ref().map(|c| &c.id));
             if let Some(revision_id) = revision_id {
-                log::info!("🔖 Using revision ID: {}", revision_id);
                 let _perf_list = perf_guard!("commits::history_list_from_revision");
-                log::debug!("🔎 Querying commits from revision in database");
                 let commits =
                     repositories::commits::list_from_paginated(&repo, revision_id, pagination)?;
 
-                // Note: count_cached is already set by list_from_paginated
-
                 log::debug!("commit_history got {} commits", commits.commits.len());
                 // log::debug!("commit_history commits: {:?}", commits.commits);
-                log::info!("🎉 Returning successful response with commits");
                 Ok(HttpResponse::Ok().json(commits))
             } else {
-                log::error!("❌ No revision ID found - cannot retrieve commit history");
                 Err(OxenHttpError::NotFound)
             }
         }

@@ -430,6 +430,7 @@ fn recurse_commit(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 // Paginated version of recurse_commit
 // Only collects commits within the skip..skip+limit range
 // If known_total_count is provided, enables early exit after collecting enough commits
@@ -656,11 +657,7 @@ pub fn list_from_paginated_impl(
         drop(_perf_count);
 
         log::info!(
-            "list_from_paginated_impl: total_count={}, cached={}, skip={}, limit={}",
-            total_count,
-            cached,
-            skip,
-            limit
+            "list_from_paginated_impl: total_count={total_count}, cached={cached}, skip={skip}, limit={limit}"
         );
 
         // Fast path: if requesting a small number of recent commits, use simple forward traversal

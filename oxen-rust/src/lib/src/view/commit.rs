@@ -187,8 +187,7 @@ impl ListCommitResponse {
         "page_number": 1,
         "page_size": 10,
         "total_pages": 5,
-        "total_entries": 45,
-        "count_cached": true
+        "total_entries": 45
     })
 )]
 pub struct PaginatedCommits {
@@ -206,8 +205,7 @@ pub struct PaginatedCommits {
             "page_number": 1,
             "page_size": 10,
             "total_pages": 5,
-            "total_entries": 45,
-            "count_cached": true
+            "total_entries": 45
         })
     )]
     pub pagination: Pagination,
