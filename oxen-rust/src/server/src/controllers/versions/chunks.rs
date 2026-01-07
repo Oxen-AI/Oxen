@@ -122,6 +122,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         // Combine all the chunks for a version file into a single file
         let cleanup = true;
+        // TODO: capture etag info from chunk upload to avoid extra list_parts() api call
         version_store
             .combine_version_chunks(&version_id, Some(chunks), upload_id, cleanup)
             .await?;
