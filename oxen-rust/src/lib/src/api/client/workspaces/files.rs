@@ -394,6 +394,7 @@ async fn parallel_batched_small_file_upload(
                                     ))
                                 })?;
 
+                                let file_size = file.len();
                                 let hash = hasher::hash_buffer(&file);
 
                                 let mut encoder =
@@ -415,7 +416,6 @@ async fn parallel_batched_small_file_upload(
                                             )));
                                         }
                                     };
-                                    let file_size = compressed_bytes.len();
                                     let mut headers = HeaderMap::new();
                                     let hv = HeaderValue::from_str(&file_size.to_string())
                                         .map_err(|e| {

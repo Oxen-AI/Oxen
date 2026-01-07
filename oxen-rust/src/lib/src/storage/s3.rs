@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::primitives::{ByteStream, SdkBody};
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, ObjectIdentifier};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{config::Region, error::SdkError, Client};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -681,7 +681,7 @@ impl VersionStore for S3VersionStore {
                 break;
             }
 
-            let delete_objects = aws_sdk_s3::types::Delete::builder()
+            let delete_objects = Delete::builder()
                 .set_objects(Some(
                     objects
                         .iter()
@@ -716,6 +716,68 @@ impl VersionStore for S3VersionStore {
                 break;
             }
         }
+        Ok(())
+    }
+
+    async fn delete_all_versions(&self) -> Result<(), OxenError> {
+        let client = self.init_client().await?;
+        let prefix = &self.prefix;
+        let mut continuation_token = None;
+        loop {
+            let res = client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(prefix)
+                .set_continuation_token(continuation_token)
+                .send()
+                .await
+                .map_err(|e| {
+                    OxenError::basic_str(format!(
+                        "S3 list_objects_v2 failed for prefix {prefix}: {e}"
+                    ))
+                })?;
+
+            let objects = res.contents();
+            if objects.is_empty() {
+                break;
+            }
+
+            let delete_objects = Delete::builder()
+                .set_objects(Some(
+                    objects
+                        .iter()
+                        .filter_map(|obj| {
+                            let key = obj.key()?;
+                            ObjectIdentifier::builder().key(key).build().ok()
+                        })
+                        .collect(),
+                ))
+                .build()
+                .map_err(|e| {
+                    OxenError::basic_str(format!(
+                        "S3 Delete builder failed for prefix {prefix}: {e}"
+                    ))
+                })?;
+
+            client
+                .delete_objects()
+                .bucket(&self.bucket)
+                .delete(delete_objects)
+                .send()
+                .await
+                .map_err(|e| {
+                    OxenError::basic_str(format!(
+                        "S3 delete_objects failed for prefix {prefix}: {e}"
+                    ))
+                })?;
+
+            continuation_token = res.next_continuation_token().map(|s| s.to_string());
+
+            if continuation_token.is_none() {
+                break;
+            }
+        }
+
         Ok(())
     }
 

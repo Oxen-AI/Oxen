@@ -308,7 +308,7 @@ pub async fn create(
     })
 }
 
-pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
+pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     if !repo.path.exists() {
         let err = format!("Repository does not exist {:?}", repo.path);
         return Err(OxenError::basic_str(err));
@@ -320,6 +320,10 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     core::refs::ref_manager::remove_from_cache(&repo.path)?;
 
     log::debug!("Deleting repo directory: {repo:?}");
+    // Remove version files
+    let version_store = repo.version_store()?;
+    version_store.delete_all_versions().await?;
+    // Remove the repo folder
     util::fs::remove_dir_all(&repo.path)?;
     Ok(repo)
 }
