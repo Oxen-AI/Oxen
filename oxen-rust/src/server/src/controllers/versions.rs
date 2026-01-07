@@ -553,7 +553,7 @@ pub async fn save_multiparts(
                 let file_size = raw_headers
                     .get("X-Oxen-File-Size")
                     .and_then(|val| val.to_str().ok())
-                    .and_then(|s| s.parse::<usize>().ok());
+                    .and_then(|s| s.parse::<u64>().ok());
 
                 let size = match file_size {
                     Some(size) => {
@@ -598,14 +598,14 @@ pub async fn save_multiparts(
                 };
 
                 match version_store
-                    .store_version_from_reader_with_size(upload_filehash, reader, size as u64)
+                    .store_version_from_reader_with_size(upload_filehash, reader, size)
                     .await
                 {
                     Ok(_) => {
                         log::info!("Successfully stored version for hash: {upload_filehash}");
                     }
                     Err(e) => {
-                        log::error!("Failed to store version for hash {upload_filehash}: {e}");
+                        log::error!("Failed to store version: {e}");
                         record_error_file(
                             &mut err_files,
                             upload_filehash.to_string(),
