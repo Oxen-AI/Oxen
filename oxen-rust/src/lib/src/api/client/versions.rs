@@ -569,10 +569,12 @@ pub async fn multipart_batch_upload(
             }
         };
 
-        let file_size = entry.num_bytes();
+        let file_size = compressed_bytes.len();
         let hash = entry.hash();
         let mut headers = HeaderMap::new();
-        headers.insert("X-Oxen-File-Size", file_size.into());
+        let hv = HeaderValue::from_str(&file_size.to_string())
+            .map_err(|e| OxenError::basic_str(format!("Invalid file size header: {e}")))?;
+        headers.insert("X-Oxen-File-Size", hv);
         let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
             .file_name(hash.to_string())
             .mime_str("application/gzip")?
@@ -585,12 +587,9 @@ pub async fn multipart_batch_upload(
 
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    // Post the node hashes to sync on the first chunk upload
-
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
-    eprintln!("response: {response:?}");
     err_files.extend(response.err_files);
 
     Ok(err_files)
@@ -739,9 +738,16 @@ pub async fn workspace_multipart_batch_upload_versions(
             }
         };
 
+        let file_size = compressed_bytes.len();
+        let mut headers = HeaderMap::new();
+        let hv = HeaderValue::from_str(&file_size.to_string())
+            .map_err(|e| OxenError::basic_str(format!("Invalid file size header: {e}")))?;
+        headers.insert("X-Oxen-File-Size", hv);
+
         let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
             .file_name(hash)
-            .mime_str("application/gzip")?;
+            .mime_str("application/gzip")?
+            .headers(headers);
 
         form = form.part("file[]", file_part);
     }

@@ -198,16 +198,9 @@ impl VersionStore for S3VersionStore {
         log::debug!("Storing version to S3 from reader with size {size}");
         let key = self.generate_key(hash);
 
-        // // AsyncRead → http StreamBody
-        // let body = body_from_async_read(reader);
-        // // StreamBody → ByteStream
-        // let byte_stream = ByteStream::from_body_1_x(body);
-        let stream = ReaderStream::with_capacity(reader, 64 * 1024) // 64KB buffer
-            .map(|result| {
-                result
-                    .map(Frame::data)
-                    .map_err(std::io::Error::other)
-            });
+        let stream =
+            ReaderStream::with_capacity(reader, 64 * 1024) // 64KB buffer
+                .map(|result| result.map(Frame::data).map_err(std::io::Error::other));
 
         let sdk_body = SdkBody::from_body_1_x(http_body_util::StreamBody::new(stream));
         let byte_stream = ByteStream::from_body_1_x(sdk_body);
@@ -409,6 +402,7 @@ impl VersionStore for S3VersionStore {
         Ok(Some(upload_id.to_string()))
     }
 
+    // It's only used in the entries client for pull
     async fn store_version_chunk(
         &self,
         _hash: &str,
@@ -442,11 +436,8 @@ impl VersionStore for S3VersionStore {
         let bucket = self.bucket.clone();
         let (tx, rx) = duplex(8 * 1024);
 
-        let stream = ReaderStream::new(rx).map(|result| {
-            result
-                .map(Frame::data)
-                .map_err(std::io::Error::other)
-        });
+        let stream = ReaderStream::new(rx)
+            .map(|result| result.map(Frame::data).map_err(std::io::Error::other));
 
         let sdk_body = SdkBody::from_body_1_x(http_body_util::StreamBody::new(stream));
 
@@ -753,7 +744,7 @@ impl VersionStore for S3VersionStore {
 
             for obj in resp.contents() {
                 if let Some(key) = obj.key() {
-                    if let Some(rest) = key.strip_prefix(prefix) {
+                    if let Some(rest) = key.strip_prefix(&root_prefix) {
                         let mut parts = rest.split('/');
                         if let (Some(a), Some(b)) = (parts.next(), parts.next()) {
                             versions.push(format!("{a}{b}"));

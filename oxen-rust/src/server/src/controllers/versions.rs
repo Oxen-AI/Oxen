@@ -393,8 +393,6 @@ pub async fn save_multiparts(
         let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
-        let raw_header = field.headers();
-        eprintln!("raw header: {raw_header:?}");
         if let Some(name) = content_disposition.get_name() {
             if name == "file[]" || name == "file" {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
@@ -411,7 +409,8 @@ pub async fn save_multiparts(
                 };
 
                 // Get file size from header
-                let file_size = raw_header
+                let raw_headers = field.headers();
+                let file_size = raw_headers
                     .get("X-Oxen-File-Size")
                     .and_then(|val| val.to_str().ok())
                     .and_then(|s| s.parse::<usize>().ok());
@@ -503,15 +502,13 @@ mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
-    use actix_multipart::test::create_form_data_payload_and_headers;
-    use actix_web::{web, web::Bytes, App};
+    use actix_web::{web, App};
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::ErrorFilesResponse;
-    use mime;
     use std::io::Write;
 
     #[actix_web::test]
@@ -577,23 +574,41 @@ mod tests {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(file_content.as_bytes())?;
         let compressed_bytes = encoder.finish()?;
+        let file_size = compressed_bytes.len();
 
-        // create multipart request
-        let (body, headers) = create_form_data_payload_and_headers(
-            "file[]",
-            Some(file_hash.clone()),
-            Some("application/gzip".parse::<mime::Mime>().unwrap()),
-            Bytes::from(compressed_bytes),
+        // Construct multipart request body
+        let boundary = "----oxen-boundary";
+
+        let mut body = Vec::new();
+
+        // including self defined header x-oxen-file-size
+        body.extend_from_slice(
+            format!(
+                "--{b}\r\n\
+            Content-Disposition: form-data; name=\"file[]\"; filename=\"{file_hash}\"\r\n\
+            Content-Type: application/gzip\r\n\
+            X-Oxen-File-Size: {size}\r\n\
+            \r\n",
+                b = boundary,
+                size = file_size,
+                file_hash = file_hash,
+            )
+            .as_bytes(),
         );
+
+        body.extend_from_slice(&compressed_bytes);
+
+        body.extend_from_slice(format!("\r\n--{b}--\r\n", b = boundary).as_bytes());
+
         let uri = format!("/oxen/{namespace}/{repo_name}/versions");
 
         let req = actix_web::test::TestRequest::post()
             .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
-
-        let req = headers
-            .into_iter()
-            .fold(req, |req, hdr| req.insert_header(hdr))
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            ))
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
             .set_payload(body)
             .to_request();
 
