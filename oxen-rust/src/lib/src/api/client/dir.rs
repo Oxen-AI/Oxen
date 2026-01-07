@@ -79,7 +79,7 @@ pub async fn get_dir(
 ) -> Result<PaginatedDirEntriesResponse, OxenError> {
     let path_str = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
-    let uri = format!("/dir/download/{revision}/{path_str}");
+    let uri = format!("/dir/{revision}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
