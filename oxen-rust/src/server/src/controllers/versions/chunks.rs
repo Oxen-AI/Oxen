@@ -197,11 +197,10 @@ pub async fn create(req: HttpRequest, _body: String) -> Result<HttpResponse, Oxe
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let version_store = repo.version_store()?;
-    eprintln!("In create controller");
     let upload_id = version_store
         .init_version_chunk_session(&version_id)
         .await?;
-    eprintln!("Created upload session with id: {upload_id:?}");
+
     Ok(HttpResponse::Ok().json(CreateVersionUploadResponse {
         status: StatusMessage::resource_found(),
         upload_id,

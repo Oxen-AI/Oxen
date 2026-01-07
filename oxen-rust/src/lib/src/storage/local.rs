@@ -647,7 +647,6 @@ pub struct LocalVersionWriter {
 #[async_trait]
 impl VersionWriter for LocalVersionWriter {
     async fn finish(mut self: Box<Self>) -> Result<(), OxenError> {
-        // flush 本地文件 buffer
         self.writer
             .flush()
             .await
@@ -662,7 +661,6 @@ impl AsyncWrite for LocalVersionWriter {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        // 将 BufWriter 的 poll_write 封装
         Pin::new(&mut self.writer).poll_write(cx, buf)
     }
 

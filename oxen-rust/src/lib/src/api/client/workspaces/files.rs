@@ -14,6 +14,7 @@ use glob_match::glob_match;
 use parking_lot::Mutex;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
+use reqwest::header::{HeaderMap, HeaderValue};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -414,10 +415,20 @@ async fn parallel_batched_small_file_upload(
                                             )));
                                         }
                                     };
+                                    let file_size = compressed_bytes.len();
+                                    let mut headers = HeaderMap::new();
+                                    let hv = HeaderValue::from_str(&file_size.to_string())
+                                        .map_err(|e| {
+                                            OxenError::basic_str(format!(
+                                                "Invalid file size header: {e}"
+                                            ))
+                                        })?;
+                                    headers.insert("X-Oxen-File-Size", hv);
 
                                     reqwest::multipart::Part::bytes(compressed_bytes)
                                         .file_name(hash.clone())
                                         .mime_str("application/gzip")?
+                                        .headers(headers)
                                 };
 
                                 Ok(Some((file_part, hash, staging_path, size)))
