@@ -305,6 +305,72 @@ fn list_recursive(
     Ok(())
 }
 
+/// Fast forward-only traversal for paginated commits
+/// This is much faster than full topological sort for recent commits
+/// Follows the first parent chain, which works well for linear histories (99% of cases)
+fn list_forward_paginated(
+    repo: &LocalRepository,
+    head_commit: Commit,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<Commit>, OxenError> {
+    let mut results = Vec::new();
+    let mut current = Some(head_commit);
+    let mut count = 0;
+    let end_idx = skip + limit;
+
+    while let Some(commit) = current {
+        // Collect commits within the pagination range
+        if count >= skip && count < end_idx {
+            results.push(commit.clone());
+        }
+        count += 1;
+
+        // Early exit once we've collected enough commits
+        if count >= end_idx {
+            break;
+        }
+
+        // Follow the first parent (main branch)
+        current = if let Some(parent_id) = commit.parent_ids.first() {
+            let parent_id: MerkleHash = parent_id.parse()?;
+            get_by_hash(repo, &parent_id)?
+        } else {
+            None
+        };
+    }
+
+    Ok(results)
+}
+
+/// List commits recursively with pagination support
+/// Returns (commits, total_count)
+/// Only collects commits within the skip..skip+limit range
+/// If known_total_count is provided, enables early exit optimization
+fn list_recursive_paginated(
+    repo: &LocalRepository,
+    head_commit: Commit,
+    skip: usize,
+    limit: usize,
+    stop_at_base: Option<&Commit>,
+    known_total_count: Option<usize>,
+) -> Result<(Vec<Commit>, usize), OxenError> {
+    let mut results = vec![];
+    let mut visited = HashSet::new();
+    let total_count = recurse_commit_paginated(
+        repo,
+        head_commit,
+        &mut results,
+        stop_at_base,
+        &mut visited,
+        skip,
+        limit,
+        known_total_count,
+    )?;
+    results.reverse();
+    Ok((results, total_count))
+}
+
 // post-order traversal of the commit tree
 // returns a Topological sort with priority to timestamp in case of multiple parents
 // Uses iterative approach to avoid stack overflow in debug builds
@@ -362,6 +428,91 @@ fn recurse_commit(
     }
 
     Ok(())
+}
+
+// Paginated version of recurse_commit
+// Only collects commits within the skip..skip+limit range
+// If known_total_count is provided, enables early exit after collecting enough commits
+// Returns the total count of commits (either computed or the known value)
+fn recurse_commit_paginated(
+    repo: &LocalRepository,
+    head_commit: Commit,
+    results: &mut Vec<Commit>,
+    stop_at_base: Option<&Commit>,
+    visited: &mut HashSet<String>,
+    skip: usize,
+    limit: usize,
+    known_total_count: Option<usize>,
+) -> Result<usize, OxenError> {
+    // Stack to simulate recursion: (commit, processing_state)
+    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
+    let mut count = 0;
+    let end_idx = skip + limit;
+    let can_early_exit = known_total_count.is_some();
+
+    while let Some((commit, children_processed)) = stack.pop() {
+        // Check if we've already visited this commit
+        if visited.contains(&commit.id) {
+            continue;
+        }
+
+        if children_processed {
+            // All children have been processed, now add this commit to results
+            visited.insert(commit.id.clone());
+
+            // Only collect commits within the pagination range
+            if count >= skip && count < end_idx {
+                results.push(commit);
+            }
+            count += 1;
+
+            // Early exit if we've collected enough commits and we know the total count
+            if can_early_exit && count >= end_idx {
+                log::debug!(
+                    "Early exit: collected {} commits (skip={}, limit={})",
+                    results.len(),
+                    skip,
+                    limit
+                );
+                break;
+            }
+        } else {
+            // Check if this is the base commit we should stop at
+            if let Some(base) = stop_at_base {
+                if commit.id == base.id {
+                    visited.insert(commit.id.clone());
+                    if count >= skip && count < end_idx {
+                        results.push(commit);
+                    }
+                    count += 1;
+                    continue;
+                }
+            }
+
+            // Mark this commit for re-processing after children
+            stack.push((commit.clone(), true));
+
+            // Get and sort parent commits
+            let mut parent_commits: Vec<Commit> = Vec::new();
+            for parent_id in commit.parent_ids.clone() {
+                let parent_id = parent_id.parse()?;
+                if let Some(c) = get_by_hash(repo, &parent_id)? {
+                    parent_commits.push(c);
+                }
+            }
+
+            // Sort by timestamp and push in reverse order (so they're processed in correct order)
+            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
+            for parent_commit in parent_commits {
+                if !visited.contains(&parent_commit.id) {
+                    stack.push((parent_commit, false));
+                }
+            }
+        }
+    }
+
+    // Return known count if available, otherwise return computed count
+    Ok(known_total_count.unwrap_or(count))
 }
 
 /// List commits for the repository in no particular order
@@ -464,6 +615,73 @@ pub fn list_from(
     }
 
     Ok(results)
+}
+
+/// Get commit history given a revision with pagination
+/// Returns (commits, total_count, count_was_cached)
+/// Only collects commits within the requested page range
+pub fn list_from_paginated_impl(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+    skip: usize,
+    limit: usize,
+) -> Result<(Vec<Commit>, usize, bool), OxenError> {
+    let _perf = crate::perf_guard!("core::commits::list_from_paginated_impl");
+
+    let revision = revision.as_ref();
+    if revision.contains("..") {
+        let _perf_between = crate::perf_guard!("core::commits::list_between_range");
+        let split: Vec<&str> = revision.split("..").collect();
+        let base = split[0];
+        let head = split[1];
+        let base_commit = repositories::commits::get_by_id(repo, base)?
+            .ok_or(OxenError::revision_not_found(base.into()))?;
+        let head_commit = repositories::commits::get_by_id(repo, head)?
+            .ok_or(OxenError::revision_not_found(head.into()))?;
+
+        // For range queries, we need to compute the count (no cache for ranges)
+        let (commits, total_count) =
+            list_recursive_paginated(repo, head_commit, skip, limit, Some(&base_commit), None)?;
+        return Ok((commits, total_count, false));
+    }
+
+    let _perf_get = crate::perf_guard!("core::commits::get_revision");
+    let commit = repositories::revisions::get(repo, revision)?;
+    drop(_perf_get);
+
+    if let Some(commit) = commit {
+        // Try to get cached count first
+        let _perf_count = crate::perf_guard!("core::commits::get_cached_count");
+        let (total_count, cached) = count_from(repo, &commit.id)?;
+        drop(_perf_count);
+
+        log::info!(
+            "list_from_paginated_impl: total_count={}, cached={}, skip={}, limit={}",
+            total_count,
+            cached,
+            skip,
+            limit
+        );
+
+        // Fast path: if requesting a small number of recent commits, use simple forward traversal
+        // This is much faster than the full topological sort for early pages
+        if skip + limit <= 100 {
+            let _perf_fast = crate::perf_guard!("core::commits::list_forward_paginated");
+            let commits = list_forward_paginated(repo, commit, skip, limit)?;
+            drop(_perf_fast);
+            return Ok((commits, total_count, cached));
+        }
+
+        // Slow path: full topological sort with early exit
+        let _perf_recursive = crate::perf_guard!("core::commits::list_recursive_paginated");
+        let (commits, _) =
+            list_recursive_paginated(repo, commit, skip, limit, None, Some(total_count))?;
+        drop(_perf_recursive);
+
+        return Ok((commits, total_count, cached));
+    }
+
+    Ok((vec![], 0, false))
 }
 
 /// Get commit history given a revision (branch name or commit id)
