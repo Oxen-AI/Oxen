@@ -250,6 +250,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash of the version to delete
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
 
+    /// Delete all version files
+    async fn delete_all_versions(&self) -> Result<(), OxenError>;
+
     /// List all versions
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;
 

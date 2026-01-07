@@ -223,6 +223,11 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
+    async fn delete_all_versions(&self) -> Result<(), OxenError> {
+        util::fs::remove_dir_all(&self.root_path)?;
+        Ok(())
+    }
+
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
         let mut versions = Vec::new();
 

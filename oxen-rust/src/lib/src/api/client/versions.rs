@@ -433,7 +433,7 @@ async fn upload_chunk(
     // Optional upload id header
     if let Some(upload_id) = &upload.upload_id {
         request = request.header(
-            "X-Upload-Id",
+            "X-Oxen-Upload-Id",
             HeaderValue::from_str(upload_id).map_err(|e| {
                 OxenError::basic_str(format!("Invalid upload id header value: {e}"))
             })?,
@@ -569,7 +569,7 @@ pub async fn multipart_batch_upload(
             }
         };
 
-        let file_size = compressed_bytes.len();
+        let file_size = entry.num_bytes();
         let hash = entry.hash();
         let mut headers = HeaderMap::new();
         let hv = HeaderValue::from_str(&file_size.to_string())
@@ -703,6 +703,7 @@ pub async fn workspace_multipart_batch_upload_versions(
         let file = std::fs::read(&path)
             .map_err(|e| OxenError::basic_str(format!("Failed to read file '{path:?}': {e}")))?;
 
+        let file_size = file.len();
         let hash = hasher::hash_buffer(&file);
         let file_name = PathBuf::from(path.file_name().unwrap());
 
@@ -738,7 +739,6 @@ pub async fn workspace_multipart_batch_upload_versions(
             }
         };
 
-        let file_size = compressed_bytes.len();
         let mut headers = HeaderMap::new();
         let hv = HeaderValue::from_str(&file_size.to_string())
             .map_err(|e| OxenError::basic_str(format!("Invalid file size header: {e}")))?;

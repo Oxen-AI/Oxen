@@ -37,7 +37,9 @@ pub async fn upload(
         .and_then(|s| s.parse::<i32>().ok());
 
     let headers = req.headers();
-    let upload_id = headers.get("X-Upload-Id").and_then(|v| v.to_str().ok());
+    let upload_id = headers
+        .get("X-Oxen-Upload-Id")
+        .and_then(|v| v.to_str().ok());
 
     let chunk_size = headers
         .get(CONTENT_LENGTH)

@@ -714,7 +714,7 @@ mod tests {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(file_content.as_bytes())?;
         let compressed_bytes = encoder.finish()?;
-        let file_size = compressed_bytes.len();
+        let file_size = file_content.len();
 
         // Construct multipart request body
         let boundary = "----oxen-boundary";
