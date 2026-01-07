@@ -380,7 +380,6 @@ pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
-    // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
         log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
@@ -442,6 +441,7 @@ pub async fn save_multiparts(
                     .unwrap_or(false);
 
                 // Read the bytes from the stream
+                // TODO: Implement streaming here
                 let mut field_bytes = Vec::new();
                 while let Some(chunk) = field.try_next().await? {
                     field_bytes.extend_from_slice(&chunk);

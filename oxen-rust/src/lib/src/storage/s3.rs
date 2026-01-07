@@ -477,7 +477,7 @@ impl VersionStore for S3VersionStore {
             OxenError::basic_str("Missing chunk_number for S3 store_version_chunk_stream")
         })?;
         let bucket = self.bucket.clone();
-        let (tx, rx) = duplex(8 * 1024);
+        let (tx, rx) = duplex(64 * 1024);
 
         let stream = ReaderStream::new(rx)
             .map(|result| result.map(Frame::data).map_err(std::io::Error::other));
@@ -756,7 +756,7 @@ impl VersionStore for S3VersionStore {
                 })?;
 
             // TODO: Handle partial failure
-            client
+            let delete_resp = client
                 .delete_objects()
                 .bucket(&self.bucket)
                 .delete(delete_objects)
@@ -769,6 +769,22 @@ impl VersionStore for S3VersionStore {
                     ))
                 })?;
 
+            let errors = delete_resp.errors();
+            if !errors.is_empty() {
+                log::warn!(
+                    "S3 delete_objects partial failure for prefix {}: {} objects failed",
+                    version_dir,
+                    errors.len()
+                );
+                for err in errors {
+                    log::warn!(
+                        "S3 delete_objects failed for key={:?}, code={:?}, message={:?}",
+                        err.key(),
+                        err.code(),
+                        err.message(),
+                    );
+                }
+            }
             continuation_token = res.next_continuation_token().map(|s| s.to_string());
 
             if continuation_token.is_none() {
@@ -820,7 +836,7 @@ impl VersionStore for S3VersionStore {
                 })?;
 
             // TODO: Handle partial failure
-            client
+            let delete_resp = client
                 .delete_objects()
                 .bucket(&self.bucket)
                 .delete(delete_objects)
@@ -833,6 +849,22 @@ impl VersionStore for S3VersionStore {
                     ))
                 })?;
 
+            let errors = delete_resp.errors();
+            if !errors.is_empty() {
+                log::warn!(
+                    "S3 delete_all_versions partial failure for prefix {}: {} objects failed",
+                    prefix,
+                    errors.len()
+                );
+                for err in errors {
+                    log::warn!(
+                        "S3 delete_all_versions failed for key={:?}, code={:?}, message={:?}",
+                        err.key(),
+                        err.code(),
+                        err.message(),
+                    );
+                }
+            }
             continuation_token = res.next_continuation_token().map(|s| s.to_string());
 
             if continuation_token.is_none() {
