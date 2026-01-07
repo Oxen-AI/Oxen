@@ -1,7 +1,6 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::primitives::{ByteStream, SdkBody};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{config::Region, error::SdkError, Client};
@@ -67,7 +66,10 @@ impl S3VersionStore {
                     .send()
                     .await
                     .map_err(|err| {
-                        OxenError::basic_str(format!("Failed to get bucket location: {err:?}"))
+                        OxenError::basic_str(format!(
+                            "S3 init_client Failed to get bucket location: {:?}",
+                            parse_s3_error(&err)
+                        ))
                     })?
                     .location_constraint()
                     .map(|loc| loc.as_str().to_string())
@@ -132,20 +134,23 @@ impl VersionStore for S3VersionStore {
                             .await
                             .map_err(|err| {
                                 OxenError::basic_str(format!(
-                                    "Failed to delete _permission_check: {err}"
+                                    "S3 init() failed to delete _permission_check: {}",
+                                    parse_s3_error(&err)
                                 ))
                             })?;
                         Ok(())
                     }
                     // Surface the error from S3
                     Err(err) => Err(OxenError::basic_str(format!(
-                        "S3 write permission check failed: {err}",
+                        "S3 init() write permission check failed: {}",
+                        parse_s3_error(&err)
                     ))),
                 }
             }
             Err(err) => Err(OxenError::basic_str(format!(
-                "Cannot access S3 bucket '{}': {err}",
-                self.bucket
+                "S3 init() cannot access S3 bucket '{}': {}",
+                self.bucket,
+                parse_s3_error(&err)
             ))),
         }
     }
@@ -172,7 +177,12 @@ impl VersionStore for S3VersionStore {
             .body(body)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to store version in S3: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 store_version_from_path failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         Ok(())
     }
@@ -213,7 +223,12 @@ impl VersionStore for S3VersionStore {
             .content_length(size as i64)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to store version in S3: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 store_version_derived failed : {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         Ok(())
     }
@@ -231,7 +246,9 @@ impl VersionStore for S3VersionStore {
             .body(body)
             .send()
             .await
-            .map_err(|_| OxenError::Basic("failed to store version in S3".into()))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!("S3 store_version failed: {}", parse_s3_error(&e)))
+            })?;
 
         Ok(())
     }
@@ -260,7 +277,10 @@ impl VersionStore for S3VersionStore {
             .send()
             .await
             .map_err(|e| {
-                OxenError::basic_str(format!("failed to store derived version file in S3: {e}"))
+                OxenError::basic_str(format!(
+                    "S3 store_version_derived failed: {}",
+                    parse_s3_error(&e)
+                ))
             })?;
         log::debug!("Saved derived version file {derived_path:?}");
 
@@ -277,7 +297,12 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 get_version_size failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         let size = resp
             .content_length()
@@ -296,13 +321,15 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!("S3 get_object failed: {}", parse_s3_error(&e)))
+            })?;
 
         let data = resp
             .body
             .collect()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 read body failed: {e}")))?
+            .map_err(|e| OxenError::basic_str(format!("S3 read response body failed: {e}")))?
             .into_bytes()
             .to_vec();
 
@@ -323,7 +350,12 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 get_version_stream failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
 
@@ -351,7 +383,12 @@ impl VersionStore for S3VersionStore {
             .key(key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 get_version_derived_stream failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
         Ok(Box::new(adapter) as Box<_>)
@@ -393,7 +430,12 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("create_multipart_upload failed: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 create_multipart_upload failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         let upload_id = upload_resp
             .upload_id()
@@ -416,6 +458,7 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
+    // Must call finish() specifically before the writer dropped
     async fn get_version_chunk_writer(
         &self,
         hash: &str,
@@ -454,7 +497,9 @@ impl VersionStore for S3VersionStore {
                 .body(byte_stream)
                 .send()
                 .await
-                .map_err(|e| OxenError::basic_str(format!("S3 upload failed: {e}")))?;
+                .map_err(|e| {
+                    OxenError::basic_str(format!("S3 chunk upload failed: {}", parse_s3_error(&e)))
+                })?;
             Ok(())
         });
 
@@ -483,7 +528,12 @@ impl VersionStore for S3VersionStore {
             .range(range)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 get_version_chunk failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         let mut reader = resp.body.into_async_read();
         let mut buf = Vec::with_capacity(size as usize);
@@ -512,8 +562,12 @@ impl VersionStore for S3VersionStore {
             .range(range)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 get_version_chunk_stream failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
         let stream = ByteStreamAdapter { inner: resp.body };
 
         Ok(Box::new(stream))
@@ -543,7 +597,10 @@ impl VersionStore for S3VersionStore {
                 .send()
                 .await
                 .map_err(|e| {
-                    OxenError::basic_str(format!("S3 list_version_chunks list_parts failed: {e}"))
+                    OxenError::basic_str(format!(
+                        "S3 list_version_chunks list_parts failed: {}",
+                        parse_s3_error(&e)
+                    ))
                 })?;
 
             if let Some(s3_parts) = resp.parts {
@@ -626,7 +683,12 @@ impl VersionStore for S3VersionStore {
             .multipart_upload(completed_upload)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("complete_multipart_upload failed: {e}")))?;
+            .map_err(|e| {
+                OxenError::basic_str(format!(
+                    "S3 complete_multipart_upload failed: {}",
+                    parse_s3_error(&e)
+                ))
+            })?;
 
         Ok(())
     }
@@ -644,15 +706,9 @@ impl VersionStore for S3VersionStore {
         {
             Ok(_) => Ok(true),
 
-            Err(SdkError::ServiceError(err)) => match err.err() {
-                HeadObjectError::NotFound(_) => Ok(false),
-                err => Err(OxenError::basic_str(format!(
-                    "version_exists failed with S3 head_object error: {err:?}"
-                ))),
-            },
-
             Err(err) => Err(OxenError::basic_str(format!(
-                "version_exists failed with S3 head_object error: {err:?}"
+                "S3 version_exists failed: {}",
+                parse_s3_error(&err)
             ))),
         }
     }
@@ -672,7 +728,8 @@ impl VersionStore for S3VersionStore {
                 .await
                 .map_err(|e| {
                     OxenError::basic_str(format!(
-                        "S3 list_objects_v2 failed for prefix {version_dir}: {e}"
+                        "S3 list_objects_v2 failed for prefix {version_dir}: {}",
+                        parse_s3_error(&e)
                     ))
                 })?;
 
@@ -698,6 +755,7 @@ impl VersionStore for S3VersionStore {
                     ))
                 })?;
 
+            // TODO: Handle partial failure
             client
                 .delete_objects()
                 .bucket(&self.bucket)
@@ -706,7 +764,8 @@ impl VersionStore for S3VersionStore {
                 .await
                 .map_err(|e| {
                     OxenError::basic_str(format!(
-                        "S3 delete_objects failed for prefix {version_dir}: {e}"
+                        "S3 delete_objects failed for prefix {version_dir}: {}",
+                        parse_s3_error(&e)
                     ))
                 })?;
 
@@ -733,7 +792,8 @@ impl VersionStore for S3VersionStore {
                 .await
                 .map_err(|e| {
                     OxenError::basic_str(format!(
-                        "S3 list_objects_v2 failed for prefix {prefix}: {e}"
+                        "S3 list_objects_v2 failed for prefix {prefix}: {}",
+                        parse_s3_error(&e)
                     ))
                 })?;
 
@@ -759,6 +819,7 @@ impl VersionStore for S3VersionStore {
                     ))
                 })?;
 
+            // TODO: Handle partial failure
             client
                 .delete_objects()
                 .bucket(&self.bucket)
@@ -767,7 +828,8 @@ impl VersionStore for S3VersionStore {
                 .await
                 .map_err(|e| {
                     OxenError::basic_str(format!(
-                        "S3 delete_objects failed for prefix {prefix}: {e}"
+                        "S3 delete_objects failed for prefix {prefix}: {}",
+                        parse_s3_error(&e)
                     ))
                 })?;
 
@@ -800,7 +862,8 @@ impl VersionStore for S3VersionStore {
                 .await
                 .map_err(|e| {
                     OxenError::basic_str(format!(
-                        "S3 list_objects_v2 failed for prefix {root_prefix}: {e}"
+                        "S3 list_objects_v2 failed for prefix {root_prefix}: {}",
+                        parse_s3_error(&e)
                     ))
                 })?;
 
@@ -846,6 +909,29 @@ impl VersionStore for S3VersionStore {
     }
 }
 
+use aws_sdk_s3::error::ProvideErrorMetadata;
+use std::fmt::Debug;
+
+pub fn parse_s3_error<E, R>(e: &SdkError<E, R>) -> String
+where
+    E: Debug + ProvideErrorMetadata,
+    R: Debug,
+{
+    match e {
+        SdkError::ServiceError(se) => {
+            let meta = se.err().meta();
+            let code = meta.code();
+            let message = meta.message();
+
+            format!("AWS ServiceError: code={code:?}, message={message:?}",)
+        }
+        SdkError::TimeoutError(te) => format!("AWS TimeoutError: {te:?}"),
+        SdkError::DispatchFailure(df) => format!("AWS DispatchFailure: {df:?}"),
+        SdkError::ConstructionFailure(cf) => format!("AWS ConstructionFailure: {cf:?}"),
+        other => format!("Other AWS error: {other:?}"),
+    }
+}
+
 struct ByteStreamAdapter {
     inner: ByteStream,
 }
@@ -873,6 +959,7 @@ pub struct S3VersionWriter {
 
 #[async_trait]
 impl VersionWriter for S3VersionWriter {
+    // Must be called specifically before the writer dropped
     async fn finish(mut self: Box<Self>) -> Result<(), OxenError> {
         // flush duplex
         self.writer.shutdown().await?;
