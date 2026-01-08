@@ -430,6 +430,102 @@ fn recurse_commit(
     Ok(())
 }
 
+/// Mark a commit and all its ancestors as visited
+/// This is used when we find a cached count to prevent double-counting
+fn mark_ancestors_visited(
+    repo: &LocalRepository,
+    commit: &Commit,
+    visited: &mut HashSet<String>,
+) -> Result<(), OxenError> {
+    let mut stack = vec![commit.clone()];
+
+    while let Some(current) = stack.pop() {
+        if visited.contains(&current.id) {
+            continue;
+        }
+        visited.insert(current.id.clone());
+
+        for parent_id in current.parent_ids.clone() {
+            let parent_id: MerkleHash = parent_id.parse()?;
+            if let Some(parent) = get_by_hash(repo, &parent_id)? {
+                if !visited.contains(&parent.id) {
+                    stack.push(parent);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Count commits recursively without collecting them into memory
+/// This is much more efficient than list_from for counting purposes
+/// Leverages the commit count cache during traversal - when we encounter a commit
+/// with a cached count, we use that count and skip traversing its entire history
+fn count_with_cache(
+    repo: &LocalRepository,
+    db: &DBWithThreadMode<MultiThreaded>,
+    head_commit: Commit,
+    stop_at_base: Option<&Commit>,
+    visited: &mut HashSet<String>,
+) -> Result<usize, OxenError> {
+    let mut count = 0;
+
+    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
+
+    while let Some((commit, children_processed)) = stack.pop() {
+        if visited.contains(&commit.id) {
+            continue;
+        }
+
+        if children_processed {
+            visited.insert(commit.id.clone());
+            count += 1;
+        } else {
+            if let Some(base) = stop_at_base {
+                if commit.id == base.id {
+                    visited.insert(commit.id.clone());
+                    count += 1;
+                    continue;
+                }
+            }
+
+            if let Some(cached_count) = get_cached_count(db, &commit.id)? {
+                log::debug!(
+                    "Found cached count for commit {}: {} commits",
+                    &commit.id[..8],
+                    cached_count
+                );
+                mark_ancestors_visited(repo, &commit, visited)?;
+                count += cached_count;
+                continue;
+            }
+
+            // Mark this commit for re-processing after children
+            stack.push((commit.clone(), true));
+
+            // Get and sort parent commits
+            let mut parent_commits: Vec<Commit> = Vec::new();
+            for parent_id in commit.parent_ids.clone() {
+                let parent_id = parent_id.parse()?;
+                if let Some(c) = get_by_hash(repo, &parent_id)? {
+                    parent_commits.push(c);
+                }
+            }
+
+            // Sort by timestamp and push in reverse order (so they're processed in correct order)
+            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
+            for parent_commit in parent_commits {
+                if !visited.contains(&parent_commit.id) {
+                    stack.push((parent_commit, false));
+                }
+            }
+        }
+    }
+
+    Ok(count)
+}
+
 #[allow(clippy::too_many_arguments)]
 // Paginated version of recurse_commit
 // Only collects commits within the skip..skip+limit range
@@ -758,23 +854,17 @@ pub fn count_from(
 ) -> Result<(usize, bool), OxenError> {
     let revision = revision.as_ref();
 
-    // Get the commit from the revision
     let commit = repositories::revisions::get(repo, revision)?
         .ok_or_else(|| OxenError::revision_not_found(revision.into()))?;
 
-    // Open the cache database
     let db = open_commit_count_db(repo)?;
 
-    // Check if we have this count cached
     if let Some(cached_count) = get_cached_count(&db, &commit.id)? {
         return Ok((cached_count, true));
     }
 
-    // Not cached, compute the count using list_from
-    let commits = list_from(repo, &commit.id)?;
-    let count = commits.len();
+    let count = count_with_cache(repo, &db, commit.clone(), None, &mut HashSet::new())?;
 
-    // Cache the result
     cache_count(&db, &commit.id, count)?;
 
     Ok((count, false))
