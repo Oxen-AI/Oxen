@@ -88,9 +88,11 @@ pub fn start_fork(
                 // otherwise commits go to the original repo not the fork
                 if let Err(e) = update_storage_config(&new_path) {
                     log::error!("Failed to update storage config: {e}");
-                    write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(|e| {
-                        log::error!("Failed to write error status: {e}");
-                    });
+                    write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(
+                        |e| {
+                            log::error!("Failed to write error status: {e}");
+                        },
+                    );
                     return;
                 }
 
@@ -192,7 +194,9 @@ fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Resu
 }
 
 fn update_storage_config(forked_repo_path: &Path) -> Result<(), OxenError> {
-    let config_path = forked_repo_path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
+    let config_path = forked_repo_path
+        .join(OXEN_HIDDEN_DIR)
+        .join(REPO_CONFIG_FILENAME);
 
     if !config_path.exists() {
         log::warn!("Config file not found at {config_path:?}, skipping storage config update");
@@ -213,7 +217,10 @@ fn update_storage_config(forked_repo_path: &Path) -> Result<(), OxenError> {
             new_storage_path
         );
 
-        storage.settings.insert("path".to_string(), new_storage_path.to_string_lossy().to_string());
+        storage.settings.insert(
+            "path".to_string(),
+            new_storage_path.to_string_lossy().to_string(),
+        );
     }
 
     config.save(&config_path)?;
@@ -305,6 +312,37 @@ mod tests {
                     !new_workspaces_path.exists(),
                     "workspaces directory should not be copied"
                 );
+
+                // Verify that storage config was updated to point to forked repo
+                let forked_config_path = forked_repo_path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
+                assert!(
+                    forked_config_path.exists(),
+                    "Forked repo config should exist"
+                );
+
+                let forked_config = RepositoryConfig::from_file(&forked_config_path)?;
+                if let Some(storage) = forked_config.storage {
+                    let storage_path = storage.settings.get("path").expect("Storage path should exist");
+                    let expected_path = forked_repo_path
+                        .join(OXEN_HIDDEN_DIR)
+                        .join("versions")
+                        .join("files")
+                        .to_string_lossy()
+                        .to_string();
+
+                    assert_eq!(
+                        storage_path,
+                        &expected_path,
+                        "Storage path should be updated to point to forked repo"
+                    );
+
+                    // Verify it doesn't point to the original repo
+                    let original_path_str = original_repo_path.to_string_lossy().to_string();
+                    assert!(
+                        !storage_path.contains(&original_path_str),
+                        "Storage path should not reference the original repo path, got: {storage_path}"
+                    );
+                }
 
                 // Fork fails if repo exists
                 let result = start_fork(original_repo_path.clone(), forked_repo_path.clone());

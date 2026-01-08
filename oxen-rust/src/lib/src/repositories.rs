@@ -4,6 +4,7 @@
 //!
 
 use crate::constants;
+use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
@@ -15,7 +16,6 @@ use crate::model::Commit;
 use crate::model::MetadataEntry;
 use crate::model::{LocalRepository, RepoNew};
 use crate::repositories;
-use crate::constants::{OXEN_HIDDEN_DIR};
 use crate::repositories::fork::FORK_STATUS_FILENAME;
 use crate::util;
 use fd_lock::RwLock;
