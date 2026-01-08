@@ -307,7 +307,7 @@ fn list_recursive(
 
 /// Fast forward-only traversal for paginated commits
 /// This is much faster than full topological sort for recent commits
-/// Follows the first parent chain, which works well for linear histories (99% of cases)
+/// Follows the first parent chain, which works well for linear histories.
 fn list_forward_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -343,10 +343,6 @@ fn list_forward_paginated(
     Ok(results)
 }
 
-/// List commits recursively with pagination support
-/// Returns (commits, total_count)
-/// Only collects commits within the skip..skip+limit range
-/// If known_total_count is provided, enables early exit optimization
 fn list_recursive_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -430,8 +426,6 @@ fn recurse_commit(
     Ok(())
 }
 
-/// Mark a commit and all its ancestors as visited
-/// This is used when we find a cached count to prevent double-counting
 fn mark_ancestors_visited(
     repo: &LocalRepository,
     commit: &Commit,
@@ -458,10 +452,6 @@ fn mark_ancestors_visited(
     Ok(())
 }
 
-/// Count commits recursively without collecting them into memory
-/// This is much more efficient than list_from for counting purposes
-/// Leverages the commit count cache during traversal - when we encounter a commit
-/// with a cached count, we use that count and skip traversing its entire history
 fn count_with_cache(
     repo: &LocalRepository,
     db: &DBWithThreadMode<MultiThreaded>,
@@ -501,10 +491,8 @@ fn count_with_cache(
                 continue;
             }
 
-            // Mark this commit for re-processing after children
             stack.push((commit.clone(), true));
 
-            // Get and sort parent commits
             let mut parent_commits: Vec<Commit> = Vec::new();
             for parent_id in commit.parent_ids.clone() {
                 let parent_id = parent_id.parse()?;
@@ -513,7 +501,6 @@ fn count_with_cache(
                 }
             }
 
-            // Sort by timestamp and push in reverse order (so they're processed in correct order)
             parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
             for parent_commit in parent_commits {
                 if !visited.contains(&parent_commit.id) {
@@ -527,10 +514,6 @@ fn count_with_cache(
 }
 
 #[allow(clippy::too_many_arguments)]
-// Paginated version of recurse_commit
-// Only collects commits within the skip..skip+limit range
-// If known_total_count is provided, enables early exit after collecting enough commits
-// Returns the total count of commits (either computed or the known value)
 fn recurse_commit_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -541,29 +524,24 @@ fn recurse_commit_paginated(
     limit: usize,
     known_total_count: Option<usize>,
 ) -> Result<usize, OxenError> {
-    // Stack to simulate recursion: (commit, processing_state)
     let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
     let mut count = 0;
     let end_idx = skip + limit;
     let can_early_exit = known_total_count.is_some();
 
     while let Some((commit, children_processed)) = stack.pop() {
-        // Check if we've already visited this commit
         if visited.contains(&commit.id) {
             continue;
         }
 
         if children_processed {
-            // All children have been processed, now add this commit to results
             visited.insert(commit.id.clone());
 
-            // Only collect commits within the pagination range
             if count >= skip && count < end_idx {
                 results.push(commit);
             }
             count += 1;
 
-            // Early exit if we've collected enough commits and we know the total count
             if can_early_exit && count >= end_idx {
                 log::debug!(
                     "Early exit: collected {} commits (skip={}, limit={})",
@@ -574,7 +552,6 @@ fn recurse_commit_paginated(
                 break;
             }
         } else {
-            // Check if this is the base commit we should stop at
             if let Some(base) = stop_at_base {
                 if commit.id == base.id {
                     visited.insert(commit.id.clone());
@@ -586,10 +563,8 @@ fn recurse_commit_paginated(
                 }
             }
 
-            // Mark this commit for re-processing after children
             stack.push((commit.clone(), true));
 
-            // Get and sort parent commits
             let mut parent_commits: Vec<Commit> = Vec::new();
             for parent_id in commit.parent_ids.clone() {
                 let parent_id = parent_id.parse()?;
@@ -598,7 +573,6 @@ fn recurse_commit_paginated(
                 }
             }
 
-            // Sort by timestamp and push in reverse order (so they're processed in correct order)
             parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
             for parent_commit in parent_commits {
                 if !visited.contains(&parent_commit.id) {
@@ -608,7 +582,6 @@ fn recurse_commit_paginated(
         }
     }
 
-    // Return known count if available, otherwise return computed count
     Ok(known_total_count.unwrap_or(count))
 }
 
@@ -756,9 +729,9 @@ pub fn list_from_paginated_impl(
             "list_from_paginated_impl: total_count={total_count}, cached={cached}, skip={skip}, limit={limit}"
         );
 
-        // Fast path: if requesting a small number of recent commits, use simple forward traversal
-        // This is much faster than the full topological sort for early pages
-        if skip + limit <= 100 {
+        // Fast path: if requesting a small number of recent commits, we directly
+        // return the commits in forward order.
+        if skip + limit <= 10 {
             let _perf_fast = crate::perf_guard!("core::commits::list_forward_paginated");
             let commits = list_forward_paginated(repo, commit, skip, limit)?;
             drop(_perf_fast);
@@ -820,7 +793,6 @@ fn list_recursive_with_depth(
     Ok(())
 }
 
-/// Open the commit count cache database
 fn open_commit_count_db(
     repo: &LocalRepository,
 ) -> Result<DBWithThreadMode<MultiThreaded>, OxenError> {
@@ -829,7 +801,6 @@ fn open_commit_count_db(
     Ok(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?)
 }
 
-/// Get cached commit count from the database
 fn get_cached_count(
     db: &DBWithThreadMode<MultiThreaded>,
     commit_id: &str,
@@ -837,7 +808,6 @@ fn get_cached_count(
     str_val_db::get(db, commit_id)
 }
 
-/// Cache a commit count in the database
 fn cache_count(
     db: &DBWithThreadMode<MultiThreaded>,
     commit_id: &str,
@@ -846,8 +816,6 @@ fn cache_count(
     str_val_db::put(db, commit_id, &count)
 }
 
-/// Get the number of commits in the history from a given revision (including the commit itself)
-/// This function uses a cache to avoid recomputing counts for commits we've already seen
 pub fn count_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,

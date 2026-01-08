@@ -347,8 +347,6 @@ pub fn list_by_path_from_paginated(
     }
 }
 
-/// Get the number of commits in the history from a given revision (including the commit itself)
-/// Returns a tuple of (count, cached) where cached is true if the result was from cache
 pub fn count_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
