@@ -1,3 +1,5 @@
+use crate::config::RepositoryConfig;
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::error::OxenError;
 use crate::util::fs as oxen_fs;
 use crate::view::fork::{ForkStartResponse, ForkStatus, ForkStatusFile, ForkStatusResponse};
@@ -82,6 +84,16 @@ pub fn start_fork(
             &mut copied_items,
         ) {
             Ok(()) => {
+                // update the storage path in config.toml to point to the forked repo
+                // otherwise commits go to the original repo not the fork
+                if let Err(e) = update_storage_config(&new_path) {
+                    log::error!("Failed to update storage config: {e}");
+                    write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(|e| {
+                        log::error!("Failed to write error status: {e}");
+                    });
+                    return;
+                }
+
                 write_status(&new_path, &ForkStatus::Complete).unwrap_or_else(|e| {
                     log::error!("Failed to write completion status: {e}");
                 });
@@ -173,6 +185,36 @@ fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Resu
     }
     write_status(status_repo, &ForkStatus::Counting(*current_count))?;
     Ok(*current_count)
+}
+
+fn update_storage_config(forked_repo_path: &Path) -> Result<(), OxenError> {
+    let config_path = forked_repo_path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
+
+    if !config_path.exists() {
+        log::warn!("Config file not found at {config_path:?}, skipping storage config update");
+        return Ok(());
+    }
+
+    let mut config = RepositoryConfig::from_file(&config_path)?;
+
+    if let Some(ref mut storage) = config.storage {
+        let new_storage_path = forked_repo_path
+            .join(OXEN_HIDDEN_DIR)
+            .join("versions")
+            .join("files");
+
+        log::info!(
+            "Updating storage path in forked repo from {:?} to {:?}",
+            storage.settings.get("path"),
+            new_storage_path
+        );
+
+        storage.settings.insert("path".to_string(), new_storage_path.to_string_lossy().to_string());
+    }
+
+    config.save(&config_path)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
