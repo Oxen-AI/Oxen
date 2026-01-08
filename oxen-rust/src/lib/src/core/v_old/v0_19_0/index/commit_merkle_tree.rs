@@ -9,17 +9,18 @@ use rocksdb::{DBWithThreadMode, IteratorMode, MultiThreaded};
 
 use crate::core::db;
 
+use crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path_from_commit_id;
 use crate::core::db::merkle_node::MerkleNodeDB;
-
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 
 use crate::model::merkle_tree::node::{FileNode, MerkleTreeNode};
 
+use crate::constants::DIR_HASHES_DIR;
+use crate::constants::HISTORY_DIR;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
-
-use crate::repositories;
+use crate::util;
 
 pub struct CommitMerkleTree {
     pub root: MerkleTreeNode,
@@ -223,12 +224,24 @@ impl CommitMerkleTree {
         Ok(Some(node))
     }
 
+    pub fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
+        let commit_id = commit.id.clone();
+        dir_hash_db_path_from_commit_id(repo, &commit_id)
+    }
+
+    pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &String) -> PathBuf {
+        util::fs::oxen_hidden_dir(&repo.path)
+            .join(Path::new(HISTORY_DIR))
+            .join(commit_id)
+            .join(DIR_HASHES_DIR)
+    }
+
     /// The dir hashes allow you to skip to a directory in the tree
     pub fn dir_hashes(
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
-        let node_db_dir = repositories::tree::dir_hash_db_path(repo, commit);
+        let node_db_dir = CommitMerkleTree::dir_hash_db_path(repo, commit);
         log::debug!("loading dir_hashes from: {node_db_dir:?}");
         let opts = db::key_val::opts::default();
         let node_db: DBWithThreadMode<MultiThreaded> =
