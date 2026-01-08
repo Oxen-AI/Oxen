@@ -1,5 +1,5 @@
 use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACES_DIR};
 use crate::error::OxenError;
 use crate::util::fs as oxen_fs;
 use crate::view::fork::{ForkStartResponse, ForkStatus, ForkStatusFile, ForkStatusResponse};
@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use toml;
 
-pub const FORK_STATUS_FILE: &str = ".oxen/fork_status.toml";
+pub const FORK_STATUS_FILENAME: &str = "fork_status.toml";
 
 fn write_status(repo_path: &Path, status: &ForkStatus) -> Result<(), OxenError> {
-    let status_path = repo_path.join(FORK_STATUS_FILE);
+    let status_path = repo_path.join(OXEN_HIDDEN_DIR).join(FORK_STATUS_FILENAME);
     if let Some(parent) = status_path.parent() {
         oxen_fs::create_dir_all(parent)?;
     }
@@ -21,7 +21,7 @@ fn write_status(repo_path: &Path, status: &ForkStatus) -> Result<(), OxenError> 
 }
 
 fn read_status(repo_path: &Path) -> Result<Option<ForkStatus>, OxenError> {
-    let status_path = repo_path.join(FORK_STATUS_FILE);
+    let status_path = repo_path.join(OXEN_HIDDEN_DIR).join(FORK_STATUS_FILENAME);
     if !status_path.exists() {
         return Ok(None);
     }
@@ -143,12 +143,14 @@ fn copy_dir_recursive(
     total_items: f32,
     copied_items: &mut f32,
 ) -> Result<(), OxenError> {
+    let workspaces_path = PathBuf::from(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
+
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let path = entry.path();
         let dest_path = dst.join(entry.file_name());
 
-        if path.ends_with(".oxen/workspaces") {
+        if path.ends_with(&workspaces_path) {
             continue;
         }
 
@@ -171,10 +173,12 @@ fn copy_dir_recursive(
 }
 
 fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Result<u32, OxenError> {
+    let workspaces_path = PathBuf::from(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
+
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path();
-        if path.ends_with(".oxen/workspaces") {
+        if path.ends_with(&workspaces_path) {
             continue;
         }
         if path.is_dir() {
@@ -240,7 +244,7 @@ mod tests {
                 std::fs::write(file_path, "test file content")?;
 
                 // Create a workspace directory and add a file to it
-                let workspaces_path = original_repo_path.join(".oxen/workspaces");
+                let workspaces_path = original_repo_path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
                 oxen_fs::create_dir_all(&workspaces_path)?;
                 let workspace_file = workspaces_path.join("test_workspace.txt");
                 std::fs::write(workspace_file, "test workspace content")?;
@@ -295,11 +299,11 @@ mod tests {
                     "The content of test_file.txt should be the same in both repositories"
                 );
 
-                // Verify that .oxen/workspaces was not copied
-                let new_workspaces_path = forked_repo_path.join(".oxen/workspaces");
+                // Verify that workspaces directory was not copied
+                let new_workspaces_path = forked_repo_path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
                 assert!(
                     !new_workspaces_path.exists(),
-                    ".oxen/workspaces should not be copied"
+                    "workspaces directory should not be copied"
                 );
 
                 // Fork fails if repo exists
