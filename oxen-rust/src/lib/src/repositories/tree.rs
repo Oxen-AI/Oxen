@@ -2,19 +2,18 @@ use bytesize::ByteSize;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use rocksdb::{DBWithThreadMode, IteratorMode, MultiThreaded};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
 use tar::Archive;
 
-use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR, NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
+use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
-use crate::core::db;
 use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -174,7 +173,7 @@ pub fn has_dir(
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<bool, OxenError> {
-    let dir_hashes = repositories::tree::dir_hashes(repo, commit)?;
+    let dir_hashes = CommitMerkleTreeLatest::dir_hashes(repo, commit)?;
     Ok(dir_hashes.contains_key(path.as_ref()))
 }
 
@@ -184,7 +183,7 @@ pub fn has_path(
     path: impl AsRef<Path>,
 ) -> Result<bool, OxenError> {
     let path = path.as_ref();
-    let dir_hashes = repositories::tree::dir_hashes(repo, commit)?;
+    let dir_hashes = CommitMerkleTreeLatest::dir_hashes(repo, commit)?;
     match dir_hashes.get(path) {
         Some(dir_hash) => {
             let node = get_node_by_id_with_children(repo, dir_hash)?.unwrap();
@@ -882,9 +881,12 @@ pub fn cp_dir_hashes_to(
     original_commit_id: &MerkleHash,
     new_commit_id: &MerkleHash,
 ) -> Result<(), OxenError> {
-    let original_dir_hashes_path = dir_hash_db_path_from_commit_id(repo, original_commit_id);
-    let new_dir_hashes_path = dir_hash_db_path_from_commit_id(repo, new_commit_id);
+    let original_dir_hashes_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &original_commit_id.to_string());
+    let new_dir_hashes_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &new_commit_id.to_string());
     util::fs::copy_dir_all(original_dir_hashes_path, new_dir_hashes_path)?;
+
     Ok(())
 }
 
@@ -1103,38 +1105,6 @@ fn p_write_tree(
     }
     db.close()?;
     Ok(())
-}
-
-// TODO: Deprecate. This should go directly to CommitMerkleTree
-/// The dir hashes allow you to skip to a directory in the tree
-pub fn dir_hashes(
-    repo: &LocalRepository,
-    commit: &Commit,
-) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
-    let node_db_dir = repositories::tree::dir_hash_db_path(repo, commit);
-    log::debug!("loading dir_hashes from: {node_db_dir:?}");
-    let opts = db::key_val::opts::default();
-    let node_db: DBWithThreadMode<MultiThreaded> =
-        DBWithThreadMode::open_for_read_only(&opts, node_db_dir, false)?;
-    let mut dir_hashes = HashMap::new();
-    let iterator = node_db.iterator(IteratorMode::Start);
-    for item in iterator {
-        match item {
-            Ok((key, value)) => {
-                let key = str::from_utf8(&key)?;
-                let value = str::from_utf8(&value)?;
-                let hash = value.parse()?;
-                dir_hashes.insert(PathBuf::from(key), hash);
-            }
-            _ => {
-                return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
-                ));
-            }
-        }
-    }
-    // log::debug!("read dir_hashes: {:?}", dir_hashes);
-    Ok(dir_hashes)
 }
 
 // TODO: Refactor to remove 'is_download' var here
@@ -1395,23 +1365,6 @@ pub fn get_ancestor_nodes(
     }
 
     Ok(())
-}
-
-// Commit db is the directories per commit
-// This helps us skip to a directory in the tree
-// .oxen/history/{COMMIT_ID}/dir_hashes
-pub fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
-    util::fs::oxen_hidden_dir(&repo.path)
-        .join(Path::new(HISTORY_DIR))
-        .join(&commit.id)
-        .join(DIR_HASHES_DIR)
-}
-
-pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &MerkleHash) -> PathBuf {
-    util::fs::oxen_hidden_dir(&repo.path)
-        .join(Path::new(HISTORY_DIR))
-        .join(commit_id.to_string())
-        .join(DIR_HASHES_DIR)
 }
 
 // TODO: Deduplicate these
