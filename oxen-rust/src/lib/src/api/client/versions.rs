@@ -1,6 +1,6 @@
 use crate::api;
 use crate::api::client;
-use crate::constants::{max_retries, AVG_CHUNK_SIZE, MAX_RETRIES};
+use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
@@ -198,7 +198,7 @@ pub async fn download_data_from_version_paths(
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
-    let total_retries = max_retries().try_into().unwrap_or(MAX_RETRIES as u64);
+    let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
     let mut num_retries = 0;
 
     while num_retries < total_retries {

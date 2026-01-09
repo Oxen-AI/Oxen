@@ -37,7 +37,7 @@ impl RunCmd for CloneCmd {
             .arg(
                 Arg::new("depth")
                     .long("depth")
-                    .help("Used in combination with --subtree. The depth at which to clone the subtree. If not provided, the entire subtree will be cloned.")
+                    .help("Used in combination with --filter. The depth at which to clone a subtree. If not provided, the entire subtree will be cloned.")
                     .action(clap::ArgAction::Set),
             )
             .arg(
