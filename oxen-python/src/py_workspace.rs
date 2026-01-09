@@ -177,7 +177,8 @@ impl PyWorkspace {
 
     fn rm(&self, path: PathBuf) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::workspaces::files::rm_files(None, &self.repo.repo, &self.id, vec![path]).await
+            api::client::workspaces::files::rm_files(None, &self.repo.repo, &self.id, vec![path])
+                .await
         })?;
         Ok(())
     }
