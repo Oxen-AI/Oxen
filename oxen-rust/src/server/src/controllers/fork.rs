@@ -38,6 +38,9 @@ pub async fn fork(
 
     let original_repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
+    // Update storage path in config.toml to relative path
+    original_repo.save()?;
+
     let new_repo_namespace = body.namespace.clone();
 
     let new_repo_name = body.new_repo_name.clone().unwrap_or(repo_name.clone());
