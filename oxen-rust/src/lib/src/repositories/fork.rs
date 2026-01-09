@@ -1,5 +1,4 @@
-use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACES_DIR};
+use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACES_DIR};
 use crate::error::OxenError;
 use crate::util::fs as oxen_fs;
 use crate::view::fork::{ForkStartResponse, ForkStatus, ForkStatusFile, ForkStatusResponse};
@@ -84,18 +83,6 @@ pub fn start_fork(
             &mut copied_items,
         ) {
             Ok(()) => {
-                // update the storage path in config.toml to point to the forked repo
-                // otherwise commits go to the original repo not the fork
-                if let Err(e) = update_storage_config(&new_path) {
-                    log::error!("Failed to update storage config: {e}");
-                    write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(
-                        |e| {
-                            log::error!("Failed to write error status: {e}");
-                        },
-                    );
-                    return;
-                }
-
                 write_status(&new_path, &ForkStatus::Complete).unwrap_or_else(|e| {
                     log::error!("Failed to write completion status: {e}");
                 });
@@ -193,46 +180,13 @@ fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Resu
     Ok(*current_count)
 }
 
-fn update_storage_config(forked_repo_path: &Path) -> Result<(), OxenError> {
-    let config_path = forked_repo_path
-        .join(OXEN_HIDDEN_DIR)
-        .join(REPO_CONFIG_FILENAME);
-
-    if !config_path.exists() {
-        log::warn!("Config file not found at {config_path:?}, skipping storage config update");
-        return Ok(());
-    }
-
-    let mut config = RepositoryConfig::from_file(&config_path)?;
-
-    if let Some(ref mut storage) = config.storage {
-        let new_storage_path = forked_repo_path
-            .join(OXEN_HIDDEN_DIR)
-            .join("versions")
-            .join("files");
-
-        log::info!(
-            "Updating storage path in forked repo from {:?} to {:?}",
-            storage.settings.get("path"),
-            new_storage_path
-        );
-
-        storage.settings.insert(
-            "path".to_string(),
-            new_storage_path.to_string_lossy().to_string(),
-        );
-    }
-
-    config.save(&config_path)?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::config::RepositoryConfig;
+    use crate::constants::REPO_CONFIG_FILENAME;
     use crate::error::OxenError;
     use crate::{repositories, test};
 
@@ -251,7 +205,9 @@ mod tests {
                 std::fs::write(file_path, "test file content")?;
 
                 // Create a workspace directory and add a file to it
-                let workspaces_path = original_repo_path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
+                let workspaces_path = original_repo_path
+                    .join(OXEN_HIDDEN_DIR)
+                    .join(WORKSPACES_DIR);
                 oxen_fs::create_dir_all(&workspaces_path)?;
                 let workspace_file = workspaces_path.join("test_workspace.txt");
                 std::fs::write(workspace_file, "test workspace content")?;
@@ -307,14 +263,17 @@ mod tests {
                 );
 
                 // Verify that workspaces directory was not copied
-                let new_workspaces_path = forked_repo_path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
+                let new_workspaces_path =
+                    forked_repo_path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
                 assert!(
                     !new_workspaces_path.exists(),
                     "workspaces directory should not be copied"
                 );
 
                 // Verify that storage config was updated to point to forked repo
-                let forked_config_path = forked_repo_path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
+                let forked_config_path = forked_repo_path
+                    .join(OXEN_HIDDEN_DIR)
+                    .join(REPO_CONFIG_FILENAME);
                 assert!(
                     forked_config_path.exists(),
                     "Forked repo config should exist"
@@ -322,25 +281,19 @@ mod tests {
 
                 let forked_config = RepositoryConfig::from_file(&forked_config_path)?;
                 if let Some(storage) = forked_config.storage {
-                    let storage_path = storage.settings.get("path").expect("Storage path should exist");
-                    let expected_path = forked_repo_path
-                        .join(OXEN_HIDDEN_DIR)
+                    let storage_path = storage
+                        .settings
+                        .get("path")
+                        .expect("Storage path should exist");
+                    let expected_path = PathBuf::from(OXEN_HIDDEN_DIR)
                         .join("versions")
                         .join("files")
                         .to_string_lossy()
                         .to_string();
 
                     assert_eq!(
-                        storage_path,
-                        &expected_path,
-                        "Storage path should be updated to point to forked repo"
-                    );
-
-                    // Verify it doesn't point to the original repo
-                    let original_path_str = original_repo_path.to_string_lossy().to_string();
-                    assert!(
-                        !storage_path.contains(&original_path_str),
-                        "Storage path should not reference the original repo path, got: {storage_path}"
+                        storage_path, &expected_path,
+                        "Storage path should be default to relative path"
                     );
                 }
 
