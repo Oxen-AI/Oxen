@@ -366,7 +366,6 @@ pub fn list_recursive_paginated(
     };
 
     let total_count = traverse_commits(config, Some(&mut results))?;
-    results.reverse();
     Ok((results, total_count))
 }
 
@@ -401,77 +400,77 @@ fn traverse_commits(
     mut results: Option<&mut Vec<Commit>>,
 ) -> Result<usize, OxenError> {
     let mut count = 0;
-    let mut stack: Vec<(Commit, bool)> = vec![(config.head_commit, false)];
+    let mut stack: Vec<Commit> = vec![config.head_commit];
     let end_idx = config.skip + config.limit;
     let can_early_exit = config.known_total_count.is_some();
     let collect_results = results.is_some();
 
-    while let Some((commit, children_processed)) = stack.pop() {
+    while let Some(commit) = stack.pop() {
         if config.visited.contains(&commit.id) {
             continue;
         }
 
-        if children_processed {
-            config.visited.insert(commit.id.clone());
+        config.visited.insert(commit.id.clone());
 
-            if count >= config.skip && count < end_idx {
-                if let Some(ref mut res) = results {
-                    res.push(commit.clone());
-                }
-            }
-            count += 1;
-
-            if can_early_exit && collect_results && count >= end_idx {
-                log::debug!(
-                    "Early exit: collected {} commits (skip={}, limit={})",
-                    results.as_ref().map(|r| r.len()).unwrap_or(0),
-                    config.skip,
-                    config.limit
-                );
-                break;
-            }
-        } else {
-            if let Some(base) = config.stop_at_base {
-                if commit.id == base.id {
-                    config.visited.insert(commit.id.clone());
-                    if count >= config.skip && count < end_idx {
-                        if let Some(ref mut res) = results {
-                            res.push(commit);
-                        }
+        // Check for base case
+        if let Some(base) = config.stop_at_base {
+            if commit.id == base.id {
+                if count >= config.skip && count < end_idx {
+                    if let Some(ref mut res) = results {
+                        res.push(commit);
                     }
-                    count += 1;
-                    continue;
                 }
+                count += 1;
+                continue;
             }
+        }
 
-            if let Some(db) = config.cache_db {
-                if let Some(cached_count) = get_cached_count(db, &commit.id)? {
-                    log::debug!(
-                        "Found cached count for commit {}: {} commits",
-                        &commit.id[..8],
-                        cached_count
-                    );
-                    mark_ancestors_visited(config.repo, &commit, config.visited)?;
-                    count += cached_count;
-                    continue;
-                }
+        // Check cache
+        if let Some(db) = config.cache_db {
+            if let Some(cached_count) = get_cached_count(db, &commit.id)? {
+                log::debug!(
+                    "Found cached count for commit {}: {} commits",
+                    &commit.id[..8],
+                    cached_count
+                );
+                mark_ancestors_visited(config.repo, &commit, config.visited)?;
+                count += cached_count;
+                continue;
             }
+        }
 
-            stack.push((commit.clone(), true));
-
-            let mut parent_commits: Vec<Commit> = Vec::new();
-            for parent_id in commit.parent_ids.clone() {
-                let parent_id = parent_id.parse()?;
-                if let Some(c) = get_by_hash(config.repo, &parent_id)? {
-                    parent_commits.push(c);
-                }
+        // Process commit in pre-order (newest-first)
+        if count >= config.skip && count < end_idx {
+            if let Some(ref mut res) = results {
+                res.push(commit.clone());
             }
+        }
+        count += 1;
 
-            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
-            for parent_commit in parent_commits {
-                if !config.visited.contains(&parent_commit.id) {
-                    stack.push((parent_commit, false));
-                }
+        if can_early_exit && collect_results && count >= end_idx {
+            log::debug!(
+                "Early exit: collected {} commits (skip={}, limit={})",
+                results.as_ref().map(|r| r.len()).unwrap_or(0),
+                config.skip,
+                config.limit
+            );
+            break;
+        }
+
+        // Push children to stack (sorted so newest is processed first)
+        let mut parent_commits: Vec<Commit> = Vec::new();
+        for parent_id in commit.parent_ids.clone() {
+            let parent_id = parent_id.parse()?;
+            if let Some(c) = get_by_hash(config.repo, &parent_id)? {
+                parent_commits.push(c);
+            }
+        }
+
+        // Sort by timestamp ascending, so when we push to stack, newest is on top
+        parent_commits.sort_by_key(|c| c.timestamp);
+        for parent_commit in parent_commits {
+            if !config.visited.contains(&parent_commit.id) {
+                stack.push(parent_commit);
             }
         }
     }
@@ -856,4 +855,133 @@ pub fn list_by_path_from_paginated(
         commits,
         pagination,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repositories;
+    use crate::test;
+
+    #[tokio::test]
+    async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create 15 commits to trigger the slow path (skip + limit > 10)
+            let mut commit_ids = Vec::new();
+
+            for i in 0..15 {
+                let filename = format!("file_{}.txt", i);
+                let file_path = repo.path.join(&filename);
+                test::write_txt_file_to_path(&file_path, format!("Content {}", i))?;
+
+                repositories::add(&repo, &file_path).await?;
+                let commit = repositories::commit(&repo, &format!("Commit {}", i))?;
+                commit_ids.push(commit.id.clone());
+            }
+
+            // Commits should be ordered newest-first (C14, C13, C12, ...)
+            // Test: skip=9, limit=2 (total 11 > 10) to trigger the slow path
+            // This should return [C5, C4] (skip 9 newest, then take 2)
+            let (paginated_commits, _total, _cached) =
+                list_from_paginated_impl(&repo, "main", 9, 2)?;
+
+            assert_eq!(
+                paginated_commits.len(),
+                2,
+                "Should return exactly 2 commits"
+            );
+
+            // Expected: skip 9 newest (C14 down to C6), then take [C5, C4]
+            let expected_first = &commit_ids[5]; // C5 (0-indexed)
+            let expected_second = &commit_ids[4]; // C4
+
+            println!("Total commits: {}", commit_ids.len());
+            println!("Expected first: {} (C5 - Commit 5)", expected_first);
+            println!("Expected second: {} (C4 - Commit 4)", expected_second);
+            println!(
+                "Actual first: {} ({})",
+                paginated_commits[0].id, paginated_commits[0].message
+            );
+            println!(
+                "Actual second: {} ({})",
+                paginated_commits[1].id, paginated_commits[1].message
+            );
+
+            // This assertion will FAIL due to the bug
+            // Bug behavior: Post-order counts oldest-first (C0=0, C1=1, ..., C5=5, C6=6)
+            // Window [9, 11) in post-order selects C9, C10
+            // After reverse: [C10, C9]
+            assert_eq!(
+                &paginated_commits[0].id, expected_first,
+                "First result should be C5 (Commit 5), but got {}",
+                paginated_commits[0].message
+            );
+            assert_eq!(
+                &paginated_commits[1].id, expected_second,
+                "Second result should be C4 (Commit 4), but got {}",
+                paginated_commits[1].message
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_pagination_with_forward_path() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create exactly 10 commits - this should use forward pagination (fast path)
+            let mut commit_ids = Vec::new();
+
+            for i in 0..10 {
+                let filename = format!("file_{}.txt", i);
+                let file_path = repo.path.join(&filename);
+                test::write_txt_file_to_path(&file_path, format!("Content {}", i))?;
+
+                repositories::add(&repo, &file_path).await?;
+                let commit = repositories::commit(&repo, &format!("Commit {}", i))?;
+                commit_ids.push(commit.id.clone());
+            }
+
+            // With skip=1, limit=2, and total commits <= 10, should use forward path
+            let (paginated_commits, _total, _cached) =
+                list_from_paginated_impl(&repo, "main", 1, 2)?;
+
+            assert_eq!(
+                paginated_commits.len(),
+                2,
+                "Should return exactly 2 commits"
+            );
+
+            // Forward path should work correctly: skip C9, return [C8, C7]
+            let expected_first = &commit_ids[8]; // C8
+            let expected_second = &commit_ids[7]; // C7
+
+            println!("Forward path test:");
+            println!("Expected first: {} (C8)", expected_first);
+            println!("Expected second: {} (C7)", expected_second);
+            println!(
+                "Actual first: {} ({})",
+                paginated_commits[0].id, paginated_commits[0].message
+            );
+            println!(
+                "Actual second: {} ({})",
+                paginated_commits[1].id, paginated_commits[1].message
+            );
+
+            assert_eq!(
+                &paginated_commits[0].id, expected_first,
+                "First result should be C8, got {}",
+                paginated_commits[0].message
+            );
+            assert_eq!(
+                &paginated_commits[1].id, expected_second,
+                "Second result should be C7, got {}",
+                paginated_commits[1].message
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }
