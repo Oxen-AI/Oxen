@@ -16,6 +16,11 @@ pub fn branches() -> Scope {
             web::get().to(controllers::branches::list_entry_versions),
         )
         .route(
+            "/{branch_name}/latest_commit",
+            web::get().to(controllers::branches::latest_synced_commit),
+        )
+        // TODO: Deprecate. `latest_commit` by itself is clearer
+        .route(
             "/{branch_name}/latest_synced_commit",
             web::get().to(controllers::branches::latest_synced_commit),
         )

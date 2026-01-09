@@ -12,12 +12,12 @@ use liboxen::{current_function, repositories};
 use actix_web::{HttpRequest, HttpResponse};
 use utoipa;
 
-/// Get entry metadata
+/// Get file metadata
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
     operation_id = "get_entry_metadata",
-    tag = "Entries",
+    tag = "Metadata",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -26,8 +26,8 @@ use utoipa;
     ),
     responses(
         (status = 200, description = "Metadata for the entry found", body = EMetadataEntryResponseView),
-        (status = 404, description = "Entry not found"),
-        (status = 400, description = "Invalid resource path")
+        (status = 400, description = "Invalid resource path"),
+        (status = 404, description = "Entry not found")
     )
 )]
 pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -100,12 +100,12 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(meta))
 }
 
-/// Update metadata
+/// Update file metadata
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
     operation_id = "update_entry_metadata",
-    tag = "Entries",
+    tag = "Metadata",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),

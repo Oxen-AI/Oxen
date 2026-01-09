@@ -18,11 +18,12 @@ pub mod changes;
 pub mod data_frames;
 pub mod files;
 
-/// Get or create workspace
+/// Create Workspace
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/get_or_create",
     operation_id = "get_or_create_workspace",
+    description = "Create a workspace. If the workspace exists, return it",
     tag = "Workspaces",
     security( ("api_key" = []) ),
     params(
@@ -152,86 +153,12 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     }))
 }
 
-/// Create a new workspace
+/// Create workspace on branch
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces",
-    operation_id = "create_workspace",
-    tag = "Workspaces",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    request_body(
-        content = NewWorkspace,
-        description = "Workspace creation details.",
-        example = json!({
-            "branch_name": "main",
-            "name": "bessie_workspace",
-            "workspace_id": "b3f27f05-0955-4076-805f-39575853b27b"
-        })
-    ),
-    responses(
-        (status = 200, description = "Workspace created", body = WorkspaceResponseView),
-        (status = 400, description = "Invalid payload or branch not found"),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn create(
-    req: HttpRequest,
-    body: String,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
-    let data = match data {
-        Ok(data) => data,
-        Err(err) => {
-            log::error!("Unable to parse body. Err: {err}\n{body}");
-            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
-        }
-    };
-
-    let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
-        return Ok(
-            HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Branch not found: {}",
-                data.branch_name
-            ))),
-        );
-    };
-
-    let workspace_id = &data.workspace_id;
-    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
-
-    // Create the workspace
-    repositories::workspaces::create_with_name(
-        &repo,
-        &commit,
-        workspace_id,
-        data.name.clone(),
-        true,
-    )?;
-
-    Ok(HttpResponse::Ok().json(WorkspaceResponseView {
-        status: StatusMessage::resource_created(),
-        workspace: WorkspaceResponse {
-            id: workspace_id.clone(),
-            name: data.name.clone(),
-            commit: commit.into(),
-        },
-    }))
-}
-
-/// Create workspace from new branch
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/new_branch",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/new",
     operation_id = "create_workspace_new_branch",
+    description = "Create a workspace on a branch. If the branch doesn't exist, create it",
     tag = "Workspaces",
     security( ("api_key" = []) ),
     params(
@@ -301,7 +228,7 @@ pub async fn create_with_new_branch(
     }))
 }
 
-/// List all workspaces
+/// List workspaces
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces",
@@ -358,6 +285,7 @@ pub async fn list(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/clear",
     operation_id = "clear_workspaces",
+    description = "Deletes all workspaces for the repo",
     tag = "Workspaces",
     security( ("api_key" = []) ),
     params(
@@ -424,6 +352,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
     operation_id = "check_workspace_mergeability",
+    description = "Checks if a workspace can be be committed and merged onto a branch",
     tag = "Workspaces",
     security( ("api_key" = []) ),
     params(
@@ -461,7 +390,7 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
 /// Commit workspace
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/commit/{branch}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
     operation_id = "commit_workspace",
     tag = "Workspaces",
     security( ("api_key" = []) ),

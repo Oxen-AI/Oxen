@@ -7,8 +7,9 @@ pub mod data_frames;
 
 pub fn workspace() -> Scope {
     web::scope("/workspaces")
+        // TODO: Pick one of these and deprecate the other
         .route("", web::put().to(controllers::workspaces::get_or_create))
-        .route("", web::post().to(controllers::workspaces::create))
+        .route("", web::post().to(controllers::workspaces::get_or_create))
         .route("", web::get().to(controllers::workspaces::list))
         .route("", web::delete().to(controllers::workspaces::clear))
         .service(
@@ -51,6 +52,7 @@ pub fn workspace() -> Scope {
                     "/files/{path:.*}",
                     web::post().to(controllers::workspaces::files::add),
                 )
+                // TODO: Deprecate. Use /versions or /staged
                 .route(
                     "/files/{path:.*}",
                     web::delete().to(controllers::workspaces::files::delete),

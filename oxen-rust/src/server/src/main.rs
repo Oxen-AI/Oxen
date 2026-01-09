@@ -108,18 +108,15 @@ const SUPPORT: &str = "
         // Workspaces
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
-        crate::controllers::workspaces::create,
         crate::controllers::workspaces::create_with_new_branch,
         crate::controllers::workspaces::list,
         crate::controllers::workspaces::clear,
         crate::controllers::workspaces::delete,
         crate::controllers::workspaces::mergeability,
         crate::controllers::workspaces::commit,
-        // Files (Workspace)
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
-        crate::controllers::workspaces::files::delete,
         crate::controllers::workspaces::files::rm_files,
         crate::controllers::workspaces::files::rm_files_from_staged,
         // Branches
@@ -135,8 +132,8 @@ const SUPPORT: &str = "
         crate::controllers::branches::is_locked,
         crate::controllers::branches::list_entry_versions,
         // Commits
-        crate::controllers::commits::index,
         crate::controllers::commits::history,
+        crate::controllers::commits::list_commits,
         crate::controllers::commits::list_all,
         crate::controllers::commits::list_missing,
         crate::controllers::commits::list_missing_files,
@@ -156,8 +153,6 @@ const SUPPORT: &str = "
         crate::controllers::merger::show,
         crate::controllers::merger::merge,
         // Diff
-        crate::controllers::diff::commits,
-        crate::controllers::diff::entries,
         crate::controllers::diff::dir_tree,
         crate::controllers::diff::dir_entries,
         crate::controllers::diff::file,
