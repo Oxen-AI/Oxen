@@ -198,7 +198,7 @@ async fn parse_json_body_with_err_msg(
         Err(err) => {
             log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
-                "Could not deserialize response from [{url}]\n{status}\n'{body}'"
+                "Could not deserialize response from [{url}]\n{status}"
             )))
         }
     }
