@@ -311,9 +311,6 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
     }
 }
 
-/// Fast forward-only traversal for paginated commits
-/// This is much faster than full topological sort for recent commits
-/// Follows the first parent chain, which works well for linear histories.
 fn list_forward_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -326,18 +323,15 @@ fn list_forward_paginated(
     let end_idx = skip + limit;
 
     while let Some(commit) = current {
-        // Collect commits within the pagination range
         if count >= skip && count < end_idx {
             results.push(commit.clone());
         }
         count += 1;
 
-        // Early exit once we've collected enough commits
         if count >= end_idx {
             break;
         }
 
-        // Follow the first parent (main branch)
         current = if let Some(parent_id) = commit.parent_ids.first() {
             let parent_id: MerkleHash = parent_id.parse()?;
             get_by_hash(repo, &parent_id)?
@@ -581,9 +575,6 @@ pub fn list_from(
     Ok(commits)
 }
 
-/// Get commit history given a revision with pagination
-/// Returns (commits, total_count, count_was_cached)
-/// Only collects commits within the requested page range
 pub fn list_from_paginated_impl(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
@@ -603,7 +594,6 @@ pub fn list_from_paginated_impl(
         let head_commit = repositories::commits::get_by_id(repo, head)?
             .ok_or(OxenError::revision_not_found(head.into()))?;
 
-        // For range queries, we need to compute the count (no cache for ranges)
         let (commits, total_count) =
             list_recursive_paginated(repo, head_commit, skip, limit, Some(&base_commit), None)?;
         return Ok((commits, total_count, false));
@@ -614,7 +604,6 @@ pub fn list_from_paginated_impl(
     drop(_perf_get);
 
     if let Some(commit) = commit {
-        // Try to get cached count first
         let _perf_count = crate::perf_guard!("core::commits::get_cached_count");
         let (total_count, cached) = count_from(repo, &commit.id)?;
         drop(_perf_count);
@@ -623,8 +612,6 @@ pub fn list_from_paginated_impl(
             "list_from_paginated_impl: total_count={total_count}, cached={cached}, skip={skip}, limit={limit}"
         );
 
-        // Fast path: if requesting a small number of recent commits, we directly
-        // return the commits in forward order.
         if skip + limit <= 10 {
             let _perf_fast = crate::perf_guard!("core::commits::list_forward_paginated");
             let commits = list_forward_paginated(repo, commit, skip, limit)?;
@@ -632,7 +619,6 @@ pub fn list_from_paginated_impl(
             return Ok((commits, total_count, cached));
         }
 
-        // Slow path: full topological sort with early exit
         let _perf_recursive = crate::perf_guard!("core::commits::list_recursive_paginated");
         let (commits, _) =
             list_recursive_paginated(repo, commit, skip, limit, None, Some(total_count))?;
