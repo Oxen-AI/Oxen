@@ -5,11 +5,6 @@ use crate::controllers;
 
 pub fn compare() -> Scope {
     web::scope("/compare")
-        // TODO: Deprecate. This belongs in the commits router
-        .route(
-            "/commits/{base_head:.*}",
-            web::get().to(controllers::commits::list_commits),
-        )
         .route(
             "/dir_tree/{base_head:.*}",
             web::get().to(controllers::diff::dir_tree),

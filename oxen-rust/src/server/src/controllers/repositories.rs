@@ -244,7 +244,7 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     security( ("api_key" = []) ),
     request_body(
         content = RepoNew,
-        description = "Repository creation JSON",
+        description = "Repository creation payload (JSON or Multipart)",
         content_type = "application/json",
         example = json!({
             "namespace": "ox",

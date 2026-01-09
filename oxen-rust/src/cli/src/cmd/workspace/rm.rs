@@ -110,7 +110,7 @@ impl RunCmd for WorkspaceRmCmd {
             .await?;
         } else {
             api::client::workspaces::files::rm_files(
-                &repository,
+                Some(&repository),
                 &remote_repo,
                 workspace_identifier,
                 paths,

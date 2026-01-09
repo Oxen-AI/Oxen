@@ -18,7 +18,82 @@ pub mod changes;
 pub mod data_frames;
 pub mod files;
 
-/// Create Workspace
+/// Create a new workspace
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces",
+    operation_id = "create_workspace",
+    tag = "Workspaces",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = NewWorkspace,
+        description = "Workspace creation details.",
+        example = json!({
+            "branch_name": "main",
+            "name": "bessie_workspace",
+            "workspace_id": "b3f27f05-0955-4076-805f-39575853b27b"
+        })
+    ),
+    responses(
+        (status = 200, description = "Workspace created", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid payload or branch not found"),
+        (status = 404, description = "Repository not found")
+    )
+)]
+pub async fn create(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
+    let data = match data {
+        Ok(data) => data,
+        Err(err) => {
+            log::error!("Unable to parse body. Err: {err}\n{body}");
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+        }
+    };
+
+    let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
+        return Ok(
+            HttpResponse::BadRequest().json(StatusMessage::error(format!(
+                "Branch not found: {}",
+                data.branch_name
+            ))),
+        );
+    };
+
+    let workspace_id = &data.workspace_id;
+    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+
+    // Create the workspace
+    repositories::workspaces::create_with_name(
+        &repo,
+        &commit,
+        workspace_id,
+        data.name.clone(),
+        true,
+    )?;
+
+    Ok(HttpResponse::Ok().json(WorkspaceResponseView {
+        status: StatusMessage::resource_created(),
+        workspace: WorkspaceResponse {
+            id: workspace_id.clone(),
+            name: data.name.clone(),
+            commit: commit.into(),
+        },
+    }))
+}
+
+/// Get or create workspace
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/get_or_create",
