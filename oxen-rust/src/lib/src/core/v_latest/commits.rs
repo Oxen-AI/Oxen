@@ -22,6 +22,26 @@ use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
 use rocksdb::{DBWithThreadMode, MultiThreaded};
 
+/// Configuration for commit traversal operations
+struct CommitTraversalConfig<'a> {
+    /// Repository to traverse
+    repo: &'a LocalRepository,
+    /// Starting commit for traversal
+    head_commit: Commit,
+    /// Optional base commit to stop at (exclusive)
+    stop_at_base: Option<&'a Commit>,
+    /// Set of visited commit IDs to avoid cycles
+    visited: &'a mut HashSet<String>,
+    /// Number of commits to skip (for pagination)
+    skip: usize,
+    /// Maximum number of commits to collect (for pagination)
+    limit: usize,
+    /// Optional cache database for count lookups
+    cache_db: Option<&'a DBWithThreadMode<MultiThreaded>>,
+    /// Known total count for early exit optimization
+    known_total_count: Option<usize>,
+}
+
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
     repositories::commits::commit_writer::commit(repo, message)
 }
@@ -283,26 +303,12 @@ pub fn create_empty_commit(
 
 /// List commits on the current branch from HEAD
 pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
-    let mut results = vec![];
-    let mut visited = HashSet::new();
     if let Some(commit) = head_commit_maybe(repo)? {
-        list_recursive(repo, commit, &mut results, None, &mut visited)?;
+        let (results, _) = list_recursive_paginated(repo, commit, 0, usize::MAX, None, None)?;
+        Ok(results)
+    } else {
+        Ok(vec![])
     }
-    Ok(results)
-}
-
-/// List commits recursively from the head commit
-/// Commits will be returned in reverse chronological order
-fn list_recursive(
-    repo: &LocalRepository,
-    head_commit: Commit,
-    results: &mut Vec<Commit>,
-    stop_at_base: Option<&Commit>,
-    visited: &mut HashSet<String>,
-) -> Result<(), OxenError> {
-    recurse_commit(repo, head_commit, results, stop_at_base, visited)?;
-    results.reverse();
-    Ok(())
 }
 
 /// Fast forward-only traversal for paginated commits
@@ -343,7 +349,7 @@ fn list_forward_paginated(
     Ok(results)
 }
 
-fn list_recursive_paginated(
+pub fn list_recursive_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
     skip: usize,
@@ -353,77 +359,21 @@ fn list_recursive_paginated(
 ) -> Result<(Vec<Commit>, usize), OxenError> {
     let mut results = vec![];
     let mut visited = HashSet::new();
-    let total_count = recurse_commit_paginated(
+
+    let config = CommitTraversalConfig {
         repo,
         head_commit,
-        &mut results,
         stop_at_base,
-        &mut visited,
+        visited: &mut visited,
         skip,
         limit,
+        cache_db: None,
         known_total_count,
-    )?;
+    };
+
+    let total_count = traverse_commits(config, Some(&mut results))?;
     results.reverse();
     Ok((results, total_count))
-}
-
-// post-order traversal of the commit tree
-// returns a Topological sort with priority to timestamp in case of multiple parents
-// Uses iterative approach to avoid stack overflow in debug builds
-fn recurse_commit(
-    repo: &LocalRepository,
-    head_commit: Commit,
-    results: &mut Vec<Commit>,
-    stop_at_base: Option<&Commit>,
-    visited: &mut HashSet<String>,
-) -> Result<(), OxenError> {
-    // Stack to simulate recursion: (commit, processing_state)
-    // processing_state: false = need to process children, true = children processed, add to results
-    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
-
-    while let Some((commit, children_processed)) = stack.pop() {
-        // Check if we've already visited this commit
-        if visited.contains(&commit.id) {
-            continue;
-        }
-
-        if children_processed {
-            // All children have been processed, now add this commit to results
-            visited.insert(commit.id.clone());
-            results.push(commit);
-        } else {
-            // Check if this is the base commit we should stop at
-            if let Some(base) = stop_at_base {
-                if commit.id == base.id {
-                    visited.insert(commit.id.clone());
-                    results.push(commit);
-                    continue;
-                }
-            }
-
-            // Mark this commit for re-processing after children
-            stack.push((commit.clone(), true));
-
-            // Get and sort parent commits
-            let mut parent_commits: Vec<Commit> = Vec::new();
-            for parent_id in commit.parent_ids.clone() {
-                let parent_id = parent_id.parse()?;
-                if let Some(c) = get_by_hash(repo, &parent_id)? {
-                    parent_commits.push(c);
-                }
-            }
-
-            // Sort by timestamp and push in reverse order (so they're processed in correct order)
-            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
-            for parent_commit in parent_commits {
-                if !visited.contains(&parent_commit.id) {
-                    stack.push((parent_commit, false));
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn mark_ancestors_visited(
@@ -452,6 +402,89 @@ fn mark_ancestors_visited(
     Ok(())
 }
 
+fn traverse_commits(
+    config: CommitTraversalConfig,
+    mut results: Option<&mut Vec<Commit>>,
+) -> Result<usize, OxenError> {
+    let mut count = 0;
+    let mut stack: Vec<(Commit, bool)> = vec![(config.head_commit, false)];
+    let end_idx = config.skip + config.limit;
+    let can_early_exit = config.known_total_count.is_some();
+    let collect_results = results.is_some();
+
+    while let Some((commit, children_processed)) = stack.pop() {
+        if config.visited.contains(&commit.id) {
+            continue;
+        }
+
+        if children_processed {
+            config.visited.insert(commit.id.clone());
+
+            if count >= config.skip && count < end_idx {
+                if let Some(ref mut res) = results {
+                    res.push(commit.clone());
+                }
+            }
+            count += 1;
+
+            if can_early_exit && collect_results && count >= end_idx {
+                log::debug!(
+                    "Early exit: collected {} commits (skip={}, limit={})",
+                    results.as_ref().map(|r| r.len()).unwrap_or(0),
+                    config.skip,
+                    config.limit
+                );
+                break;
+            }
+        } else {
+            if let Some(base) = config.stop_at_base {
+                if commit.id == base.id {
+                    config.visited.insert(commit.id.clone());
+                    if count >= config.skip && count < end_idx {
+                        if let Some(ref mut res) = results {
+                            res.push(commit);
+                        }
+                    }
+                    count += 1;
+                    continue;
+                }
+            }
+
+            if let Some(db) = config.cache_db {
+                if let Some(cached_count) = get_cached_count(db, &commit.id)? {
+                    log::debug!(
+                        "Found cached count for commit {}: {} commits",
+                        &commit.id[..8],
+                        cached_count
+                    );
+                    mark_ancestors_visited(config.repo, &commit, config.visited)?;
+                    count += cached_count;
+                    continue;
+                }
+            }
+
+            stack.push((commit.clone(), true));
+
+            let mut parent_commits: Vec<Commit> = Vec::new();
+            for parent_id in commit.parent_ids.clone() {
+                let parent_id = parent_id.parse()?;
+                if let Some(c) = get_by_hash(config.repo, &parent_id)? {
+                    parent_commits.push(c);
+                }
+            }
+
+            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
+            for parent_commit in parent_commits {
+                if !config.visited.contains(&parent_commit.id) {
+                    stack.push((parent_commit, false));
+                }
+            }
+        }
+    }
+
+    Ok(config.known_total_count.unwrap_or(count))
+}
+
 fn count_with_cache(
     repo: &LocalRepository,
     db: &DBWithThreadMode<MultiThreaded>,
@@ -459,130 +492,17 @@ fn count_with_cache(
     stop_at_base: Option<&Commit>,
     visited: &mut HashSet<String>,
 ) -> Result<usize, OxenError> {
-    let mut count = 0;
-
-    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
-
-    while let Some((commit, children_processed)) = stack.pop() {
-        if visited.contains(&commit.id) {
-            continue;
-        }
-
-        if children_processed {
-            visited.insert(commit.id.clone());
-            count += 1;
-        } else {
-            if let Some(base) = stop_at_base {
-                if commit.id == base.id {
-                    visited.insert(commit.id.clone());
-                    count += 1;
-                    continue;
-                }
-            }
-
-            if let Some(cached_count) = get_cached_count(db, &commit.id)? {
-                log::debug!(
-                    "Found cached count for commit {}: {} commits",
-                    &commit.id[..8],
-                    cached_count
-                );
-                mark_ancestors_visited(repo, &commit, visited)?;
-                count += cached_count;
-                continue;
-            }
-
-            stack.push((commit.clone(), true));
-
-            let mut parent_commits: Vec<Commit> = Vec::new();
-            for parent_id in commit.parent_ids.clone() {
-                let parent_id = parent_id.parse()?;
-                if let Some(c) = get_by_hash(repo, &parent_id)? {
-                    parent_commits.push(c);
-                }
-            }
-
-            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
-            for parent_commit in parent_commits {
-                if !visited.contains(&parent_commit.id) {
-                    stack.push((parent_commit, false));
-                }
-            }
-        }
-    }
-
-    Ok(count)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn recurse_commit_paginated(
-    repo: &LocalRepository,
-    head_commit: Commit,
-    results: &mut Vec<Commit>,
-    stop_at_base: Option<&Commit>,
-    visited: &mut HashSet<String>,
-    skip: usize,
-    limit: usize,
-    known_total_count: Option<usize>,
-) -> Result<usize, OxenError> {
-    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
-    let mut count = 0;
-    let end_idx = skip + limit;
-    let can_early_exit = known_total_count.is_some();
-
-    while let Some((commit, children_processed)) = stack.pop() {
-        if visited.contains(&commit.id) {
-            continue;
-        }
-
-        if children_processed {
-            visited.insert(commit.id.clone());
-
-            if count >= skip && count < end_idx {
-                results.push(commit);
-            }
-            count += 1;
-
-            if can_early_exit && count >= end_idx {
-                log::debug!(
-                    "Early exit: collected {} commits (skip={}, limit={})",
-                    results.len(),
-                    skip,
-                    limit
-                );
-                break;
-            }
-        } else {
-            if let Some(base) = stop_at_base {
-                if commit.id == base.id {
-                    visited.insert(commit.id.clone());
-                    if count >= skip && count < end_idx {
-                        results.push(commit);
-                    }
-                    count += 1;
-                    continue;
-                }
-            }
-
-            stack.push((commit.clone(), true));
-
-            let mut parent_commits: Vec<Commit> = Vec::new();
-            for parent_id in commit.parent_ids.clone() {
-                let parent_id = parent_id.parse()?;
-                if let Some(c) = get_by_hash(repo, &parent_id)? {
-                    parent_commits.push(c);
-                }
-            }
-
-            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
-            for parent_commit in parent_commits {
-                if !visited.contains(&parent_commit.id) {
-                    stack.push((parent_commit, false));
-                }
-            }
-        }
-    }
-
-    Ok(known_total_count.unwrap_or(count))
+    let config = CommitTraversalConfig {
+        repo,
+        head_commit,
+        stop_at_base,
+        visited,
+        skip: 0,
+        limit: usize::MAX,
+        cache_db: Some(db),
+        known_total_count: None,
+    };
+    traverse_commits(config, None)
 }
 
 /// List commits for the repository in no particular order
@@ -632,25 +552,23 @@ fn list_all_recursive(
     commit: Commit,
     commits: &mut HashSet<Commit>,
 ) -> Result<(), OxenError> {
-    let mut stack = vec![commit];
+    // Create a temporary Vec to collect results, then add to HashSet
+    let mut visited_ids = HashSet::new();
+    let mut results = Vec::new();
 
-    while let Some(current_commit) = stack.pop() {
-        // Skip if already processed
-        if commits.contains(&current_commit) {
-            continue;
-        }
+    let config = CommitTraversalConfig {
+        repo,
+        head_commit: commit,
+        stop_at_base: None,
+        visited: &mut visited_ids,
+        skip: 0,
+        limit: usize::MAX,
+        cache_db: None,
+        known_total_count: None,
+    };
 
-        commits.insert(current_commit.clone());
-
-        for parent_id in current_commit.parent_ids {
-            let parent_id = parent_id.parse()?;
-            if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
-                if !commits.contains(&parent_commit) {
-                    stack.push(parent_commit);
-                }
-            }
-        }
-    }
+    traverse_commits(config, Some(&mut results))?;
+    commits.extend(results);
     Ok(())
 }
 
@@ -659,32 +577,8 @@ pub fn list_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
 ) -> Result<Vec<Commit>, OxenError> {
-    let _perf = crate::perf_guard!("core::commits::list_from");
-
-    let revision = revision.as_ref();
-    if revision.contains("..") {
-        let _perf_between = crate::perf_guard!("core::commits::list_between_range");
-        let split: Vec<&str> = revision.split("..").collect();
-        let base = split[0];
-        let head = split[1];
-        let base_commit = repositories::commits::get_by_id(repo, base)?
-            .ok_or(OxenError::revision_not_found(base.into()))?;
-        let head_commit = repositories::commits::get_by_id(repo, head)?
-            .ok_or(OxenError::revision_not_found(head.into()))?;
-        return list_between(repo, &base_commit, &head_commit);
-    }
-
-    let _perf_get = crate::perf_guard!("core::commits::get_revision");
-    let commit = repositories::revisions::get(repo, revision)?;
-    drop(_perf_get);
-
-    let mut results = vec![];
-    if let Some(commit) = commit {
-        let _perf_recursive = crate::perf_guard!("core::commits::list_recursive");
-        list_recursive(repo, commit, &mut results, None, &mut HashSet::new())?;
-    }
-
-    Ok(results)
+    let (commits, _, _) = list_from_paginated_impl(repo, revision, 0, usize::MAX)?;
+    Ok(commits)
 }
 
 /// Get commit history given a revision with pagination
@@ -845,14 +739,8 @@ pub fn list_between(
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
     log::debug!("list_between()\nbase: {base}\nhead: {head}");
-    let mut results = vec![];
-    list_recursive(
-        repo,
-        head.clone(),
-        &mut results,
-        Some(base),
-        &mut HashSet::new(),
-    )?;
+    let (results, _) =
+        list_recursive_paginated(repo, head.clone(), 0, usize::MAX, Some(base), None)?;
     Ok(results)
 }
 
