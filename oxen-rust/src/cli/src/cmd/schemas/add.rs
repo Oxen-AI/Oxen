@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use liboxen::error::OxenError;
@@ -164,7 +165,8 @@ impl SchemasAddCmd {
 
     fn generate_render_json(&self, render_type: impl AsRef<str>) -> Result<String, OxenError> {
         let render_type = render_type.as_ref();
-        if render_type == "image" || render_type == "link" {
+        let valid_render_types: HashSet<&str> = ["image", "link", "video"].into_iter().collect();
+        if valid_render_types.contains(render_type) {
             let json = serde_json::json!({
                 "_oxen": {
                   "render": {
