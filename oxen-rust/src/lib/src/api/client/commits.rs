@@ -138,7 +138,7 @@ pub async fn list_commits(
 ) -> Result<Vec<Commit>, OxenError> {
     let base_commit_id = base_commit_id.to_string();
     let head_commit_id = head_commit_id.to_string();
-    let uri = format!("/compare/commits/{base_commit_id}..{head_commit_id}");
+    let uri = format!("/commits/list/{base_commit_id}..{head_commit_id}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -157,7 +157,7 @@ pub async fn list_missing_hashes(
     remote_repo: &RemoteRepository,
     commits: Vec<Commit>,
 ) -> Result<Vec<Commit>, OxenError> {
-    let uri = "/commits/missing".to_string();
+    let uri = "/commits/list_missing".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
     let commit_hashes = commits
@@ -192,11 +192,12 @@ pub async fn list_missing_files(
     let url = match base_commit {
         Some(base_commit) => {
             let base_commit_id = base_commit.id;
-            let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
+            let uri =
+                format!("/commits/list_missing_files?base={base_commit_id}&head={head_commit_id}");
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
         None => {
-            let uri = format!("/commits/missing_files?head={head_commit_id}");
+            let uri = format!("/commits/list_missing_files?head={head_commit_id}");
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
     };
@@ -312,7 +313,7 @@ async fn list_all_commits_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     let page_num = page_opts.page_num;
     let page_size = page_opts.page_size;
-    let uri = format!("/commits/all?page={page_num}&page_size={page_size}");
+    let uri = format!("/commits/list_all?page={page_num}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;

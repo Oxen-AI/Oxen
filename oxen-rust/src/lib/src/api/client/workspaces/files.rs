@@ -863,26 +863,8 @@ pub async fn add_many(
     }
 }
 
-// TODO: Merge this with 'rm_files'
-// Splitting them is a temporary solution to preserve compatibility with the python repo
-pub async fn rm(
-    remote_repo: &RemoteRepository,
-    workspace_id: &str,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    let file_name = path.as_ref().to_string_lossy();
-    let uri = format!("/workspaces/{workspace_id}/files/{file_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_file {url}");
-    let client = client::new_for_url(&url)?;
-    let response = client.delete(&url).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_file got body: {body}");
-    Ok(())
-}
-
 pub async fn rm_files(
-    local_repo: &LocalRepository,
+    local_repo: Option<&LocalRepository>,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
@@ -898,14 +880,18 @@ pub async fn rm_files(
         walk_dirs: false,
     };
 
-    let expanded_paths: HashSet<PathBuf> =
-        util::glob::parse_glob_paths(&glob_opts, Some(local_repo))?;
+    let expanded_paths: HashSet<PathBuf> = util::glob::parse_glob_paths(&glob_opts, local_repo)?;
 
     // Convert to relative paths
-    let repo_path = &local_repo.path;
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
     let expanded_paths: Vec<PathBuf> = expanded_paths
         .iter()
-        .map(|p| util::fs::path_relative_to_dir(p, repo_path).unwrap())
+        .map(|p| util::fs::path_relative_to_dir(p, &repo_path).unwrap())
         .collect();
 
     let uri = format!("/workspaces/{workspace_id}/versions");
@@ -915,18 +901,19 @@ pub async fn rm_files(
     let response = client.delete(&url).json(&expanded_paths).send().await?;
 
     if response.status().is_success() {
-        let _body = client::parse_json_body(&url, response).await?;
         println!("🐂 oxen staged paths {paths:?} as removed in workspace {workspace_id}");
 
-        // Remove files locally
-        for path in expanded_paths {
-            let full_path = local_repo.path.join(&path);
-            if full_path.is_dir() {
-                util::fs::remove_dir_all(&full_path)?;
-            }
+        // If in a remote-mode repo, remove files locally
+        if local_repo.is_some() && local_repo.unwrap().is_remote_mode() {
+            for path in expanded_paths {
+                let full_path = repo_path.join(&path);
+                if full_path.is_dir() {
+                    util::fs::remove_dir_all(&full_path)?;
+                }
 
-            if full_path.is_file() {
-                util::fs::remove_file(&full_path)?;
+                if full_path.is_file() {
+                    util::fs::remove_file(&full_path)?;
+                }
             }
         }
     } else {
@@ -941,6 +928,7 @@ pub async fn rm_files(
     Ok(())
 }
 
+// TODO: Convert to use glob module
 pub async fn rm_files_from_staged(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -1721,18 +1709,22 @@ mod tests {
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                path,
+                path.clone(),
             )
             .await;
             assert!(result.is_ok());
 
             // Remove the file
-            let result =
-                api::client::workspaces::files::rm(&remote_repo, &workspace_id, result.unwrap())
-                    .await;
+            let result = api::client::workspaces::files::rm_files(
+                None,
+                &remote_repo,
+                &workspace_id,
+                vec![path],
+            )
+            .await;
             assert!(result.is_ok());
 
-            // Make sure we have 0 files staged
+            // We should have 1 file staged
             let page_num = constants::DEFAULT_PAGE_NUM;
             let page_size = constants::DEFAULT_PAGE_SIZE;
             let path = Path::new(directory_name);
@@ -1744,8 +1736,8 @@ mod tests {
                 page_size,
             )
             .await?;
-            assert_eq!(entries.added_files.entries.len(), 0);
-            assert_eq!(entries.added_files.total_entries, 0);
+            assert_eq!(entries.added_files.entries.len(), 1);
+            assert_eq!(entries.added_files.total_entries, 1);
 
             Ok(remote_repo)
         })

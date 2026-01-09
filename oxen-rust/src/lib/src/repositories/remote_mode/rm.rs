@@ -44,7 +44,7 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_identifier,
                     vec![file_path],
@@ -95,7 +95,7 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_identifier,
                     vec![file_path],
@@ -148,7 +148,7 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_identifier,
                     vec![file_path],
@@ -200,7 +200,7 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_identifier,
                     vec![full_path],
@@ -253,7 +253,7 @@ mod tests {
                 // Try to remove it. This should fail because the directory is not a committed part of the remote repo.
                 let paths_to_remove = vec![untracked_dir.clone()];
                 let result = api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     paths_to_remove,
@@ -398,7 +398,7 @@ mod tests {
                 // Remove just one file
                 let paths_to_remove = vec![file1.clone()];
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     paths_to_remove,
@@ -476,7 +476,7 @@ mod tests {
                 // Remove the directory using a path with a trailing slash
                 let paths_to_remove = vec![path_with_asterisk.clone()];
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     paths_to_remove,
@@ -546,7 +546,7 @@ mod tests {
                 // Remove the directory using a path with a trailing slash
                 let paths_to_remove = vec![path_with_slash.clone()];
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     paths_to_remove,

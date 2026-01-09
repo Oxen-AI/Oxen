@@ -165,7 +165,7 @@ pub async fn history(
 /// List all commits
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/commits/all",
+    path = "/api/repos/{namespace}/{repo_name}/commits/list_all",
     operation_id = "list_all_commits",
     description = "List all commits in a repository",
     tag = "Commits",
@@ -201,7 +201,7 @@ pub async fn list_all(
 /// List commits
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
+    path = "/api/repos/{namespace}/{repo_name}/commits/list/{base_head}",
     description = "List the commits between the provided base commit and head commit",
     tag = "list_between",
     security( ("api_key" = []) ),
@@ -260,7 +260,7 @@ pub async fn list_commits(
 /// List missing commits
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/commits/missing",
+    path = "/api/repos/{namespace}/{repo_name}/commits/list_missing",
     operation_id = "list_missing_commits",
     description = "From a list of commit hashes, list the ones not present on the server",
     tag = "Commits",
@@ -318,7 +318,7 @@ pub async fn list_missing(
 /// List missing files from commits
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/commits/missing_files",
+    path = "/api/repos/{namespace}/{repo_name}/commits/list_missing_files",
     operation_id = "list_missing_files",
     description = "Lists files that are referenced in a commit, but not present on the server. Accepts a commit range",
     tag = "Commits",
