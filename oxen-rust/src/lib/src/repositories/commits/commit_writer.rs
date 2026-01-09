@@ -267,7 +267,9 @@ pub fn commit_dir_entries_with_parents(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
@@ -368,7 +370,9 @@ pub fn commit_dir_entries_new(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
@@ -490,7 +494,9 @@ pub fn commit_dir_entries(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
