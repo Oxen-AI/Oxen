@@ -200,7 +200,7 @@ pub async fn get(
         .streaming(stream))
 }
 
-/// Put file
+/// Upload files
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
@@ -209,14 +209,14 @@ pub async fn get(
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("resource" = String, Path, description = "Path to the file (including branch)", example = "main/train/n01440764/images/n01440764_10026.JPEG"),
+        ("resource" = String, Path, description = "Path of the directory to add files in (including branch)", example = "main/train/images"),
     ),
     request_body(
         content_type = "multipart/form-data",
         content = FileUploadBody
     ),
     responses(
-        (status = 200, description = "File committed successfully", body = CommitResponse),
+        (status = 200, description = "Files committed successfully", body = CommitResponse),
         (status = 400, description = "Bad Request"),
         (status = 404, description = "Branch or path not found")
     )
@@ -252,12 +252,12 @@ pub async fn put(
             resource.version.to_string_lossy(),
         ))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
-    // Make sure the resource path is not already a file
+    // Make sure the resource path is not a file
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
     if node.is_some() && node.unwrap().is_file() {
         return Err(OxenHttpError::BasicError(
             format!(
-                "Target path must be a directory: {}",
+                "Resource path must be a directory: {}",
                 resource.path.display()
             )
             .into(),
@@ -310,6 +310,7 @@ pub async fn put(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    description = "Removes a file from the repository. Stages the file as removed to a workspace and commits the removal. Can be remove files or dirs",
     tag = "Files",
     security( ("api_key" = []) ),
     params(

@@ -13,6 +13,7 @@ use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::branch::BranchName;
+use liboxen::view::compare::{CompareCommits, CompareCommitsResponse};
 use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::MerkleHashesResponse;
@@ -20,14 +21,13 @@ use liboxen::view::{
     CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
     StatusMessage,
 };
-use os_path::OsPath;
 
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::parse_resource;
 use crate::params::PageNumQuery;
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, parse_base_head, path_param, resolve_base_head};
 
 use actix_web::{web, Error, HttpRequest, HttpResponse};
 use async_compression::tokio::bufread::GzipDecoder;
@@ -35,6 +35,7 @@ use bytesize::ByteSize;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use futures_util::stream::StreamExt as _;
+use os_path::OsPath;
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Cursor;
@@ -49,17 +50,17 @@ use utoipa::IntoParams;
 #[derive(Deserialize, Debug, IntoParams)]
 pub struct ChunkedDataUploadQuery {
     #[param(example = "a2c3d4e5f67890b1c2d3e4f5a6b7c8d9")]
-    pub hash: String, // UUID to tie all the chunks together (hash of the contents)
+    pub hash: String,
     #[param(example = 1)]
-    pub chunk_num: usize, // which chunk it is, so that we can combine it all in the end
+    pub chunk_num: usize,
     #[param(example = 10)]
-    pub total_chunks: usize, // how many chunks to expect
+    pub total_chunks: usize,
     #[param(example = 100000000)]
-    pub total_size: usize, // total size so we can know when we are finished
+    pub total_size: usize,
     #[param(example = true)]
-    pub is_compressed: bool, // whether or not we need to decompress the archive
+    pub is_compressed: bool,
     #[param(example = "images/cow.jpg")]
-    pub filename: Option<String>, // maybe a file name if !compressed
+    pub filename: Option<String>,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -70,37 +71,11 @@ pub struct ListMissingFilesQuery {
     pub head: String,
 }
 
-/// List commits
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/commits",
-    operation_id = "list_commits",
-    tag = "Commits",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    responses(
-        (status = 200, description = "List of commits", body = ListCommitResponse),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let commits = repositories::commits::list(&repo).unwrap_or_default();
-    Ok(HttpResponse::Ok().json(ListCommitResponse::success(commits)))
-}
-
-/// List commit history
+/// Get commit history
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/history/{resource}",
-    operation_id = "list_commit_history",
+    operation_id = "commit_history",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(
@@ -192,6 +167,7 @@ pub async fn history(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/all",
     operation_id = "list_all_commits",
+    description = "List all commits in a repository",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(
@@ -222,11 +198,71 @@ pub async fn list_all(
     Ok(HttpResponse::Ok().json(paginated_commits))
 }
 
+/// List commits
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
+    description = "List the commits between the provided base commit and head commit",
+    tag = "list_between",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Commits found successfully", body = CompareCommitsResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
+pub async fn list_commits(
+    req: HttpRequest,
+    query: web::Query<PageNumQuery>,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let base_head = path_param(&req, "base_head")?;
+
+    // Get the repository or return error
+    let repository = get_repo(&app_data.path, namespace, name)?;
+
+    // Page size and number
+    let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
+    let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
+
+    // Parse the base and head from the base..head string
+    let (base, head) = parse_base_head(&base_head)?;
+    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
+
+    let base_commit = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
+    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
+
+    let commits = repositories::commits::list_between(&repository, &base_commit, &head_commit)?;
+    let (paginated, pagination) = util::paginate(commits, page, page_size);
+
+    let compare = CompareCommits {
+        base_commit,
+        head_commit,
+        commits: paginated,
+    };
+
+    let view = CompareCommitsResponse {
+        status: StatusMessage::resource_found(),
+        compare,
+        pagination,
+    };
+    Ok(HttpResponse::Ok().json(view))
+}
+
 /// List missing commits
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/missing",
     operation_id = "list_missing_commits",
+    description = "From a list of commit hashes, list the ones not present on the server",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(
@@ -279,11 +315,12 @@ pub async fn list_missing(
     Ok(HttpResponse::Ok().json(response))
 }
 
-/// List files missing on the server within a commit range
+/// List missing files from commits
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/missing_files",
     operation_id = "list_missing_files",
+    description = "Lists files that are referenced in a commit, but not present on the server. Accepts a commit range",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(
@@ -414,7 +451,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }))
 }
 
-/// List commit parents
+/// Get a commit's parents
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/parents",
@@ -660,11 +697,12 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
     Ok(buffer)
 }
 
-/// Create commit
+/// Upload commit
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits",
     operation_id = "create_commit",
+    description = "Uploads a commit to a branch the server. This will create an empty commit. To create a commit with children, use the upload_tree endpoint",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(
@@ -738,6 +776,7 @@ pub async fn create(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload_chunk",
     operation_id = "upload_chunk",
+    description = "Uploads a chunk of file data, for use in large file uploads",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(
@@ -1076,6 +1115,7 @@ pub async fn upload(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/complete",
     operation_id = "commit_upload_complete",
+    description = "Notifies the server that the commit has finished uploading.",
     tag = "Commits",
     security( ("api_key" = []) ),
     params(

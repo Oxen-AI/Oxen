@@ -81,7 +81,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
-/// Get a specific branch
+/// Get an existing branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -286,7 +286,7 @@ pub async fn update(
     }))
 }
 
-/// Merge an incoming commit into a branch
+/// Merge a commit into a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
@@ -296,7 +296,7 @@ pub async fn update(
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch to merge into (the destination)", example = "main"),
+        ("branch_name" = String, Path, description = "Name of the branch to merge into (the target branch)", example = "main"),
     ),
     request_body(
         content = BranchRemoteMerge,
@@ -366,8 +366,8 @@ pub async fn maybe_create_merge(
 /// Get Latest Commit for Branch
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
-    operation_id = "get_latest_synced_commit",
+    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_commit",
+    operation_id = "get_latest_commit",
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
@@ -397,11 +397,12 @@ pub async fn latest_synced_commit(
     }))
 }
 
-/// Lock a branch (prevents writes)
+/// Lock a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
     operation_id = "lock_branch",
+    description = "Locks a branch, preventing writes until it is unlocked",
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
@@ -440,7 +441,7 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }
 }
 
-/// Unlock a branch (allows writes)
+/// Unlock a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/unlock",
@@ -504,18 +505,18 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     }))
 }
 
-/// List file history/versions for a path on a branch
+/// Get all versions of a file on a branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
-    operation_id = "list_entry_versions",
+    operation_id = "list_file_versions",
     tag = "Branches",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
         ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
-        ("path" = String, Path, description = "Path to the file/entry", example = "images/train.jpg"),
+        ("path" = String, Path, description = "Path to the file or dir", example = "images/train.jpg"),
         PageNumQuery
     ),
     responses(

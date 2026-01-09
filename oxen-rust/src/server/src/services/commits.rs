@@ -12,6 +12,10 @@ pub fn commits() -> Scope {
         .route("/all", web::get().to(controllers::commits::list_all))
         .route("/upload", web::post().to(controllers::commits::upload))
         .route(
+            "/{base_head:.*}",
+            web::get().to(controllers::commits::list_commits),
+        )
+        .route(
             "/upload_chunk",
             web::post().to(controllers::commits::upload_chunk),
         )

@@ -16,8 +16,7 @@ use liboxen::model::{Commit, CommitEntry, DataFrameSize, LocalRepository, Schema
 use liboxen::opts::df_opts::DFOptsView;
 use liboxen::opts::DFOpts;
 use liboxen::view::compare::{
-    CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
-    CompareTabular, CompareTabularResponse,
+    CompareDupes, CompareEntries, CompareEntryResponse, CompareTabular, CompareTabularResponse,
 };
 use liboxen::view::compare::{TabularCompareBody, TabularCompareTargetBody};
 use liboxen::view::diff::{DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse};
@@ -27,7 +26,7 @@ use liboxen::view::{
     CompareEntriesResponse, JsonDataFrame, JsonDataFrameView, JsonDataFrameViewResponse,
     JsonDataFrameViews, Pagination, StatusMessage,
 };
-use liboxen::{constants, repositories, util};
+use liboxen::{constants, repositories};
 
 use crate::helpers::get_repo;
 use crate::params::{
@@ -35,82 +34,6 @@ use crate::params::{
     PageNumQuery,
 };
 
-/// List commits between base and head
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
-    tag = "list_between",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
-        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
-        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
-        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
-    ),
-    responses(
-        (status = 200, description = "Commits found successfully", body = CompareCommitsResponse),
-        (status = 404, description = "Repository or one of the revisions not found")
-    )
-)]
-pub async fn commits(
-    req: HttpRequest,
-    query: web::Query<PageNumQuery>,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
-
-    // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
-
-    // Page size and number
-    let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-    let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-
-    // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
-    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
-
-    let base_commit = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
-    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
-
-    let commits = repositories::commits::list_between(&repository, &base_commit, &head_commit)?;
-    let (paginated, pagination) = util::paginate(commits, page, page_size);
-
-    let compare = CompareCommits {
-        base_commit,
-        head_commit,
-        commits: paginated,
-    };
-
-    let view = CompareCommitsResponse {
-        status: StatusMessage::resource_found(),
-        compare,
-        pagination,
-    };
-    Ok(HttpResponse::Ok().json(view))
-}
-
-/// List file and directory entries changed between base and head
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/entries",
-    tag = "Compare",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
-        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
-        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
-        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
-    ),
-    responses(
-        (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
-        (status = 404, description = "Repository or one of the revisions not found")
-    )
-)]
 // TODO: Depreciate
 pub async fn entries(
     req: HttpRequest,
@@ -181,8 +104,8 @@ pub async fn entries(
 /// Get diff tree
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/tree",
-    tag = "get_diff_tree",
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}",
+    tag = "Compare",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -224,10 +147,11 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     Ok(HttpResponse::Ok().json(response))
 }
 
-/// List file and directory entries changed within a directory between revisions
+/// List changed files
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/dir/{dir}/entries",
+    description = "Lists the files and sub-directories within a dir that have changed within a provided commit range",
     tag = "Compare",
     security( ("api_key" = []) ),
     params(
@@ -383,7 +307,7 @@ pub async fn file(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames",
-    tag = "Compare Data Frames",
+    tag = "Data Frames",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -490,7 +414,7 @@ pub async fn create_df_diff(
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
-    tag = "Compare Data Frames",
+    tag = "Data Frames",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -599,7 +523,7 @@ pub async fn update_df_diff(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
-    tag = "Compare Data Frames",
+    tag = "Data Frames",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -688,7 +612,7 @@ pub async fn get_df_diff(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
-    tag = "Compare Data Frames",
+    tag = "Data Frames",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -712,11 +636,11 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
-/// Get Data Frame from Tabular Diff
+/// Get Derived Data Frame
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}/diff",
-    tag = "get_data_frame_from_tabular_diff",
+    tag = "Compare",
     security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
