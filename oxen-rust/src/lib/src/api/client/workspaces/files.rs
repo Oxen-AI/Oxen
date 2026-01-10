@@ -1686,7 +1686,7 @@ mod tests {
         })
         .await
     }
-    
+
     #[tokio::test]
     async fn test_stage_file_in_multiple_subdirectories() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
