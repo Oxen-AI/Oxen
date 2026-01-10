@@ -12,6 +12,7 @@ use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
+use crate::view::compare::CompareCommitsResponse;
 use crate::view::entries::ListCommitEntryResponse;
 use crate::view::{
     CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
@@ -129,11 +130,34 @@ pub async fn list_all(remote_repo: &RemoteRepository) -> Result<Vec<Commit>, Oxe
     Ok(all_commits)
 }
 
+// List the commits between a base and head commit
+pub async fn list_commits(
+    remote_repo: &RemoteRepository,
+    base_commit_id: &MerkleHash,
+    head_commit_id: &MerkleHash,
+) -> Result<Vec<Commit>, OxenError> {
+    let base_commit_id = base_commit_id.to_string();
+    let head_commit_id = head_commit_id.to_string();
+    let uri = format!("/commits/list/{base_commit_id}..{head_commit_id}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let res = client.get(&url).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<CompareCommitsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(commits) => Ok(commits.compare.commits),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "commits() Could not deserialize response [{err}]\n{body}"
+        ))),
+    }
+}
+
 pub async fn list_missing_hashes(
     remote_repo: &RemoteRepository,
     commits: Vec<Commit>,
 ) -> Result<Vec<Commit>, OxenError> {
-    let uri = "/commits/missing".to_string();
+    let uri = "/commits/list_missing".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
     let commit_hashes = commits
@@ -141,7 +165,7 @@ pub async fn list_missing_hashes(
         .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
     let res = client
-        .post(&url)
+        .get(&url)
         .json(&MerkleHashes {
             hashes: commit_hashes,
         })
@@ -168,11 +192,12 @@ pub async fn list_missing_files(
     let url = match base_commit {
         Some(base_commit) => {
             let base_commit_id = base_commit.id;
-            let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
+            let uri =
+                format!("/commits/list_missing_files?base={base_commit_id}&head={head_commit_id}");
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
         None => {
-            let uri = format!("/commits/missing_files?head={head_commit_id}");
+            let uri = format!("/commits/list_missing_files?head={head_commit_id}");
             crate::api::endpoint::url_from_repo(remote_repo, &uri)?
         }
     };
@@ -288,7 +313,7 @@ async fn list_all_commits_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     let page_num = page_opts.page_num;
     let page_size = page_opts.page_size;
-    let uri = format!("/commits/all?page={page_num}&page_size={page_size}");
+    let uri = format!("/commits/list_all?page={page_num}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -1073,6 +1098,48 @@ mod tests {
             api::client::repositories::delete(&remote_repo).await?;
 
             Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_commits() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+            // Keep track of the commit ids
+            let mut commit_ids = Vec::new();
+
+            // Create 5 commits
+            for i in 0..5 {
+                // Write a file
+                let file_path = format!("file_{i}.txt");
+                test::write_txt_file_to_path(
+                    local_repo.path.join(file_path),
+                    format!("File content {i}"),
+                )?;
+                repositories::add(&local_repo, &local_repo.path).await?;
+
+                let commit_message = format!("Commit {i}");
+                let commit = repositories::commit(&local_repo, &commit_message)?;
+                commit_ids.push(commit.id);
+            }
+
+            // Set remote
+            command::config::set_remote(
+                &mut local_repo,
+                constants::DEFAULT_REMOTE_NAME,
+                &remote_repo.remote.url,
+            )?;
+
+            // Push the commits to the remote
+            repositories::push(&local_repo).await?;
+
+            let base_commit_id = commit_ids[3].parse()?;
+            let head_commit_id = commit_ids[1].parse()?;
+            let commits =
+                api::client::commits::list_commits(&remote_repo, &base_commit_id, &head_commit_id)
+                    .await?;
+            assert_eq!(commits.len(), 2);
+            Ok(remote_repo)
         })
         .await
     }

@@ -240,7 +240,7 @@ pub async fn latest_synced_commit(
     repository: &RemoteRepository,
     branch_name: &str,
 ) -> Result<Commit, OxenError> {
-    let uri = format!("/branches/{branch_name}/latest_synced_commit");
+    let uri = format!("/branches/{branch_name}/latest_commit");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("Retrieving latest synced commit for branch...");
     let client = client::new_for_url(&url)?;
@@ -796,11 +796,11 @@ mod tests {
 
             // Lock up the branch
             api::client::branches::lock(&remote_repo, DEFAULT_BRANCH_NAME).await?;
-
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                     .await?;
+
             assert_eq!(workspace.id, workspace_id);
 
             // Use remote staging to commit without releasing lock (push releases lock)

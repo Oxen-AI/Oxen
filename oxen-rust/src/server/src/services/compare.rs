@@ -6,10 +6,6 @@ use crate::controllers;
 pub fn compare() -> Scope {
     web::scope("/compare")
         .route(
-            "/commits/{base_head:.*}",
-            web::get().to(controllers::diff::commits),
-        )
-        .route(
             "/dir_tree/{base_head:.*}",
             web::get().to(controllers::diff::dir_tree),
         )

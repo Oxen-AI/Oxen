@@ -7,6 +7,7 @@ pub mod data_frames;
 
 pub fn workspace() -> Scope {
     web::scope("/workspaces")
+        // TODO: Deprecate one of these
         .route("", web::put().to(controllers::workspaces::get_or_create))
         .route("", web::post().to(controllers::workspaces::create))
         .route("", web::get().to(controllers::workspaces::list))
@@ -52,17 +53,8 @@ pub fn workspace() -> Scope {
                     web::post().to(controllers::workspaces::files::add),
                 )
                 .route(
-                    "/files/{path:.*}",
-                    web::delete().to(controllers::workspaces::files::delete),
-                )
-                .route(
                     "/validate",
                     web::post().to(controllers::workspaces::files::validate),
-                )
-                // TODO: Depreciate /commit as we are calling it /merge instead to be consistent with the /merge branch endpoint
-                .route(
-                    "/commit/{branch:.*}",
-                    web::post().to(controllers::workspaces::commit),
                 )
                 .route(
                     "/merge/{branch:.*}",

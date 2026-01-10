@@ -404,7 +404,7 @@ mod tests {
 
                 // Stage the deletion
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     vec![hello_file_path.clone()],
@@ -476,7 +476,7 @@ mod tests {
 
                 // Add the deletion to stage the removal
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     vec![dir_to_remove.clone()],

@@ -126,6 +126,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     get,
     path = "/api/repos/{namespace}/{repo_name}/stats",
     operation_id = "get_repository_stats",
+    description = "Gets the total number of files, the total size of the files, and the number of different file types",
     tag = "Repositories",
     security( ("api_key" = []) ),
     params(

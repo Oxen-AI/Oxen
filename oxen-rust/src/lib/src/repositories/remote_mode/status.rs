@@ -232,7 +232,7 @@ mod tests {
 
                 // Remove bounding_box.csv
                 api::client::workspaces::files::rm_files(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_identifier,
                     vec![bounding_box_path.clone()],
