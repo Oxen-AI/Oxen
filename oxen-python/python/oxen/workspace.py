@@ -174,13 +174,23 @@ class Workspace:
 
         self._workspace.add_bytes(src, buf, dst)
 
-    def rm(self, path: str):
+    def delete_file(self, path: str):
         """
-        Remove a file from the workspace
+        Remove a file staged to the workspace
 
         Args:
             path: `str`
-                The path to the file on workspace to be removed
+                The path to the file to be deleted from workspace staging
+        """
+        self._workspace.delete_file(path)
+    
+    def rm(self, path: str):
+        """
+        Stage a file to be removed in the workspace
+
+        Args:
+            path: `str`
+                The path to the file to be removed from the base repository
         """
         self._workspace.rm(path)
 
