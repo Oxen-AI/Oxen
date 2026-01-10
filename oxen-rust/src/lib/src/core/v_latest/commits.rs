@@ -478,26 +478,6 @@ fn traverse_commits(
     Ok(config.known_total_count.unwrap_or(count))
 }
 
-fn count_with_cache(
-    repo: &LocalRepository,
-    db: &DBWithThreadMode<MultiThreaded>,
-    head_commit: Commit,
-    stop_at_base: Option<&Commit>,
-    visited: &mut HashSet<String>,
-) -> Result<usize, OxenError> {
-    let config = CommitTraversalConfig {
-        repo,
-        head_commit,
-        stop_at_base,
-        visited,
-        skip: 0,
-        limit: usize::MAX,
-        cache_db: Some(db),
-        known_total_count: None,
-    };
-    traverse_commits(config, None)
-}
-
 /// List commits for the repository in no particular order
 pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
     let branches = with_ref_manager(repo, |manager| manager.list_branches())?;
@@ -676,6 +656,7 @@ fn open_commit_count_db(
     repo: &LocalRepository,
 ) -> Result<DBWithThreadMode<MultiThreaded>, OxenError> {
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
+    util::fs::create_dir_all(&db_path)?;
     let opts = crate::core::db::key_val::opts::default();
     Ok(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?)
 }
@@ -710,7 +691,17 @@ pub fn count_from(
         return Ok((cached_count, true));
     }
 
-    let count = count_with_cache(repo, &db, commit.clone(), None, &mut HashSet::new())?;
+    let config = CommitTraversalConfig {
+        repo,
+        head_commit: commit.clone(),
+        stop_at_base: None,
+        visited: &mut HashSet::new(),
+        skip: 0,
+        limit: usize::MAX,
+        cache_db: Some(&db),
+        known_total_count: None,
+    };
+    let count = traverse_commits(config, None)?;
 
     cache_count(&db, &commit.id, count)?;
 
@@ -907,10 +898,6 @@ mod tests {
                 paginated_commits[1].id, paginated_commits[1].message
             );
 
-            // This assertion will FAIL due to the bug
-            // Bug behavior: Post-order counts oldest-first (C0=0, C1=1, ..., C5=5, C6=6)
-            // Window [9, 11) in post-order selects C9, C10
-            // After reverse: [C10, C9]
             assert_eq!(
                 &paginated_commits[0].id, expected_first,
                 "First result should be C5 (Commit 5), but got {}",
