@@ -313,7 +313,7 @@ mod tests {
                 // Remove it from staged area
                 let paths_to_remove = vec![file_path.clone()];
                 api::client::workspaces::files::rm_files_from_staged(
-                    &cloned_repo,
+                    Some(&cloned_repo),
                     &remote_repo,
                     &workspace_id,
                     paths_to_remove,

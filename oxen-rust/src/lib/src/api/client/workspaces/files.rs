@@ -10,7 +10,6 @@ use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityReques
 
 use bytesize::ByteSize;
 use futures_util::StreamExt;
-use glob_match::glob_match;
 use parking_lot::Mutex;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
@@ -894,6 +893,7 @@ pub async fn rm_files(
         .map(|p| util::fs::path_relative_to_dir(p, &repo_path).unwrap())
         .collect();
 
+    log::debug!("expanded paths: {:?}", expanded_paths.len());
     let uri = format!("/workspaces/{workspace_id}/versions");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("rm_files: {url}");
@@ -929,9 +929,8 @@ pub async fn rm_files(
     Ok(())
 }
 
-// TODO: Convert to use glob module
 pub async fn rm_files_from_staged(
-    local_repo: &LocalRepository,
+    local_repo: Option<&LocalRepository>,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
@@ -939,54 +938,30 @@ pub async fn rm_files_from_staged(
     let workspace_id = workspace_id.as_ref();
 
     // Parse glob paths
-    let repo_path = local_repo.path.clone();
-    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+    let glob_opts = GlobOpts {
+        paths: paths.clone(),
+        staged_db: false,
+        merkle_tree: false,
+        working_dir: true,
+        walk_dirs: true,
+    };
 
-    for path in paths.clone() {
-        let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
-        let full_path = repo_path.join(&relative_path);
-        if util::fs::is_glob_path(&full_path) {
-            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
-            else {
-                // TODO: Better error message?
-                return Err(OxenError::basic_str(
-                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
-                ));
-            };
-            let glob_pattern = relative_path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
-            let root_path = PathBuf::from("");
-            let parent_path = relative_path.parent().unwrap_or(&root_path);
+    let expanded_paths: HashSet<PathBuf> = util::glob::parse_glob_paths(&glob_opts, local_repo)?;
 
-            // If dir not found in tree, skip glob path
-            let Some(dir_node) = repositories::tree::get_dir_with_children(
-                local_repo,
-                head_commit,
-                parent_path,
-                None,
-            )?
-            else {
-                continue;
-            };
+    // Convert to relative paths
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
 
-            let dir_children = dir_node.list_paths()?;
-            for child_path in dir_children {
-                let child_str = child_path.to_string_lossy().to_string();
-                if glob_match(&glob_pattern, &child_str) {
-                    expanded_paths.insert(parent_path.join(child_path.clone()));
-                }
-            }
-        } else {
-            expanded_paths.insert(relative_path);
-        }
-    }
+    let expanded_paths: Vec<PathBuf> = expanded_paths
+        .iter()
+        .map(|p| util::fs::path_relative_to_dir(p, &repo_path).unwrap())
+        .collect();
 
-    log::debug!("expanded paths: {expanded_paths:?}");
-
-    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+    let expanded_paths: Vec<PathBuf> = expanded_paths.to_vec();
+    log::debug!("expanded paths: {:?}", expanded_paths.len());
 
     let uri = format!("/workspaces/{workspace_id}/staged");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

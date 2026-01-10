@@ -99,10 +99,9 @@ impl RunCmd for WorkspaceRmCmd {
             ));
         }
 
-        // TODO: Use directory
         if args.get_flag("staged") {
             api::client::workspaces::files::rm_files_from_staged(
-                &repository,
+                Some(&repository),
                 &remote_repo,
                 workspace_identifier,
                 paths,
