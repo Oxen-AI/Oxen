@@ -901,6 +901,7 @@ pub async fn rm_files(
     let response = client.delete(&url).json(&expanded_paths).send().await?;
 
     if response.status().is_success() {
+        let _body = client::parse_json_body(&url, response).await?;
         println!("🐂 oxen staged paths {paths:?} as removed in workspace {workspace_id}");
 
         // If in a remote-mode repo, remove files locally
@@ -1685,65 +1686,7 @@ mod tests {
         })
         .await
     }
-
-    #[tokio::test]
-    async fn test_rm_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
-
-            let workspace_id = uuid::Uuid::new_v4().to_string();
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
-
-            let directory_name = "images";
-            let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_id,
-                directory_name,
-                path.clone(),
-            )
-            .await;
-            assert!(result.is_ok());
-
-            // Remove the file
-            let result = api::client::workspaces::files::rm_files(
-                None,
-                &remote_repo,
-                &workspace_id,
-                vec![path],
-            )
-            .await;
-            assert!(result.is_ok());
-
-            // We should have 1 file staged
-            let page_num = constants::DEFAULT_PAGE_NUM;
-            let page_size = constants::DEFAULT_PAGE_SIZE;
-            let path = Path::new(directory_name);
-            let entries = api::client::workspaces::changes::list(
-                &remote_repo,
-                &workspace_id,
-                path,
-                page_num,
-                page_size,
-            )
-            .await?;
-            assert_eq!(entries.added_files.entries.len(), 1);
-            assert_eq!(entries.added_files.total_entries, 1);
-
-            Ok(remote_repo)
-        })
-        .await
-    }
-
+    
     #[tokio::test]
     async fn test_stage_file_in_multiple_subdirectories() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {

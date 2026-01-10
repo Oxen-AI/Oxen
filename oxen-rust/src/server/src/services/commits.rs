@@ -11,7 +11,7 @@ pub fn commits() -> Scope {
         .route("/list_all", web::get().to(controllers::commits::list_all))
         .route(
             "/list_missing",
-            web::post().to(controllers::commits::list_missing),
+            web::get().to(controllers::commits::list_missing),
         )
         .route(
             "/list_missing_files",

@@ -165,7 +165,7 @@ pub async fn list_missing_hashes(
         .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
     let res = client
-        .post(&url)
+        .get(&url)
         .json(&MerkleHashes {
             hashes: commit_hashes,
         })

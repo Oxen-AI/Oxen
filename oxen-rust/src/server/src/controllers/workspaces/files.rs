@@ -396,12 +396,17 @@ pub async fn rm_files(
     let mut err_files = vec![];
 
     for path in &paths_to_remove {
-        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
-        log::debug!("rm ✅ success! staged file {path:?} as removed");
+        let err_files_for_path = repositories::workspaces::files::rm(&workspace, &path).await?;
+        if err_files_for_path.is_empty() {
+            log::debug!("successfully staged file {path:?} as removed");
+        } else {
+            log::debug!("failed to stage file {path:?} as removed");
+            err_files.extend(err_files_for_path);
+        }
         ret_files.push(path);
     }
 
-    log::debug!("err_files: {err_files:?}");
+    log::debug!("err_files: {:?}", err_files.len());
 
     if err_files.is_empty() {
         Ok(HttpResponse::Ok().json(FilePathsResponse {
