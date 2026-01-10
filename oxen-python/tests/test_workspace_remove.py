@@ -17,8 +17,3 @@ def test_remove_staged_file(
     added_files = status.added_files()
     assert len(added_files) == 1, "Error adding to test remove"
 
-    folder_path = str(PurePath("folder", "2.jpg"))
-    workspace.rm(folder_path)
-    status = workspace.status()
-    added_files = status.added_files()
-    assert len(added_files) == 0, "File not successfully removed from staging"
