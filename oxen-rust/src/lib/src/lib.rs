@@ -75,6 +75,7 @@ pub mod model;
 pub mod namespaces;
 pub mod opts;
 pub mod repositories;
+pub mod request_context;
 pub mod resource;
 pub mod storage;
 pub mod test;

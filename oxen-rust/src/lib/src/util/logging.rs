@@ -18,6 +18,8 @@ macro_rules! current_function {
 pub fn init_logging() {
     match env_logger::Builder::from_env(Env::default())
         .format(|buf, record| {
+            use crate::request_context::get_request_id;
+
             // Split string on a character and take the last part
             fn take_last(s: &str, c: char) -> &str {
                 s.split(c).next_back().unwrap_or("")
@@ -37,14 +39,22 @@ pub fn init_logging() {
             let file_name = take_last(record.file().unwrap_or("unknown"), '/');
             let line_number = record.line().unwrap_or(0);
 
+            // Add request ID if available
+            let request_id_str = if let Some(request_id) = get_request_id() {
+                format!(" [request_id={}]", request_id)
+            } else {
+                String::new()
+            };
+
             writeln!(
                 buf,
-                "[{}] {} - {}/{}:{} {}",
+                "[{}] {} - {}/{}:{}{}  {}",
                 record.level(),
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
                 formatted_target,
                 file_name,
                 line_number,
+                request_id_str,
                 record.args()
             )
         })

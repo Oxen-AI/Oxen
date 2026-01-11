@@ -26,6 +26,8 @@ use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
 
+use middleware::RequestIdMiddleware;
+
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
 use liboxen::model::metadata::{
     generic_metadata::GenericMetadata, MetadataAudio, MetadataDir, MetadataImage, MetadataTabular,
@@ -393,6 +395,7 @@ async fn main() -> std::io::Result<()> {
                     HttpServer::new(move || {
                         App::new()
                             .app_data(data.clone())
+                            .wrap(RequestIdMiddleware)
                             .route(
                                 "/api/version",
                                 web::get().to(controllers::oxen_version::index),
