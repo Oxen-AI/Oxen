@@ -5,7 +5,7 @@ use crate::params::{app_data, path_param};
 use liboxen::core;
 use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
-use liboxen::model::merkle_tree::node::EMerkleTreeNode;
+use liboxen::model::merkle_tree::node::{file_node::FileNodeOpts, EMerkleTreeNode};
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::LocalRepository;
@@ -300,7 +300,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 )]
 pub async fn add_version_files(
     req: HttpRequest,
-    payload: web::Json<Vec<FileWithHash>>,
+    payload: web::Json<Vec<FileNodeOpts>>,
 ) -> Result<HttpResponse, OxenHttpError> {
     // Add file to staging
     let app_data = app_data(&req)?;
@@ -314,15 +314,15 @@ pub async fn add_version_files(
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    let files_with_hash: Vec<FileWithHash> = payload.into_inner();
+    let file_nodes_to_stage: Vec<FileNodeOpts> = payload.into_inner();
     log::debug!(
         "Calling add version files from the core workspace logic with {} files",
-        files_with_hash.len(),
+        file_nodes_to_stage.len(),
     );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,
-        &files_with_hash,
+        &file_nodes_to_stage,
         &directory,
     )?;
 

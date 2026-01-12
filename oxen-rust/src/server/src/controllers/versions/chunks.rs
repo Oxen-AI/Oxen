@@ -127,7 +127,6 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
             .combine_version_chunks(&version_id, Some(chunks), upload_id, cleanup)
             .await?;
 
-        let version_path = version_store.get_version_path(&version_id)?;
         // If the workspace id is provided, stage the file
         if let Some(workspace_id) = request.workspace_id {
             let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -143,9 +142,16 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                 PathBuf::from(file.file_name.clone())
             };
 
+            let Some(file_node_opts) = request.file_node_opts else {
+                return Ok(HttpResponse::BadRequest().json(StatusMessage::error(
+                    "Missing FileNode value for workspace add",
+                )));
+            };
+
             core::v_latest::workspaces::files::add_version_file(
+                &repo,
                 &workspace,
-                &version_path,
+                file_node_opts,
                 &dst_path,
             )?;
         }

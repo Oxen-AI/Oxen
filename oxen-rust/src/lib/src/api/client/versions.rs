@@ -3,6 +3,7 @@ use crate::api::client;
 use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
+use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
@@ -114,7 +115,7 @@ pub async fn parallel_large_file_upload(
     progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
-
+    let file_path = file_path.as_ref();
     let mut upload =
         create_multipart_large_file_upload(remote_repo, file_path, dst_dir, entry).await?;
 
@@ -134,7 +135,18 @@ pub async fn parallel_large_file_upload(
         "multipart_large_file_upload results length: {:?}",
         results.len()
     );
-    complete_multipart_large_file_upload(remote_repo, upload, results, workspace_id).await
+    // Check if file path is relative
+    let file_node_opts = if let Some(_workspace_id) = &workspace_id {
+        let hash = hasher::u128_hash_file_contents(file_path)?;
+        let file_node_opts =
+            client::workspaces::files::generate_file_node_opts(hash, &file_path.to_path_buf())?;
+        Some(file_node_opts)
+    } else {
+        None
+    };
+
+    complete_multipart_large_file_upload(remote_repo, upload, results, workspace_id, file_node_opts)
+        .await
 }
 
 /// Creates a new multipart large file upload
@@ -143,11 +155,10 @@ pub async fn parallel_large_file_upload(
 /// Returns the `MultipartLargeFileUpload` struct for the created upload
 async fn create_multipart_large_file_upload(
     remote_repo: &RemoteRepository,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     dst_dir: Option<impl AsRef<Path>>,
     entry: Option<Entry>,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
-    let file_path = file_path.as_ref();
     let dst_dir = dst_dir.as_ref();
 
     let (file_size, hash) = match entry {
@@ -460,6 +471,7 @@ async fn complete_multipart_large_file_upload(
     upload: MultipartLargeFileUpload,
     results: Vec<HashMap<String, String>>,
     workspace_id: Option<String>,
+    file_node_opts: Option<FileNodeOpts>,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let file_hash = &upload.hash.to_string();
     let upload_id = &upload.upload_id;
@@ -483,6 +495,7 @@ async fn complete_multipart_large_file_upload(
             upload_id: upload_id.clone(),
         }],
         workspace_id,
+        file_node_opts,
     };
 
     let body = serde_json::to_string(&body)?;
@@ -593,41 +606,6 @@ pub async fn multipart_batch_upload(
     err_files.extend(response.err_files);
 
     Ok(err_files)
-}
-
-pub async fn workspace_multipart_batch_upload_versions_with_retry(
-    remote_repo: &RemoteRepository,
-    local_repo: &Option<LocalRepository>,
-    client: Arc<reqwest::Client>,
-    paths: Vec<PathBuf>,
-) -> Result<UploadResult, OxenError> {
-    let mut result: UploadResult = UploadResult {
-        files_to_add: vec![],
-        err_files: vec![],
-    };
-    let mut first_try = true;
-    let mut retry_count: usize = 0;
-    let max_retries = max_retries();
-
-    while (first_try || !result.err_files.is_empty()) && retry_count < max_retries {
-        first_try = false;
-        retry_count += 1;
-
-        result = workspace_multipart_batch_upload_versions(
-            remote_repo,
-            local_repo,
-            client.clone(),
-            paths.clone(),
-            result,
-        )
-        .await?;
-
-        if !result.err_files.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-            sleep(Duration::from_millis(wait_time as u64)).await;
-        }
-    }
-    Ok(result)
 }
 
 pub async fn workspace_multipart_batch_upload_versions(

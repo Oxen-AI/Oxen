@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct FileNodeOpts {
     pub name: String,
     pub hash: MerkleHash,

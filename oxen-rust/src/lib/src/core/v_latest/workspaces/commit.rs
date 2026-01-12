@@ -57,6 +57,8 @@ pub async fn commit(
             &commit_progress_bar,
         )?;
 
+        eprintln!("num of entries in staged db {}", dir_entries.values().len());
+
         let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
         if !conflicts.is_empty() {
             return Err(OxenError::workspace_behind(workspace));

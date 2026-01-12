@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use crate::model::MerkleHash;
-
 use super::StatusMessage;
+use crate::model::merkle_tree::node::file_node::FileNodeOpts;
+use crate::model::MerkleHash;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -63,6 +63,7 @@ pub struct CompleteVersionUploadRequest {
     // If the workspace_id is provided, we will add the file to the workspace
     // otherwise, we will just add the file to the versions store
     pub workspace_id: Option<String>,
+    pub file_node_opts: Option<FileNodeOpts>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

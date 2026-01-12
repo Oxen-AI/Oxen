@@ -15,21 +15,22 @@ use zip::ZipArchive;
 use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
+    add_file_node_and_parent_dir, add_file_node_to_staged_db, get_file_node,
     process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::core::{self, db};
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::merkle_tree::node::{
+    file_node::FileNodeOpts, EMerkleTreeNode, FileNode, MerkleTreeNode,
+};
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
 use crate::model::{Branch, Commit, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
-use crate::view::{ErrorFileInfo, FileWithHash};
+use crate::view::ErrorFileInfo;
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
 const MAX_CONTENT_LENGTH: u64 = 1024 * 1024 * 1024; // 1GB limit
@@ -67,26 +68,44 @@ pub async fn rm(
 }
 
 pub fn add_version_file(
+    base_repo: &LocalRepository,
     workspace: &Workspace,
-    version_path: impl AsRef<Path>,
+    file_node_opts: FileNodeOpts,
     dst_path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
-    // version_path is where the file is stored, dst_path is the relative path to the repo path
-    let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
 
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        get_status_and_add_file(
-            workspace_repo,
-            version_path,
-            dst_path,
-            staged_db_manager,
-            &seen_dirs,
-        )
-    })?;
+    let file_node_to_stage = FileNode::new(workspace_repo, file_node_opts)?;
+    let workspace_commit = workspace.commit.clone();
+    let maybe_file_node =
+        repositories::tree::get_file_by_path(base_repo, &workspace_commit, dst_path)?;
+
+    let status = if let Some(existing_file_node) = &maybe_file_node {
+        log::debug!("got existing file_node: {existing_file_node} data_path {dst_path:?}");
+        if util::fs::is_modified_between_node(&file_node_to_stage, existing_file_node)? {
+            StagedEntryStatus::Modified
+        } else {
+            StagedEntryStatus::Unmodified
+        }
+    } else {
+        StagedEntryStatus::Added
+    };
+    if status == StagedEntryStatus::Unmodified {
+        log::debug!("file has not changed - skipping add");
+        return Ok(dst_path.to_path_buf());
+    }
+
+    let relative_path = util::fs::path_relative_to_dir(dst_path, &workspace_repo.path)?;
+    add_file_node_to_staged_db(
+        workspace_repo,
+        relative_path,
+        status,
+        &file_node_to_stage,
+        &seen_dirs,
+    )?;
 
     Ok(dst_path.to_path_buf())
 }
@@ -121,24 +140,45 @@ pub fn add_version_file_with_hash(
 pub fn add_version_files(
     repo: &LocalRepository,
     workspace: &Workspace,
-    files_with_hash: &[FileWithHash],
+    file_nodes_to_stage: &[FileNodeOpts],
     directory: impl AsRef<str>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let version_store = repo.version_store()?;
-
     let directory = directory.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
+    let workspace_commit = workspace.commit.clone();
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        for item in files_with_hash.iter() {
-            let version_path = version_store.get_version_path(&item.hash)?;
-            let target_path = PathBuf::from(directory).join(&item.path);
+        for file_node_opts in file_nodes_to_stage.iter() {
+            let target_path = PathBuf::from(directory).join(&file_node_opts.name);
 
-            match get_status_and_add_file(
-                workspace_repo,
-                &version_path,
+            let file_node_to_stage = FileNode::new(workspace_repo, file_node_opts.clone())?;
+
+            let maybe_file_node =
+                repositories::tree::get_file_by_path(repo, &workspace_commit, &target_path)?;
+            let status = if let Some(existing_file_node) = &maybe_file_node {
+                log::debug!(
+                    "got existing file_node: {existing_file_node} data_path {target_path:?}"
+                );
+                if util::fs::is_modified_between_node(&file_node_to_stage, existing_file_node)? {
+                    StagedEntryStatus::Modified
+                } else {
+                    StagedEntryStatus::Unmodified
+                }
+            } else {
+                StagedEntryStatus::Added
+            };
+            eprintln!("In add version files, path {target_path:?} file status is {status:?}");
+
+            if status == StagedEntryStatus::Unmodified {
+                log::debug!("file has not changed - skipping add");
+                continue;
+            }
+
+            match add_file_node_and_parent_dir(
+                &file_node_to_stage,
+                status,
                 &target_path,
                 staged_db_manager,
                 &seen_dirs,
@@ -150,8 +190,8 @@ pub fn add_version_files(
                 Err(e) => {
                     log::error!("error with adding file: {e:?}");
                     err_files.push(ErrorFileInfo {
-                        hash: item.hash.clone(),
-                        path: Some(item.path.clone()),
+                        hash: format!("{:x}", file_node_to_stage.hash().to_u128()),
+                        path: Some(target_path),
                         error: format!("Failed to add file to staged db: {e}"),
                     });
                     continue;
@@ -437,6 +477,70 @@ fn delete_file(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), Oxen
     }
     Ok(())
 }
+
+// pub fn determine_file_status_from_metadata(
+//     repo: &LocalRepository,
+//     relative_path: &Path,
+//     file_metadata: &FileWithHash,
+// ) -> Result<FileStatus, OxenError> {
+//     let file_name = relative_path.file_name()
+//         .and_then(|n| n.to_str())
+//         .unwrap_or("");
+
+//     // 从head commit获取现有的file node
+//     let maybe_dir_node = None; // 你需要根据实际情况获取parent dir node
+//     let maybe_file_node = get_file_node(&maybe_dir_node, file_name)?;
+
+//     let mut previous_metadata: Option<GenericMetadata> = None;
+//     let hash = MerkleHash::from_str(&file_with_hash.hash)?;
+
+//     let (status, hash, num_bytes, mtime) = if let Some(file_node) = &maybe_file_node {
+//         previous_metadata = file_node.metadata();
+
+//         let mtime = FileTime::from_unix_time(
+//             file_with_hash.mtime_seconds,
+//             file_with_hash.mtime_nanoseconds,
+//         );
+
+//         // 比较hash判断是否修改
+//         if file_node.hash == hash {
+//             (
+//                 StagedEntryStatus::Unmodified,
+//                 hash,
+//                 file_with_hash.num_bytes,
+//                 mtime,
+//             )
+//         } else {
+//             (
+//                 StagedEntryStatus::Modified,
+//                 hash,
+//                 file_with_hash.num_bytes,
+//                 mtime,
+//             )
+//         }
+//     } else {
+//         // 新文件
+//         let mtime = FileTime::from_unix_time(
+//             file_with_hash.mtime_seconds,
+//             file_with_hash.mtime_nanoseconds,
+//         );
+//         (
+//             StagedEntryStatus::Added,
+//             hash,
+//             file_with_hash.num_bytes,
+//             mtime,
+//         )
+//     };
+
+//     Ok(FileStatus {
+//         status,
+//         hash,
+//         num_bytes,
+//         mtime,
+//         previous_file_node: maybe_file_node,
+//         previous_metadata,
+//     })
+// }
 
 pub async fn save_stream(
     workspace: &Workspace,
