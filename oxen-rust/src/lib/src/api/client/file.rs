@@ -492,10 +492,76 @@ mod tests {
                 api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
 
             assert!(bytes.is_ok());
-            assert!(!bytes.as_ref().unwrap().is_empty());
             assert_eq!(
                 bytes.as_ref().unwrap(),
                 &Bytes::from_static(b"fake png data 1")
+            );
+
+            let bytes_2 =
+                api::client::file::get_file(&remote_repo, branch_name, "images/image2.png").await;
+
+            assert!(bytes_2.is_ok());
+            assert_eq!(
+                bytes_2.as_ref().unwrap(),
+                &Bytes::from_static(b"fake png data 2")
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_upload_zip_file_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = "upload-zip-test";
+
+            // Create a test ZIP file
+            let temp_dir = tempfile::tempdir()?;
+            let zip_path = temp_dir.path().join("test.zip");
+            let zip_file = std::fs::File::create(&zip_path)?;
+            let mut zip = zip::ZipWriter::new(&zip_file);
+
+            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+            zip.start_file("image1.png", options).unwrap();
+            zip.write_all(b"fake png data 1")?;
+            zip.start_file("image2.png", options).unwrap();
+            zip.write_all(b"fake png data 2")?;
+            zip.finish().unwrap();
+            drop(zip_file);
+
+            // Upload the ZIP
+            let result = api::client::file::upload_zip(
+                &remote_repo,
+                branch_name,
+                "images",
+                &zip_path,
+                "Test User",
+                "test@oxen.ai",
+                Some("Upload test ZIP in empty repo"),
+            )
+            .await;
+
+            assert!(result.is_ok());
+            let commit = result.unwrap();
+            assert!(commit.message.contains("Upload test ZIP in empty repo"));
+
+            let bytes =
+                api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
+
+            assert!(bytes.is_ok());
+            assert_eq!(
+                bytes.as_ref().unwrap(),
+                &Bytes::from_static(b"fake png data 1")
+            );
+
+            let bytes_2 =
+                api::client::file::get_file(&remote_repo, branch_name, "images/image2.png").await;
+
+            assert!(bytes_2.is_ok());
+            assert_eq!(
+                bytes_2.as_ref().unwrap(),
+                &Bytes::from_static(b"fake png data 2")
             );
 
             Ok(remote_repo)
