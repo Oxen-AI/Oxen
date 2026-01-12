@@ -235,11 +235,21 @@ impl PyRemoteRepo {
     ) -> Result<u64, PyOxenError> {
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             if !revision.is_empty() {
-                api::client::dir::download_dir_as_zip(&self.repo, revision, &directory, &local_path)
-                    .await
+                api::client::export::download_dir_as_zip(
+                    &self.repo,
+                    revision,
+                    &directory,
+                    &local_path,
+                )
+                .await
             } else if let Some(revision) = &self.revision {
-                api::client::dir::download_dir_as_zip(&self.repo, revision, &directory, &local_path)
-                    .await
+                api::client::export::download_dir_as_zip(
+                    &self.repo,
+                    revision,
+                    &directory,
+                    &local_path,
+                )
+                .await
             } else {
                 Err(OxenError::basic_str(
                     "Invalid Revision: Cannot download zip file without a revision.",
