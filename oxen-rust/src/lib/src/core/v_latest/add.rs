@@ -232,13 +232,6 @@ pub async fn add_files(
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
     log::debug!("---END--- oxen add: {paths:?} duration: {duration:?}");
 
-    println!(
-        "🐂 oxen added {} files ({}) in {}",
-        total.total_files,
-        bytesize::ByteSize::b(total.total_bytes),
-        humantime::format_duration(duration)
-    );
-
     Ok(total)
 }
 
@@ -979,7 +972,7 @@ pub fn get_status_and_add_file(
         log::debug!("file has not changed - skipping add");
         return Ok(());
     }
-    let file_node = generate_file_node(repo, data_path, dst_path, &file_status)?;
+    let file_node = generate_file_node_with_file_status(repo, data_path, dst_path, &file_status)?;
 
     // Only add the file to the staged db if it has changed
     if let Some(file_node) = file_node {
@@ -995,7 +988,34 @@ pub fn get_status_and_add_file(
     Ok(())
 }
 
-pub fn stage_file_with_hash(
+/// Stage a file without additional checks or processing
+pub fn stage_file_with_db_manager(
+    repo: &LocalRepository,
+    data_path: &Path,
+    dst_path: &Path,
+    hash: &String,
+    staged_db_manager: &StagedDBManager,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<(), OxenError> {
+    let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
+    let Some(file_node) = generate_file_node_with_hash(repo, data_path, dst_path, hash)? else {
+        return Err(OxenError::basic_str(format!("Unable to generate file node for dst_path {:?}, data_path {:?}", dst_path, data_path)));
+    };
+
+    let status = StagedEntryStatus::Added;
+    add_file_node_and_parent_dir(
+        &file_node,
+        status,
+        &relative_path,
+        staged_db_manager,
+        seen_dirs,
+    )?;
+    
+    Ok(())
+}
+
+
+pub fn stage_file_with_hash_and_db_manager(
     workspace: &Workspace,
     data_path: &Path,
     dst_path: &Path,
@@ -1044,7 +1064,7 @@ pub fn stage_file_with_hash(
         }
     };
 
-    let file_node = generate_file_node(workspace_repo, data_path, dst_path, &file_status)?;
+    let file_node = generate_file_node_with_file_status(workspace_repo, data_path, dst_path, &file_status)?;
     if let Some(file_node) = file_node {
         let status = file_status.status.clone();
         add_file_node_and_parent_dir(
@@ -1083,7 +1103,7 @@ pub fn add_file_node_and_parent_dir(
     Ok(())
 }
 
-pub fn generate_file_node(
+pub fn generate_file_node_with_file_status(
     repo: &LocalRepository,
     version_path: &Path,
     dst_path: &Path,
@@ -1162,6 +1182,76 @@ pub fn generate_file_node(
     )?;
     Ok(Some(file_node))
 }
+
+pub fn generate_file_node_with_hash(
+    repo: &LocalRepository,
+    data_path: &Path,
+    dst_path: &Path,
+    hash: &String,
+) -> Result<Option<FileNode>, OxenError> {
+
+    // Get metadata from data path
+    // TODO: This is clearly wrong. We need to send this over the wire
+    let metadata = util::fs::metadata(data_path)?;
+    let num_bytes = metadata.len();
+    let mtime = FileTime::from_last_modification_time(&metadata);
+
+    // Get metadata from dst path
+    let extension = dst_path
+        .extension()
+        .unwrap_or_default()
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str(format!("Invalid UTF-8 in file name for dst path {:?}", dst_path)))?;
+
+    let mime_type = util::fs::file_mime_type_from_extension(data_path, dst_path);
+    let mut data_type =
+        util::fs::datatype_from_mimetype_from_extension(data_path, dst_path, &mime_type);
+
+    // TODO: Also must be sent over the wire
+    let metadata = repositories::metadata::get_file_metadata_with_extension(
+        data_path,
+        &data_type,
+        extension
+    )?;
+
+    // If the metadata is None, but the data type is tabular, we need to set the data type to binary
+    // because this means we failed to parse the metadata from the file
+    if metadata.is_none() && data_type == EntryDataType::Tabular {
+        data_type = EntryDataType::Binary;
+    }
+
+    let hash = MerkleHash::from_str(&hash)?;
+    let (metadata_hash, combined_hash) = if metadata.is_some() {
+        let metadata_hash = util::hasher::get_metadata_hash(&metadata)?;
+        let metadata_hash = MerkleHash::new(metadata_hash);
+        let combined_hash =
+            util::hasher::get_combined_hash(Some(metadata_hash.to_u128()), hash.to_u128())?;
+        let combined_hash = MerkleHash::new(combined_hash);
+
+        (Some(metadata_hash), combined_hash)
+    } else {
+        (None, hash)
+    };
+
+    let file_node = FileNode::new(
+        repo,
+        FileNodeOpts {
+            name: dst_path.to_string_lossy().to_string(),
+            hash,
+            combined_hash,
+            metadata_hash,
+            num_bytes,
+            last_modified_seconds: mtime.unix_seconds(),
+            last_modified_nanoseconds: mtime.nanoseconds(),
+            data_type,
+            metadata,
+            mime_type: mime_type,
+            extension: extension.to_string(),
+        },
+    )?;
+    Ok(Some(file_node))
+}
+
 
 pub fn maybe_construct_generic_metadata_for_tabular(
     df_metadata: Option<GenericMetadata>,
