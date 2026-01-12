@@ -3,6 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::core::staged::staged_db_manager::with_staged_db_manager;
+use liboxen::core::v_latest::workspaces::files::decompress_zip;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew, TempFilePathNew};
@@ -20,8 +21,9 @@ use futures_util::TryStreamExt as _;
 use liboxen::repositories::commits;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
@@ -452,7 +454,17 @@ pub async fn upload_zip(
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    let resource = parse_resource(&req, &repo)?;
+    let resource = match parse_resource(&req, &repo) {
+        Ok(res) => res,
+        Err(parse_err) => {
+            if repositories::commits::head_commit_maybe(&repo)?.is_none() {
+                return handle_initial_upload_zip_empty_repo(req, payload, &repo).await;
+            } else {
+                return Err(parse_err);
+            }
+        }
+    };
+
     let branch = resource
         .branch
         .clone()
@@ -463,8 +475,9 @@ pub async fn upload_zip(
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace_path = workspace.dir();
     let (commit_message, name, email, temp_files) =
-        parse_multipart_fields_for_upload_zip(payload, &workspace, directory).await?;
+        parse_multipart_fields_for_upload_zip(payload, &workspace_path, &directory).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -496,20 +509,21 @@ pub async fn upload_zip(
     }))
 }
 
-// Helper: when the repository has no commits yet, accept the upload as the first commit on the
-// default branch ("main").
+// Helper: when the repository has no commits yet, accept the upload as the first commit
 async fn handle_initial_put_empty_repo(
     req: HttpRequest,
     payload: Multipart,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
-    let path_string = resource
-        .components()
-        .skip(1)
-        .collect::<PathBuf>()
-        .to_string_lossy()
-        .to_string();
+
+    let mut resource = resource.components();
+    let branch_name = resource
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .unwrap_or("main".to_string());
+    let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
+    let path = PathBuf::from(path_string);
 
     let (name, email, _message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
@@ -528,17 +542,73 @@ async fn handle_initial_put_empty_repo(
     // If the user supplied files, add and commit them
     let mut commit: Option<Commit> = None;
 
-    process_and_add_files(repo, None, PathBuf::from(&path_string), files.clone()).await?;
+    process_and_add_files(repo, None, path, files.clone()).await?;
 
     if !files.is_empty() {
         let user_ref = &files[0].user; // Use the user from the first file, since it's the same for all
         commit = Some(commits::commit_with_user(repo, "Initial commit", user_ref)?);
-        branches::create(repo, "main", &commit.as_ref().unwrap().id)?;
+        branches::create(repo, &branch_name, &commit.as_ref().unwrap().id)?;
     }
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit: commit.unwrap(),
+    }))
+}
+
+async fn handle_initial_upload_zip_empty_repo(
+    req: HttpRequest,
+    payload: Multipart,
+    repo: &liboxen::model::LocalRepository,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+
+    // Parse the resource for the path and branch name
+    let mut resource = resource.components();
+    let branch_name = resource
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .unwrap_or("main".to_string());
+    let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
+    let path = PathBuf::from(path_string);
+
+    // Create a temp dir to unzip the files into
+    let temp_dir = TempDir::new()?;
+
+    // Parse the payload for the files and commit info
+    let (name, email, message, temp_files) =
+        parse_multipart_fields_for_upload_zip(payload, temp_dir.path(), &path).await?;
+
+    let user = create_user_from_options(name.clone(), email.clone())?;
+    let commit_message = message.unwrap_or("Upload zip file".to_string());
+
+    // Unzip the files and add
+    for temp_file in temp_files {
+        let files = decompress_zip(&temp_file.temp_file_path).await?;
+
+        for file in files.iter() {
+            // Skip files in __MACOSX directories
+            if file
+                .components()
+                .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
+            {
+                log::debug!("Skipping __MACOSX file: {file:?}");
+                continue;
+            }
+
+            repositories::add(repo, file).await?;
+        }
+    }
+
+    // Commit the files
+    let commit = repositories::commits::commit_with_user(repo, &commit_message, &user)?;
+
+    // Create the branch
+    branches::create(repo, &branch_name, &commit.id)?;
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
     }))
 }
 
@@ -766,8 +836,8 @@ async fn parse_multipart_fields_for_repo(
 
 async fn parse_multipart_fields_for_upload_zip(
     mut payload: Multipart,
-    workspace: &liboxen::repositories::workspaces::TemporaryWorkspace,
-    directory: PathBuf,
+    data_dir: &Path,
+    directory: &Path,
 ) -> actix_web::Result<
     (
         Option<String>,
@@ -832,10 +902,11 @@ async fn parse_multipart_fields_for_upload_zip(
                     sanitize_filename::sanitize,
                 );
 
-                let workspace_path = workspace.dir().join(directory.clone()).join(&filename);
+                // Create a dir for the zip file
+                let data_path = data_dir.join(directory).join(&filename);
 
                 // Create parent directories if they don't exist
-                if let Some(parent) = workspace_path.parent() {
+                if let Some(parent) = data_path.parent() {
                     tokio::fs::create_dir_all(parent).await.map_err(|e| {
                         OxenHttpError::BadRequest(
                             format!("Failed to create directories: {e}").into(),
@@ -844,11 +915,9 @@ async fn parse_multipart_fields_for_upload_zip(
                 }
 
                 // Create the file in the workspace directory
-                let mut file = tokio::fs::File::create(&workspace_path)
-                    .await
-                    .map_err(|e| {
-                        OxenHttpError::BadRequest(format!("Failed to create file: {e}").into())
-                    })?;
+                let mut file = tokio::fs::File::create(&data_path).await.map_err(|e| {
+                    OxenHttpError::BadRequest(format!("Failed to create file: {e}").into())
+                })?;
 
                 while let Some(chunk) = field
                     .try_next()
@@ -871,7 +940,7 @@ async fn parse_multipart_fields_for_upload_zip(
                         OxenHttpError::BadRequest(format!("Failed to flush file: {e}").into())
                     })?;
 
-                fields_data.push((filename, workspace_path));
+                fields_data.push((filename, data_path));
             }
             _ => {}
         }
@@ -879,7 +948,7 @@ async fn parse_multipart_fields_for_upload_zip(
 
     for (_filename, temp_path) in fields_data {
         temp_files.push(TempFilePathNew {
-            path: directory.clone(),
+            path: directory.to_path_buf(),
             temp_file_path: temp_path,
         });
     }

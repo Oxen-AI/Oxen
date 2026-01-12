@@ -479,7 +479,7 @@ pub async fn save_stream(
     Ok(full_dir)
 }
 
-async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
+pub async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
     // File unzipped into the same directory
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
