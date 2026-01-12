@@ -16,7 +16,7 @@ use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager, stage_file_with_db_manager
+    process_add_file_with_staged_db_manager, stage_file_with_db_manager,
 };
 use crate::core::{self, db};
 use crate::error::OxenError;

@@ -993,13 +993,15 @@ pub fn stage_file_with_db_manager(
     repo: &LocalRepository,
     data_path: &Path,
     dst_path: &Path,
-    hash: &String,
+    hash: &str,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
     let Some(file_node) = generate_file_node_with_hash(repo, data_path, dst_path, hash)? else {
-        return Err(OxenError::basic_str(format!("Unable to generate file node for dst_path {:?}, data_path {:?}", dst_path, data_path)));
+        return Err(OxenError::basic_str(format!(
+            "Unable to generate file node for dst_path {dst_path:?}, data_path {data_path:?}"
+        )));
     };
 
     let status = StagedEntryStatus::Added;
@@ -1010,10 +1012,9 @@ pub fn stage_file_with_db_manager(
         staged_db_manager,
         seen_dirs,
     )?;
-    
+
     Ok(())
 }
-
 
 pub fn stage_file_with_hash_and_db_manager(
     workspace: &Workspace,
@@ -1064,7 +1065,8 @@ pub fn stage_file_with_hash_and_db_manager(
         }
     };
 
-    let file_node = generate_file_node_with_file_status(workspace_repo, data_path, dst_path, &file_status)?;
+    let file_node =
+        generate_file_node_with_file_status(workspace_repo, data_path, dst_path, &file_status)?;
     if let Some(file_node) = file_node {
         let status = file_status.status.clone();
         add_file_node_and_parent_dir(
@@ -1189,7 +1191,6 @@ pub fn generate_file_node_with_hash(
     dst_path: &Path,
     hash: &String,
 ) -> Result<Option<FileNode>, OxenError> {
-
     // Get metadata from data path
     // TODO: This is clearly wrong. We need to send this over the wire
     let metadata = util::fs::metadata(data_path)?;
@@ -1201,18 +1202,19 @@ pub fn generate_file_node_with_hash(
         .extension()
         .unwrap_or_default()
         .to_str()
-        .ok_or_else(|| OxenError::basic_str(format!("Invalid UTF-8 in file name for dst path {:?}", dst_path)))?;
+        .ok_or_else(|| {
+            OxenError::basic_str(format!(
+                "Invalid UTF-8 in file name for dst path {dst_path:?}"
+            ))
+        })?;
 
     let mime_type = util::fs::file_mime_type_from_extension(data_path, dst_path);
     let mut data_type =
         util::fs::datatype_from_mimetype_from_extension(data_path, dst_path, &mime_type);
 
     // TODO: Also must be sent over the wire
-    let metadata = repositories::metadata::get_file_metadata_with_extension(
-        data_path,
-        &data_type,
-        extension
-    )?;
+    let metadata =
+        repositories::metadata::get_file_metadata_with_extension(data_path, &data_type, extension)?;
 
     // If the metadata is None, but the data type is tabular, we need to set the data type to binary
     // because this means we failed to parse the metadata from the file
@@ -1220,7 +1222,7 @@ pub fn generate_file_node_with_hash(
         data_type = EntryDataType::Binary;
     }
 
-    let hash = MerkleHash::from_str(&hash)?;
+    let hash = MerkleHash::from_str(hash)?;
     let (metadata_hash, combined_hash) = if metadata.is_some() {
         let metadata_hash = util::hasher::get_metadata_hash(&metadata)?;
         let metadata_hash = MerkleHash::new(metadata_hash);
@@ -1245,13 +1247,12 @@ pub fn generate_file_node_with_hash(
             last_modified_nanoseconds: mtime.nanoseconds(),
             data_type,
             metadata,
-            mime_type: mime_type,
+            mime_type,
             extension: extension.to_string(),
         },
     )?;
     Ok(Some(file_node))
 }
-
 
 pub fn maybe_construct_generic_metadata_for_tabular(
     df_metadata: Option<GenericMetadata>,
