@@ -176,15 +176,15 @@ pub const EVAL_DURATION_COL: &str = "_oxen_eval_duration";
 // Average chunk size of ~10mb
 /// Average chunk size of ~10mb when chunking and sending data
 pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 10;
-// Retry and back off of upload tasks N times
-/// Retry and back off of upload tasks N times
+// Allow up to N concurrent upload tasks
+/// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
 // Retry and back off of requests N times
 /// Retry and back off of requests N times
 #[cfg(test)]
 pub const NUM_HTTP_RETRIES: u64 = 1;
 #[cfg(not(test))]
-pub const NUM_HTTP_RETRIES: u64 = 10;
+pub const NUM_HTTP_RETRIES: u64 = 5;
 /// Number of workers
 pub const DEFAULT_NUM_WORKERS: usize = 8;
 /// Default timeout for HTTP requests
