@@ -16,7 +16,7 @@ pub fn branches() -> Scope {
             web::post().to(controllers::branches::unlock),
         )
         .route(
-            "/{branch_name}/latest_commit",
+            "/{branch_name:.*}/latest_commit",
             web::get().to(controllers::branches::latest_synced_commit),
         )
         .route(

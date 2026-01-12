@@ -60,6 +60,11 @@ pub fn workspace() -> Scope {
                     "/merge/{branch:.*}",
                     web::post().to(controllers::workspaces::commit),
                 )
+                // TODO: Deprecate. Use /merge/{branch} instead
+                .route(
+                    "/commit/{branch:.*}",
+                    web::post().to(controllers::workspaces::commit),
+                )
                 .route(
                     "/merge/{branch:.*}",
                     web::get().to(controllers::workspaces::mergeability),
