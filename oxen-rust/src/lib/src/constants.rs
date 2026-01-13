@@ -27,6 +27,10 @@ pub const REFS_DIR: &str = "refs";
 pub const HISTORY_DIR: &str = "history";
 /// commits/ is a key-value database of commit ids to commit objects
 pub const COMMITS_DIR: &str = "commits";
+/// prefix for the cached stats dirs
+pub const CACHE_DIR: &str = "cache";
+/// prefix for the commit count dirs
+pub const COMMIT_COUNT_DIR: &str = "cache/commit_count";
 /// name of the schema db
 pub const SCHEMAS_DIR: &str = "schemas";
 /// schemas node in merkle tree
@@ -51,8 +55,6 @@ pub const DIR_HASHES_DIR: &str = "dir_hashes";
 pub const TREE_DIR: &str = "tree";
 /// prefix for the commit merkle tree node dbs
 pub const NODES_DIR: &str = "nodes";
-/// prefix for the cached stats dirs
-pub const CACHE_DIR: &str = "cache";
 /// prefix for cached compare dfs
 pub const COMPARES_DIR: &str = "compares";
 /// prefix for the left commit pointer in cached compares
