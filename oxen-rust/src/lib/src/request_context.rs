@@ -1,3 +1,4 @@
+use crate::constants::OXEN_REQUEST_ID;
 use std::cell::RefCell;
 
 tokio::task_local! {
@@ -14,7 +15,7 @@ pub fn generate_request_id() -> String {
 
 pub fn extract_or_generate_request_id(headers: &actix_web::http::header::HeaderMap) -> String {
     headers
-        .get("x-oxen-request-id")
+        .get(OXEN_REQUEST_ID)
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string())
         .unwrap_or_else(generate_request_id)
@@ -50,7 +51,7 @@ mod tests {
 
         let mut headers = HeaderMap::new();
         headers.insert(
-            HeaderName::from_static("x-oxen-request-id"),
+            HeaderName::from_static(OXEN_REQUEST_ID),
             HeaderValue::from_static("test-id-123"),
         );
 

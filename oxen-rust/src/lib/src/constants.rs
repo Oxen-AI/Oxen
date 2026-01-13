@@ -268,3 +268,6 @@ pub fn chunk_size() -> u64 {
         AVG_CHUNK_SIZE
     }
 }
+
+// Oxen request Id
+pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";

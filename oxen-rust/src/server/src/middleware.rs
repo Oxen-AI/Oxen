@@ -5,6 +5,7 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use std::future::{ready, Ready};
 
+use crate::constants::OXEN_REQUEST_ID;
 use liboxen::request_context::{extract_or_generate_request_id, REQUEST_ID};
 
 /// Middleware factory for request ID injection
@@ -59,7 +60,7 @@ where
 
                 // Add request ID to response headers
                 res.headers_mut().insert(
-                    actix_web::http::header::HeaderName::from_static("x-oxen-request-id"),
+                    actix_web::http::header::HeaderName::from_static(OXEN_REQUEST_ID),
                     actix_web::http::header::HeaderValue::from_str(&request_id).unwrap_or_else(
                         |_| actix_web::http::header::HeaderValue::from_static("invalid"),
                     ),
