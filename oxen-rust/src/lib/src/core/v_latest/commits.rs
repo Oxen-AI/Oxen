@@ -861,12 +861,12 @@ mod tests {
             let mut commit_ids = Vec::new();
 
             for i in 0..15 {
-                let filename = format!("file_{}.txt", i);
+                let filename = format!("file_{i}.txt");
                 let file_path = repo.path.join(&filename);
-                test::write_txt_file_to_path(&file_path, format!("Content {}", i))?;
+                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
 
                 repositories::add(&repo, &file_path).await?;
-                let commit = repositories::commit(&repo, &format!("Commit {}", i))?;
+                let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
                 commit_ids.push(commit.id.clone());
             }
 
@@ -887,8 +887,8 @@ mod tests {
             let expected_second = &commit_ids[4]; // C4
 
             println!("Total commits: {}", commit_ids.len());
-            println!("Expected first: {} (C5 - Commit 5)", expected_first);
-            println!("Expected second: {} (C4 - Commit 4)", expected_second);
+            println!("Expected first: {expected_first} (C5 - Commit 5)");
+            println!("Expected second: {expected_second} (C4 - Commit 4)");
             println!(
                 "Actual first: {} ({})",
                 paginated_commits[0].id, paginated_commits[0].message
@@ -921,12 +921,12 @@ mod tests {
             let mut commit_ids = Vec::new();
 
             for i in 0..10 {
-                let filename = format!("file_{}.txt", i);
+                let filename = format!("file_{i}.txt");
                 let file_path = repo.path.join(&filename);
-                test::write_txt_file_to_path(&file_path, format!("Content {}", i))?;
+                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
 
                 repositories::add(&repo, &file_path).await?;
-                let commit = repositories::commit(&repo, &format!("Commit {}", i))?;
+                let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
                 commit_ids.push(commit.id.clone());
             }
 
@@ -945,8 +945,8 @@ mod tests {
             let expected_second = &commit_ids[7]; // C7
 
             println!("Forward path test:");
-            println!("Expected first: {} (C8)", expected_first);
-            println!("Expected second: {} (C7)", expected_second);
+            println!("Expected first: {expected_first} (C8)");
+            println!("Expected second: {expected_second} (C7)");
             println!(
                 "Actual first: {} ({})",
                 paginated_commits[0].id, paginated_commits[0].message
