@@ -285,24 +285,50 @@ pub fn list_from_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     let _perf = crate::perf_guard!("commits::list_from_paginated");
 
-    let _perf_list = crate::perf_guard!("commits::list_from_revision");
-    let commits = list_from(repo, revision)?;
-    log::info!(
-        "list_from_paginated {} got {} commits before pagination",
-        revision,
-        commits.len()
-    );
-    drop(_perf_list);
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            // Calculate skip and limit based on pagination parameters
+            let skip = if pagination.page_num == 0 {
+                0
+            } else {
+                (pagination.page_num - 1) * pagination.page_size
+            };
+            let limit = pagination.page_size;
 
-    let _perf_paginate = crate::perf_guard!("commits::paginate_commits");
-    let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
-    drop(_perf_paginate);
+            let _perf_list = crate::perf_guard!("commits::list_from_paginated_optimized");
+            let (commits, total_entries, cached) =
+                core::v_latest::commits::list_from_paginated_impl(repo, revision, skip, limit)?;
+            log::info!(
+                "list_from_paginated {} got {} commits out of {} total (cached: {})",
+                revision,
+                commits.len(),
+                total_entries,
+                cached
+            );
+            drop(_perf_list);
 
-    Ok(PaginatedCommits {
-        status: StatusMessage::resource_found(),
-        commits,
-        pagination,
-    })
+            // Calculate pagination metadata
+            let total_pages = if pagination.page_size > 0 {
+                (total_entries as f64 / pagination.page_size as f64).ceil() as usize
+            } else {
+                0
+            };
+
+            let pagination = crate::view::Pagination {
+                page_size: pagination.page_size,
+                page_number: pagination.page_num,
+                total_pages,
+                total_entries,
+            };
+
+            Ok(PaginatedCommits {
+                status: StatusMessage::resource_found(),
+                commits,
+                pagination,
+            })
+        }
+    }
 }
 
 /// List paginated commits by resource
@@ -318,6 +344,16 @@ pub fn list_by_path_from_paginated(
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list_by_path_from_paginated(repo, commit, path, pagination),
+    }
+}
+
+pub fn count_from(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+) -> Result<(usize, bool), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
+        _ => core::v_latest::commits::count_from(repo, revision),
     }
 }
 
