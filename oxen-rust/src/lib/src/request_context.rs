@@ -5,19 +5,14 @@ tokio::task_local! {
 }
 
 pub fn get_request_id() -> Option<String> {
-    REQUEST_ID
-        .try_with(|id| id.borrow().clone())
-        .ok()
-        .flatten()
+    REQUEST_ID.try_with(|id| id.borrow().clone()).ok().flatten()
 }
 
 pub fn generate_request_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-pub fn extract_or_generate_request_id(
-    headers: &actix_web::http::header::HeaderMap,
-) -> String {
+pub fn extract_or_generate_request_id(headers: &actix_web::http::header::HeaderMap) -> String {
     headers
         .get("x-oxen-request-id")
         .and_then(|h| h.to_str().ok())
