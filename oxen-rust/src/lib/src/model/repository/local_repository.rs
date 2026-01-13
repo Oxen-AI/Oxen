@@ -104,6 +104,33 @@ impl LocalRepository {
         Ok(())
     }
 
+    /// Create a node store for this repository.
+    ///
+    /// This creates a NodeStore implementation for reading and writing Merkle tree nodes.
+    /// By default, uses the file-based storage backend for backward compatibility.
+    ///
+    /// # Returns
+    ///
+    /// A new FileNodeStore instance for this repository
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use oxen_rust::model::LocalRepository;
+    /// # use oxen_rust::core::db::node_store::NodeStore;
+    /// # fn example(repo: &LocalRepository) -> Result<(), oxen_rust::error::OxenError> {
+    /// let mut store = repo.node_store()?;
+    /// let mut txn = store.begin_write_txn()?;
+    /// // ... use transaction ...
+    /// txn.commit()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn node_store(&self) -> Result<crate::core::db::node_store::file_store::FileNodeStore, OxenError> {
+        use crate::core::db::node_store::NodeStore;
+        crate::core::db::node_store::file_store::FileNodeStore::open(&self.path)
+    }
+
     /// Initialize local version store at a new location
     pub async fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
         let version_store = create_version_store(&self.path, storage_opts)?;

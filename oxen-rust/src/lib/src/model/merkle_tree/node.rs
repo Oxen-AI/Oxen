@@ -13,7 +13,7 @@ pub mod staged_merkle_tree_node;
 pub mod vnode;
 
 pub use commit_node::CommitNode;
-pub use dir_node::DirNode;
+pub use dir_node::{DirNode, DirNodeOpts};
 pub use dir_node_with_path::DirNodeWithPath;
 pub use file_chunk_node::FileChunkNode;
 pub use file_node::FileNode;

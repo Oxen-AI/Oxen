@@ -6,7 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use super::*;
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::node_store::node_db_compat::NodeDB;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
@@ -41,7 +41,7 @@ impl MerkleTreeNode {
 
     /// Private implementation that loads from disk without caching
     fn from_hash_uncached(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
-        let node_db = MerkleNodeDB::open_read_only(repo, hash)?;
+        let node_db = NodeDB::open_read_only(repo, hash)?;
         let parent_id = node_db.parent_id;
         Ok(MerkleTreeNode {
             hash: *hash,
@@ -74,7 +74,7 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
         hash: &MerkleHash,
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
-        let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, hash) else {
+        let Ok(mut node_db) = NodeDB::open_read_only(repo, hash) else {
             // We don't return an error here because there are some situations where we won't have all the node files.
             // For example, when working in a subtree clone.
             log::warn!("no child node db: {hash:?}");

@@ -10,7 +10,7 @@ use tar::Archive;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
 use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::node_store::node_db_compat::NodeDB;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -1084,7 +1084,7 @@ fn p_write_tree(
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;
+    let mut db = NodeDB::open_read_write(repo, node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(ref vnode) => {

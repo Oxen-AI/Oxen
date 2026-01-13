@@ -64,6 +64,30 @@ use crate::model::merkle_tree::node::MerkleTreeNodeType;
 use crate::model::MerkleHash;
 
 pub mod file_store;
+pub mod lmdb_store;
+pub mod node_db_compat;
+
+/// Backend type for node storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeStoreBackend {
+    /// File-based storage (original implementation)
+    File,
+    /// LMDB-based storage (new high-performance implementation)
+    Lmdb,
+}
+
+impl Default for NodeStoreBackend {
+    fn default() -> Self {
+        // Default to file-based for backward compatibility
+        Self::File
+    }
+}
+
+// Note: NodeStore trait uses associated types with lifetimes, which makes it
+// not object-safe (cannot create trait objects). Therefore, we cannot provide
+// a factory that returns Box<dyn NodeStore>. Instead, use the concrete types
+// directly (FileNodeStore or LmdbNodeStore) or use the node_db_compat::NodeDB
+// wrapper for code that needs to migrate from MerkleNodeDB.
 
 /// Main trait for node storage backends.
 ///

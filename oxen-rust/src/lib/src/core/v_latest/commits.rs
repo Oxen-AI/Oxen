@@ -17,7 +17,7 @@ use crate::{repositories, util};
 use std::path::PathBuf;
 use std::str;
 
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::node_store::node_db_compat::NodeDB;
 
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
     repositories::commits::commit_writer::commit(repo, message)
@@ -262,7 +262,7 @@ pub fn create_empty_commit(
     )?;
 
     let parent_id = Some(existing_node.hash);
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, parent_id)?;
+    let mut commit_db = NodeDB::open_read_write(repo, &commit_node, parent_id)?;
     // There should always be one child, the root directory
     let dir_node = existing_node.children.first().unwrap().dir()?;
     commit_db.add_child(&dir_node)?;

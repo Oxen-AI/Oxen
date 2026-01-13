@@ -17,7 +17,7 @@ use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
 use crate::core::db::key_val::str_val_db;
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::node_store::node_db_compat::NodeDB;
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
@@ -289,7 +289,7 @@ pub fn commit_dir_entries_with_parents(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
+    let mut commit_db = NodeDB::open_read_write(repo, &node, parent_id)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -392,7 +392,7 @@ pub fn commit_dir_entries_new(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
+    let mut commit_db = NodeDB::open_read_write(repo, &node, parent_id)?;
 
     write_commit_entries(
         repo,
@@ -513,7 +513,7 @@ pub fn commit_dir_entries(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
+    let mut commit_db = NodeDB::open_read_write(repo, &node, None)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -797,7 +797,7 @@ fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError> {
 fn write_commit_entries(
     repo: &LocalRepository,
     commit_id: MerkleHash,
-    commit_db: &mut MerkleNodeDB,
+    commit_db: &mut NodeDB,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -814,17 +814,24 @@ fn write_commit_entries(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let dir_db = MerkleNodeDB::open_read_write(repo, &dir_node, Some(commit_id))?;
+    let dir_db = NodeDB::open_read_write(repo, &dir_node, Some(commit_id))?;
+    let mut maybe_dir_db = Some(dir_db);
     r_create_dir_node(
         repo,
         commit_id,
-        &mut Some(dir_db),
+        &mut maybe_dir_db,
         dir_hash_db,
         dir_hashes,
         entries,
         root_path,
         &mut total_written,
     )?;
+
+    // Explicitly close dir_db instead of relying on Drop
+    // This ensures the root dir node is written even if it has no children
+    if let Some(mut dir_db) = maybe_dir_db {
+        dir_db.close()?;
+    }
 
     Ok(())
 }
@@ -833,7 +840,7 @@ fn write_commit_entries(
 fn r_create_dir_node(
     repo: &LocalRepository,
     commit_id: MerkleHash,
-    maybe_dir_db: &mut Option<MerkleNodeDB>,
+    maybe_dir_db: &mut Option<NodeDB>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -870,12 +877,12 @@ fn r_create_dir_node(
 
         // Maybe because we don't need to overwrite vnode dbs that already exist,
         // but still need to recurse and create the children
-        // let mut maybe_vnode_db = MerkleNodeDB::open_read_write_if_not_exists(
+        // let mut maybe_vnode_db = NodeDB::open_read_write_if_not_exists(
         //     repo,
         //     &vnode_obj,
         //     maybe_dir_db.as_ref().map(|db| db.node_id),
         // )?;
-        let mut vnode_db = MerkleNodeDB::open_read_write(
+        let mut vnode_db = NodeDB::open_read_write(
             repo,
             &vnode_obj,
             maybe_dir_db.as_ref().map(|db| db.node_id),
@@ -898,14 +905,14 @@ fn r_create_dir_node(
 
                         // if the vnode is new, we need a new dir db
                         // let mut child_db = if maybe_vnode_db.is_some() {
-                        let mut child_db = Some(MerkleNodeDB::open_read_write(
+                        let mut child_db = Some(NodeDB::open_read_write(
                             repo,
                             &dir_node,
                             Some(vnode.id),
                         )?);
                         // } else {
                         //     // Otherwise, check if the dir is new before opening a new db
-                        //     MerkleNodeDB::open_read_write_if_not_exists(
+                        //     NodeDB::open_read_write_if_not_exists(
                         //         repo,
                         //         &dir_node,
                         //         Some(vnode.id),

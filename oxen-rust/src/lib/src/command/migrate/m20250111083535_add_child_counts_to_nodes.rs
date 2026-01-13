@@ -3,7 +3,7 @@ use std::path::Path;
 use super::Migrate;
 
 use crate::config::RepositoryConfig;
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::node_store::node_db_compat::NodeDB;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_tree_node_cache;
@@ -138,7 +138,7 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     // Write a new commit db
     let commit_node = CommitNode::from_commit(commit.clone());
     let mut root_commit_db =
-        MerkleNodeDB::open_read_write(&old_repo, &commit_node, root_node.parent_id)?;
+        NodeDB::open_read_write(&old_repo, &commit_node, root_node.parent_id)?;
     root_commit_db.add_child(&dir_node)?;
 
     let current_path = Path::new("");
@@ -169,7 +169,7 @@ fn rewrite_nodes(
             EMerkleTreeNode::Directory(dir) => {
                 // Load all the children of children (files and folders)
                 // Then redistribute into buckets...
-                // and then just use the MerkleNodeDB to write the nodes
+                // and then just use the NodeDB to write the nodes
                 // to the new tree
                 let dir_children = repositories::tree::list_files_and_folders(child)?;
                 let current_dir = current_dir.join(dir.name());
@@ -190,7 +190,7 @@ fn rewrite_nodes(
                 let mut dir_node_opts = dir.get_opts();
                 dir_node_opts.num_entries = total_children as u64;
                 let dir = DirNode::new(new_repo, dir_node_opts)?;
-                let mut dir_db = MerkleNodeDB::open_read_write(old_repo, &dir, node.parent_id)?;
+                let mut dir_db = NodeDB::open_read_write(old_repo, &dir, node.parent_id)?;
 
                 // log::debug!(
                 //     "rewrite_nodes {} VNodes for {} children in {} with vnode size {}",
@@ -254,7 +254,7 @@ fn rewrite_nodes(
                     dir_db.add_child(&vnode_obj)?;
 
                     let mut vnode_db =
-                        MerkleNodeDB::open_read_write(new_repo, &vnode_obj, Some(dir_db.node_id))?;
+                        NodeDB::open_read_write(new_repo, &vnode_obj, Some(dir_db.node_id))?;
 
                     // log::debug!("rewrite_nodes count entries {}", entries.len());
                     for entry in entries {

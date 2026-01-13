@@ -153,6 +153,8 @@ xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = "2.4.1"
 pathdiff = "0.2.3"
 async-recursion = "1.1.1"
+heed = "0.20.5"
+rkyv = { version = "0.7.45", features = ["validation"] }
 
 
 [workspace]
