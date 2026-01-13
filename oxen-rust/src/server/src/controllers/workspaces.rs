@@ -72,7 +72,15 @@ pub async fn create(
     };
 
     let workspace_id = &data.workspace_id;
-    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.ok_or_else(|| {
+        OxenHttpError::InternalOxenError(
+            format!(
+                "branch {:?} references invalid commit id {:?}",
+                branch.name, branch.commit_id
+            )
+            .into(),
+        )
+    })?;
 
     // Create the workspace
     repositories::workspaces::create_with_name(
