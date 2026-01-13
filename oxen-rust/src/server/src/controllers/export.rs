@@ -11,7 +11,7 @@ use liboxen::{constants, repositories};
 
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/export/download_zip/{resource}",
+    path = "/api/repos/{namespace}/{repo_name}/export/download/{resource}",
     tag = "Files",
     security( ("api_key" = []) ),
     params(

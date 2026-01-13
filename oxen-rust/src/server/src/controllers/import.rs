@@ -197,7 +197,7 @@ pub async fn import(
 /// Upload zip archive
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/import/upload_zip/{resource}",
+    path = "/api/repos/{namespace}/{repo_name}/import/upload/{resource}",
     tag = "Files",
     security( ("api_key" = []) ),
     params(
