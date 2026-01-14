@@ -24,9 +24,10 @@ use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::{
     file_node::FileNodeOpts, EMerkleTreeNode, FileNode, MerkleTreeNode,
 };
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
@@ -169,7 +170,16 @@ pub fn add_version_files(
             } else {
                 StagedEntryStatus::Added
             };
-            eprintln!("In add version files, path {target_path:?} file status is {status:?}");
+            let file_node_to_stage = if let Some(existing_file_node) = &maybe_file_node {
+                let metadata = &file_node_to_stage.metadata();
+                maybe_construct_file_node_for_tabular(
+                    file_node_to_stage,
+                    metadata,
+                    &existing_file_node.metadata(),
+                )?
+            } else {
+                file_node_to_stage
+            };
 
             if status == StagedEntryStatus::Unmodified {
                 log::debug!("file has not changed - skipping add");
@@ -477,70 +487,6 @@ fn delete_file(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), Oxen
     }
     Ok(())
 }
-
-// pub fn determine_file_status_from_metadata(
-//     repo: &LocalRepository,
-//     relative_path: &Path,
-//     file_metadata: &FileWithHash,
-// ) -> Result<FileStatus, OxenError> {
-//     let file_name = relative_path.file_name()
-//         .and_then(|n| n.to_str())
-//         .unwrap_or("");
-
-//     // 从head commit获取现有的file node
-//     let maybe_dir_node = None; // 你需要根据实际情况获取parent dir node
-//     let maybe_file_node = get_file_node(&maybe_dir_node, file_name)?;
-
-//     let mut previous_metadata: Option<GenericMetadata> = None;
-//     let hash = MerkleHash::from_str(&file_with_hash.hash)?;
-
-//     let (status, hash, num_bytes, mtime) = if let Some(file_node) = &maybe_file_node {
-//         previous_metadata = file_node.metadata();
-
-//         let mtime = FileTime::from_unix_time(
-//             file_with_hash.mtime_seconds,
-//             file_with_hash.mtime_nanoseconds,
-//         );
-
-//         // 比较hash判断是否修改
-//         if file_node.hash == hash {
-//             (
-//                 StagedEntryStatus::Unmodified,
-//                 hash,
-//                 file_with_hash.num_bytes,
-//                 mtime,
-//             )
-//         } else {
-//             (
-//                 StagedEntryStatus::Modified,
-//                 hash,
-//                 file_with_hash.num_bytes,
-//                 mtime,
-//             )
-//         }
-//     } else {
-//         // 新文件
-//         let mtime = FileTime::from_unix_time(
-//             file_with_hash.mtime_seconds,
-//             file_with_hash.mtime_nanoseconds,
-//         );
-//         (
-//             StagedEntryStatus::Added,
-//             hash,
-//             file_with_hash.num_bytes,
-//             mtime,
-//         )
-//     };
-
-//     Ok(FileStatus {
-//         status,
-//         hash,
-//         num_bytes,
-//         mtime,
-//         previous_file_node: maybe_file_node,
-//         previous_metadata,
-//     })
-// }
 
 pub async fn save_stream(
     workspace: &Workspace,
@@ -864,4 +810,50 @@ fn has_dir_node(
     } else {
         Ok(false)
     }
+}
+
+fn maybe_construct_file_node_for_tabular(
+    mut file_node_to_stage: FileNode,
+    df_metadata: &Option<GenericMetadata>,
+    previous_oxen_metadata: &Option<GenericMetadata>,
+) -> Result<FileNode, OxenError> {
+    log::debug!("maybe_construct_generic_metadata_for_tabular {df_metadata:?}");
+    log::debug!("previous_oxen_metadata {previous_oxen_metadata:?}");
+
+    if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {
+        if let Some(GenericMetadata::MetadataTabular(previous_oxen_metadata)) =
+            previous_oxen_metadata.as_ref()
+        {
+            // Combine the two by using previous_oxen_metadata as the source of truth for metadata,
+            // but keeping df_metadata's fields
+            for field in &mut df_metadata.tabular.schema.fields {
+                if let Some(oxen_field) = previous_oxen_metadata
+                    .tabular
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|oxen_field| oxen_field.name == field.name)
+                {
+                    field.metadata = oxen_field.metadata.clone();
+                }
+            }
+            let updated_metadata = GenericMetadata::MetadataTabular(df_metadata);
+
+            let hash = file_node_to_stage.hash();
+            let (metadata_hash, combined_hash) = {
+                let metadata_hash =
+                    util::hasher::get_metadata_hash(&Some(updated_metadata.clone()))?;
+                let metadata_hash = MerkleHash::new(metadata_hash);
+                let combined_hash =
+                    util::hasher::get_combined_hash(Some(metadata_hash.to_u128()), hash.to_u128())?;
+                let combined_hash = MerkleHash::new(combined_hash);
+                (Some(metadata_hash), combined_hash)
+            };
+            file_node_to_stage.set_metadata(Some(updated_metadata));
+            file_node_to_stage.set_metadata_hash(metadata_hash);
+            file_node_to_stage.set_combined_hash(&combined_hash);
+        }
+    };
+
+    Ok(file_node_to_stage)
 }

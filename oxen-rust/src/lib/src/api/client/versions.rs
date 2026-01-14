@@ -117,7 +117,7 @@ pub async fn parallel_large_file_upload(
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
     let file_path = file_path.as_ref();
     let mut upload =
-        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, entry).await?;
+        create_multipart_large_file_upload(remote_repo, file_path, &dst_dir, entry).await?;
 
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
 
@@ -135,11 +135,17 @@ pub async fn parallel_large_file_upload(
         "multipart_large_file_upload results length: {:?}",
         results.len()
     );
-    // Check if file path is relative
+
+    // Construct file node if workspace add
     let file_node_opts = if let Some(_workspace_id) = &workspace_id {
         let hash = hasher::u128_hash_file_contents(file_path)?;
+        let staging_path = if let Some(directory) = dst_dir {
+            PathBuf::from(directory.as_ref()).join(file_path.file_name().unwrap())
+        } else {
+            file_path.to_path_buf()
+        };
         let file_node_opts =
-            client::workspaces::files::generate_file_node_opts(hash, &file_path.to_path_buf())?;
+            client::workspaces::files::generate_file_node_opts(hash, file_path, &staging_path)?;
         Some(file_node_opts)
     } else {
         None
@@ -156,7 +162,7 @@ pub async fn parallel_large_file_upload(
 async fn create_multipart_large_file_upload(
     remote_repo: &RemoteRepository,
     file_path: &Path,
-    dst_dir: Option<impl AsRef<Path>>,
+    dst_dir: &Option<impl AsRef<Path>>,
     entry: Option<Entry>,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let dst_dir = dst_dir.as_ref();

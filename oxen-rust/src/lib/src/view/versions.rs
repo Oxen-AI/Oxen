@@ -19,7 +19,7 @@ pub struct VersionFileResponse {
     pub version: VersionFile,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MultipartLargeFileUploadStatus {
     Pending,
     Completed,

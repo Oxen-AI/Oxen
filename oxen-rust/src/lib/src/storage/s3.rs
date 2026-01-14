@@ -225,7 +225,7 @@ impl VersionStore for S3VersionStore {
             .await
             .map_err(|e| {
                 OxenError::basic_str(format!(
-                    "S3 store_version_derived failed : {}",
+                    "S3 store_version_from_reader_with_size failed : {}",
                     parse_s3_error(&e)
                 ))
             })?;

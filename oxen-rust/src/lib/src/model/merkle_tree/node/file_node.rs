@@ -44,6 +44,7 @@ pub trait TFileNode {
     fn last_modified_seconds(&self) -> i64;
     fn last_modified_nanoseconds(&self) -> u32;
     fn data_type(&self) -> &EntryDataType;
+    fn set_data_type(&mut self, data_type: EntryDataType);
     fn metadata(&self) -> Option<GenericMetadata>;
     fn get_mut_metadata(&mut self) -> &mut Option<GenericMetadata>;
     fn set_metadata(&mut self, metadata: Option<GenericMetadata>);
@@ -180,6 +181,10 @@ impl FileNode {
 
     pub fn data_type(&self) -> &EntryDataType {
         self.node().data_type()
+    }
+
+    pub fn set_data_type(&mut self, data_type: EntryDataType) {
+        self.mut_node().set_data_type(data_type);
     }
 
     pub fn metadata(&self) -> Option<GenericMetadata> {
