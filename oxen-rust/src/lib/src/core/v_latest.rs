@@ -15,6 +15,7 @@ pub mod init;
 pub mod merge;
 pub mod metadata;
 pub mod model;
+pub mod prune;
 pub mod pull;
 pub mod push;
 pub mod resource;
@@ -27,6 +28,6 @@ pub mod workspaces;
 
 pub use add::add;
 pub use commits::commit;
-pub use init::{init, init_with_version};
+pub use init::{init, init_with_version_and_storage_opts, init_with_version_default};
 pub use pull::{pull, pull_all, pull_remote_branch};
 pub use rm::rm;

@@ -4,8 +4,9 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSchema)]
 pub enum FileContents {
     Text(String),
     Binary(Vec<u8>),
@@ -56,8 +57,9 @@ impl<'de> Deserialize<'de> for FileContents {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct FileNew {
+    #[schema(value_type = String)]
     pub path: PathBuf,
     pub contents: FileContents,
     pub user: User,
@@ -67,6 +69,12 @@ pub struct FileNew {
 pub struct TempFileNew {
     pub path: PathBuf,
     pub contents: FileContents,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct TempFilePathNew {
+    pub path: PathBuf,
+    pub temp_file_path: PathBuf,
 }
 
 impl FileNew {

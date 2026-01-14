@@ -29,6 +29,12 @@ impl RunCmd for CommitCmd {
                     .required(true)
                     .action(clap::ArgAction::Set),
             )
+            .arg(
+                Arg::new("allow_empty")
+                    .help("Allow creating a commit with no changes")
+                    .long("allow-empty")
+                    .action(clap::ArgAction::SetTrue),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -39,11 +45,18 @@ impl RunCmd for CommitCmd {
             ));
         };
 
+        let allow_empty = args.get_flag("allow_empty");
+
         let repo = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repo)?;
 
         println!("Committing with message: {message}");
-        repositories::commit(&repo, message)?;
+
+        if allow_empty {
+            repositories::commits::commit_allow_empty(&repo, message)?;
+        } else {
+            repositories::commit(&repo, message)?;
+        }
 
         Ok(())
     }

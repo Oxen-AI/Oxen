@@ -2,7 +2,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::core::v_latest::fetch;
 use crate::core::v_latest::index::restore::{self, FileToRestore};
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Commit, CommitEntry, LocalRepository, MerkleHash, PartialNode};
@@ -112,11 +111,7 @@ pub fn list_entry_versions_for_commit(
     commit_id: &str,
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
-    log::debug!(
-        "list_entry_versions_for_commit {} for file: {:?}",
-        commit_id,
-        path
-    );
+    log::debug!("list_entry_versions_for_commit {commit_id} for file: {path:?}");
     let mut branch_commits = repositories::commits::list_from(repo, commit_id)?;
 
     // Sort on timestamp oldest to newest
@@ -126,16 +121,12 @@ pub fn list_entry_versions_for_commit(
     let mut seen_hashes: HashSet<String> = HashSet::new();
 
     for commit in branch_commits {
-        log::debug!("list_entry_versions_for_commit {}", commit);
+        log::debug!("list_entry_versions_for_commit {commit}");
         let node = repositories::tree::get_node_by_path(repo, &commit, path)?;
 
         if let Some(node) = node {
             if !seen_hashes.contains(&node.node.hash().to_string()) {
-                log::debug!(
-                    "list_entry_versions_for_commit adding {} -> {}",
-                    commit,
-                    node
-                );
+                log::debug!("list_entry_versions_for_commit adding {commit} -> {node}");
                 seen_hashes.insert(node.node.hash().to_string());
 
                 match node.node {
@@ -150,7 +141,7 @@ pub fn list_entry_versions_for_commit(
                     _ => {}
                 }
             } else {
-                log::debug!("list_entry_versions_for_commit already seen {}", node);
+                log::debug!("list_entry_versions_for_commit already seen {node}");
             }
         }
     }
@@ -187,16 +178,18 @@ pub async fn checkout_subtrees(
         let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
         let mut target_hashes = HashSet::new();
         let target_root = if let Some(target_root) =
-            CommitMerkleTree::from_path_depth_children_and_hashes(
+            repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 to_commit,
                 subtree_path.clone(),
+                None,
+                Some(&mut target_hashes),
+                None,
                 depth,
-                &mut target_hashes,
             )? {
             target_root
         } else {
-            log::error!("Cannot get subtree for commit: {}", to_commit);
+            log::error!("Cannot get subtree for commit: {to_commit}");
             continue;
         };
 
@@ -209,15 +202,16 @@ pub async fn checkout_subtrees(
         let from_root = if maybe_from_commit.is_some() {
             log::debug!("from id: {:?}", maybe_from_commit.as_ref().unwrap().id);
             log::debug!("to id: {:?}", to_commit.id);
-            CommitMerkleTree::root_with_unique_children(
+            repositories::tree::get_root_with_children_and_partial_nodes(
                 repo,
                 maybe_from_commit.as_ref().unwrap(),
-                &mut target_hashes,
-                &mut shared_hashes,
+                Some(&target_hashes),
+                None,
+                Some(&mut shared_hashes),
                 &mut partial_nodes,
             )
             .map_err(|e| {
-                OxenError::basic_str(format!("Cannot get root node for base commit: {:?}", e))
+                OxenError::basic_str(format!("Cannot get root node for base commit: {e:?}"))
             })?
         } else {
             log::warn!("head commit missing, might be a clone");
@@ -225,7 +219,6 @@ pub async fn checkout_subtrees(
         };
 
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
-
         let mut results = CheckoutResult::new();
         let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
         let version_store = repo.version_store()?;
@@ -249,7 +242,7 @@ pub async fn checkout_subtrees(
         }
 
         if from_root.is_some() {
-            log::debug!("🔥 from node: {:?}", from_root);
+            log::debug!("Cleanup_removed_files");
             cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
@@ -257,10 +250,10 @@ pub async fn checkout_subtrees(
 
         if repo.is_remote_mode() {
             for file_to_restore in results.files_to_restore {
-                //let file_hash = format!("{}", &file_to_restore.file_node.hash());
-
+                log::debug!("file_to_restore: {:?}", file_to_restore.file_node);
                 // In remote-mode repos, only restore files that are present in version store
-                if version_store.version_exists(&file_to_restore.file_node.hash().to_string())? {
+                let file_hash = format!("{}", &file_to_restore.file_node.hash());
+                if version_store.version_exists(&file_hash).await? {
                     restore::restore_file(
                         repo,
                         &file_to_restore.file_node,
@@ -291,7 +284,7 @@ pub async fn checkout_commit(
     to_commit: &Commit,
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
-    log::debug!("checkout_commit to {} from {:?}", to_commit, from_commit);
+    log::debug!("checkout_commit to {to_commit} from {from_commit:?}");
 
     if let Some(from_commit) = from_commit {
         if from_commit.id == to_commit.id {
@@ -321,8 +314,13 @@ pub async fn set_working_repo_to_commit(
 
     // Load in the target tree, collecting every dir and vnode hash for comparison with the from tree
     let mut target_hashes = HashSet::new();
-    let Some(target_tree) =
-        CommitMerkleTree::root_with_children_and_hashes(repo, to_commit, &mut target_hashes)?
+    let Some(target_tree) = repositories::tree::get_root_with_children_and_node_hashes(
+        repo,
+        to_commit,
+        None,
+        Some(&mut target_hashes),
+        None,
+    )?
     else {
         return Err(OxenError::basic_str(
             "Cannot get root node for target commit",
@@ -341,11 +339,12 @@ pub async fn set_working_repo_to_commit(
 
         log::debug!("from id: {:?}", from_commit.id);
         log::debug!("to id: {:?}", to_commit.id);
-        CommitMerkleTree::root_with_unique_children(
+        repositories::tree::get_root_with_children_and_partial_nodes(
             repo,
             from_commit,
-            &mut target_hashes,
-            &mut shared_hashes,
+            Some(&target_hashes),
+            None,
+            Some(&mut shared_hashes),
             &mut partial_nodes,
         )
         .map_err(|_| OxenError::basic_str("Cannot get root node for base commit"))?
@@ -377,7 +376,7 @@ pub async fn set_working_repo_to_commit(
         ));
     }
 
-    // Cleanup files if checking out from another commit
+    // Cleanup files if checking out fr om another commit
     if maybe_from_commit.is_some() {
         log::debug!("Cleanup_removed_files");
         cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes).await?;
@@ -429,6 +428,7 @@ async fn cleanup_removed_files(
     if repo.is_remote_mode() {
         let version_store = repo.version_store()?;
         for (hash, full_path) in files_to_store {
+            log::debug!("Storing hash {hash:?} and path {full_path:?}");
             version_store
                 .store_version_from_path(&hash.to_string(), &full_path)
                 .await?;
@@ -438,10 +438,10 @@ async fn cleanup_removed_files(
     for full_path in paths_to_remove {
         // If it's a directory, and it's empty, remove it
         if full_path.is_dir() && full_path.read_dir()?.next().is_none() {
-            log::debug!("Removing dir: {:?}", full_path);
+            log::debug!("Removing dir: {full_path:?}");
             util::fs::remove_dir_all(&full_path)?;
         } else if full_path.is_file() {
-            log::debug!("Removing file: {:?}", full_path);
+            log::debug!("Removing file: {full_path:?}");
             util::fs::remove_file(&full_path)?;
         }
         progress.increment_removed();
@@ -450,8 +450,6 @@ async fn cleanup_removed_files(
     Ok(())
 }
 
-// Note: If we're willing to duplicate the recursive logic, we could make synchronous version for regular repos
-// And have the async only for remote-mode repos
 fn r_remove_if_not_in_target(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
@@ -468,8 +466,9 @@ fn r_remove_if_not_in_target(
             if !hashes.seen_hashes.contains(&from_node.hash) {
                 let file_path = current_path.join(file_node.name());
                 let full_path = repo.path.join(&file_path);
-                // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
+                //log::debug!("file_path: {file_path:?}");
 
+                // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
                 if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
                     if util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
@@ -481,6 +480,9 @@ fn r_remove_if_not_in_target(
 
                         paths_to_remove.push(full_path.clone());
                     }
+                // If in remote-mode, save original file contents to version_store
+                } else if full_path.exists() && repo.is_remote_mode() {
+                    files_to_store.push((from_node.hash, full_path.clone()))
                 }
             }
         }
@@ -575,7 +577,7 @@ fn r_restore_missing_or_modified_files(
             hashes.seen_paths.insert(file_path.clone());
             if !full_path.exists() {
                 // File doesn't exist, restore it
-                log::debug!("Restoring missing file: {:?}", file_path);
+                log::debug!("Restoring missing file: {file_path:?}");
                 results.files_to_restore.push(FileToRestore {
                     file_node: file_node.clone(),
                     path: file_path.clone(),
@@ -583,30 +585,40 @@ fn r_restore_missing_or_modified_files(
 
                 progress.increment_restored();
             } else {
+                // TODO: Refactor this check into a separate module
+                // We don't have a module for a 3-way is_modified_from_node right now
+
                 // File exists, check whether it matches the target node or a from node
-                // First check last modified times
+                // First, check the metadata
                 let meta = util::fs::metadata(&full_path)?;
                 let last_modified = Some(FileTime::from_last_modification_time(&meta));
+                let size = Some(meta.len());
 
-                // If last_modified matches the target, do nothing
                 let target_last_modified = util::fs::last_modified_time(
                     file_node.last_modified_seconds(),
                     file_node.last_modified_nanoseconds(),
                 );
-                if last_modified == Some(target_last_modified) {
+
+                let target_size = file_node.num_bytes();
+
+                // If this matches the target, do nothing
+                if last_modified == Some(target_last_modified) && size == Some(target_size) {
                     return Ok(());
                 }
 
-                // If last_modified matches a corresponding from_node, stage it to be restored
-                let (from_node, from_last_modified) =
+                // If the metadata matches a corresponding from_node, stage it to be restored
+                let (from_node, from_last_modified, from_size) =
                     if let Some(from_node) = partial_nodes.get(&file_path) {
-                        (Some(from_node), Some(from_node.last_modified))
+                        (
+                            Some(from_node),
+                            Some(from_node.last_modified),
+                            Some(from_node.size),
+                        )
                     } else {
-                        (None, None)
+                        (None, None, None)
                     };
 
-                if last_modified == from_last_modified {
-                    log::debug!("Updating modified file: {:?}", file_path);
+                if last_modified == from_last_modified && size == from_size {
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),
@@ -628,8 +640,6 @@ fn r_restore_missing_or_modified_files(
                 //log::debug!("from hash: {from_hash:?}");
 
                 if working_hash == from_hash {
-                    log::debug!("Updating modified file: {:?}", file_path);
-
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),

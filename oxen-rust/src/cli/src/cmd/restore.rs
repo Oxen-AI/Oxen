@@ -5,7 +5,9 @@ use clap::{Arg, ArgMatches, Command};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::opts::RestoreOpts;
-use liboxen::repositories;
+
+use liboxen::{repositories, util};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::cmd::RunCmd;
@@ -16,8 +18,10 @@ pub fn restore_args() -> Command {
     // Setups the CLI args for the restore command
     Command::new(NAME)
         .about("Restore specified paths in the working tree with some contents from a restore source.")
-        .arg(Arg::new("PATH")
-            .help("The files or directory to restore")
+        .arg(
+            Arg::new("paths")
+                .required(true)
+                .action(clap::ArgAction::Append),
         )
         .arg_required_else_help(true)
         .arg(
@@ -25,14 +29,14 @@ pub fn restore_args() -> Command {
                 .long("source")
                 .help("Restores a specific revision of the file. Can supply commit id or branch name")
                 .action(clap::ArgAction::Set)
-                .requires("PATH"),
+                .requires("paths"),
         )
         .arg(
             Arg::new("staged")
                 .long("staged")
                 .help("Restore content in staging area. By default, if --staged is given, the contents are restored from HEAD. Use --source to restore from a different commit.")
                 .action(clap::ArgAction::SetTrue)
-                .requires("PATH"),
+                .requires("paths"),
         )
 }
 
@@ -47,34 +51,40 @@ impl RunCmd for RestoreCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
-        let path = args.get_one::<String>("PATH").expect("required");
+        let repository = LocalRepository::from_current_dir()?;
+        check_repo_migration_needed(&repository)?;
+        let paths: Vec<PathBuf> = args
+            .get_many::<String>("paths")
+            .expect("Must supply paths")
+            .map(|p| -> Result<PathBuf, OxenError> {
+                let current_dir = std::env::current_dir().map_err(|e| {
+                    log::warn!("Failed to get current directory: {e}");
+                    OxenError::basic_str(format!("Failed to get current directory: {e}"))
+                })?;
+                let joined_path = current_dir.join(p);
+
+                util::fs::canonicalize(&joined_path).or_else(|_| Ok(joined_path))
+            })
+            .collect::<Result<Vec<PathBuf>, OxenError>>()?;
+
+        let paths: HashSet<PathBuf> = HashSet::from_iter(paths.iter().cloned());
 
         let opts = if let Some(source) = args.get_one::<String>("source") {
             RestoreOpts {
-                path: PathBuf::from(path),
+                paths,
                 staged: args.get_flag("staged"),
                 is_remote: false,
                 source_ref: Some(String::from(source)),
             }
         } else {
             RestoreOpts {
-                path: PathBuf::from(path),
+                paths,
                 staged: args.get_flag("staged"),
                 is_remote: false,
                 source_ref: None,
             }
         };
 
-        let repository = LocalRepository::from_current_dir()?;
-
-        // Don't allow in remote mode
-        if repository.is_remote_mode() {
-            return Err(OxenError::basic_str(
-                "Error: Command 'oxen restore' not implemented for remote mode repositories",
-            ));
-        }
-
-        check_repo_migration_needed(&repository)?;
         repositories::restore::restore(&repository, opts).await?;
 
         Ok(())

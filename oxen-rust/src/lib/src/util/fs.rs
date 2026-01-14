@@ -2,6 +2,9 @@
 //! and eventually abstract away the fs implementation
 //!
 
+use async_std::pin::Pin;
+use bytes::Bytes;
+use futures::StreamExt;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use jwalk::WalkDir;
@@ -12,34 +15,36 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::Cursor;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio_stream::Stream;
 
-use crate::constants;
 use crate::constants::CACHE_DIR;
 use crate::constants::CHUNKS_DIR;
 use crate::constants::CONTENT_IS_VALID;
-use crate::constants::DATA_ARROW_FILE;
 use crate::constants::HISTORY_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::TREE_DIR;
 use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
+use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::model::Commit;
-use crate::model::Schema;
+use crate::model::MerkleHash;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
+use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
+use crate::{constants, repositories, util};
 use filetime::FileTime;
-use image::ImageFormat;
-
-use crate::repositories;
-use crate::util;
+use image::{ImageFormat, ImageReader};
+#[cfg(feature = "ffmpeg")]
+use thumbnails::Thumbnailer;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -86,56 +91,45 @@ pub fn commit_content_is_valid_path(repo: &LocalRepository, commit: &Commit) -> 
         .join(CONTENT_IS_VALID)
 }
 
-pub fn version_path_for_commit_id(
-    repo: &LocalRepository,
-    commit_id: &str,
-    filepath: &Path,
-) -> Result<PathBuf, OxenError> {
-    match repositories::commits::get_by_id(repo, commit_id)? {
-        Some(commit) => match repositories::entries::get_commit_entry(repo, &commit, filepath)? {
-            Some(entry) => {
-                let path = version_path(repo, &entry);
-                let arrow_path = path.parent().unwrap().join(DATA_ARROW_FILE);
-                if arrow_path.exists() {
-                    Ok(arrow_path)
-                } else {
-                    Ok(path)
-                }
-            }
-            None => Err(OxenError::path_does_not_exist(filepath)),
-        },
-        None => Err(OxenError::revision_not_found(commit_id.into())),
-    }
+pub async fn handle_image_resize(
+    version_store: Arc<dyn VersionStore>,
+    file_hash: String,
+    file_path: &Path,
+    version_path: &Path,
+    img_resize: ImgResize,
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
+    log::debug!("img_resize {img_resize:?}");
+    let resized_path = resized_path_for_version_store_file(
+        Arc::clone(&version_store),
+        &file_hash,
+        file_path,
+        img_resize.width,
+        img_resize.height,
+    )?;
+
+    let stream = resize_cache_image_version_store(
+        version_store,
+        &file_hash,
+        version_path,
+        &resized_path,
+        img_resize,
+    )
+    .await?;
+    log::debug!("Got the resize image! {resized_path:?}");
+
+    Ok(stream)
 }
 
-pub fn resized_path_for_file_node(
-    repo: &LocalRepository,
-    file_node: &FileNode,
-    width: Option<u32>,
-    height: Option<u32>,
-) -> Result<PathBuf, OxenError> {
-    let path = version_path_from_hash(repo, file_node.hash().to_string());
-    let extension = file_node.extension().to_string();
-    let width = width.map(|w| w.to_string());
-    let height = height.map(|w| w.to_string());
-    let resized_path = path.parent().unwrap().join(format!(
-        "{}x{}.{}",
-        width.unwrap_or("".to_string()),
-        height.unwrap_or("".to_string()),
-        extension
-    ));
-    Ok(resized_path)
-}
-
-pub fn resized_path_for_staged_entry(
-    branch_repo: LocalRepository,
+// TODO: Change the resized path from version store to a server location
+pub fn resized_path_for_version_store_file(
+    version_store: Arc<dyn VersionStore>,
+    img_hash: &str,
     img_path: &Path,
     width: Option<u32>,
     height: Option<u32>,
 ) -> Result<PathBuf, OxenError> {
-    let img_hash = util::hasher::hash_file_contents(img_path)?;
-    let img_version_path = version_path_from_hash_and_file(branch_repo.path, img_hash, img_path);
-    let extension = img_version_path.extension().unwrap().to_str().unwrap();
+    let img_version_path = version_store.get_version_path(img_hash)?;
+    let extension = img_path.extension().unwrap().to_str().unwrap();
     let width = width.map(|w| w.to_string());
     let height = height.map(|w| w.to_string());
     let resized_path = img_version_path.parent().unwrap().join(format!(
@@ -145,28 +139,6 @@ pub fn resized_path_for_staged_entry(
         extension
     ));
     Ok(resized_path)
-}
-
-pub fn version_file_size(repo: &LocalRepository, entry: &CommitEntry) -> Result<u64, OxenError> {
-    let version_path = version_path(repo, entry);
-    // if is_tabular(&version_path) {
-    //     let data_file = version_path.parent().unwrap().join(DATA_ARROW_FILE);
-    //     if !data_file.exists() {
-    //         // just for unit tests to pass for now, we only really call file size from the server
-    //         // on the client we don't have the data.arrow file and would have to compute size on the fly
-    //         // but a warning for now should be good
-    //         log::warn!("TODO: compute size of data file: {:?}", data_file);
-    //         return Ok(0);
-    //     }
-    //     let meta = util::fs::metadata(&data_file)?;
-    //     Ok(meta.len())
-    // } else {
-    if !version_path.exists() {
-        return Err(OxenError::path_does_not_exist(version_path));
-    }
-    let meta = util::fs::metadata(&version_path)?;
-    Ok(meta.len())
-    // }
 }
 
 pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
@@ -186,10 +158,6 @@ pub fn version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
         ),
         _ => version_path_from_hash_and_file(&repo.path, entry.hash.clone(), entry.filename()),
     }
-}
-
-pub fn root_version_path(path: impl AsRef<Path>) -> PathBuf {
-    util::fs::oxen_hidden_dir(path).join(constants::VERSIONS_DIR)
 }
 
 pub fn version_path_from_hash_and_filename(
@@ -227,33 +195,6 @@ pub fn version_path_from_hash(repo: &LocalRepository, hash: impl AsRef<str>) -> 
     }
 }
 
-pub fn version_path_for_entry(repo: &LocalRepository, entry: &Entry) -> PathBuf {
-    match entry {
-        Entry::CommitEntry(commit_entry) => version_path(repo, commit_entry),
-        Entry::SchemaEntry(schema_entry) => {
-            version_path_from_schema_hash(repo.path.clone(), schema_entry.hash.clone())
-        }
-    }
-}
-
-pub fn version_path_from_dst(dst: impl AsRef<Path>, entry: &CommitEntry) -> PathBuf {
-    version_path_from_hash_and_file(dst, entry.hash.clone(), entry.filename())
-}
-
-pub fn version_path_from_dst_generic(dst: impl AsRef<Path>, entry: &Entry) -> PathBuf {
-    match entry {
-        Entry::CommitEntry(commit_entry) => version_path_from_dst(dst, commit_entry),
-        Entry::SchemaEntry(schema_entry) => {
-            version_path_from_schema_hash(dst, schema_entry.hash.clone())
-        }
-    }
-}
-
-pub fn df_version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
-    let version_dir = version_dir_from_hash(&repo.path, entry.hash.clone());
-    version_dir.join(DATA_ARROW_FILE)
-}
-
 pub fn version_path_from_hash_and_file_v0_10_0(
     dst: impl AsRef<Path>,
     hash: impl AsRef<str>,
@@ -267,7 +208,7 @@ pub fn version_path_from_hash_and_file_v0_10_0(
     //     version_dir
     // );
     let extension = extension_from_path(filename);
-    version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension))
+    version_dir.join(format!("{VERSION_FILE_NAME}.{extension}"))
 }
 
 pub fn version_path_from_hash_and_file(
@@ -287,7 +228,7 @@ pub fn version_path_from_hash_and_file(
         version_dir.join(VERSION_FILE_NAME)
     } else {
         // backwards compatibility
-        let path = version_dir.join(format!("{}.{}", VERSION_FILE_NAME, extension));
+        let path = version_dir.join(format!("{VERSION_FILE_NAME}.{extension}"));
         if path.exists() {
             // Older files have the extension in the filename
             path
@@ -296,11 +237,6 @@ pub fn version_path_from_hash_and_file(
             version_dir.join(VERSION_FILE_NAME)
         }
     }
-}
-
-pub fn version_path_from_schema(dst: impl AsRef<Path>, schema: &Schema) -> PathBuf {
-    // Save schemas as path with no extension
-    version_path_from_schema_hash(dst, schema.hash.clone())
 }
 
 pub fn version_path_from_schema_hash(dst: impl AsRef<Path>, hash: String) -> PathBuf {
@@ -340,6 +276,13 @@ pub fn read_bytes_from_path(path: impl AsRef<Path>) -> Result<Vec<u8>, OxenError
     Ok(std::fs::read(path)?)
 }
 
+pub fn read_file(path: Option<impl AsRef<Path>>) -> Result<String, OxenError> {
+    match path {
+        Some(path) => read_from_path(path),
+        None => Ok(String::new()),
+    }
+}
+
 pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
     let path = path.as_ref();
     match std::fs::read_to_string(path) {
@@ -349,7 +292,7 @@ pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
                 "util::fs::read_from_path could not open: {}",
                 path.display()
             );
-            log::warn!("{}", err);
+            log::warn!("{err}");
             Err(OxenError::basic_str(&err))
         }
     }
@@ -654,11 +597,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
     // There is not a recursive copy in the standard library, so we implement it here
     let from = from.as_ref();
     let to = to.as_ref();
-    log::debug!(
-        "copy_dir_all Copy directory from: {:?} -> to: {:?}",
-        from,
-        to
-    );
+    log::debug!("copy_dir_all Copy directory from: {from:?} -> to: {to:?}");
 
     let mut stack = Vec::new();
     stack.push(PathBuf::from(from));
@@ -696,7 +635,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
                         std::fs::copy(&path, &dest_path)?;
                     }
                     None => {
-                        log::error!("copy_dir_all could not get file_name: {:?}", path);
+                        log::error!("copy_dir_all could not get file_name: {path:?}");
                     }
                 }
             }
@@ -721,8 +660,7 @@ pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenErro
                     attempt += 1;
                     if attempt == max_retries {
                         return Err(OxenError::basic_str(format!(
-                            "File is in use by another process after {} attempts: {src:?}",
-                            max_retries
+                            "File is in use by another process after {max_retries} attempts: {src:?}"
                         )));
                     }
                     // Exponential backoff: 100ms, 200ms, 400ms
@@ -819,7 +757,24 @@ pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
     match std::fs::create_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("create_dir_all {:?} {}", src, err);
+            log::error!("create_dir_all {src:?} {err}");
+            Err(OxenError::file_error(src, err))
+        }
+    }
+}
+
+/// Wrapper around the util::fs::create_dir command to tell us which file it failed on
+/// creates a directory if they don't exist
+pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
+    if src.as_ref().exists() {
+        return Ok(());
+    }
+
+    let src = src.as_ref();
+    match std::fs::create_dir(src) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            log::error!("create_dir {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -831,7 +786,7 @@ pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
     match std::fs::remove_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("remove_dir_all {:?} {}", src, err);
+            log::error!("remove_dir_all {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -843,20 +798,20 @@ pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenEr
     match std::fs::write(src, data) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("write {:?} {}", src, err);
+            log::error!("write {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
 }
 
-/// Wrapper around the util::fs::remove_file command to tell us which file it failed on
+/// Wrapper around the std::fs::remove_file command to tell us which file it failed on
 pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
     let src = src.as_ref();
     log::debug!("Removing file: {}", src.display());
     match std::fs::remove_file(src) {
         Ok(_) => Ok(()),
         Err(err) => {
-            log::error!("remove_file {:?} {}", src, err);
+            log::error!("remove_file {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
@@ -868,7 +823,7 @@ pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> 
     match std::fs::metadata(path) {
         Ok(file) => Ok(file),
         Err(err) => {
-            log::debug!("metadata {:?} {}", path, err);
+            log::debug!("metadata {path:?} {err}");
             Err(OxenError::file_metadata_error(path, err))
         }
     }
@@ -880,7 +835,7 @@ pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
     match std::fs::File::create(path) {
         Ok(file) => Ok(file),
         Err(err) => {
-            log::error!("file_create {:?} {}", path, err);
+            log::error!("file_create {path:?} {err}");
             Err(OxenError::file_create_error(path, err))
         }
     }
@@ -1252,15 +1207,15 @@ pub fn p_count_files_in_dir_w_progress(dir: &Path, pb: Option<ProgressBar>) -> u
                             if !is_in_oxen_hidden_dir(&path) && path.is_file() {
                                 count += 1;
                                 if let Some(ref pb) = pb {
-                                    pb.set_message(format!("🐂 Found {:?} files", count));
+                                    pb.set_message(format!("🐂 Found {count:?} files"));
                                 }
                             }
                         }
-                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                        Err(err) => log::warn!("error reading dir entry: {err}"),
                     }
                 }
             }
-            Err(err) => log::warn!("error reading dir: {}", err),
+            Err(err) => log::warn!("error reading dir: {err}"),
         }
     }
     count
@@ -1295,11 +1250,11 @@ pub fn count_files_in_dir_with_progress(dir: impl AsRef<Path>) -> usize {
                                 ))
                             }
                         }
-                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                        Err(err) => log::warn!("error reading dir entry: {err}"),
                     }
                 }
             }
-            Err(err) => log::warn!("error reading dir: {}", err),
+            Err(err) => log::warn!("error reading dir: {err}"),
         }
     }
     count
@@ -1318,11 +1273,11 @@ pub fn count_items_in_dir(dir: &Path) -> usize {
                                 count += 1;
                             }
                         }
-                        Err(err) => log::warn!("error reading dir entry: {}", err),
+                        Err(err) => log::warn!("error reading dir entry: {err}"),
                     }
                 }
             }
-            Err(err) => log::warn!("error reading dir: {}", err),
+            Err(err) => log::warn!("error reading dir: {err}"),
         }
     }
     count
@@ -1438,8 +1393,7 @@ fn stem_from_canonical_child_path(
 
     if child_components.len() < parent_components.len() + relative_components.len() {
         return Err(OxenError::basic_str(format!(
-            "Invalid path relationship: child path {:?} is not under parent path {:?}",
-            child_path, parent_path
+            "Invalid path relationship: child path {child_path:?} is not under parent path {parent_path:?}"
         )));
     }
 
@@ -1560,6 +1514,68 @@ pub fn path_relative_to_dir(
     Ok(result)
 }
 
+// Check whether a path can be found relative to a dir
+pub fn is_relative_to_dir(path: impl AsRef<Path>, dir: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    let dir = dir.as_ref();
+
+    let path_components: Vec<Component> = path.components().collect();
+    let dir_components: Vec<Component> = dir.components().collect();
+
+    if path_components.is_empty() || dir == path {
+        return true;
+    }
+
+    if dir_components.is_empty() || dir_components.len() > path_components.len() {
+        return false;
+    }
+
+    // Get iterators for the component vectors
+    let mut path_iter = path_components.iter();
+    let mut dir_iter = dir_components.iter();
+    let starting_dir_iter = dir_iter.clone();
+
+    let mut dir_component = dir_iter.next().unwrap();
+    let mut matches = 0;
+
+    for _ in 0..(path_components.len()) {
+        let path_component = path_iter.next().expect("Path bounds violated");
+        let path_str = path_component.as_os_str();
+        let dir_str = dir_component.as_os_str();
+
+        if path_str == dir_str {
+            matches += 1;
+            if matches == dir_components.len() {
+                return true;
+            }
+            dir_component = dir_iter.next().expect("Dir bounds violated");
+            continue;
+        }
+
+        if path_str.len() == dir_str.len() {
+            let path_lower = path_str.to_string_lossy().to_lowercase();
+            let dir_lower = dir_str.to_string_lossy().to_lowercase();
+
+            if path_lower == dir_lower {
+                matches += 1;
+                if matches == dir_components.len() {
+                    return true;
+                }
+                dir_component = dir_iter.next().expect("Dir bounds violated");
+                continue;
+            }
+        }
+
+        // If the components don't match, reset dir_iter and dir_component
+        dir_iter = starting_dir_iter.clone();
+        dir_component = dir_iter.next().unwrap();
+        matches = 0;
+    }
+
+    // If the loop finishes, the path cannot be found relative to the dir
+    false
+}
+
 pub fn linux_path_str(string: &str) -> String {
     // Convert string to bytes, replacing '\\' with '/' if necessary
     let bytes = string.as_bytes();
@@ -1580,8 +1596,19 @@ pub fn linux_path(path: &Path) -> PathBuf {
     Path::new(&linux_path_str(string)).to_path_buf()
 }
 
+pub fn remove_leading_slash(path: &Path) -> PathBuf {
+    let mut components = path.components();
+
+    // If the first component of the path is '/', skip it and reconstruct the path
+    if components.next() == Some(std::path::Component::RootDir) {
+        components.collect()
+    } else {
+        path.to_path_buf()
+    }
+}
+
 pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
-    log::debug!("disk_usage_for_path: {:?}", path);
+    log::debug!("disk_usage_for_path: {path:?}");
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
     if disks.is_empty() {
@@ -1605,7 +1632,7 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
         }
     }
 
-    log::debug!("disk_usage_for_path selected disk: {:?}", selected_disk);
+    log::debug!("disk_usage_for_path selected disk: {selected_disk:?}");
     let total_gb = selected_disk.total_space() as f64 / bytesize::GB as f64;
     let free_gb = selected_disk.available_space() as f64 / bytesize::GB as f64;
     let used_gb = total_gb - free_gb;
@@ -1621,9 +1648,9 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
 pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bool {
     let mut current_path = file_path.to_path_buf();
     // Iterate through parent directories
-    log::debug!("checking if {:?} is in {:?}", current_path, path_set);
+    log::debug!("checking if {current_path:?} is in {path_set:?}");
     while let Some(parent) = current_path.parent() {
-        log::debug!("checking if {:?} is in {:?}", current_path, path_set);
+        log::debug!("checking if {current_path:?} is in {path_set:?}");
         if path_set.contains(parent) {
             return true;
         }
@@ -1644,37 +1671,67 @@ pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
     }
 }
 
-fn detect_image_format(path: &Path) -> Result<ImageFormat, OxenError> {
-    let mut file = File::open(path)?;
-    let mut buffer = [0; 10];
-    file.read_exact(&mut buffer)?;
+async fn detect_image_format_from_version(
+    versioned_store: Arc<dyn VersionStore>,
+    hash: &str,
+) -> Result<ImageFormat, OxenError> {
+    let mut stream = versioned_store.get_version_stream(hash).await?;
 
-    match image::guess_format(&buffer) {
-        Ok(format) => Ok(format),
-        Err(_) => Err(OxenError::basic_str(format!(
-            "Unknown image format for file: {:?}",
-            path
-        ))),
+    let mut header = Vec::with_capacity(16);
+    while header.len() < 16 {
+        if let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
+            })?;
+            let to_take = 16 - header.len();
+            header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
+        } else {
+            break; // EOF
+        }
     }
+
+    if header.is_empty() {
+        return Err(OxenError::basic_str(format!(
+            "Version file {hash} is empty"
+        )));
+    }
+
+    let format = image::guess_format(&header)
+        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
+
+    Ok(format)
 }
 
 // Caller must provide out path because it differs between remote staged vs. committed files
-pub fn resize_cache_image(
+pub async fn resize_cache_image_version_store(
+    version_store: Arc<dyn VersionStore>,
+    img_hash: &str,
     image_path: &Path,
     resize_path: &Path,
     resize: ImgResize,
-) -> Result<(), OxenError> {
-    log::debug!("resize to path {:?} from {:?}", resize_path, image_path);
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
     if resize_path.exists() {
-        return Ok(());
+        log::debug!("In the resize cache! {resize_path:?}");
+        let stream = version_store
+            .get_version_derived_stream(resize_path)
+            .await?;
+        return Ok(stream.boxed());
     }
 
-    let image_format = detect_image_format(image_path);
+    log::debug!("resize to path {resize_path:?} from {image_path:?}");
+    let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash).await;
+    let image_data = version_store.get_version(img_hash).await?;
+
     let img = match image_format {
-        Ok(format) => image::load(BufReader::new(File::open(image_path)?), format)?,
+        Ok(format) => {
+            let reader = Cursor::new(&image_data);
+            image::load(reader, format)?
+        }
         Err(_) => {
             log::debug!("Could not detect image format, opening file without format");
-            image::open(image_path)?
+            let reader = Cursor::new(&image_data);
+
+            ImageReader::new(reader).with_guessed_format()?.decode()?
         }
     };
 
@@ -1699,16 +1756,161 @@ pub fn resize_cache_image(
     } else {
         img
     };
-    log::debug!("about to save {:?}", resize_path);
+    log::debug!("about to save {resize_path:?}");
 
-    let resize_parent = resize_path.parent().unwrap_or(Path::new(""));
-    if !resize_parent.exists() {
-        util::fs::create_dir_all(resize_parent).unwrap();
+    log::debug!("saved {resize_path:?}");
+
+    let image_format = ImageFormat::from_path(resize_path)?;
+    let mut buf = Vec::new();
+    resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+    version_store
+        .store_version_derived(resized_img, buf.clone(), resize_path)
+        .await?;
+
+    let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        futures::stream::once(async move { Ok(Bytes::from(buf)) }).boxed();
+
+    Ok(stream)
+}
+
+/// Generate a video thumbnail using thumbnails crate.
+/// This function extracts a frame from the video and saves it as an image thumbnail.
+/// Note: The thumbnails crate extracts from the beginning of the video.
+/// If a specific timestamp is required, it may need to be handled differently.
+#[cfg(feature = "ffmpeg")]
+fn generate_video_thumbnail_version_store(
+    version_store: Arc<dyn VersionStore>,
+    video_hash: &str,
+    _video_path: &Path,
+    thumbnail_path: &Path,
+    thumbnail: VideoThumbnail,
+) -> Result<(), OxenError> {
+    log::debug!("generate thumbnail to path {thumbnail_path:?} from video hash {video_hash}");
+    if thumbnail_path.exists() {
+        return Ok(());
     }
 
-    resized_img.save(resize_path).unwrap();
-    log::debug!("saved {:?}", resize_path);
+    // Create parent directory if it doesn't exist
+    let thumbnail_parent = thumbnail_path.parent().unwrap_or(Path::new(""));
+    if !thumbnail_parent.exists() {
+        util::fs::create_dir_all(thumbnail_parent)?;
+    }
+
+    // Get the video file from version store
+    let version_path = version_store.get_version_path(video_hash)?;
+
+    // Determine output dimensions
+    // The thumbnails crate maintains aspect ratio, so we use max dimensions
+    let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, w), // Use width for both if only width specified
+        (None, Some(h)) => (h, h), // Use height for both if only height specified
+        (None, None) => (320, 240),
+    };
+
+    // Note: The thumbnails crate doesn't support timestamp selection directly.
+    // It extracts from the beginning of the video.
+    // If timestamp support is needed, we may need to use ffmpeg directly or another approach.
+    let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
+
+    // Create thumbnailer with specified dimensions
+    let thumbnailer = Thumbnailer::new(output_width, output_height);
+
+    // Generate thumbnail from video file
+    let thumb_image = thumbnailer.get(&version_path).map_err(|e| {
+        OxenError::basic_str(format!(
+            "Failed to generate thumbnail: {e}. Make sure ffmpeg is installed."
+        ))
+    })?;
+
+    // Save the thumbnail image
+    thumb_image
+        .save(thumbnail_path)
+        .map_err(|e| OxenError::basic_str(format!("Failed to save thumbnail: {e}")))?;
+
+    log::debug!("saved thumbnail {thumbnail_path:?}");
     Ok(())
+}
+
+/// Generate the cache path for a video thumbnail based on the video hash and thumbnail parameters.
+pub fn thumbnail_path_for_version_store_file(
+    version_store: Arc<dyn VersionStore>,
+    video_hash: &str,
+    _video_path: &Path,
+    width: Option<u32>,
+    height: Option<u32>,
+    timestamp: Option<f64>,
+) -> Result<PathBuf, OxenError> {
+    let video_version_path = version_store.get_version_path(video_hash)?;
+    let extension = "jpg"; // Always use jpg for thumbnails
+
+    // Build dimension strings for cache path - use "auto" when maintaining aspect ratio
+    let (width_str, height_str) = match (width, height) {
+        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
+        (Some(w), None) => (w.to_string(), "auto".to_string()),
+        (None, Some(h)) => ("auto".to_string(), h.to_string()),
+        (None, None) => ("320".to_string(), "240".to_string()),
+    };
+
+    let timestamp_str = timestamp
+        .map(|t| format!("t{t:.1}"))
+        .unwrap_or_else(|| "t1.0".to_string());
+
+    let thumbnail_path = video_version_path.parent().unwrap().join(format!(
+        "thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"
+    ));
+    Ok(thumbnail_path)
+}
+
+/// Handle video thumbnail generation: determine cache path and generate thumbnail if needed.
+/// Returns the path to the cached thumbnail.
+/// Only enabled if the 'ffmpeg' feature is enabled.
+#[allow(unused_variables)]
+pub fn handle_video_thumbnail(
+    version_store: Arc<dyn VersionStore>,
+    file_hash: String,
+    file_path: &Path,
+    version_path: &Path,
+    video_thumbnail: VideoThumbnail,
+) -> Result<PathBuf, OxenError> {
+    #[cfg(not(feature = "ffmpeg"))]
+    {
+        let _ = (
+            version_store,
+            file_hash,
+            file_path,
+            version_path,
+            video_thumbnail,
+        );
+        Err(OxenError::thumbnailing_not_enabled(
+            "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
+             Build with --features ffmpeg to enable this functionality.",
+        ))
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    {
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+        let thumbnail_path = thumbnail_path_for_version_store_file(
+            Arc::clone(&version_store),
+            &file_hash,
+            file_path,
+            video_thumbnail.width,
+            video_thumbnail.height,
+            video_thumbnail.timestamp,
+        )?;
+
+        generate_video_thumbnail_version_store(
+            version_store,
+            &file_hash,
+            version_path,
+            &thumbnail_path,
+            video_thumbnail,
+        )?;
+
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+        Ok(thumbnail_path)
+    }
 }
 
 pub fn to_unix_str(path: impl AsRef<Path>) -> String {
@@ -1735,17 +1937,19 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
     }
 }
 
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    // First, check if the file exists; return false if not
+pub fn is_modified_from_node_with_metadata(
+    path: &Path,
+    node: &FileNode,
+    metadata: Result<std::fs::Metadata, OxenError>,
+) -> Result<bool, OxenError> {
     if !path.exists() {
         log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
         return Ok(false);
     }
 
+    let metadata = metadata?;
     // Second, check the length of the file
-    let meta = util::fs::metadata(path)?;
-
-    let file_size = meta.len();
+    let file_size = metadata.len();
     let node_size = node.num_bytes();
 
     if file_size != node_size {
@@ -1753,7 +1957,7 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
     }
 
     // Third, check the last modified times
-    let file_last_modified = FileTime::from_last_modification_time(&meta);
+    let file_last_modified = FileTime::from_last_modification_time(&metadata);
     let node_last_modified = util::fs::last_modified_time(
         node.last_modified_seconds(),
         node.last_modified_nanoseconds(),
@@ -1763,15 +1967,36 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
         return Ok(false);
     }
 
+    // Fourth, check the metadata hashes
+    let node_metadata_hash = node.metadata_hash();
+    let file_metadata_hash = {
+        let mime_type = util::fs::file_mime_type(path);
+        let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
+
+        let file_metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
+        util::hasher::maybe_get_metadata_hash(&file_metadata)?
+    };
+
+    if node_metadata_hash.is_some()
+        && file_metadata_hash.is_some()
+        && *node_metadata_hash.unwrap() != MerkleHash::new(file_metadata_hash.unwrap())
+    {
+        return Ok(true);
+    }
+
     // Finally, check the hashes
     let node_hash = node.hash().to_u128();
-    let working_hash = util::hasher::get_hash_given_metadata(path, &meta)?;
+    let working_hash = util::hasher::get_hash_given_metadata(path, &metadata)?;
 
     if node_hash == working_hash {
         Ok(false)
     } else {
         Ok(true)
     }
+}
+
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+    is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
 }
 
 // Only uses the metadata to check for modification
@@ -1918,8 +2143,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn version_path() -> Result<(), OxenError> {
+    #[test]
+    fn version_path() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
             let entry = CommitEntry {
                 commit_id: String::from("1234"),
@@ -1944,8 +2169,8 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn detect_file_type() -> Result<(), OxenError> {
+    #[test]
+    fn detect_file_type() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";

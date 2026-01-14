@@ -9,7 +9,7 @@ use crate::model::entry::metadata_entry::CLIMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
-use crate::model::{Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource};
+use crate::model::{Commit, LocalRepository, MetadataEntry, ParsedResource};
 use crate::util;
 
 use std::path::{Path, PathBuf};
@@ -62,37 +62,6 @@ pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
         hash: "".to_string(),
         is_dir: path.is_dir(),
         latest_commit: None,
-        resource: None,
-        size,
-        data_type,
-        mime_type,
-        extension,
-        metadata,
-        is_queryable: None,
-    })
-}
-
-pub fn from_commit_entry(
-    repo: &LocalRepository,
-    entry: &CommitEntry,
-    commit: &Commit,
-) -> Result<MetadataEntry, OxenError> {
-    let path = util::fs::version_path(repo, entry);
-    let base_name = entry
-        .path
-        .file_name()
-        .ok_or(OxenError::file_has_no_name(&path))?;
-    let size = get_file_size(&path)?;
-    let mime_type = util::fs::file_mime_type(&path);
-    let data_type = util::fs::datatype_from_mimetype(&path, mime_type.as_str());
-    let extension = util::fs::file_extension(&path);
-    let metadata = get_file_metadata(&path, &data_type)?;
-
-    Ok(MetadataEntry {
-        filename: base_name.to_string_lossy().to_string(),
-        hash: entry.hash.to_string(),
-        is_dir: path.is_dir(),
-        latest_commit: Some(commit.to_owned()),
         resource: None,
         size,
         data_type,
@@ -179,35 +148,35 @@ pub fn get_file_metadata_with_extension(
         EntryDataType::Text => match text::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataText(metadata))),
             Err(err) => {
-                log::warn!("could not compute text metadata: {}", err);
+                log::warn!("could not compute text metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Image => match image::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataImage(metadata))),
             Err(err) => {
-                log::warn!("could not compute image metadata: {}", err);
+                log::warn!("could not compute image metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Video => match video::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataVideo(metadata))),
             Err(err) => {
-                log::warn!("could not compute video metadata: {}", err);
+                log::warn!("could not compute video metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Audio => match audio::get_metadata(path) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataAudio(metadata))),
             Err(err) => {
-                log::warn!("could not compute audio metadata: {}", err);
+                log::warn!("could not compute audio metadata: {err}");
                 Ok(None)
             }
         },
         EntryDataType::Tabular => match tabular::get_metadata_with_extension(path, extension) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
             Err(err) => {
-                log::warn!("could not compute tabular metadata: {}", err);
+                log::warn!("could not compute tabular metadata: {err}");
                 Ok(None)
             }
         },
@@ -230,12 +199,12 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
-    #[test]
-    fn test_get_metadata_audio_flac() {
+    #[tokio::test]
+    async fn test_get_metadata_audio_flac() {
         let file = test::test_audio_file_with_name("121-121726-0005.flac");
         let metadata = repositories::metadata::get(file).unwrap();
 
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 37096);
         assert_eq!(metadata.data_type, EntryDataType::Audio);

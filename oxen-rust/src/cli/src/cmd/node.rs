@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::core::v_latest::index::CommitMerkleTree;
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, MerkleHash};
+use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
-use std::str::FromStr;
+use std::path::Path;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "node";
@@ -34,14 +33,18 @@ impl RunCmd for NodeCmd {
                 Arg::new("node")
                     .long("node")
                     .short('n')
+                    .conflicts_with("path")
+                    .required_unless_present("path")
                     .help("Node hash to inspect"),
             )
-            // add --file flag
+            // add --path flag
             .arg(
-                Arg::new("file")
-                    .long("file")
-                    .short('f')
-                    .help("File path to inspect"),
+                Arg::new("path")
+                    .long("path")
+                    .short('p')
+                    .conflicts_with("node")
+                    .required_unless_present("node")
+                    .help("Path to the node to inspect"),
             )
             // add --revision flag
             .arg(
@@ -56,31 +59,50 @@ impl RunCmd for NodeCmd {
         // Find the repository
         let repository = LocalRepository::from_current_dir()?;
 
-        // if the --file flag is set, we need to get the node for the file
-        if let Some(file) = args.get_one::<String>("file") {
+        // if the --path flag is set, get the node by path in the specified revision
+        if let Some(path) = args.get_one::<String>("path") {
             let commit = if let Some(revision) = args.get_one::<String>("revision") {
-                repositories::revisions::get(&repository, revision)?.unwrap()
+                repositories::revisions::get(&repository, revision)?
+                    .ok_or_else(|| OxenError::basic_str(format!("Revision {revision} not found")))?
             } else {
                 repositories::commits::head_commit(&repository)?
             };
-            let node = repositories::entries::get_file(&repository, &commit, file)?;
-            println!("{:?}", node);
-            return Ok(());
-        }
+            let path = Path::new(path);
+            let Some(node) = repositories::tree::get_node_by_path(&repository, &commit, path)?
+            else {
+                return Err(OxenError::basic_str(format!(
+                    "Error: path {:?} not found in commit {:?}",
+                    path, commit.id
+                )));
+            };
 
-        // otherwise, get the node based on the node hash
-        let node_hash = args.get_one::<String>("node").expect("Must supply node");
-        let node_hash = MerkleHash::from_str(node_hash)?;
-        let node = CommitMerkleTree::read_node(&repository, &node_hash, false)?;
-
-        println!("{:?}", node);
-        if args.get_flag("verbose") {
-            if let Some(node) = node {
+            println!("{node:?}");
+            if args.get_flag("verbose") {
                 println!("{} children", node.children.len());
                 for child in node.children {
-                    println!("{:?}", child);
+                    println!("{child:?}");
                 }
             }
+            return Ok(());
+
+        // otherwise, get the node based on the node hash
+        } else if let Some(node_hash) = args.get_one::<String>("node") {
+            let node_hash = node_hash.parse()?;
+            let Some(node) = repositories::tree::get_node_by_id(&repository, &node_hash)? else {
+                return Err(OxenError::basic_str(format!(
+                    "Error: node {node_hash:?} not found in repo"
+                )));
+            };
+
+            println!("{node:?}");
+            if args.get_flag("verbose") {
+                println!("{} children", node.children.len());
+                for child in node.children {
+                    println!("{child:?}");
+                }
+            }
+        } else {
+            return Err(OxenError::basic_str("Must supply file path or node hash"));
         }
 
         Ok(())

@@ -1,5 +1,6 @@
 use polars::prelude::DataFrame;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::core::df::tabular;
 use crate::error::OxenError;
@@ -10,18 +11,18 @@ use crate::opts::DFOpts;
 use crate::util;
 
 // THE DIFFERENCE BETWEEN WRAPPER AND SUMMARY IS JUST THE KEY NAME IN THE JSON RESPONSE
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffWrapper {
     pub tabular: TabularDiffSummaryImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffSummary {
     pub summary: TabularDiffSummaryImpl,
 }
 
 // Impl is so that we can wrap the json response in the "tabular" field to make summaries easier to distinguish
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct TabularDiffSummaryImpl {
     pub num_added_rows: usize,
     pub num_added_cols: usize,
@@ -64,29 +65,13 @@ impl TabularDiffWrapper {
                 // TODO - this can be made less naive
                 let schema_has_changed = base_size.width != head_size.width;
 
-                let num_added_rows = if base_size.height < head_size.height {
-                    head_size.height - base_size.height
-                } else {
-                    0
-                };
+                let num_added_rows = head_size.height.saturating_sub(base_size.height);
 
-                let num_removed_rows = if base_size.height > head_size.height {
-                    base_size.height - head_size.height
-                } else {
-                    0
-                };
+                let num_removed_rows = base_size.height.saturating_sub(head_size.height);
 
-                let num_added_cols = if base_size.width < head_size.width {
-                    head_size.width - base_size.width
-                } else {
-                    0
-                };
+                let num_added_cols = head_size.width.saturating_sub(base_size.width);
 
-                let num_removed_cols = if base_size.width > head_size.width {
-                    base_size.width - head_size.width
-                } else {
-                    0
-                };
+                let num_removed_cols = base_size.width.saturating_sub(head_size.width);
 
                 Ok(TabularDiffWrapper {
                     tabular: TabularDiffSummaryImpl {
@@ -150,7 +135,7 @@ impl TabularDiffWrapper {
         }
     }
 
-    pub fn maybe_get_df_from_file_node(
+    pub async fn maybe_get_df_from_file_node(
         repo: &LocalRepository,
         node: &Option<FileNode>,
     ) -> Option<DataFrame> {
@@ -158,20 +143,21 @@ impl TabularDiffWrapper {
             Some(node) => {
                 let version_path = util::fs::version_path_from_hash(repo, node.hash().to_string());
                 tabular::read_df_with_extension(version_path, node.extension(), &DFOpts::empty())
+                    .await
                     .ok()
             }
             None => None,
         }
     }
 
-    pub fn maybe_get_df_from_commit_entry(
+    pub async fn maybe_get_df_from_commit_entry(
         repo: &LocalRepository,
         entry: &Option<CommitEntry>,
     ) -> Option<DataFrame> {
         match entry {
             Some(entry) => {
                 let version_path = util::fs::version_path(repo, entry);
-                tabular::read_df(version_path, DFOpts::empty()).ok()
+                tabular::read_df(version_path, DFOpts::empty()).await.ok()
             }
             None => None,
         }

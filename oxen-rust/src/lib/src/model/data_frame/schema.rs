@@ -6,15 +6,16 @@ pub mod staged_schema;
 pub use custom_data_type::CustomDataType;
 pub use data_type::DataType;
 pub use field::Field;
+use utoipa::ToSchema;
 
 use crate::util::hasher;
 use itertools::Itertools;
-use polars::prelude::SchemaExt;
+use polars::prelude::{SchemaExt, SchemaRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, fmt, path::PathBuf};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Schema {
     pub hash: String,
     pub fields: Vec<Field>,
@@ -57,7 +58,7 @@ impl Schema {
         schema
     }
 
-    pub fn from_polars(schema: &polars::prelude::Schema) -> Schema {
+    pub fn from_polars(schema: &SchemaRef) -> Schema {
         let mut fields: Vec<Field> = vec![];
         for field in schema.iter_fields() {
             let f = Field::new(field.name(), field.dtype().to_string().as_str());
@@ -79,7 +80,7 @@ impl Schema {
 
     /// Add metadata to a column
     pub fn add_column_metadata(&mut self, name: &str, metadata: &Value) {
-        log::debug!("add_column_metadata {} {}", name, metadata);
+        log::debug!("add_column_metadata {name} {metadata}");
         if let Some(f) = self.fields.iter_mut().find(|f| f.name == name) {
             f.metadata = Some(metadata.to_owned());
         }
@@ -140,8 +141,8 @@ impl Schema {
             schema.iter_fields().map(|f| f.name().to_string()).collect();
 
         log::debug!("Comparing field names between self and provided schema");
-        log::debug!("self are {:?}", self_field_names);
-        log::debug!("schema are {:?}", schema_field_names);
+        log::debug!("self are {self_field_names:?}");
+        log::debug!("schema are {schema_field_names:?}");
         if self_field_names != schema_field_names {
             return false;
         }
@@ -303,9 +304,9 @@ impl Schema {
             table.add_row(row);
         }
         if let Some(metadata) = &self.metadata {
-            format!("\n{}\n\n{}", metadata, table)
+            format!("\n{metadata}\n\n{table}")
         } else {
-            format!("{}", table)
+            format!("{table}")
         }
     }
 }
@@ -344,7 +345,7 @@ mod tests {
             },
         );
         let table = Schema::schemas_to_string(schemas);
-        println!("{}", table);
+        println!("{table}");
         assert_eq!(
             table,
             r"
@@ -375,7 +376,7 @@ mod tests {
             },
         );
         let table = Schema::schemas_to_string(schemas);
-        println!("{}", table);
+        println!("{table}");
 
         assert_eq!(
             table,
@@ -416,7 +417,7 @@ mod tests {
             },
         );
         let table = Schema::schemas_to_string(schemas);
-        println!("{}", table);
+        println!("{table}");
 
         assert_eq!(
             table,

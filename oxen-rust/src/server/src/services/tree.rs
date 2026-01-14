@@ -21,8 +21,8 @@ pub fn tree() -> Scope {
                     web::post().to(controllers::tree::list_missing_file_hashes_from_commits),
                 )
                 .route(
-                    "/missing_file_hashes_from_nodes",
-                    web::post().to(controllers::tree::list_missing_file_hashes_from_nodes),
+                    "/mark_nodes_as_synced",
+                    web::post().to(controllers::tree::mark_nodes_as_synced),
                 )
                 .service(
                     web::scope("/hash/{hash}")

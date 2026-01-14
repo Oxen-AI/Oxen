@@ -524,7 +524,7 @@ mod tests {
             repositories::add(&repo, &bbox_path).await?;
 
             let status = repositories::status(&repo)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             status.print();
 
             // Add the schema
@@ -637,7 +637,7 @@ mod tests {
             repositories::commit(&repo, "Adding metadata to file column")?;
 
             // Add a new column to the data frame
-            command::df::add_column(&bbox_path, "new_column:0:i32")?;
+            command::df::add_column(&bbox_path, "new_column:0:i32").await?;
 
             // Stage the file
             repositories::add(&repo, &bbox_path).await?;
@@ -671,7 +671,7 @@ mod tests {
                 "root": "images"
             });
             repositories::add(&repo, &bbox_path).await?;
-            println!("after add initial metadata to: {:?}", bbox_file);
+            println!("after add initial metadata to: {bbox_file:?}");
 
             repositories::data_frames::schemas::add_column_metadata(
                 &repo,
@@ -680,7 +680,7 @@ mod tests {
                 &file_metadata,
             )?;
 
-            println!("staged column metadata to: {:?}", bbox_file);
+            println!("staged column metadata to: {bbox_file:?}");
 
             // Fetch staged
             let schema =
@@ -785,6 +785,148 @@ mod tests {
             assert_eq!(schema.fields[5].dtype, "i64");
 
             Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_schemas_merge_fast_forward_pull() -> Result<(), OxenError> {
+        test::run_select_data_sync_remote("README.md", |_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            test::run_empty_dir_test_async(|repo_dir_a| async move {
+                let repo_dir_a = repo_dir_a.join("repo_a");
+                let cloned_repo_a =
+                    repositories::clone_url(&remote_repo.remote.url, &repo_dir_a).await?;
+
+                test::run_empty_dir_test_async(|repo_dir_b| async move {
+                    println!("=== Starting test: Two users pushing to remote ===");
+                    println!("User A: Will add schema metadata to dataframe");
+                    println!("User B: Will edit README");
+
+                    // Write a data frame to data.csv
+                    let data_filename = Path::new("data.csv");
+                    let data_path = cloned_repo_a.path.join(data_filename);
+                    let column_name = "name";
+                    let data_content = "name,age\nJohn,30\nJane,25";
+                    util::fs::write_to_path(&data_path, data_content)?;
+                    repositories::add(&cloned_repo_a, &data_path).await?;
+                    repositories::commit(&cloned_repo_a, "User A adding data.csv")?;
+                    // Push to the remote so User B can pull
+                    repositories::push(&cloned_repo_a).await?;
+
+                    // Clone repo to User B before we edit the schema metadata
+                    let repo_dir_b = repo_dir_b.join("repo_b");
+                    let cloned_repo_b =
+                        repositories::clone_url(&remote_repo.remote.url, &repo_dir_b).await?;
+
+                    // User A: Add schema metadata to the data.csv dataframe
+                    println!("User A: Adding schema metadata...");
+                    // Add schema metadata
+                    let column_metadata = json!({
+                        "my_custom": "name_column_metadata"
+                    });
+                    repositories::data_frames::schemas::add_column_metadata(
+                        &cloned_repo_a,
+                        data_filename,
+                        column_name,
+                        &column_metadata,
+                    )?;
+                    repositories::commit(&cloned_repo_a, "User A adding schema metadata")?;
+                    println!("User A: Pushing schema metadata...");
+                    repositories::push(&cloned_repo_a).await?;
+                    println!("User A pushed ✅ 1");
+
+                    // Make sure the schema metadata is in the schema
+                    let commit = repositories::commits::head_commit(&cloned_repo_a)?;
+                    let schema = repositories::data_frames::schemas::get_by_path(
+                        &cloned_repo_a,
+                        &commit,
+                        data_filename,
+                    )?
+                    .expect("Schema should exist");
+                    println!("User A: Schema: {schema:?}");
+
+                    // Save the number of commits in User A
+                    let num_commits_a = repositories::commits::list(&cloned_repo_a)?.len();
+                    println!("User A: Number of commits: {num_commits_a}");
+                    let commits = repositories::commits::list(&cloned_repo_a)?;
+                    for commit in &commits {
+                        println!("User A: GOT COMMIT {commit}");
+                    }
+                    println!("================================================");
+
+                    // User B: Edit the README (but don't push yet)
+                    println!("User B: Editing README...");
+                    let readme_path = cloned_repo_b.path.join("README.md");
+                    let readme_content = "Updated README by User B";
+                    util::fs::write_to_path(&readme_path, readme_content)?;
+                    repositories::add(&cloned_repo_b, &readme_path).await?;
+                    repositories::commit(&cloned_repo_b, "User B editing README")?;
+
+                    // User B should have all the commits from User A
+                    let commits = repositories::commits::list(&cloned_repo_b)?;
+                    for commit in &commits {
+                        println!("User B: GOT COMMIT BEFORE {commit}");
+                    }
+                    println!("================================================");
+
+                    // User B tries to push - should fail because remote is ahead
+                    println!("User B: Attempting to push README changes (should fail because remote is ahead)...");
+                    let push_result = repositories::push(&cloned_repo_b).await;
+                    assert!(push_result.is_err(), "Push should fail when remote is ahead");
+                    println!("User B push failed ✅ 3 (as expected - remote is ahead)");
+
+                    // User B pulls - should succeed with fast-forward merge (no conflicts)
+                    println!("User B: Pulling changes...");
+                    repositories::pull(&cloned_repo_b).await?;
+                    println!("User B pulled ✅ 4");
+
+                    // User B should have all the commits from User A
+                    let commits = repositories::commits::list(&cloned_repo_b)?;
+                    for commit in &commits {
+                        println!("User B: GOT COMMIT AFTER {commit}");
+                    }
+                    println!("================================================");
+                    // assert_eq!(commits.len(), num_commits_a);
+
+                    // Verify User B has both changes locally:
+                    // 1. The README should still have User B's changes
+                    let readme_content_after_pull = util::fs::read_from_path(&readme_path)?;
+                    assert_eq!(
+                        readme_content_after_pull, readme_content,
+                        "README should still have User B's changes"
+                    );
+
+                    // 2. The schema should have User A's metadata
+                    let commit = repositories::commits::head_commit(&cloned_repo_b)?;
+                    println!("User B: CHECKING COMMIT {commit}");
+                    let schema = repositories::data_frames::schemas::get_by_path(
+                        &cloned_repo_b,
+                        &commit,
+                        data_filename,
+                    )?
+                    .expect("Schema should exist");
+                    println!("User B: Schema: {schema:?}");
+                    let name_field = schema.fields.iter()
+                        .find(|field| field.name == column_name)
+                        .expect("Schema should have a 'name' field");
+                    assert_eq!(
+                        name_field.metadata, Some(column_metadata.clone()),
+                        "Schema should have User A's metadata on the 'name' field"
+                    );
+
+                    // User B pushes - should succeed now after pulling
+                    println!("User B: Pushing README changes (should succeed after pull)...");
+                    repositories::push(&cloned_repo_b).await?;
+                    println!("User B pushed ✅ 5");
+
+                    Ok(())
+                })
+                .await?;
+                Ok(())
+            })
+            .await?;
+            Ok(remote_repo_copy)
         })
         .await
     }

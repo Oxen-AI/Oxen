@@ -111,22 +111,21 @@ impl RunCmd for EmbeddingsQueryCmd {
         let workspace_id = format!("{}-{}", path, commit.id);
         let Some(workspace) = repositories::workspaces::get(&repository, &workspace_id)? else {
             return Err(OxenError::basic_str(format!(
-                "Workspace not found: {}",
-                workspace_id
+                "Workspace not found: {workspace_id}"
             )));
         };
 
         let start = std::time::Instant::now();
         let mut df =
             liboxen::repositories::workspaces::data_frames::embeddings::query(&workspace, &opts)?;
-        println!("{}", df);
+        println!("{df}");
         println!("Query took: {:?}", start.elapsed());
 
         let Some(output) = args.get_one::<String>("output") else {
             return Ok(());
         };
 
-        println!("Writing to {}", output);
+        println!("Writing to {output}");
         tabular::write_df(&mut df, output)?;
 
         Ok(())

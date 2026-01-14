@@ -2,97 +2,307 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
-use actix_files::NamedFile;
-
 use liboxen::core;
 use liboxen::core::staged::with_staged_db_manager;
+use liboxen::error::OxenError;
+use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
+use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::LocalRepository;
 use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
+use liboxen::util::hasher;
 use liboxen::view::{
-    ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
+    StatusMessageDescription,
 };
-
-use actix_web::{web, HttpRequest, HttpResponse};
 
 use actix_multipart::Multipart;
 use actix_web::Error;
+use actix_web::{web, HttpRequest, HttpResponse};
+use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use serde::Deserialize;
+use std::io::Read as StdRead;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::BufReader;
+use tokio_util::io::ReaderStream;
+use utoipa;
 
+#[derive(utoipa::ToSchema)]
+pub struct FileUpload {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+}
+
+/// Combined query parameters for workspace file operations (image resize and video thumbnail)
+#[derive(Deserialize, Debug)]
+pub struct WorkspaceFileQueryParams {
+    // Shared parameters (can be used for both image resize and video thumbnail)
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    // Video thumbnail specific parameters
+    pub timestamp: Option<f64>,
+    pub thumbnail: Option<bool>,
+}
+
+/// Get workspace file
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The path to the file in the workspace", example = "images/train/dog_1.jpg"),
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
+        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from", example = 1.0),
+        ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
+    ),
+    responses(
+        (status = 200, description = "File content returned as a stream. Content-Type varies: matches the file's MIME type for regular files and image resizes, or 'image/jpeg' for video thumbnails",
+            body = Vec<u8>,
+            headers(
+                ("oxen-revision-id" = String, description = "The commit ID of the file version")
+            )
+        ),
+        (status = 404, description = "Workspace or File not found"),
+        (status = 400, description = "Invalid parameters")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
-    query: web::Query<ImgResize>,
-) -> Result<NamedFile, OxenHttpError> {
+    query: web::Query<WorkspaceFileQueryParams>,
+) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let version_store = repo.version_store()?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
+
     let path = path_param(&req, "path")?;
+    log::debug!("got workspace file path {:?}", &path);
 
-    // The path in a workspace context is just the working path of the workspace repo
-    let path = workspace.workspace_repo.path.join(path);
+    // First, look for the file in the workspace staged_db
+    let file_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+        let staged_node = staged_db_manager.read_from_staged_db(&path)?;
 
-    log::debug!("got workspace file path {:?}", path);
+        match staged_node {
+            Some(staged_node) => {
+                let file_node = match staged_node.node.node {
+                    EMerkleTreeNode::File(f) => Ok(f),
+                    _ => Err(OxenError::basic_str(
+                        "Only single file download is supported",
+                    )),
+                }?;
 
-    // TODO: This probably isn't the best place for the resize logic
-    let img_resize = query.into_inner();
-    if img_resize.width.is_some() || img_resize.height.is_some() {
-        let resized_path = util::fs::resized_path_for_staged_entry(
-            repo,
-            &path,
-            img_resize.width,
-            img_resize.height,
-        )?;
+                Ok(file_node)
+            }
+            None => {
+                // If the file isn't in the workspace staged_db, look for it in the base repo
+                if let Some(file_node) = repositories::tree::get_file_by_path(
+                    &workspace.base_repo,
+                    &workspace.commit,
+                    &path,
+                )? {
+                    Ok(file_node)
+                } else {
+                    Err(OxenError::basic_str(
+                        "File not found in workspace staged DB or base repo",
+                    ))
+                }
+            }
+        }
+    })?;
 
-        util::fs::resize_cache_image(&path, &resized_path, img_resize)?;
-        return Ok(NamedFile::open(resized_path)?);
+    let file_hash = file_node.hash();
+    let hash_str = file_hash.to_string();
+    let mime_type = file_node.mime_type();
+    let last_commit_id = file_node.last_commit_id().to_string();
+    let version_path = version_store.get_version_path(&hash_str)?;
+    log::debug!("got workspace file version path {:?}", &version_path);
+
+    let query_params = query.into_inner();
+
+    // Handle image resize
+    if (query_params.width.is_some() || query_params.height.is_some())
+        && mime_type.starts_with("image/")
+    {
+        let img_resize = ImgResize {
+            width: query_params.width,
+            height: query_params.height,
+        };
+        log::debug!("img_resize {img_resize:?}");
+
+        let file_stream = util::fs::handle_image_resize(
+            Arc::clone(&version_store),
+            hash_str.clone(),
+            &PathBuf::from(path),
+            &version_path,
+            img_resize,
+        )
+        .await?;
+
+        return Ok(HttpResponse::Ok()
+            .content_type(mime_type)
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(file_stream));
     }
-    Ok(NamedFile::open(path)?)
+
+    // Handle video thumbnail - requires thumbnail=true parameter
+    if query_params.thumbnail == Some(true) && mime_type.starts_with("video/") {
+        let video_thumbnail = VideoThumbnail {
+            width: query_params.width,
+            height: query_params.height,
+            timestamp: query_params.timestamp.or(Some(1.0)),
+            thumbnail: query_params.thumbnail,
+        };
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+
+        let thumbnail_path = util::fs::handle_video_thumbnail(
+            Arc::clone(&version_store),
+            hash_str,
+            &PathBuf::from(path),
+            &version_path,
+            video_thumbnail,
+        )?;
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+
+        // Generate stream for the thumbnail (always JPEG)
+        let file = File::open(&thumbnail_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        return Ok(HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(stream));
+    }
+
+    log::debug!("did not hit the resize or thumbnail cache");
+
+    // Stream the file
+    let stream = version_store.get_version_stream(&hash_str).await?;
+
+    Ok(HttpResponse::Ok()
+        .content_type(mime_type)
+        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+        .streaming(stream))
 }
 
+/// Add file to workspace
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The directory to upload the file to", example = "data/train")
+    ),
+    request_body(
+        content_type = "multipart/form-data", 
+        description = "Multipart upload of file. Form field 'file' should be the file content.",
+        content = FileUpload,
+    ),
+    responses(
+        (status = 200, description = "File successfully uploaded to workspace", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found"),
+        (status = 400, description = "Invalid upload request")
+    )
+)]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let directory = PathBuf::from(path_param(&req, "path")?);
+    let directory = path_param(&req, "path")?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    log::debug!("add_file directory {:?}", directory);
+    let version_store = repo.version_store()?;
 
-    let files = save_parts(&workspace, &directory, payload).await?;
+    let (upload_files, err_files) = save_parts(payload, &repo).await?;
+    log::debug!("Save multiparts found {} err_files", err_files.len());
+    log::debug!(
+        "Calling add version files from the core workspace logic with {} files",
+        upload_files.len(),
+    );
+
     let mut ret_files = vec![];
+    for upload_file in upload_files {
+        let file_name = upload_file.path.file_name().unwrap();
+        let dst_path = PathBuf::from(&directory).join(file_name);
+        let version_path = version_store.get_version_path(&upload_file.hash)?;
 
-    for file in files.iter() {
-        log::debug!("add_file file {:?}", file);
-        let path = repositories::workspaces::files::add(&workspace, file).await?;
-        log::debug!("add_file ✅ success! staged file {:?}", path);
-        ret_files.push(path);
+        let ret_file = match core::v_latest::workspaces::files::add_version_file_with_hash(
+            &workspace,
+            &version_path,
+            &dst_path,
+            &upload_file.hash,
+        ) {
+            Ok(ret_file) => ret_file,
+            Err(e) => {
+                log::error!("Error adding file {version_path:?}: {e:?}");
+                continue;
+            }
+        };
+
+        ret_files.push(ret_file);
+        log::info!("Successfully staged file {upload_file:?}");
     }
+
     Ok(HttpResponse::Ok().json(FilePathsResponse {
         status: StatusMessage::resource_created(),
         paths: ret_files,
     }))
 }
 
+/// Stage files to workspace
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("directory" = String, Path, description = "The directory to stage the files into", example = "data/train")
+    ),
+    request_body(
+        content = Vec<FileWithHash>,
+        description = "List of files and their pre-calculated hashes (must exist in version store).",
+        example = json!([
+            {
+                "path": "images/train/dog.jpg",
+                "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+        ])
+    ),
+    responses(
+        (status = 200, description = "Files staged successfully", body = ErrorFilesResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn add_version_files(
     req: HttpRequest,
     payload: web::Json<Vec<FileWithHash>>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    // Add version file to staging
+    // Add file to staging
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -100,20 +310,23 @@ pub async fn add_version_files(
     let directory = path_param(&req, "directory")?;
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-
+    log::debug!(
+        "Calling add version files from the core workspace logic with {} files",
+        files_with_hash.len(),
+    );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,
         &files_with_hash,
         &directory,
     )?;
+
+    log::debug!("Staging complete with {:?} err files", err_files.len());
 
     // Return the error files for retry
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {
@@ -122,6 +335,22 @@ pub async fn add_version_files(
     }))
 }
 
+/// Delete file from workspace staging
+#[utoipa::path(
+    delete,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The path to the file to delete (unstage)", example = "images/train/dog_1.jpg")
+    ),
+    responses(
+        (status = 200, description = "File marked for deletion", body = StatusMessage),
+        (status = 404, description = "Workspace or File not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -138,7 +367,28 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     remove_file_from_workspace(&repo, &workspace, &path)
 }
 
-// Stage files as removed
+/// Stage files for removal
+#[utoipa::path(
+    delete,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/versions",
+    tag = "Workspace Files",
+    summary = "Batch delete files (Stage removal)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745")
+    ),
+    request_body(
+        content = Vec<String>,
+        description = "List of paths to remove from the workspace staging area",
+        example = json!(["images/train/dog_1.jpg", "annotations/incorrect.xml"])
+    ),
+    responses(
+        (status = 200, description = "Files successfully removed", body = FilePathsResponse),
+        (status = 206, description = "Some files could not be found/removed (returns paths of files not found)", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn rm_files(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,
@@ -157,21 +407,57 @@ pub async fn rm_files(
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
 
     let mut ret_files = vec![];
+    let mut err_files = vec![];
 
-    for path in paths_to_remove {
-        log::debug!("rm_files path {:?}", path);
-        let path = repositories::workspaces::files::rm(&workspace, &path).await?;
-        log::debug!("rm ✅ success! staged file {:?} as removed", path);
+    for path in &paths_to_remove {
+        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
+        log::debug!("rm ✅ success! staged file {path:?} as removed");
         ret_files.push(path);
     }
 
-    Ok(HttpResponse::Ok().json(FilePathsResponse {
-        status: StatusMessage::resource_deleted(),
-        paths: ret_files,
-    }))
+    log::debug!("err_files: {err_files:?}");
+
+    if err_files.is_empty() {
+        Ok(HttpResponse::Ok().json(FilePathsResponse {
+            status: StatusMessage::resource_deleted(),
+            paths: paths_to_remove,
+        }))
+    } else {
+        let error_paths: Vec<PathBuf> = err_files
+            .into_iter()
+            .filter_map(|err_info| err_info.path)
+            .collect();
+
+        // Return a partial content response with all the paths
+        Ok(HttpResponse::PartialContent().json(FilePathsResponse {
+            status: StatusMessage::resource_not_found(),
+            paths: error_paths,
+        }))
+    }
 }
 
-// Remove files from staging
+/// Unstage files
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/restore",
+    tag = "Workspace Files",
+    summary = "Unstage files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745")
+    ),
+    request_body(
+        content = Vec<String>,
+        description = "List of paths to restore/unstage from the workspace staging area",
+        example = json!(["images/train/revert_me.jpg", "data/config.json"])
+    ),
+    responses(
+        (status = 200, description = "Files restored from staging", body = StatusMessage),
+        (status = 206, description = "Some files could not be restored (returns paths of files not found)", body = FilePathsResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn rm_files_from_staged(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,
@@ -211,7 +497,7 @@ pub async fn rm_files_from_staged(
                     .await?;
             }
             Err(e) => {
-                log::debug!("Failed to stage file {path:?} for removal: {:?}", e);
+                log::debug!("Failed to stage file {path:?} for removal: {e:?}");
                 err_paths.push(path);
             }
         }
@@ -227,77 +513,161 @@ pub async fn rm_files_from_staged(
     }
 }
 
-pub async fn validate(_req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
+pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let workspace_id = path_param(&req, "workspace_id")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let Some(_workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }
 
+// Read the payload files into memory, compute the hash, and save to version store
+// Unlike controllers::versions::save_multiparts, the hash must be computed here,
+// As this function expects the filename to be the file path, not the hash
 pub async fn save_parts(
-    workspace: &Workspace,
-    directory: &Path,
     mut payload: Multipart,
-) -> Result<Vec<PathBuf>, Error> {
-    let mut files: Vec<PathBuf> = vec![];
+    repo: &LocalRepository,
+) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>), Error> {
+    // Receive a multipart request and save the files to the version store
+    let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
+        log::error!("Failed to get version store: {oxen_err:?}");
+        actix_web::error::ErrorInternalServerError(oxen_err.to_string())
+    })?;
+    let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
-    // iterate over multipart stream
+    let mut upload_files: Vec<FileWithHash> = vec![];
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+
     while let Some(mut field) = payload.try_next().await? {
-        // A multipart/form-data stream has to contain `content_disposition`
-        let Some(content_disposition) = field.content_disposition() else {
+        let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
 
-        log::debug!(
-            "workspace::files::save_parts content_disposition.get_name() {:?}",
-            content_disposition.get_name()
-        );
-
-        // Filter to process only fields with the name "file[]" or "file"
-        // (the old client is sending "file" instead of "file[]", but "file[]" makes sense for more than 1 file)
         if let Some(name) = content_disposition.get_name() {
-            if "file[]" == name || "file" == name {
+            if name == "file[]" || name == "file" {
+                // The file path is passed in as the filename
                 let upload_filename = content_disposition.get_filename().map_or_else(
-                    || uuid::Uuid::new_v4().to_string(),
-                    sanitize_filename::sanitize,
-                );
+                    || {
+                        Err(actix_web::error::ErrorBadRequest(
+                            "Missing hash in multipart request",
+                        ))
+                    },
+                    |fhash_os_str| Ok(fhash_os_str.to_string()),
+                )?;
 
-                log::debug!(
-                    "workspace::files::save_parts Got uploaded file name: {upload_filename:?}"
-                );
-
-                let workspace_dir = workspace.dir();
-
-                log::debug!("workspace::files::save_parts Got workspace dir: {workspace_dir:?}");
-
-                let full_dir = workspace_dir.join(directory);
-
-                log::debug!("workspace::files::save_parts Got full dir: {full_dir:?}");
-
-                if !full_dir.exists() {
-                    std::fs::create_dir_all(&full_dir)?;
-                }
-
-                // Need copy to pass to thread and return the name
-                let filepath = full_dir.join(&upload_filename);
-                let filepath_cpy = filepath.clone();
-                log::debug!(
-                    "workspace::files::save_parts writing file to {:?}",
-                    filepath
-                );
-
-                // File::create is blocking operation, use threadpool
-                let mut f = web::block(|| std::fs::File::create(filepath)).await??;
-
-                // Field in turn is stream of *Bytes* object
+                let mut field_bytes = Vec::new();
                 while let Some(chunk) = field.try_next().await? {
-                    // filesystem operations are blocking, we have to use threadpool
-                    f = web::block(move || f.write_all(&chunk).map(|_| f)).await??;
+                    field_bytes.extend_from_slice(&chunk);
                 }
 
-                files.push(filepath_cpy);
+                let is_gzipped = field
+                    .content_type()
+                    .map(|mime| {
+                        mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
+                    })
+                    .unwrap_or(false);
+
+                let upload_filename_copy = upload_filename.clone();
+
+                let (upload_filehash, data_to_store) =
+                    match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
+                        if is_gzipped {
+                            log::debug!(
+                                "Decompressing gzipped data for file: {upload_filename_copy:?}"
+                            );
+
+                            // Decompress the data if it is gzipped
+                            let mut decoder = GzDecoder::new(&field_bytes[..]);
+                            let mut decompressed_bytes: Vec<u8> = Vec::new();
+                            decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
+                                OxenError::basic_str(format!(
+                                    "Failed to decompress gzipped data: {e}"
+                                ))
+                            })?;
+
+                            // Hash file contents
+                            let hash = hasher::hash_buffer(&decompressed_bytes);
+
+                            Ok((hash, decompressed_bytes))
+                        } else {
+                            log::debug!("Data for file {upload_filename_copy:?} is not gzipped.");
+
+                            // Only hash file contents
+                            let hash = hasher::hash_buffer(&field_bytes);
+                            Ok((hash, field_bytes))
+                        }
+                    })
+                    .await
+                    {
+                        Ok(Ok((hash, data))) => (hash, data),
+                        Ok(Err(e)) => {
+                            log::error!(
+                                "Failed to decompress data for file {}: {:?}",
+                                &upload_filename,
+                                e
+                            );
+                            record_error_file(
+                                &mut err_files,
+                                upload_filename.clone(),
+                                None,
+                                format!("Failed to decompress data: {e:?}"),
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to execute blocking decompression task for file {}: {}",
+                                &upload_filename,
+                                e
+                            );
+                            record_error_file(
+                                &mut err_files,
+                                upload_filename.clone(),
+                                None,
+                                format!("Failed to execute blocking decompression: {e}"),
+                            );
+                            continue;
+                        }
+                    };
+
+                match version_store
+                    .store_version(&upload_filehash, &data_to_store)
+                    .await
+                {
+                    Ok(_) => {
+                        upload_files.push(FileWithHash {
+                            hash: upload_filehash.to_string(),
+                            path: upload_filename.into(),
+                        });
+                        log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to store version for hash {}: {}",
+                            &upload_filehash,
+                            e
+                        );
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.clone(),
+                            None,
+                            format!("Failed to store version: {e}"),
+                        );
+                        continue;
+                    }
+                }
             }
         }
     }
 
-    Ok(files)
+    Ok((upload_files, err_files))
 }
 
 fn remove_file_from_workspace(
@@ -315,4 +685,19 @@ fn remove_file_from_workspace(
     } else {
         Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
     }
+}
+
+// Record the error file info for retry
+fn record_error_file(
+    err_files: &mut Vec<ErrorFileInfo>,
+    filehash: String,
+    filepath: Option<PathBuf>,
+    error: String,
+) {
+    let info = ErrorFileInfo {
+        hash: filehash,
+        path: filepath,
+        error,
+    };
+    err_files.push(info);
 }

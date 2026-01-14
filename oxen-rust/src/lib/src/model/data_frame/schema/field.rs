@@ -1,12 +1,13 @@
 use polars::prelude::PlSmallStr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
 use crate::model::data_frame::schema::DataType;
 
 use super::CustomDataType;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Field {
     pub name: String,
     pub dtype: String,
@@ -14,14 +15,14 @@ pub struct Field {
     pub changes: Option<Changes>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct PreviousField {
     pub name: String,
     pub dtype: String,
     pub metadata: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Changes {
     pub status: String,
     pub previous: Option<PreviousField>,
@@ -69,14 +70,14 @@ impl Field {
             let field = field.trim();
             let field_parts: Vec<&str> = field.split(':').collect();
             if field_parts.len() != 2 {
-                panic!("Invalid field: {}", field);
+                panic!("Invalid field: {field}");
             }
             let name = field_parts[0];
             let dtype = field_parts[1];
             if DataType::from_string(dtype) == DataType::Unknown
                 && CustomDataType::from_string(dtype) == CustomDataType::Unknown
             {
-                panic!("Invalid dtype: {}", dtype);
+                panic!("Invalid dtype: {dtype}");
             }
 
             let field = Field::new(name, dtype);

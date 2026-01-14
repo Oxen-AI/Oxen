@@ -2,7 +2,7 @@ use std::path::Path;
 
 // use liboxen::constants::DEFAULT_REDIS_URL;
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, RepoNew};
+use liboxen::model::{LocalRepository, RepoNew, User};
 use liboxen::repositories;
 
 use crate::errors::OxenHttpError;
@@ -14,12 +14,24 @@ pub fn get_repo(
 ) -> Result<LocalRepository, OxenHttpError> {
     let repo = repositories::get_by_namespace_and_name(path, &namespace, &name)?;
     let Some(repo) = repo else {
-        return Err(
-            OxenError::repo_not_found(RepoNew::from_namespace_name(&namespace, &name)).into(),
-        );
+        return Err(OxenError::repo_not_found(RepoNew::from_namespace_name(
+            &namespace, &name, None,
+        ))
+        .into());
     };
 
     Ok(repo)
+}
+
+// Helper function for user creation
+pub fn create_user_from_options(
+    name: Option<String>,
+    email: Option<String>,
+) -> actix_web::Result<User, OxenHttpError> {
+    Ok(User {
+        name: name.ok_or(OxenHttpError::BadRequest("Name is required".into()))?,
+        email: email.ok_or(OxenHttpError::BadRequest("Email is required".into()))?,
+    })
 }
 
 // #[allow(dependency_on_unit_never_type_fallback)]

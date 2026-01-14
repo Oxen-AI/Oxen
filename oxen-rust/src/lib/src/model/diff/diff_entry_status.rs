@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffEntryStatus {
     Added,
@@ -16,7 +17,7 @@ impl std::fmt::Display for DiffEntryStatus {
             DiffEntryStatus::Modified => "modified",
             DiffEntryStatus::Removed => "removed",
         };
-        write!(f, "{}", status)
+        write!(f, "{status}")
     }
 }
 
@@ -29,7 +30,7 @@ impl std::str::FromStr for DiffEntryStatus {
             "added" => Ok(DiffEntryStatus::Added),
             "modified" => Ok(DiffEntryStatus::Modified),
             "removed" => Ok(DiffEntryStatus::Removed),
-            _ => Err(format!("Could not parse {} as a DiffEntryStatus", s)),
+            _ => Err(format!("Could not parse {s} as a DiffEntryStatus")),
         }
     }
 }

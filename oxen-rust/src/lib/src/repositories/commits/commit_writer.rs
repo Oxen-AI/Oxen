@@ -37,7 +37,6 @@ use crate::model::{Commit, LocalRepository, StagedEntryStatus};
 
 use crate::util::hasher;
 use crate::{repositories, util};
-use std::str::FromStr;
 
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::{CommitNode, DirNode};
@@ -46,6 +45,7 @@ use crate::model::merkle_tree::node::{CommitNode, DirNode};
 pub struct EntryVNode {
     pub id: MerkleHash,
     pub entries: Vec<StagedMerkleTreeNode>,
+    pub removed_entries: Vec<StagedMerkleTreeNode>,
 }
 
 impl std::fmt::Debug for EntryVNode {
@@ -68,6 +68,7 @@ impl EntryVNode {
         EntryVNode {
             id,
             entries: vec![],
+            removed_entries: vec![],
         }
     }
 }
@@ -111,7 +112,7 @@ pub fn commit_with_cfg(
     // Read the staged files from the staged db
     let opts = db::key_val::opts::default();
     let staged_db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
-    log::debug!("commit_with_cfg staged db path: {:?}", staged_db_path);
+    log::debug!("commit_with_cfg staged db path: {staged_db_path:?}");
     let staged_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&staged_db_path))?;
 
@@ -122,7 +123,7 @@ pub fn commit_with_cfg(
     // Read all the staged entries
     let (dir_entries, total_changes) =
         status::read_staged_entries(repo, &staged_db, &commit_progress_bar)?;
-    commit_progress_bar.set_message(format!("Committing {} changes", total_changes));
+    commit_progress_bar.set_message(format!("Committing {total_changes} changes"));
 
     log::debug!("got dir entries: {:?}", dir_entries.len());
 
@@ -143,7 +144,7 @@ pub fn commit_with_cfg(
     let branch = repositories::branches::current_branch(repo)?;
     let maybe_branch_name = branch.map(|b| b.name);
     let commit = if let Some(parent_ids) = parent_ids {
-        log::debug!("parent ids: {:?}", parent_ids);
+        log::debug!("parent ids: {parent_ids:?}");
         commit_dir_entries_with_parents(
             repo,
             parent_ids,
@@ -168,7 +169,7 @@ pub fn commit_with_cfg(
 
     // Write HEAD file and update branch
     let head_path = util::fs::oxen_hidden_dir(&repo.path).join(HEAD_FILE);
-    log::debug!("Looking for HEAD file at {:?}", head_path);
+    log::debug!("Looking for HEAD file at {head_path:?}");
 
     let commit_id = commit.id.to_owned();
     let branch_name = maybe_branch_name.unwrap_or(DEFAULT_BRANCH_NAME.to_string());
@@ -206,6 +207,7 @@ pub fn commit_dir_entries_with_parents(
 ) -> Result<Commit, OxenError> {
     let message = &new_commit.message;
     let target_branch = target_branch.as_ref();
+
     // if the HEAD file exists, we have parents
     // otherwise this is the first commit
     let head_path = util::fs::oxen_hidden_dir(&repo.path).join(HEAD_FILE);
@@ -221,10 +223,7 @@ pub fn commit_dir_entries_with_parents(
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
 
-    log::debug!(
-        "collecting existing nodes for directories: {:?}",
-        directories
-    );
+    log::debug!("collecting existing nodes for directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -268,31 +267,35 @@ pub fn commit_dir_entries_with_parents(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    // Copy over the dir hashes from the previous commit
-    let mut parent_id: Option<MerkleHash> = None;
-    if let Some(commit) = &maybe_head_commit {
-        parent_id = Some(commit.hash()?);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        for (path, hash) in dir_hashes {
-            if let Some(path_str) = path.to_str() {
-                str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-            } else {
-                log::error!("Failed to convert path to string: {:?}", path);
-            }
+    let (dir_hashes, parent_id) = match &maybe_head_commit {
+        Some(commit) => (
+            CommitMerkleTree::dir_hashes(repo, commit)?,
+            Some(commit.hash()?),
+        ),
+        None => (HashMap::new(), None),
+    };
+
+    for (path, hash) in &dir_hashes {
+        if let Some(path_str) = path.to_str() {
+            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
+        } else {
+            log::error!("Failed to convert path to string: {path:?}");
         }
     }
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
     write_commit_entries(
         repo,
-        &maybe_head_commit,
         commit_id,
         &mut commit_db,
         &dir_hash_db,
+        &dir_hashes,
         &vnode_entries,
     )?;
     commit_progress_bar.finish_and_clear();
@@ -328,7 +331,7 @@ pub fn commit_dir_entries_new(
         .keys()
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
-    log::debug!("new commit directories: {:?}", directories);
+    log::debug!("new commit directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -357,7 +360,7 @@ pub fn commit_dir_entries_new(
             parent_ids: new_commit
                 .parent_ids
                 .iter()
-                .map(|id: &String| MerkleHash::from_str(id).unwrap())
+                .map(|id: &String| id.parse().unwrap())
                 .collect(),
             email: new_commit.email.clone(),
             author: new_commit.author.clone(),
@@ -367,21 +370,25 @@ pub fn commit_dir_entries_new(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    // Copy over the dir hashes from the previous commit
-    let mut parent_id: Option<MerkleHash> = None;
-    if let Some(commit) = &maybe_head_commit {
-        parent_id = Some(commit.hash()?);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        for (path, hash) in dir_hashes {
-            if let Some(path_str) = path.to_str() {
-                str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-            } else {
-                log::error!("Failed to convert path to string: {:?}", path);
-            }
+    let (dir_hashes, parent_id) = match &maybe_head_commit {
+        Some(commit) => (
+            CommitMerkleTree::dir_hashes(repo, commit)?,
+            Some(commit.hash()?),
+        ),
+        None => (HashMap::new(), None),
+    };
+
+    for (path, hash) in &dir_hashes {
+        if let Some(path_str) = path.to_str() {
+            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
+        } else {
+            log::error!("Failed to convert path to string: {path:?}");
         }
     }
 
@@ -389,10 +396,10 @@ pub fn commit_dir_entries_new(
 
     write_commit_entries(
         repo,
-        &maybe_head_commit,
         commit_id,
         &mut commit_db,
         &dir_hash_db,
+        &dir_hashes,
         &vnode_entries,
     )?;
 
@@ -453,7 +460,7 @@ pub fn commit_dir_entries(
         .keys()
         .map(|path| path.to_path_buf())
         .collect::<Vec<_>>();
-    log::debug!("commit_dir_entries directories: {:?}", directories);
+    log::debug!("commit_dir_entries directories: {directories:?}");
 
     let mut existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
     if let Some(commit) = &maybe_head_commit {
@@ -487,36 +494,32 @@ pub fn commit_dir_entries(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
-    // Copy over the dir hashes from the previous commit
-    let mut parent_id: Option<MerkleHash> = None;
-    if let Some(commit) = &maybe_head_commit {
-        parent_id = Some(commit.hash()?);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        log::debug!(
-            "Copy over {} dir hashes from previous commit {}",
-            dir_hashes.len(),
-            commit
-        );
-        for (path, hash) in dir_hashes {
-            if let Some(path_str) = path.to_str() {
-                str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-            } else {
-                log::error!("Failed to convert path to string: {:?}", path);
-            }
+    let dir_hashes = match &maybe_head_commit {
+        Some(commit) => CommitMerkleTree::dir_hashes(repo, commit)?,
+        None => HashMap::new(),
+    };
+
+    for (path, hash) in &dir_hashes {
+        if let Some(path_str) = path.to_str() {
+            str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
+        } else {
+            log::error!("Failed to convert path to string: {path:?}");
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
     write_commit_entries(
         repo,
-        &maybe_head_commit,
         commit_id,
         &mut commit_db,
         &dir_hash_db,
+        &dir_hashes,
         &vnode_entries,
     )?;
     commit_progress_bar.finish_and_clear();
@@ -578,7 +581,7 @@ fn get_node_dir_children(
     base_dir: impl AsRef<Path>,
     node: &MerkleTreeNode,
 ) -> Result<HashSet<StagedMerkleTreeNode>, OxenError> {
-    let dir_children = CommitMerkleTree::node_files_and_folders(node)?;
+    let dir_children = repositories::tree::list_files_and_folders(node)?;
     let children = dir_children
         .into_iter()
         .flat_map(|child| node_data_to_staged_node(&base_dir, &child))
@@ -589,13 +592,16 @@ fn get_node_dir_children(
 }
 
 // This should return the directory to vnode mapping that we need to update
+// It also maps directories to removed files to update their metadata
+#[allow(clippy::type_complexity)]
 fn split_into_vnodes(
     repo: &LocalRepository,
     entries: &HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     existing_nodes: &HashMap<PathBuf, MerkleTreeNode>,
     new_commit: &NewCommitBody,
-) -> Result<HashMap<PathBuf, Vec<EntryVNode>>, OxenError> {
-    let mut results: HashMap<PathBuf, Vec<EntryVNode>> = HashMap::new();
+) -> Result<HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>, OxenError> {
+    let mut results: HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)> =
+        HashMap::new();
 
     if log::max_level() == log::Level::Debug {
         log::debug!("split_into_vnodes new_commit: {:?}", new_commit.message);
@@ -609,10 +615,11 @@ fn split_into_vnodes(
     // Create the VNode buckets per directory
     for (directory, new_children) in entries {
         let mut children = HashSet::new();
+        let mut removed_children = HashSet::new();
 
         // Lookup children in the existing merkle tree
         if let Some(existing_node) = existing_nodes.get(directory) {
-            log::debug!("got existing node for {:?}", directory);
+            log::debug!("got existing node for {directory:?}");
             children = get_node_dir_children(directory, existing_node)?;
             log::debug!(
                 "got {} existing children for dir {:?}",
@@ -620,7 +627,7 @@ fn split_into_vnodes(
                 directory
             );
         } else {
-            log::debug!("no existing node for {:?}", directory);
+            log::debug!("no existing node for {directory:?}");
         };
 
         log::debug!("new_children {}", new_children.len());
@@ -647,6 +654,7 @@ fn split_into_vnodes(
                                 child.node.maybe_path().unwrap()
                             );
                             children.remove(child);
+                            removed_children.insert(child.to_owned());
                         }
                         _ => {
                             log::debug!(
@@ -679,16 +687,11 @@ fn split_into_vnodes(
         let total_children = children.len();
         let vnode_size = repo.vnode_size();
         let num_vnodes = (total_children as f32 / vnode_size as f32).ceil() as u128;
-
         // Antoher way to do it would be log2(N / 10000) if we wanted it to scale more logarithmically
         // let num_vnodes = (total_children as f32 / 10000_f32).log2();
         // let num_vnodes = 2u128.pow(num_vnodes.ceil() as u32);
         log::debug!(
-            "{} VNodes for {} children in {:?} with vnode size {}",
-            num_vnodes,
-            total_children,
-            directory,
-            vnode_size
+            "{num_vnodes} VNodes for {total_children} children in {directory:?} with vnode size {vnode_size}"
         );
         let mut vnode_children: Vec<EntryVNode> =
             vec![EntryVNode::new(MerkleHash::new(0)); num_vnodes as usize];
@@ -747,7 +750,8 @@ fn split_into_vnodes(
         }
 
         // Sort before we hash
-        results.insert(directory.to_owned(), vnode_children);
+        let removed_children = removed_children.iter().cloned().collect();
+        results.insert(directory.to_owned(), (vnode_children, removed_children));
     }
 
     // Make sure to update all the vnode ids based on all their children
@@ -759,7 +763,7 @@ fn split_into_vnodes(
         new_commit.message
     );
     if log::max_level() == log::Level::Debug {
-        for (dir, vnodes) in results.iter_mut() {
+        for (dir, (vnodes, _)) in results.iter_mut() {
             log::debug!("dir {:?} has {} vnodes", dir, vnodes.len());
             for vnode in vnodes.iter_mut() {
                 log::debug!("  vnode {} has {} entries", vnode.id, vnode.entries.len());
@@ -792,16 +796,16 @@ fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError> {
 
 fn write_commit_entries(
     repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
     commit_id: MerkleHash,
     commit_db: &mut MerkleNodeDB,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
 ) -> Result<(), OxenError> {
     // Write the root dir, then recurse into the vnodes and subdirectories
     let mut total_written = 0;
     let root_path = PathBuf::from("");
-    let dir_node = compute_dir_node(repo, maybe_head_commit, commit_id, entries, &root_path)?;
+    let dir_node = compute_dir_node(repo, commit_id, entries, dir_hashes, &root_path)?;
     commit_db.add_child(&dir_node)?;
     total_written += 1;
 
@@ -813,10 +817,10 @@ fn write_commit_entries(
     let dir_db = MerkleNodeDB::open_read_write(repo, &dir_node, Some(commit_id))?;
     r_create_dir_node(
         repo,
-        maybe_head_commit,
         commit_id,
         &mut Some(dir_db),
         dir_hash_db,
+        dir_hashes,
         entries,
         root_path,
         &mut total_written,
@@ -828,24 +832,21 @@ fn write_commit_entries(
 #[allow(clippy::too_many_arguments)]
 fn r_create_dir_node(
     repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
     commit_id: MerkleHash,
     maybe_dir_db: &mut Option<MerkleNodeDB>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     path: impl AsRef<Path>,
     total_written: &mut u64,
 ) -> Result<(), OxenError> {
     let path = path.as_ref().to_path_buf();
 
     let keys = entries.keys();
-    log::debug!("r_create_dir_node path {:?} keys: {:?}", path, keys);
+    log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
 
-    let Some(vnodes) = entries.get(&path) else {
-        log::debug!(
-            "r_create_dir_node No entries found for directory {:?}",
-            path
-        );
+    let Some((vnodes, _)) = entries.get(&path) else {
+        log::debug!("r_create_dir_node No entries found for directory {path:?}");
         return Ok(());
     };
 
@@ -887,13 +888,8 @@ fn r_create_dir_node(
                     let dir_path = entry.node.maybe_path().unwrap();
                     // log::debug!("Processing dir node {:?}", dir_path);
                     let dir_node = if entries.contains_key(&dir_path) {
-                        let dir_node = compute_dir_node(
-                            repo,
-                            maybe_head_commit,
-                            commit_id,
-                            entries,
-                            &dir_path,
-                        )?;
+                        let dir_node =
+                            compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
 
                         // if let Some(vnode_db) = &mut maybe_vnode_db {
                         vnode_db.add_child(&dir_node)?;
@@ -918,10 +914,10 @@ fn r_create_dir_node(
 
                         r_create_dir_node(
                             repo,
-                            maybe_head_commit,
                             commit_id,
                             &mut child_db,
                             dir_hash_db,
+                            dir_hashes,
                             entries,
                             &dir_path,
                             total_written,
@@ -1008,17 +1004,13 @@ fn r_create_dir_node(
         }
     }
 
-    log::debug!(
-        "Finished processing dir {:?} total written {} entries",
-        path,
-        total_written
-    );
+    log::debug!("Finished processing dir {path:?} total written {total_written} entries");
 
     Ok(())
 }
 
 fn get_children(
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     dir_path: impl AsRef<Path>,
 ) -> Result<Vec<PathBuf>, OxenError> {
     let dir_path = dir_path.as_ref().to_path_buf();
@@ -1035,9 +1027,9 @@ fn get_children(
 
 fn compute_dir_node(
     repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
     commit_id: MerkleHash,
-    entries: &HashMap<PathBuf, Vec<EntryVNode>>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
     path: impl AsRef<Path>,
 ) -> Result<DirNode, OxenError> {
     let path = path.as_ref().to_path_buf();
@@ -1050,11 +1042,18 @@ fn compute_dir_node(
     let mut data_type_counts: HashMap<String, u64> = HashMap::new();
     let mut data_type_sizes: HashMap<String, u64> = HashMap::new();
 
-    // Collect the previous commit counts
-    if let Some(head_commit) = maybe_head_commit {
-        if let Ok(Some(old_dir_node)) =
-            CommitMerkleTree::dir_without_children(repo, head_commit, &path)
-        {
+    let children = get_children(entries, &path)?;
+    log::debug!(
+        "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"
+    );
+    let head_commit_maybe = repositories::commits::head_commit_maybe(repo)?;
+    if let Some(head_commit) = head_commit_maybe {
+        if let Ok(Some(old_dir_node)) = repositories::tree::get_dir_without_children(
+            repo,
+            &head_commit,
+            &path,
+            Some(dir_hashes),
+        ) {
             let old_dir_node = old_dir_node.dir().unwrap();
             num_entries = old_dir_node.num_entries();
             num_bytes = old_dir_node.num_bytes();
@@ -1063,51 +1062,42 @@ fn compute_dir_node(
         };
     }
 
-    let children = get_children(entries, &path)?;
-    log::debug!(
-        "Aggregating dir {:?} for [{}] with {:?} children num_bytes {:?} data_type_counts {:?}",
-        path,
-        commit_id,
-        children,
-        num_bytes,
-        data_type_counts
-    );
     for child in children.iter() {
-        let Some(vnodes) = entries.get(child) else {
-            let err_msg = format!("compute_dir_node No entries found for directory {:?}", path);
+        let Some((vnodes, removed_entries)) = entries.get(child) else {
+            let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
             return Err(OxenError::basic_str(err_msg));
         };
-        log::debug!(
-            "Aggregating dir {:?} child {:?} with {} vnodes",
-            path,
-            child,
-            vnodes.len()
-        );
+        // log::debug!(
+        //     "Aggregating dir {:?} child {:?} with {} vnodes",
+        //     path,
+        //     child,
+        //     vnodes.len()
+        // );
         for vnode in vnodes.iter() {
-            log::debug!("Aggregating vnode entries {:?}", vnode.entries.len());
+            // log::debug!("Aggregating vnode entries {:?}", vnode.entries.len());
             for entry in vnode.entries.iter() {
-                log::debug!("Aggregating entry {}", entry.node);
+                // log::debug!("Aggregating entry {}", entry.node);
                 match &entry.node.node {
                     EMerkleTreeNode::Directory(dir_node) => {
                         if path == *child {
                             num_entries += 1;
                         }
-                        log::debug!(
-                            "Updating hash for dir {} -> hash {} status {:?}",
-                            dir_node.name(),
-                            dir_node.hash(),
-                            entry.status
-                        );
+                        // log::debug!(
+                        //     "Updating hash for dir {} -> hash {} status {:?}",
+                        //     dir_node.name(),
+                        //     dir_node.hash(),
+                        //     entry.status
+                        // );
                         hasher.update(dir_node.name().as_bytes());
                         hasher.update(&dir_node.hash().to_le_bytes());
                     }
                     EMerkleTreeNode::File(file_node) => {
-                        log::debug!(
-                            "Updating hash for file {} -> hash {} status {:?}",
-                            file_node.name(),
-                            file_node.hash(),
-                            entry.status
-                        );
+                        // log::debug!(
+                        //     "Updating hash for file {} -> hash {} status {:?}",
+                        //     file_node.name(),
+                        //     file_node.hash(),
+                        //     entry.status
+                        // );
                         hasher.update(file_node.name().as_bytes());
                         hasher.update(&file_node.combined_hash().to_le_bytes());
 
@@ -1124,18 +1114,6 @@ fn compute_dir_node(
                                     .entry(file_node.data_type().to_string())
                                     .or_insert(0) += file_node.num_bytes();
                             }
-                            StagedEntryStatus::Removed => {
-                                num_bytes -= file_node.num_bytes();
-                                if path == *child {
-                                    num_entries -= 1;
-                                }
-                                *data_type_counts
-                                    .entry(file_node.data_type().to_string())
-                                    .or_insert(1) -= 1;
-                                *data_type_sizes
-                                    .entry(file_node.data_type().to_string())
-                                    .or_insert(0) -= file_node.num_bytes();
-                            }
                             _ => {
                                 // Do nothing
                             }
@@ -1150,17 +1128,45 @@ fn compute_dir_node(
                 }
             }
         }
+        // Adjust dir node metadata for removed entries
+        for entry in removed_entries.iter() {
+            match &entry.node.node {
+                EMerkleTreeNode::Directory(_) => {
+                    // Do nothing
+                }
+                EMerkleTreeNode::File(_) => {
+                    // log::debug!(
+                    //     "Updating hash for file {} -> hash {} status {:?}",
+                    //     file_node.name(),
+                    //     file_node.hash(),
+                    //     entry.status
+                    // );
+
+                    match entry.status {
+                        StagedEntryStatus::Removed => {
+                            if path == *child {
+                                num_entries -= 1;
+                            }
+                        }
+                        _ => {
+                            // Do nothing
+                        }
+                    }
+                }
+                _ => {
+                    return Err(OxenError::basic_str(format!(
+                        "compute_dir_node found unexpected node type: {:?}",
+                        entry.node
+                    )));
+                }
+            }
+        }
     }
 
     let hash = MerkleHash::new(hasher.digest128());
     let file_name = path.file_name().unwrap_or_default().to_str().unwrap();
     log::debug!(
-        "Aggregated dir {:?} [{}] num_bytes {:?} num_entries {:?} data_type_counts {:?}",
-        path,
-        hash,
-        num_bytes,
-        num_entries,
-        data_type_counts
+        "Aggregated dir {path:?} [{hash}] num_bytes {num_bytes:?} num_entries {num_entries:?} data_type_counts {data_type_counts:?}"
     );
 
     let node = DirNode::new(
@@ -1610,9 +1616,9 @@ mod tests {
                 let new_file = repo
                     .path
                     .join("files")
-                    .join(format!("dir_{}", dir_num))
-                    .join(format!("new_file_{}.txt", i));
-                util::fs::write_to_path(&new_file, format!("New fileeeee {}", i))?;
+                    .join(format!("dir_{dir_num}"))
+                    .join(format!("new_file_{i}.txt"));
+                util::fs::write_to_path(&new_file, format!("New fileeeee {i}"))?;
                 repositories::add(&repo, &new_file).await?;
             }
 
@@ -1634,8 +1640,8 @@ mod tests {
             for i in 0..10 {
                 let dir_num = i % 2;
                 let file_path = Path::new("files")
-                    .join(format!("dir_{}", dir_num))
-                    .join(format!("new_file_{}.txt", i));
+                    .join(format!("dir_{dir_num}"))
+                    .join(format!("new_file_{i}.txt"));
 
                 let file_node = second_tree.get_by_path(&file_path)?;
                 assert!(file_node.is_some());
@@ -1791,7 +1797,7 @@ mod tests {
             let dir_hashes = CommitMerkleTree::dir_hashes(&repo, &third_commit)?;
 
             for (path, hash) in dir_hashes {
-                println!("dir_hash: {:?} {}", path, hash);
+                println!("dir_hash: {path:?} {hash}");
                 let node = third_tree.get_by_path(&path)?.unwrap();
                 assert_eq!(node.hash, hash);
             }

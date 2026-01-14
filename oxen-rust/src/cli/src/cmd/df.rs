@@ -249,13 +249,13 @@ impl RunCmd for DFCmd {
 
         if let Some(revision) = args.get_one::<String>("revision") {
             let repo = LocalRepository::from_current_dir()?;
-            command::df::df_revision(&repo, path, revision, opts)?;
+            command::df::df_revision(&repo, path, revision, opts).await?;
         } else if args.get_flag("schema") || args.get_flag("schema-flat") {
             let flatten = args.get_flag("schema-flat");
             let result = command::df::schema(path, flatten, opts)?;
             println!("{result}");
         } else {
-            command::df(path, opts)?;
+            command::df(path, opts).await?;
         }
 
         Ok(())

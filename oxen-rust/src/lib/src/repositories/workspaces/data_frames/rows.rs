@@ -17,7 +17,7 @@ use sql_query_builder::Select;
 use crate::constants::{DIFF_STATUS_COL, OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::core::db;
 
-use crate::core::db::data_frames::df_db;
+use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::model::staged_row_status::StagedRowStatus;
 use crate::model::LocalRepository;
 
@@ -96,7 +96,7 @@ pub fn delete(
     }
 }
 
-pub fn restore(
+pub async fn restore(
     repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
@@ -106,6 +106,7 @@ pub fn restore(
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
             core::v_latest::workspaces::data_frames::rows::restore(workspace, path.as_ref(), row_id)
+                .await
         }
     }
 }
@@ -118,15 +119,17 @@ pub fn get_by_id(
     let path = path.as_ref();
     let row_id = row_id.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("get_row_by_id() got db_path: {:?}", db_path);
-    let conn = df_db::get_connection(db_path)?;
-
-    let query = Select::new()
-        .select("*")
-        .from(TABLE_NAME)
-        .where_clause(&format!("{} = '{}'", OXEN_ID_COL, row_id));
-    let data = df_db::select(&conn, &query, None)?;
-    log::debug!("get_row_by_id() got data: {:?}", data);
+    log::debug!("get_row_by_id() got db_path: {db_path:?}");
+    let data = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            let query = Select::new()
+                .select("*")
+                .from(TABLE_NAME)
+                .where_clause(&format!("{OXEN_ID_COL} = '{row_id}'"));
+            df_db::select(conn, &query, None)
+        })
+    })?;
+    log::debug!("get_row_by_id() got data: {data:?}");
     Ok(data)
 }
 
@@ -170,7 +173,7 @@ pub fn get_row_idx(row_df: &DataFrame) -> Result<Option<usize>, OxenError> {
             AnyValue::Int32(val) => Ok(Some(val as usize)),
             AnyValue::Int64(val) => Ok(Some(val as usize)),
             val => {
-                log::debug!("unrecognized row index type {:?}", val);
+                log::debug!("unrecognized row index type {val:?}");
                 Ok(None)
             }
         }

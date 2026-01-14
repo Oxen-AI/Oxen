@@ -5,31 +5,38 @@ use crate::core::versions::MinOxenVersion;
 use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
+use crate::opts::StorageOpts;
 use crate::storage::{create_version_store, StorageConfig, VersionStore};
 use crate::util;
 use crate::view::RepositoryView;
 
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LocalRepository {
+    #[schema(value_type = String)]
     pub path: PathBuf,
     // Optional remotes to sync the data to
     remote_name: Option<String>, // name of the current remote ("origin" by default)
     min_version: Option<String>, // write the version if it is past v0.18.4
     remotes: Vec<Remote>,        // List of possible remotes
     vnode_size: Option<u64>,     // Size of the vnodes
+    #[schema(value_type = Option<Vec<String>>)]
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     pub depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
+    pub vfs: Option<bool>,  // Flag for repositories stored on virtual file systems
     pub remote_mode: Option<bool>, // Flag for remote repositories
     pub workspace_name: Option<String>, // ID of the associated workspace for remote mode
     workspaces: Option<Vec<String>>, // List of workspaces for remote mode
 
     // Skip this field during serialization/deserialization
     #[serde(skip)]
+    #[schema(ignore)]
     version_store: Option<Arc<dyn VersionStore>>,
 }
 
@@ -55,15 +62,20 @@ impl LocalRepository {
             subtree_paths: config.subtree_paths.clone(),
             depth: config.depth,
             version_store: None,
+            vfs: config.vfs,
             remote_mode: config.remote_mode,
             workspace_name: config.workspace_name,
             workspaces: config.workspaces,
         };
 
         // Initialize the version store based on config
-        let store = create_version_store(&repo.path, config.storage.as_ref())?;
+        let storage_opts = if let Some(storage_config) = config.storage {
+            StorageOpts::from_repo_config(&repo, &storage_config)?
+        } else {
+            StorageOpts::from_path(&repo.path, true)
+        };
+        let store = create_version_store(&repo.path, &storage_opts)?;
         repo.version_store = Some(store);
-
         Ok(repo)
     }
 
@@ -75,24 +87,29 @@ impl LocalRepository {
         }
     }
 
-    /// Initialize the version store if not already set
-    pub fn init_version_store(&mut self) -> Result<(), OxenError> {
-        if self.version_store.is_none() {
-            // Load config to get storage settings
-            let config_path = util::fs::config_filepath(&self.path);
-            let config = RepositoryConfig::from_file(&config_path)?;
-
-            // Create and initialize the store
-            let store = create_version_store(&self.path, config.storage.as_ref())?;
-            self.version_store = Some(store);
-        }
+    pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+        let store = create_version_store(&self.path, storage_opts)?;
+        self.version_store = Some(store);
         Ok(())
     }
 
     /// Initialize the default version store
+    /// this will be a local storage backend
     pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
-        let store = create_version_store(&self.path, None)?;
+        let storage_opts = StorageOpts::from_path(&self.path, true);
+
+        // Create and initialize the store
+        let store = create_version_store(&self.path, &storage_opts)?;
         self.version_store = Some(store);
+        Ok(())
+    }
+
+    /// Initialize local version store at a new location
+    pub async fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
+        let version_store = create_version_store(&self.path, storage_opts)?;
+        version_store.init().await?;
+        self.version_store = Some(version_store);
+
         Ok(())
     }
 
@@ -108,7 +125,10 @@ impl LocalRepository {
     /// Instantiate a new repository at a given path
     /// Note: Does not create the repository on disk, or read the config file, just instantiates the struct
     /// To load the repository, use `LocalRepository::from_dir` or `LocalRepository::from_current_dir`
-    pub fn new(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
+    pub fn new(
+        path: impl AsRef<Path>,
+        storage_opts: Option<StorageOpts>,
+    ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
             // No remotes are set yet
@@ -120,12 +140,17 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
         };
 
-        repo.init_default_version_store()?;
+        if let Some(storage_opts) = storage_opts {
+            repo.init_version_store(&storage_opts)?;
+        } else {
+            repo.init_default_version_store()?;
+        }
         Ok(repo)
     }
 
@@ -133,6 +158,7 @@ impl LocalRepository {
     pub fn new_from_version(
         path: impl AsRef<Path>,
         min_version: impl AsRef<str>,
+        storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
@@ -143,12 +169,17 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
         };
 
-        repo.init_default_version_store()?;
+        if let Some(storage_opts) = storage_opts {
+            repo.init_version_store(&storage_opts)?;
+        } else {
+            repo.init_default_version_store()?;
+        }
         Ok(repo)
     }
 
@@ -162,6 +193,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
@@ -181,6 +213,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
@@ -194,7 +227,7 @@ impl LocalRepository {
         match MinOxenVersion::or_earliest(self.min_version.clone()) {
             Ok(version) => version,
             Err(err) => {
-                panic!("Invalid repo version\n{}", err)
+                panic!("Invalid repo version\n{err}")
             }
         }
     }
@@ -258,15 +291,55 @@ impl LocalRepository {
         self.remote_mode.unwrap_or(false)
     }
 
+    pub fn is_vfs(&self) -> bool {
+        self.vfs.unwrap_or(false)
+    }
+
+    pub fn set_vfs(&mut self, is_vfs: Option<bool>) {
+        self.vfs = is_vfs;
+    }
+
     /// Save the repository configuration to disk
     pub fn save(&self) -> Result<(), OxenError> {
         let config_path = util::fs::config_filepath(&self.path);
 
         // Determine the current storage type and settings using the trait methods
-        let storage = self.version_store.as_ref().map(|store| StorageConfig {
-            type_: store.storage_type().to_string(),
-            settings: store.storage_settings(),
-        });
+        let storage = self
+            .version_store
+            .as_ref()
+            .map(|store| -> Result<StorageConfig, OxenError> {
+                let settings = store.storage_settings();
+                match store.storage_type() {
+                    "local" => {
+                        let path = settings.get("path").ok_or_else(|| {
+                            OxenError::basic_str("Storage settings missing 'path' key")
+                        })?;
+                        let storage_path = if util::fs::is_relative_to_dir(
+                            path,
+                            util::fs::oxen_hidden_dir(&self.path),
+                        ) {
+                            // If path is within .oxen (default location), use the relative path in case the repo was moved
+                            util::fs::path_relative_to_dir(path, &self.path)
+                                .unwrap()
+                                .to_string_lossy()
+                                .into_owned()
+                        } else {
+                            // Otherwise, use the absolute path
+                            path.clone()
+                        };
+
+                        Ok(StorageConfig {
+                            type_: store.storage_type().to_string(),
+                            settings: HashMap::from([("path".to_string(), storage_path)]),
+                        })
+                    }
+                    _ => Ok(StorageConfig {
+                        type_: store.storage_type().to_string(),
+                        settings,
+                    }),
+                }
+            })
+            .transpose()?;
 
         let config = RepositoryConfig {
             remote_name: self.remote_name.clone(),
@@ -276,6 +349,7 @@ impl LocalRepository {
             min_version: self.min_version.clone(),
             vnode_size: self.vnode_size,
             storage,
+            vfs: self.vfs,
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),
@@ -351,13 +425,13 @@ impl LocalRepository {
         let workspace_name = name.as_ref();
         let workspaces = self.workspaces.clone().unwrap_or_default();
 
-        let mut new_workspaces = vec![];
+        let mut new_workspaces = HashSet::new();
         for workspace in workspaces {
-            new_workspaces.push(workspace.clone());
+            new_workspaces.insert(workspace.clone());
         }
 
-        new_workspaces.push(workspace_name.to_string());
-        self.workspaces = Some(new_workspaces);
+        new_workspaces.insert(workspace_name.to_string());
+        self.workspaces = Some(new_workspaces.iter().cloned().collect());
     }
 
     pub fn delete_workspace(&mut self, name: impl AsRef<str>) -> Result<(), OxenError> {
@@ -365,8 +439,7 @@ impl LocalRepository {
 
         if self.workspaces.is_none() {
             return Err(OxenError::basic_str(format!(
-                "Error: Cannot delete workspace {:?} as it does not exist",
-                name
+                "Error: Cannot delete workspace {name:?} as it does not exist"
             )));
         }
 
@@ -399,8 +472,7 @@ impl LocalRepository {
                 .contains(&workspace_name.to_string())
     }
 
-    // TODO: Right ow, this doesn't need to return a result
-    // Define setting a workspace that's not in the workspaces vec to be an error?
+    // TODO: Should we define setting a workspace that's not in the workspaces vec to be an error?
     pub fn set_workspace(&mut self, name: impl AsRef<str>) -> Result<(), OxenError> {
         let workspace_name = name.as_ref();
 
@@ -409,7 +481,7 @@ impl LocalRepository {
             .clone()
             .unwrap()
             .iter()
-            .find(|ws| ws.starts_with(&format!("{}: ", workspace_name)))
+            .find(|ws| ws.starts_with(&format!("{workspace_name}: ")))
         {
             self.workspace_name = Some(ws_name.to_string());
         } else {
@@ -417,6 +489,14 @@ impl LocalRepository {
             self.workspace_name = Some(workspace_name.to_string());
         }
         Ok(())
+    }
+
+    pub fn num_workspaces(&self) -> usize {
+        if let Some(workspaces) = &self.workspaces {
+            workspaces.len()
+        } else {
+            0
+        }
     }
 
     pub fn write_is_shallow(&self, shallow: bool) -> Result<(), OxenError> {
@@ -436,7 +516,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::{LocalRepository, RepoNew};
     use crate::test;
-    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[test]
     fn test_get_dirname_from_url() -> Result<(), OxenError> {
@@ -485,8 +565,9 @@ mod tests {
     // Do we want to require that?
     #[test]
     fn test_add_workspace() -> Result<(), OxenError> {
-        let repo_path = PathBuf::from("repo_path");
-        let mut repo = LocalRepository::new(repo_path)?;
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
+        let mut repo = LocalRepository::new(repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -501,9 +582,23 @@ mod tests {
     }
 
     #[test]
+    fn test_cannot_add_repeat_workspace() -> Result<(), OxenError> {
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
+        let mut repo = LocalRepository::new(repo_path, None)?;
+
+        let sample_name = "sample";
+        repo.add_workspace(sample_name);
+        assert_eq!(repo.num_workspaces(), 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_delete_workspace() -> Result<(), OxenError> {
-        let repo_path = PathBuf::from("repo_path");
-        let mut repo = LocalRepository::new(repo_path)?;
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
+        let mut repo = LocalRepository::new(repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);

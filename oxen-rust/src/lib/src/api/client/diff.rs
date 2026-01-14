@@ -69,6 +69,7 @@ mod tests {
     use crate::model::diff::generic_diff_summary::GenericDiffSummary;
     use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::model::EntryDataType;
+    use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
@@ -118,14 +119,14 @@ mod tests {
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
 
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -135,7 +136,7 @@ mod tests {
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_none());
@@ -200,13 +201,14 @@ mod tests {
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -216,7 +218,7 @@ mod tests {
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -285,8 +287,14 @@ mod tests {
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(&repo, constants::DEFAULT_REMOTE_NAME, branch_name).await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -296,7 +304,7 @@ mod tests {
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -343,12 +351,13 @@ mod tests {
             }
 
             let diff = compare.diff.as_ref().unwrap();
+            println!("diff: {diff:#?}");
             match diff {
                 GenericDiff::TabularDiff(diff) => {
-                    assert_eq!(diff.tabular.added_rows.as_ref().unwrap().view_size.height, 2);
                     assert!(diff.tabular.added_cols.as_ref().is_none());
                     assert!(diff.tabular.removed_cols.as_ref().is_none());
-                    assert!(diff.tabular.removed_rows.as_ref().is_none());
+                    assert_eq!(diff.tabular.added_rows.as_ref().unwrap().view_size.height, 2);
+                    assert_eq!(diff.tabular.removed_rows.as_ref().unwrap().view_size.height, 0);
                 }
                 _ => panic!("Wrong summary type"),
             }
@@ -406,13 +415,14 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -422,7 +432,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -545,13 +555,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -561,7 +572,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -677,13 +688,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
@@ -693,7 +705,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("compare: {:#?}", compare);
+            println!("compare: {compare:#?}");
 
             // Make sure base entry is empty
             assert!(compare.base_entry.is_some());
@@ -779,12 +791,12 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding columns to train.csv")?;
 
             // Push it real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -882,13 +894,14 @@ who won the game?,The packers beat up on the bears,packers
             // let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -899,7 +912,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 4 dogs, one dir
             assert_eq!(compare.entries.len(), 5);
@@ -996,13 +1009,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1013,7 +1027,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 4 dogs, modified 1 cat, removed 1 cat, three dirs
             assert_eq!(compare.entries.len(), 9);
@@ -1244,13 +1258,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1261,7 +1276,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Removed 3 cats, two parent dirs
             assert_eq!(compare.entries.len(), 5);
@@ -1357,13 +1372,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1374,7 +1390,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 3 dogs, 3 parent dirs
             assert_eq!(compare.entries.len(), 6);
@@ -1496,13 +1512,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1513,7 +1530,7 @@ who won the game?,The packers beat up on the bears,packers
             )
             .await?;
 
-            println!("COMPARE: {:#?}", compare);
+            println!("COMPARE: {compare:#?}");
 
             // Added 3 dogs, added 1 dwight/vince, 3 parent dirs
             assert_eq!(compare.entries.len(), 7);
@@ -1741,13 +1758,14 @@ who won the game?,The packers beat up on the bears,packers
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push new branch real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
@@ -1851,13 +1869,14 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding dwight and vince")?;
 
+            let opts = PushOpts {
+                remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                branch: branch_name.to_string(),
+                ..Default::default()
+            };
+
             // Push it real good
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                branch_name,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,

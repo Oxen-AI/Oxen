@@ -9,11 +9,14 @@ use crate::util;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::FileNode;
+use crate::view::ErrorFileInfo;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use rocksdb::IteratorMode;
 use tokio::time::Duration;
 
+use crate::core::staged::with_staged_db_manager;
+use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::core::v_latest::add::CumulativeStats;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
@@ -23,6 +26,7 @@ use crate::constants::STAGED_DIR;
 use crate::model::Commit;
 use crate::model::StagedEntryStatus;
 
+use parking_lot::Mutex;
 use rmp_serde::Serializer;
 use serde::Serialize;
 
@@ -81,16 +85,16 @@ fn remove_staged_recursively_inner(
         match item {
             Ok((key, _)) => match str::from_utf8(&key) {
                 Ok(key) => {
-                    log::debug!("considering key: {:?}", key);
+                    log::debug!("considering key: {key:?}");
                     for path in paths {
                         let path = util::fs::path_relative_to_dir(path, &repo.path)?;
                         let db_path = PathBuf::from(key);
-                        log::debug!("considering rm db_path: {:?} for path: {:?}", db_path, path);
+                        log::debug!("considering rm db_path: {db_path:?} for path: {path:?}");
                         if db_path.starts_with(&path) && path != PathBuf::from("") {
                             let mut parent = db_path.parent().unwrap_or(Path::new(""));
                             remove_staged_entry(&db_path, staged_db)?;
                             while parent != Path::new("") {
-                                log::debug!("maybe cleaning up empty dir: {:?}", parent);
+                                log::debug!("maybe cleaning up empty dir: {parent:?}");
                                 cleanup_empty_dirs(parent, staged_db)?;
                                 parent = parent.parent().unwrap_or(Path::new(""));
                                 if parent == Path::new("") {
@@ -127,7 +131,7 @@ fn list_modified_files(
     let opts = StagedDataOpts::from_paths(&paths_vec);
     let status = repositories::status::status_from_opts(repo, &opts)?;
     log::debug!("status modified_files: {:?}", status.modified_files);
-    log::debug!("paths: {:?}", paths);
+    log::debug!("paths: {paths:?}");
     let modified: Vec<PathBuf> = status
         .modified_files
         .into_iter()
@@ -149,7 +153,7 @@ fn cleanup_empty_dirs(
         match item {
             Ok((key, _)) => match str::from_utf8(&key) {
                 Ok(key) => {
-                    log::debug!("considering key: {:?}", key);
+                    log::debug!("considering key: {key:?}");
                     let db_path = PathBuf::from(key);
                     if db_path.starts_with(path) && path != db_path {
                         total += 1;
@@ -170,7 +174,7 @@ fn cleanup_empty_dirs(
     }
     log::debug!("total sub paths for dir {path:?}: {total}");
     if total == 0 {
-        log::debug!("removing empty dir: {:?}", path);
+        log::debug!("removing empty dir: {path:?}");
         staged_db.delete(path.to_str().unwrap())?;
     }
     Ok(())
@@ -182,7 +186,7 @@ fn remove_staged_inner(
     rm_opts: &RmOpts,
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<(), OxenError> {
-    log::debug!("remove_staged paths {:?}", paths);
+    log::debug!("remove_staged paths {paths:?}");
     for path in paths {
         let relative_path = util::fs::path_relative_to_dir(path, &repo.path)?;
         let Some(entry) = get_staged_entry(&relative_path, staged_db)? else {
@@ -225,11 +229,7 @@ fn remove_staged_entry(
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<(), OxenError> {
-    log::debug!(
-        "remove_staged path: {:?} from staged db {:?}",
-        path,
-        staged_db
-    );
+    log::debug!("remove_staged path: {path:?} from staged db {staged_db:?}");
     staged_db.delete(path.to_str().unwrap())?;
     Ok(())
 }
@@ -248,7 +248,6 @@ fn remove_file_inner(
         data_type_counts: HashMap::new(),
     };
 
-    // TODO: This is ugly, but the only current solution to get the stats from the removed file
     match process_remove_file_and_parents(repo, &path, staged_db, file_node) {
         Ok(Some(node)) => {
             if let EMerkleTreeNode::File(file_node) = &node.node.node {
@@ -263,7 +262,7 @@ fn remove_file_inner(
             Ok(total)
         }
         Err(e) => {
-            let error = format!("Error adding file {path:?}: {:?}", e);
+            let error = format!("Error adding file {path:?}: {e:?}");
             Err(OxenError::basic_str(error))
         }
         _ => {
@@ -284,6 +283,121 @@ pub fn remove_file(
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
     remove_file_inner(repo, path, file_node, &staged_db)
+}
+
+pub fn remove_file_with_db_manager(
+    repo: &LocalRepository,
+    path: &Path,
+    file_node: &FileNode,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
+
+    let _ = with_staged_db_manager(repo, |staged_db_manager| {
+        let status = StagedEntryStatus::Removed;
+        match add_file_node_and_parent_dir(file_node, status, path, staged_db_manager, seen_dirs) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                err_files.push(ErrorFileInfo {
+                    hash: file_node.hash().to_string(),
+                    path: Some(path.to_path_buf()),
+                    error: format!("Failed to add file to staged db: {e}"),
+                });
+                Err(e)
+            }
+        }
+    });
+
+    Ok(err_files)
+}
+
+// TODO: Refactor to capture err files
+pub fn remove_dir_with_db_manager(
+    repo: &LocalRepository,
+    root_dir: &MerkleTreeNode,
+    root_path: &Path,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<(), OxenError> {
+    let empty_path = PathBuf::new();
+    let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
+    // let err_files: Vec<ErrorFileInfo> = vec![];
+
+    let result = with_staged_db_manager(repo, |staged_db_manager| {
+        // Walk the tree, collecting every node under the dir
+        let nodes = root_dir.list_files_and_dirs()?;
+        let parent_path = root_path.parent().unwrap_or(&empty_path);
+
+        for (path, node) in nodes {
+            let path = parent_path.join(path);
+            let corrected_node = match &node.node {
+                EMerkleTreeNode::File(ref file_node) => {
+                    let mut file_node = file_node.clone();
+                    file_node.set_name(&path.to_string_lossy());
+                    MerkleTreeNode {
+                        hash: node.hash,
+                        node: EMerkleTreeNode::File(file_node.clone()),
+                        parent_id: node.parent_id,
+                        children: node.children.clone(),
+                    }
+                }
+
+                EMerkleTreeNode::Directory(ref dir_node) => {
+                    let mut dir_node = dir_node.clone();
+                    dir_node.set_name(path.to_string_lossy());
+                    MerkleTreeNode {
+                        hash: node.hash,
+                        node: EMerkleTreeNode::Directory(dir_node.clone()),
+                        parent_id: node.parent_id,
+                        children: node.children.clone(),
+                    }
+                }
+                _ => {
+                    return Err(OxenError::basic_str("Error: Unexpected node type"));
+                }
+            };
+
+            let staged_node = StagedMerkleTreeNode {
+                status: StagedEntryStatus::Removed,
+                node: corrected_node,
+            };
+
+            staged_nodes.insert(path, staged_node);
+        }
+
+        log::debug!("staged_nodes: {}", staged_nodes.len());
+
+        // Stage the root dir's parents
+        let mut parent_path = root_path.to_path_buf();
+        while let Some(parent) = parent_path.parent() {
+            parent_path = parent.to_path_buf();
+
+            match staged_db_manager.add_directory(&parent_path, seen_dirs) {
+                Ok(_) => {}
+                Err(e) => {
+                    log::debug!("Error adding parent dirs: {e:?}");
+                    return Err(e);
+                }
+            }
+
+            if parent_path == Path::new("") {
+                break;
+            }
+        }
+
+        // Write all files to staged db
+        match staged_db_manager.upsert_staged_nodes(&staged_nodes) {
+            Ok(_) => {
+                log::debug!("Successfully upserted staged nodes");
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to upsert staged nodes due to error: {e:?}");
+                Err(e)
+            }
+        }
+    });
+
+    result
 }
 
 // Stages the file_node as removed, and all its parents in the repo as modified
@@ -307,7 +421,7 @@ fn process_remove_file_and_parents(
     log::debug!("Staged entry is: {staged_entry}");
 
     // Write removed node to staged db
-    log::debug!("writing removed file to staged db: {}", staged_entry);
+    log::debug!("writing removed file to staged db: {staged_entry}");
     let mut buf = Vec::new();
     staged_entry
         .serialize(&mut Serializer::new(&mut buf))
@@ -329,7 +443,7 @@ fn process_remove_file_and_parents(
             node: MerkleTreeNode::default_dir_from_path(&relative_path),
         };
 
-        log::debug!("writing dir to staged db: {}", dir_entry);
+        log::debug!("writing dir to staged db: {dir_entry}");
         let mut buf = Vec::new();
         dir_entry.serialize(&mut Serializer::new(&mut buf)).unwrap();
         staged_db.put(relative_path_str, &buf).unwrap();
@@ -342,8 +456,6 @@ fn process_remove_file_and_parents(
     Ok(Some(staged_entry))
 }
 
-// WARNING: This logic relies on the paths in `paths` being either full paths or the correct relative paths to each file relative to the repo
-// This is not necessarily a safe assumption, and probably needs to be handled oxen-wide
 fn remove_inner(
     paths: &HashSet<PathBuf>,
     repo: &LocalRepository,
@@ -351,7 +463,6 @@ fn remove_inner(
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<CumulativeStats, OxenError> {
     let start = std::time::Instant::now();
-    log::debug!("paths: {:?}", paths);
 
     // Head commit should always exist here, because we're removing committed files
     let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? else {
@@ -371,7 +482,7 @@ fn remove_inner(
 
         let parent_path = path.parent().unwrap_or(Path::new(""));
         let parent_node: MerkleTreeNode = if let Some(dir_node) =
-            CommitMerkleTree::dir_with_children(repo, &head_commit, parent_path)?
+            CommitMerkleTree::dir_with_children(repo, &head_commit, parent_path, None)?
         {
             dir_node
         } else {
@@ -379,11 +490,8 @@ fn remove_inner(
             return Err(OxenError::basic_str(error));
         };
 
-        log::debug!("Path is: {path:?}");
-
         // Get file name without parent paths for lookup in Merkle Tree
         let relative_path = util::fs::path_relative_to_dir(path.clone(), parent_path)?;
-        log::debug!("Relative path is: {relative_path:?}");
 
         // Lookup node in Merkle Tree
         if let Some(node) = parent_node.get_by_path(relative_path.clone())? {
@@ -396,7 +504,7 @@ fn remove_inner(
                 total += remove_dir_inner(repo, &head_commit, &path, staged_db)?;
                 // Remove dir from working directory
                 let full_path = repo.path.join(path);
-                log::debug!("REMOVING DIR: {full_path:?}");
+                log::debug!("Removing directory: {full_path:?}");
                 if full_path.exists() {
                     // user might have removed dir manually before using `oxen rm`
                     if full_path != repo.path && full_path != repo.path.join(OXEN_HIDDEN_DIR) {
@@ -409,7 +517,7 @@ fn remove_inner(
             } else if let EMerkleTreeNode::File(file_node) = &node.node {
                 total += remove_file_inner(repo, &path, file_node, staged_db)?;
                 let full_path = repo.path.join(path);
-                log::debug!("REMOVING FILE: {full_path:?}");
+                log::debug!("Removing file: {full_path:?}");
                 if full_path.exists() {
                     // user might have removed file manually before using `oxen rm`
                     util::fs::remove_file(&full_path)?;
@@ -426,7 +534,7 @@ fn remove_inner(
 
     // Stop the timer, and round the duration to the nearest second
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
-    log::debug!("---END--- oxen rm: {:?} duration: {:?}", paths, duration);
+    log::debug!("---END--- oxen rm: {paths:?} duration: {duration:?}");
 
     // TODO: Add function to CumulativeStats to output that print statement
     println!(
@@ -455,7 +563,7 @@ pub fn process_remove_file(
     };
 
     // Write removed node to staged db
-    log::debug!("writing removed file to staged db: {}", staged_entry);
+    log::debug!("writing removed file to staged db: {staged_entry}");
     let mut buf = Vec::new();
     staged_entry
         .serialize(&mut Serializer::new(&mut buf))
@@ -473,7 +581,7 @@ fn remove_dir_inner(
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<CumulativeStats, OxenError> {
-    let dir_node = match CommitMerkleTree::dir_with_children_recursive(repo, commit, path)? {
+    let dir_node = match CommitMerkleTree::dir_with_children_recursive(repo, commit, path, None)? {
         Some(node) => node,
         None => {
             let error = format!("Error: {path:?} must be committed in order to use `oxen rm`");
@@ -540,7 +648,7 @@ fn process_remove_dir(
             node: MerkleTreeNode::default_dir_from_path(&relative_path),
         };
 
-        log::debug!("writing dir to staged db: {}", dir_entry);
+        log::debug!("writing dir to staged db: {dir_entry}");
         let mut buf = Vec::new();
         dir_entry.serialize(&mut Serializer::new(&mut buf)).unwrap();
         staged_db.put(relative_path_str, &buf).unwrap();
@@ -556,7 +664,6 @@ fn process_remove_dir(
 }
 
 // Recursively remove all files and directories starting from a particular directory
-// WARNING: This function relies on the initial dir having the correct relative path to the repo
 
 // TODO: Refactor to singular match statement/loop
 // TODO: Currently, this function is only called sequentially. Consider using Arc/AtomicU64 to parallelize
@@ -605,7 +712,7 @@ fn r_process_remove_dir(
                         }
                     }
                     Err(e) => {
-                        let error = format!("Error adding file {new_path:?}: {:?}", e);
+                        let error = format!("Error adding file {new_path:?}: {e:?}");
                         return Err(OxenError::basic_str(error));
                     }
                     _ => {
@@ -631,7 +738,7 @@ fn r_process_remove_dir(
             };
 
             // Write removed node to staged db
-            log::debug!("writing removed dir to staged db: {}", staged_entry);
+            log::debug!("writing removed dir to staged db: {staged_entry}");
             let mut buf = Vec::new();
             staged_entry
                 .serialize(&mut Serializer::new(&mut buf))

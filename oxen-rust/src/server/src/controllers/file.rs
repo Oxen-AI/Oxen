@@ -1,116 +1,226 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{create_user_from_options, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
 
+use liboxen::core::staged::staged_db_manager::with_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew};
+use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
-use liboxen::model::{Commit, User};
+use liboxen::model::metadata::metadata_video::VideoThumbnail;
+use liboxen::model::Commit;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::view::{CommitResponse, StatusMessage};
 
-use actix_files::NamedFile;
 use actix_multipart::Multipart;
-use actix_web::{http::header, web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::TryStreamExt as _;
 use liboxen::repositories::commits;
-use serde_json::Value;
+use serde::Deserialize;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::BufReader;
+use tokio_util::io::ReaderStream;
+use utoipa::ToSchema;
 
-const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen.ai"];
+#[derive(ToSchema, Deserialize)]
+#[schema(
+    title = "FileUploadBody",
+    description = "Body for uploading a file via multipart/form-data",
+    example = json!({
+        "file": "<binary data>", 
+        "message": "Adding a picture of a cow",
+        "name": "bessie",
+        "email": "bessie@oxen.ai"
+    })
+)]
+pub struct FileUploadBody {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+    #[schema(example = "Adding a new image to the training set")]
+    pub message: Option<String>,
+    #[schema(example = "bessie")]
+    pub name: Option<String>,
+    #[schema(example = "bessie@oxen.ai")]
+    pub email: Option<String>,
+}
 
-/// Download file content
+/// Combined query parameters for file operations (image resize and video thumbnail)
+/// Since both ImgResize and VideoThumbnail share width/height fields, we combine them here
+#[derive(Deserialize, Debug)]
+pub struct FileQueryParams {
+    // Shared parameters (can be used for both image resize and video thumbnail)
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    // Video thumbnail specific parameters
+    pub timestamp: Option<f64>,
+    pub thumbnail: Option<bool>,
+}
+
+/// Download File
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "Voice-Data"),
+        ("resource" = String, Path, description = "Path to the file (including branch/commit info)", example = "main/audio/moo.wav"),
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
+        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from (default: 1.0)", example = 1.0),
+        ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
+    ),
+    responses(
+        (status = 200, description = "File content stream", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 404, description = "File not found")
+    )
+)]
 pub async fn get(
     req: HttpRequest,
-    query: web::Query<ImgResize>,
+    query: web::Query<FileQueryParams>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    log::debug!("get file path {:?}", req.path());
-
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let version_store = repo.version_store()?;
     let resource = parse_resource(&req, &repo)?;
-    let workspace_ref = resource.workspace.as_ref();
-    let commit = if let Some(workspace) = workspace_ref {
-        workspace.commit.clone()
-    } else {
-        resource.clone().commit.unwrap()
-    };
-
-    log::debug!(
-        "{} resource {namespace}/{repo_name}/{resource}",
-        liboxen::current_function!()
-    );
+    let workspace = resource.workspace.as_ref();
     let path = resource.path.clone();
 
-    // If the resource is a workspace, return the file from the workspace
-    let response = if let Some(workspace) = workspace_ref {
-        let file_path = workspace.workspace_repo.path.join(path.clone());
-        let file = NamedFile::open(file_path)?;
-        file.into_response(&req)
-    } else {
-        let entry = repositories::entries::get_file(&repo, &commit, &path)?;
-        let entry = entry.ok_or(OxenError::path_does_not_exist(path.clone()))?;
-
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
-
-        // TODO: refactor out of here and check for type,
-        // but seeing if it works to resize the image and cache it to disk if we have a resize query
-        let img_resize = query.into_inner();
-        if img_resize.width.is_some() || img_resize.height.is_some() {
-            log::debug!("img_resize {:?}", img_resize);
-
-            let resized_path = util::fs::resized_path_for_file_node(
-                &repo,
-                &entry,
-                img_resize.width,
-                img_resize.height,
-            )?;
-            util::fs::resize_cache_image(&version_path, &resized_path, img_resize)?;
-
-            log::debug!("In the resize cache! {:?}", resized_path);
-            return Ok(NamedFile::open(resized_path)?.into_response(&req));
-        } else {
-            log::debug!("did not hit the resize cache");
-        }
-
-        log::debug!(
-            "get_file_for_commit_id looking for {:?} -> {:?}",
-            path,
-            version_path
-        );
-
-        let file = NamedFile::open(version_path)?;
-        let mut response = file.into_response(&req);
-
-        let last_commit_id = entry.last_commit_id().to_string();
-        let meta_entry = repositories::entries::get_meta_entry(&repo, &commit, &path)?;
-        let content_length = meta_entry.size.to_string();
-        response.headers_mut().insert(
-            header::HeaderName::from_static("oxen-revision-id"),
-            header::HeaderValue::from_str(&last_commit_id).unwrap(),
-        );
-
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_str(&meta_entry.mime_type).unwrap(),
-        );
-
-        response.headers_mut().insert(
-            header::CONTENT_LENGTH,
-            header::HeaderValue::from_str(&content_length).unwrap(),
-        );
-
-        response
+    // Use workspace_repo for staged DB operations, base_repo for commit tree lookups
+    let (staged_repo, base_repo) = match workspace {
+        Some(ws) => (&ws.workspace_repo, &repo),
+        None => (&repo, &repo),
     };
 
-    Ok(response)
+    let entry = match workspace {
+        Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
+            // Try staged DB first
+            if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
+                let file_node = match staged_node.node.node {
+                    EMerkleTreeNode::File(f) => Ok(f),
+                    _ => Err(OxenError::basic_str(
+                        "Only single file download is supported",
+                    )),
+                }?;
+                return Ok(file_node);
+            }
+
+            // Fall back to commit tree using workspace's commit
+            let commit = &ws.commit;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+            Ok(file_node)
+        }),
+        None => {
+            let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+            let file_node = repositories::tree::get_file_by_path(base_repo, &commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+            Ok(file_node)
+        }
+    }?;
+
+    let file_hash = entry.hash();
+    let hash_str = file_hash.to_string();
+    let mime_type = entry.mime_type();
+    let last_commit_id = entry.last_commit_id().to_string();
+    let version_path = version_store.get_version_path(&hash_str)?;
+
+    let query_params = query.into_inner();
+
+    // Handle image resize
+    if (query_params.width.is_some() || query_params.height.is_some())
+        && mime_type.starts_with("image/")
+    {
+        let img_resize = ImgResize {
+            width: query_params.width,
+            height: query_params.height,
+        };
+        log::debug!("img_resize {img_resize:?}");
+
+        let file_stream = util::fs::handle_image_resize(
+            Arc::clone(&version_store),
+            hash_str.clone(),
+            &path,
+            &version_path,
+            img_resize,
+        )
+        .await?;
+
+        return Ok(HttpResponse::Ok()
+            .content_type(mime_type)
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(file_stream));
+    }
+
+    // Handle video thumbnail - requires thumbnail=true parameter
+    if query_params.thumbnail == Some(true) && mime_type.starts_with("video/") {
+        let video_thumbnail = VideoThumbnail {
+            width: query_params.width,
+            height: query_params.height,
+            timestamp: query_params.timestamp,
+            thumbnail: query_params.thumbnail,
+        };
+        log::debug!("video_thumbnail {video_thumbnail:?}");
+
+        let thumbnail_path = util::fs::handle_video_thumbnail(
+            Arc::clone(&version_store),
+            hash_str,
+            &path,
+            &version_path,
+            video_thumbnail,
+        )?;
+        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
+
+        // Generate stream for the thumbnail (always JPEG)
+        let file = File::open(&thumbnail_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        return Ok(HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(stream));
+    }
+
+    log::debug!("did not hit the resize or thumbnail cache");
+
+    // Stream the file
+    let stream = version_store.get_version_stream(&hash_str).await?;
+
+    Ok(HttpResponse::Ok()
+        .content_type(mime_type)
+        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+        .streaming(stream))
 }
 
-/// Update file content in place (add to temp workspace and commit)
+/// Put file
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file (including branch)", example = "main/train/n01440764/images/n01440764_10026.JPEG"),
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        content = FileUploadBody
+    ),
+    responses(
+        (status = 200, description = "File committed successfully", body = CommitResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Branch or path not found")
+    )
+)]
 pub async fn put(
     req: HttpRequest,
     payload: Multipart,
@@ -154,7 +264,7 @@ pub async fn put(
         ));
     }
 
-    let (name, email, message, temp_files) = parse_multipart_fields(payload).await?;
+    let (name, email, message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -186,12 +296,84 @@ pub async fn put(
         )),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
 
-    log::debug!("file::put workspace commit ✅ success! commit {:?}", commit);
+    log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+/// Delete file
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file to be deleted (including branch)", example = "main/train/images/n01440764_10026.JPEG"),
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        content = FileUploadBody,
+    ),
+    responses(
+        (status = 200, description = "File removed successfully", body = CommitResponse),
+        (status = 404, description = "Branch or path not found")
+    )
+)]
+pub async fn delete(
+    req: HttpRequest,
+    payload: Multipart,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::delete path {:?}", req.path());
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    // Parse the resource (branch/commit/path)
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
+    let path = resource.path;
+
+    // Get the commit info from the payload
+    let (name, email, message, _temp_files) = parse_multipart_fields_for_repo(payload).await?;
+
+    log::debug!("file::delete creating workspace for commit: {commit}");
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    // Stage the path as removed
+    log::debug!("file::delete staging path {path:?}");
+    repositories::workspaces::files::rm(&workspace, &path).await?;
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: name.clone().unwrap_or("".to_string()),
+        email: email.clone().unwrap_or("".to_string()),
+        message: message
+            .clone()
+            .unwrap_or(format!("Remove {}", &path.to_string_lossy())),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+
+    log::debug!("file::delete workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_deleted(),
         commit,
     }))
 }
@@ -211,7 +393,7 @@ async fn handle_initial_put_empty_repo(
         .to_string_lossy()
         .to_string();
 
-    let (name, email, _message, temp_files) = parse_multipart_fields(payload).await?;
+    let (name, email, _message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -242,123 +424,7 @@ async fn handle_initial_put_empty_repo(
     }))
 }
 
-/// import files from hf/kaggle (create a workspace and commit)
-pub async fn import(
-    req: HttpRequest,
-    body: web::Json<Value>,
-) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let resource = parse_resource(&req, &repo)?;
-
-    // Resource must specify branch for committing the workspace
-    let branch = resource
-        .branch
-        .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
-    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
-    let directory = resource.path.clone();
-    log::debug!("workspace::files::import_file Got directory: {directory:?}");
-
-    // commit info
-    let author = req.headers().get("oxen-commit-author");
-    let email = req.headers().get("oxen-commit-email");
-    let message = req.headers().get("oxen-commit-message");
-
-    log::debug!(
-        "file::import commit info author:{:?}, email:{:?}, message:{:?}",
-        author,
-        email,
-        message
-    );
-
-    // Make sure the resource path is not already a file
-    let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
-    if node.is_some() && node.unwrap().is_file() {
-        return Err(OxenHttpError::BasicError(
-            format!(
-                "Target path must be a directory: {}",
-                resource.path.display()
-            )
-            .into(),
-        ));
-    }
-
-    // Create temporary workspace
-    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
-
-    log::debug!("workspace::files::import_file workspace created!");
-
-    // extract auth key from req body
-    let auth = body
-        .get("headers")
-        .and_then(|headers| headers.as_object())
-        .and_then(|map| map.get("Authorization"))
-        .and_then(|auth| auth.as_str())
-        .unwrap_or_default();
-
-    let download_url = body
-        .get("download_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-
-    // Validate URL domain
-    let url_parsed = url::Url::parse(download_url)
-        .map_err(|_| OxenHttpError::BadRequest("Invalid URL".into()))?;
-    let domain = url_parsed
-        .domain()
-        .ok_or_else(|| OxenHttpError::BadRequest("Invalid URL domain".into()))?;
-    if !ALLOWED_IMPORT_DOMAINS.iter().any(|&d| domain.ends_with(d)) {
-        return Err(OxenHttpError::BadRequest("URL domain not allowed".into()));
-    }
-
-    // parse filename from the given url
-    let filename = if url_parsed.domain() == Some("huggingface.co") {
-        url_parsed.path_segments().and_then(|segments| {
-            let segments: Vec<_> = segments.collect();
-            if segments.len() >= 2 {
-                let last_two = &segments[segments.len() - 2..];
-                Some(format!("{}_{}", last_two[0], last_two[1]))
-            } else {
-                None
-            }
-        })
-    } else {
-        url_parsed
-            .path_segments()
-            .and_then(|mut segments| segments.next_back())
-            .map(|s| s.to_string())
-    }
-    .ok_or_else(|| OxenHttpError::BadRequest("Invalid filename in URL".into()))?;
-
-    // download and save the file into the workspace
-    repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
-        .await?;
-
-    // Commit workspace
-    let commit_body = NewCommitBody {
-        author: author.map_or("".to_string(), |a| a.to_str().unwrap().to_string()),
-        email: email.map_or("".to_string(), |e| e.to_str().unwrap().to_string()),
-        message: message.map_or(
-            format!("Import files to {}", &resource.path.to_string_lossy()),
-            |m| m.to_str().unwrap().to_string(),
-        ),
-    };
-
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name)?;
-    log::debug!("workspace::commit ✅ success! commit {:?}", commit);
-
-    Ok(HttpResponse::Ok().json(CommitResponse {
-        status: StatusMessage::resource_created(),
-        commit,
-    }))
-}
-
-async fn parse_multipart_fields(
+async fn parse_multipart_fields_for_repo(
     mut payload: Multipart,
 ) -> actix_web::Result<
     (
@@ -442,17 +508,6 @@ async fn parse_multipart_fields(
     }
 
     Ok((name, email, message, temp_files))
-}
-
-// Helper function for user creation
-fn create_user_from_options(
-    name: Option<String>,
-    email: Option<String>,
-) -> actix_web::Result<User, OxenHttpError> {
-    Ok(User {
-        name: name.ok_or(OxenHttpError::BadRequest("Name is required".into()))?,
-        email: email.ok_or(OxenHttpError::BadRequest("Email is required".into()))?,
-    })
 }
 
 // Helper function for processing files and adding to repo/workspace
@@ -570,70 +625,12 @@ mod tests {
         let entry =
             repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/hello.txt"))?
                 .unwrap();
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
-        let updated_content = util::fs::read_from_path(&version_path)?;
-        assert_eq!(updated_content, "Updated Content!");
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_file_import() -> Result<(), OxenError> {
-        test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Name";
-        let author = "test_user";
-        let email = "ox@oxen.ai";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        util::fs::create_dir_all(repo.path.join("data"))?;
-        let hello_file = repo.path.join("data/hello.txt");
-        util::fs::write_to_path(&hello_file, "Hello")?;
-        repositories::add(&repo, &hello_file).await?;
-        let _commit = repositories::commit(&repo, "First commit")?;
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/data");
-
-        // import a file from oxen for testing
-        let body = serde_json::json!({"download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/tables/cats_vs_dogs.tsv"});
-
-        let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
-            .param("namespace", namespace)
-            .param("repo_name", repo_name)
-            .insert_header(("oxen-commit-author", author))
-            .insert_header(("oxen-commit-email", email))
-            .set_json(&body)
-            .to_request();
-
-        let app = actix_web::test::init_service(
-            App::new()
-                .app_data(OxenAppData::new(sync_dir.clone()))
-                .route(
-                    "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
-                    web::post().to(controllers::file::import),
-                ),
-        )
-        .await;
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
-        let body = std::str::from_utf8(&bytes).unwrap();
-        let resp: CommitResponse = serde_json::from_str(body)?;
-        assert_eq!(resp.status.status, "success");
-
-        let entry = repositories::entries::get_file(
-            &repo,
-            &resp.commit,
-            PathBuf::from("data/cats_vs_dogs.tsv"),
-        )?
-        .unwrap();
-        let version_path = util::fs::version_path_from_hash(&repo, entry.hash().to_string());
-        assert!(version_path.exists());
+        let version_store = repo.version_store()?;
+        let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
+        assert_eq!(
+            String::from_utf8(uploaded_content).unwrap(),
+            "Updated Content!"
+        );
 
         // cleanup
         test::cleanup_sync_dir(&sync_dir)?;

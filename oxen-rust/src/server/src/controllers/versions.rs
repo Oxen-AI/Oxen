@@ -2,20 +2,52 @@ pub mod chunks;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, parse_resource, path_param};
 
 use actix_multipart::Multipart;
-use actix_web::{Error, HttpRequest, HttpResponse};
+use actix_web::{web, Error, HttpRequest, HttpResponse};
+use async_compression::tokio::bufread::GzipDecoder;
+use async_compression::tokio::write::GzipEncoder;
+use async_zip::base::write::ZipFileWriter;
+use async_zip::Compression;
 use flate2::read::GzDecoder;
-use futures_util::TryStreamExt as _;
+use futures_util::{StreamExt, TryStreamExt as _};
 use liboxen::error::OxenError;
+use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
-use liboxen::view::versions::{VersionFile, VersionFileResponse};
-use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, StatusMessage};
+use liboxen::repositories;
+use liboxen::util;
+use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
+use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
 use mime;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::io::BufReader;
+use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio_tar::Builder;
+use tokio_util::compat::FuturesAsyncWriteCompatExt;
+use tokio_util::compat::TokioAsyncWriteCompatExt;
+use tokio_util::io::{ReaderStream, StreamReader};
+use utoipa::ToSchema;
 
+const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+
+/// Get version file metadata
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/versions/{version_id}/metadata",
+    tag = "Version Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("version_id" = String, Path, description = "The hash ID of the file version", example = "1eb45ac94f3eab120f3a"),
+    ),
+    responses(
+        (status = 200, description = "File metadata found", body = VersionFileResponse),
+        (status = 404, description = "Version file not found"),
+    )
+)]
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -24,41 +56,447 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
-    let exists = repo.version_store()?.version_exists(&version_id)?;
+    let exists = repo.version_store()?.version_exists(&version_id).await?;
     if !exists {
         return Err(OxenHttpError::NotFound);
     }
 
-    let data = repo.version_store()?.get_version(&version_id).await?;
+    let file_size = repo.version_store()?.get_version_size(&version_id).await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
             hash: version_id,
-            size: data.len() as u64,
+            size: file_size,
         },
     }))
 }
 
-pub async fn download(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+// Clean corrupted version files for the remote repo
+pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let version_id = path_param(&req, "version_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
-    log::debug!(
-        "download file for repo: {:?}, file_hash: {}",
-        repo.path,
-        version_id
-    );
-
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let version_store = repo.version_store()?;
+    let result = version_store.clean_corrupted_versions().await?;
 
-    // TODO: stream the file
-    let file_data = version_store.get_version(&version_id).await?;
-    Ok(HttpResponse::Ok().body(file_data))
+    Ok(HttpResponse::Ok().json(CleanCorruptedVersionsResponse {
+        status: StatusMessage::resource_found(),
+        result,
+    }))
 }
 
+// TODO: Refactor places that call /file/{resource:*} to use this new version store download endpoint
+/// Download version file
+#[utoipa::path(
+    get,
+    path = "/{namespace}/{repo_name}/versions/{resource}",
+    tag = "Version Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "The resource identifier (e.g., 'main/path/to/file.ext' or a commit ID/branch name followed by the file path)", example = "main/images/dog_1.jpg"),
+        ImgResize
+    ),
+    responses(
+        (status = 200, description = "File content returned as a stream. Content-Type matches the file's MIME type (e.g., image/jpeg), or the resized image's MIME type.",
+            body = Vec<u8>,
+            headers(
+                ("oxen-revision-id" = String, description = "The commit ID of the file version")
+            )
+        ),
+        (status = 404, description = "Repository, commit, or file not found"),
+    )
+)]
+pub async fn download(
+    req: HttpRequest,
+    query: web::Query<ImgResize>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let version_store = repo.version_store()?;
+    let resource = parse_resource(&req, &repo)?;
+    let commit = resource
+        .clone()
+        .commit
+        .ok_or_else(|| OxenError::basic_str("Resource commit not found"))?;
+    let path = resource.path.clone();
+
+    log::debug!("Download resource {namespace}/{repo_name}/{resource} version file");
+
+    let entry = repositories::entries::get_file(&repo, &commit, &path)?
+        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+    let file_hash = entry.hash();
+    let hash_str = file_hash.to_string();
+    let mime_type = entry.mime_type();
+    let last_commit_id = entry.last_commit_id().to_string();
+    let version_path = version_store.get_version_path(&hash_str)?;
+
+    // TODO: refactor out of here and check for type,
+    // but seeing if it works to resize the image and cache it to disk if we have a resize query
+    let img_resize = query.into_inner();
+    if (img_resize.width.is_some() || img_resize.height.is_some())
+        && mime_type.starts_with("image/")
+    {
+        log::debug!("img_resize {img_resize:?}");
+
+        let file_stream = util::fs::handle_image_resize(
+            Arc::clone(&version_store),
+            hash_str,
+            &path,
+            &version_path,
+            img_resize,
+        )
+        .await?;
+
+        return Ok(HttpResponse::Ok()
+            .content_type(mime_type)
+            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+            .streaming(file_stream));
+    } else {
+        log::debug!("did not hit the resize cache");
+    }
+
+    let stream = version_store.get_version_stream(&hash_str).await?;
+    Ok(HttpResponse::Ok()
+        .content_type(mime_type)
+        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
+        .streaming(stream))
+}
+
+/// Batch download version files
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/versions/batch-download",
+    tag = "Version Files",
+    summary = "Batch download files (Tarball)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content = Vec<u8>,
+        content_type = "application/gzip",
+        description = "Gzip compressed binary payload containing a line-delimited list of merkle hashes to download",
+    ),
+    responses(
+        (status = 200, description = "Tarball of all requested files, gzipped.", content_type = "application/gzip"),
+    )
+)]
+pub async fn batch_download(
+    req: HttpRequest,
+    mut body: web::Payload,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = body.next().await {
+        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+    }
+
+    log::debug!(
+        "batch_download got repo [{}] and content_ids size {}",
+        repo_name,
+        bytes.len()
+    );
+
+    let mut gz = GzDecoder::new(&bytes[..]);
+    let mut line_delimited_files = String::new();
+    if let Err(e) = gz.read_to_string(&mut line_delimited_files) {
+        log::error!("Failed to decompress gzip payload: {e}");
+        return Err(OxenHttpError::from(e));
+    }
+
+    let file_hashes: Vec<String> = line_delimited_files
+        .lines()
+        .map(str::trim)
+        .filter(|hash| !hash.is_empty())
+        .filter(|hash| hash.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|hash| hash.to_string())
+        .collect();
+
+    log::debug!("Got {} file hashes", file_hashes.len());
+
+    stream_versions_tar_gz(&repo, file_hashes).await
+}
+
+pub async fn stream_versions_tar_gz(
+    repo: &LocalRepository,
+    file_hashes: Vec<String>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let version_store = repo.version_store()?;
+    let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
+
+    let version_store_clone = version_store.clone();
+    let file_hashes_clone = file_hashes.clone();
+
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let writer_task = async move {
+        let enc = GzipEncoder::new(writer);
+        let mut tar = Builder::new(enc);
+
+        let mut had_error = false;
+        for file_hash in file_hashes_clone.iter() {
+            match version_store_clone.get_version_stream(file_hash).await {
+                Ok(data) => {
+                    let file_size = match version_store_clone.get_version_size(file_hash).await {
+                        Ok(size) => size,
+                        Err(e) => {
+                            log::error!("Failed to get version file size for {file_hash}: {e}");
+                            error_tx.send(e).ok();
+                            had_error = true;
+                            break;
+                        }
+                    };
+
+                    let mut header = tokio_tar::Header::new_gnu();
+                    header.set_size(file_size as u64);
+                    if let Err(e) = header.set_path(file_hash) {
+                        log::error!("Failed to set path for {file_hash}: {e}");
+                        error_tx
+                            .send(OxenError::basic_str(format!(
+                                "Failed to set path for {file_hash}: {e}"
+                            )))
+                            .ok();
+                        had_error = true;
+                        break;
+                    }
+                    header.set_mode(0o644);
+                    header.set_uid(0);
+                    header.set_gid(0);
+                    header.set_cksum();
+
+                    let mut reader = StreamReader::new(data);
+                    if let Err(e) = tar.append(&header, &mut reader).await {
+                        log::error!("Failed to append {file_hash} to tar: {e}");
+                        error_tx.send(OxenError::IO(e)).ok();
+                        had_error = true;
+                        break;
+                    }
+                    log::info!(
+                        "Successfully appended data to tarball for hash: {}",
+                        &file_hash
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to get version {file_hash}: {e}");
+                    error_tx.send(e).ok();
+                    had_error = true;
+                    break;
+                }
+            }
+        }
+
+        if let Err(e) = tar.finish().await {
+            log::error!("Failed to finish tar: {e}");
+            error_tx.send(OxenError::IO(e)).ok();
+            had_error = true;
+        }
+
+        match tar.into_inner().await {
+            Ok(mut enc) => {
+                if let Err(e) = enc.shutdown().await {
+                    log::error!("Failed to shutdown gzip encoder: {e}");
+                    error_tx.send(OxenError::IO(e)).ok();
+                    had_error = true;
+                }
+                log::info!("Successfully finished tarball");
+            }
+            Err(e) => {
+                log::error!("Failed to get encoder: {e}");
+                error_tx.send(OxenError::IO(e)).ok();
+                had_error = true;
+            }
+        };
+
+        if had_error {
+            log::warn!("Stream closed due to earlier error");
+        } else {
+            log::info!("Streaming completed successfully");
+        }
+    };
+
+    tokio::spawn(writer_task);
+
+    let stream = ReaderStream::new(reader).map(move |chunk| {
+        if let Ok(err) = error_rx.try_recv() {
+            log::error!("Stream error: {err}");
+            return Err(OxenHttpError::from(err));
+        }
+        chunk.map_err(OxenHttpError::from)
+    });
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/gzip")
+        .streaming(stream))
+}
+
+pub async fn stream_versions_zip(
+    repo: &LocalRepository,
+    files: Vec<FileWithHash>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let version_store = repo.version_store()?;
+    let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
+
+    let version_store_clone = version_store.clone();
+    let files_clone = files.clone();
+
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let writer_task = async move {
+        let compat_writer = writer.compat_write();
+        let mut zip_writer = ZipFileWriter::new(compat_writer);
+        let mut had_error = false;
+
+        for file in files_clone.iter() {
+            let path = file.path.to_str();
+            let path = match path.map(|s| s.to_string()) {
+                Some(path) => path,
+                None => {
+                    let err = "Invalid UTF-8 in path".to_string();
+                    error_tx.send(OxenError::basic_str(err)).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let hash = &file.hash;
+
+            let version_path = match version_store_clone.get_version_path(hash) {
+                Ok(path) => path,
+                Err(e) => {
+                    log::error!("Failed to get path for {hash}: {e}");
+                    error_tx.send(e).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let metadata = match util::fs::metadata(&version_path) {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    log::error!("Failed to get metadata for {version_path:?}: {e}");
+                    error_tx.send(e).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let file_size = metadata.len();
+
+            match version_store_clone.get_version_stream(hash).await {
+                Ok(data) => {
+                    let mut reader = StreamReader::new(data);
+
+                    let compression = Compression::Deflate;
+                    let zip_entry_builder =
+                        async_zip::ZipEntryBuilder::new(path.into(), compression)
+                            .uncompressed_size(file_size as u64)
+                            .unix_permissions(0o644);
+
+                    let zip_entry = zip_entry_builder.build();
+
+                    let entry_writer = match zip_writer.write_entry_stream(zip_entry).await {
+                        Ok(writer) => writer,
+                        Err(e) => {
+                            log::error!("Failed to append {hash} to zip: {e}");
+                            error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                            had_error = true;
+                            break;
+                        }
+                    };
+
+                    let mut compat_writer = entry_writer.compat_write();
+                    if let Err(e) = tokio::io::copy(&mut reader, &mut compat_writer).await {
+                        log::error!("Failed to stream data for {hash} into zip: {e}");
+                        error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                        had_error = true;
+                        break;
+                    }
+
+                    let entry_writer = compat_writer.into_inner();
+                    if let Err(e) = entry_writer.close().await {
+                        log::error!("Failed to close zip entry for {hash}: {e}");
+                        error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                        had_error = true;
+                        break;
+                    }
+
+                    log::info!("Successfully appended data to zip for hash: {}", &hash);
+                }
+                Err(e) => {
+                    log::error!("Failed to get version {hash}: {e}");
+                    error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                    had_error = true;
+                    break;
+                }
+            }
+        }
+
+        if let Err(e) = zip_writer.close().await {
+            log::error!("Failed to finish zip file: {e}");
+            error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+            had_error = true;
+        } else {
+            log::info!("Successfully finished zip file");
+        }
+
+        // zip.close() typically handles the shutdown, but we check inner writer if needed
+        if !had_error {
+            log::info!("Streaming completed successfully");
+        } else {
+            log::warn!("Stream closed due to earlier error");
+        }
+    };
+
+    tokio::spawn(writer_task);
+
+    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
+        if let Ok(err) = error_rx.try_recv() {
+            log::error!("Stream error: {err}");
+            return Err(OxenHttpError::from(err));
+        }
+        chunk.map_err(OxenHttpError::from)
+    });
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/zip")
+        .streaming(stream))
+}
+
+#[derive(ToSchema)]
+pub struct UploadVersionFile {
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+}
+
+/// Batch upload version files
+#[utoipa::path(
+    post,
+    path = "/{namespace}/{repo_name}/versions",
+    tag = "Version Files",
+    summary = "Batch upload files (Multipart)",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+    ),
+    request_body(
+        content_type = "multipart/form-data", 
+        description = "Multipart upload of files. Each form field 'file[]' or 'file' should contain the file content (optionally gzip compressed), and the filename should be the content hash (e.g., 'file.jpg' is not used, the hash is the identifier).",
+        content = UploadVersionFile,
+    ),
+    responses(
+        (status = 200, description = "Files successfully uploaded (check err_files for failures)", body = ErrorFilesResponse),
+        (status = 400, description = "Invalid multipart request"),
+        (status = 404, description = "Repository not found"),
+    )
+)]
 pub async fn batch_upload(
     req: HttpRequest,
     payload: Multipart,
@@ -68,23 +506,23 @@ pub async fn batch_upload(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-
-    log::debug!("batch upload file for repo: {:?}", repo.path);
-    let files = save_multiparts(payload, &repo).await?;
+    let err_files = save_multiparts(payload, &repo).await?;
+    log::debug!("batch upload complete with err_files: {}", err_files.len());
 
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {
         status: StatusMessage::resource_created(),
-        err_files: files,
+        err_files,
     }))
 }
 
+// Read the payload files into memory and save to version store
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {:?}", oxen_err);
+        log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
     })?;
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
@@ -97,7 +535,7 @@ pub async fn save_multiparts(
         };
 
         if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" {
+            if name == "file[]" || name == "file" {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
                 let upload_filehash = content_disposition.get_filename().map_or_else(
                     || {
@@ -107,11 +545,7 @@ pub async fn save_multiparts(
                     },
                     |fhash_os_str| Ok(fhash_os_str.to_string()),
                 )?;
-
-                let mut field_bytes = Vec::new();
-                while let Some(chunk) = field.try_next().await? {
-                    field_bytes.extend_from_slice(&chunk);
-                }
+                log::debug!("upload file_hash: {upload_filehash:?}");
 
                 let is_gzipped = field
                     .content_type()
@@ -120,81 +554,36 @@ pub async fn save_multiparts(
                     })
                     .unwrap_or(false);
 
-                let upload_filehash_copy = upload_filehash.clone();
+                // Read the bytes from the stream
+                let mut field_bytes = Vec::new();
+                while let Some(chunk) = field.try_next().await? {
+                    field_bytes.extend_from_slice(&chunk);
+                }
 
-                // decompress the data if it is gzipped
-                let data_to_store =
-                    match actix_web::web::block(move || -> Result<Vec<u8>, OxenError> {
-                        if is_gzipped {
-                            log::debug!(
-                                "Decompressing gzipped data for hash: {}",
-                                &upload_filehash_copy
-                            );
-                            let mut decoder = GzDecoder::new(&field_bytes[..]);
-                            let mut decompressed_bytes = Vec::new();
-                            decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                                OxenError::basic_str(format!(
-                                    "Failed to decompress gzipped data: {}",
-                                    e
-                                ))
-                            })?;
-                            Ok(decompressed_bytes)
-                        } else {
-                            log::debug!("Data for hash {} is not gzipped.", &upload_filehash_copy);
-                            Ok(field_bytes)
-                        }
-                    })
-                    .await
-                    {
-                        Ok(Ok(data)) => data,
-                        Ok(Err(e)) => {
-                            log::error!(
-                                "Failed to decompress data for hash {}: {}",
-                                &upload_filehash,
-                                e
-                            );
-                            record_error_file(
-                                &mut err_files,
-                                upload_filehash.clone(),
-                                None,
-                                format!("Failed to decompress data: {}", e),
-                            );
-                            continue;
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Failed to execute blocking decompression task for hash {}: {}",
-                                &upload_filehash,
-                                e
-                            );
-                            record_error_file(
-                                &mut err_files,
-                                upload_filehash.clone(),
-                                None,
-                                format!("Failed to execute blocking decompression: {}", e),
-                            );
-                            continue;
-                        }
-                    };
+                let mut reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
+                    // async decompression
+                    let cursor = std::io::Cursor::new(field_bytes);
+                    let buf_reader = BufReader::new(cursor);
+                    Box::new(GzipDecoder::new(buf_reader))
+                } else {
+                    let cursor = std::io::Cursor::new(field_bytes);
+                    Box::new(cursor)
+                };
 
                 match version_store
-                    .store_version(&upload_filehash, &data_to_store)
+                    .store_version_from_reader(&upload_filehash, &mut reader)
                     .await
                 {
                     Ok(_) => {
-                        log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                        log::info!("Successfully stored version for hash: {upload_filehash}");
                     }
                     Err(e) => {
-                        log::error!(
-                            "Failed to store version for hash {}: {}",
-                            &upload_filehash,
-                            e
-                        );
+                        log::error!("Failed to store version for hash {upload_filehash}: {e}");
                         record_error_file(
                             &mut err_files,
                             upload_filehash.clone(),
                             None,
-                            format!("Failed to store version: {}", e),
+                            format!("Failed to store version: {e}"),
                         );
                         continue;
                     }
@@ -202,6 +591,7 @@ pub async fn save_multiparts(
             }
         }
     }
+
     Ok(err_files)
 }
 
@@ -246,17 +636,15 @@ mod tests {
 
         // create test file and commit
         util::fs::create_dir_all(repo.path.join("data"))?;
-        let hello_file = repo.path.join("data/hello.txt");
+        let relative_path = "data/hello.txt";
+        let hello_file = repo.path.join(relative_path);
         let file_content = "Hello";
         util::fs::write_to_path(&hello_file, file_content)?;
         repositories::add(&repo, &hello_file).await?;
         repositories::commit(&repo, "First commit")?;
 
-        // get file version id
-        let file_hash = util::hasher::hash_str(file_content);
-
         // test download
-        let uri = format!("/oxen/{namespace}/{repo_name}/versions/{file_hash}");
+        let uri = format!("/oxen/{namespace}/{repo_name}/versions/main/{relative_path}");
         let req = actix_web::test::TestRequest::get()
             .uri(&uri)
             .app_data(OxenAppData::new(sync_dir.to_path_buf()))
@@ -266,7 +654,7 @@ mod tests {
             App::new()
                 .app_data(OxenAppData::new(sync_dir.clone()))
                 .route(
-                    "/oxen/{namespace}/{repo_name}/versions/{version_id}",
+                    "/oxen/{namespace}/{repo_name}/versions/{resource:.*}",
                     web::get().to(controllers::versions::download),
                 ),
         )

@@ -10,7 +10,26 @@ use liboxen::view::StatusMessage;
 use liboxen::{current_function, repositories};
 
 use actix_web::{HttpRequest, HttpResponse};
+use utoipa;
 
+/// Get entry metadata
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
+    operation_id = "get_entry_metadata",
+    tag = "Entries",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file/dir (including branch/commit info)", example = "main/images/train/dog_1.jpg"),
+    ),
+    responses(
+        (status = 200, description = "Metadata for the entry found", body = EMetadataEntryResponseView),
+        (status = 404, description = "Entry not found"),
+        (status = 400, description = "Invalid resource path")
+    )
+)]
 pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -58,6 +77,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
             }
             Err(_) => {
                 let added_entry = repositories::workspaces::get_added_entry(
+                    &repo,
                     &resource.path,
                     workspace,
                     &resource,
@@ -80,6 +100,24 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(meta))
 }
 
+/// Update metadata
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
+    operation_id = "update_entry_metadata",
+    tag = "Entries",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the file (including version to update)", example = "versions/files/b4/158b417c800c7322d711f1816f5c00e1215b4d7c001c9b6892556d11/data"),
+    ),
+    responses(
+        (status = 200, description = "Metadata updated", body = StatusMessage),
+        (status = 400, description = "Missing version in resource path"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn update_metadata(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;

@@ -1,58 +1,28 @@
-use std::collections::HashSet;
-use std::path::PathBuf;
-
 use crate::core::v_latest::index;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::RestoreOpts;
-use crate::repositories;
-
-use glob::Pattern;
-
+use crate::opts::{GlobOpts, RestoreOpts};
 use crate::util;
 
-pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
-    let path = &opts.path;
-    let mut paths: HashSet<PathBuf> = HashSet::new();
+// TODO: Deprecate this module
+// Not sure why we have seperate core and core::index modules for restore
+pub async fn restore(repo: &LocalRepository, restore_opts: RestoreOpts) -> Result<(), OxenError> {
+    let paths = restore_opts.paths.iter().map(|p| p.to_owned()).collect();
 
-    // Quoted wildcard path strings, expand to include present and removed files
-    if let Some(path_str) = path.to_str() {
-        if util::fs::is_glob_path(path_str) {
-            let pattern = Pattern::new(path_str)?;
-            let staged_data = repositories::status::status(repo)?;
+    let glob_opts = GlobOpts {
+        paths,
+        staged_db: restore_opts.staged,
+        merkle_tree: !restore_opts.staged,
+        working_dir: false,
+        walk_dirs: false,
+    };
 
-            // If --staged, only operate on staged files
-            if opts.staged {
-                for entry in staged_data.staged_files {
-                    let entry_path_str = entry.0.to_str().unwrap();
-                    if pattern.matches(entry_path_str) {
-                        paths.insert(entry.0.to_owned());
-                    }
-                }
-            // Otherwise, `restore` should operate on unstaged modifications and removals.
-            } else {
-                let modified_and_removed: Vec<PathBuf> = staged_data
-                    .modified_files
-                    .into_iter()
-                    .chain(staged_data.removed_files)
-                    .collect();
-                for entry in modified_and_removed {
-                    let entry_path_str = entry.to_str().unwrap();
-                    if pattern.matches(entry_path_str) {
-                        paths.insert(entry.to_owned());
-                    }
-                }
-            }
-        } else {
-            paths.insert(path.to_owned());
-        }
-    }
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
 
-    for path in paths {
-        let mut opts = opts.clone();
-        opts.path = path;
-        index::restore::restore(repo, opts).await?;
-    }
+    let mut restore_opts = restore_opts.clone();
+    restore_opts.paths = expanded_paths;
+
+    index::restore::restore(repo, restore_opts).await?;
 
     Ok(())
 }

@@ -46,15 +46,15 @@ mod tests {
     use crate::core;
     use crate::core::df::tabular;
     use crate::error::OxenError;
-    use crate::model::MerkleHash;
     use crate::opts::CloneOpts;
     use crate::opts::DFOpts;
     use crate::opts::FetchOpts;
+    use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
+    use crate::repositories::LocalRepository;
     use crate::test;
     use crate::util;
-    use derive_more::FromStr;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -289,7 +289,7 @@ mod tests {
                     repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
 
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                assert_eq!(6, cloned_num_files);
+                assert_eq!(8, cloned_num_files);
                 let og_commits = repositories::commits::list(&repo)?;
                 let cloned_commits = repositories::commits::list(&cloned_repo)?;
                 assert_eq!(og_commits.len(), cloned_commits.len());
@@ -304,14 +304,14 @@ mod tests {
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&cloned_repo, &new_file_path).await?;
                 repositories::commit(&cloned_repo, "Adding one file to train dir")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // Push it back
-                repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 let fetch_opts = &FetchOpts {
                     remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -332,12 +332,13 @@ mod tests {
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&repo, &train_path).await?;
                 repositories::commit(&repo, "Adding next file to train dir")?;
-                repositories::push::push_remote_branch(
-                    &repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
+
+                repositories::push::push_remote_branch(&repo, &opts).await?;
 
                 // Pull it on the second side again
                 repositories::pull_remote_branch(
@@ -351,8 +352,8 @@ mod tests {
                 )
                 .await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // Now there should be 7 train/ files and 1 in large_files/
-                assert_eq!(8, cloned_num_files);
+                // Now there should be 9 train/ files and 1 in large_files/
+                assert_eq!(10, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 
@@ -416,14 +417,14 @@ mod tests {
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&cloned_repo, &new_file_path).await?;
                 repositories::commit(&cloned_repo, "Adding one file to train dir")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // Push it back
-                repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
                 // Pull it on the OG side
                 repositories::pull_remote_branch(
                     &repo,
@@ -517,7 +518,7 @@ mod tests {
         test::run_empty_local_repo_test_async(|mut repo| async move {
             // create 5 text files in the repo.path
             for i in 1..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 test::write_txt_file_to_path(&filepath, &filename)?;
             }
@@ -547,7 +548,7 @@ mod tests {
 
             // Add the rest of the files
             for i in 3..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 repositories::add(&repo, &filepath).await?;
             }
@@ -597,7 +598,7 @@ mod tests {
         test::run_empty_local_repo_test_async(|mut repo| async move {
             // create 5 text files in the repo.path
             for i in 1..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 test::write_txt_file_to_path(&filepath, &filename)?;
             }
@@ -627,7 +628,7 @@ mod tests {
 
             // Add the rest of the files
             for i in 3..6 {
-                let filename = format!("{}.txt", i);
+                let filename = format!("{i}.txt");
                 let filepath = repo.path.join(&filename);
                 repositories::add(&repo, &filepath).await?;
             }
@@ -676,9 +677,7 @@ mod tests {
             println!("Writing file to {}", path.display());
             repositories::add(&local_repo, path).await?;
             println!("adding file to index at path {}", path.display());
-            println!("First commit");
             repositories::commit(&local_repo, "Adding file for first time")?;
-            println!("Commit successfull");
             // Write the same file to newfolder/a.txt
 
             let new_path = &local_repo.path.join("newfolder").join("a.txt");
@@ -698,7 +697,6 @@ mod tests {
             let new_path = local_repo.path.join(path);
             util::fs::remove_file(&new_path)?;
             repositories::add(&local_repo, &new_path).await?;
-            println!("Second commit");
             repositories::commit(
                 &local_repo,
                 "Moved file to 2 new places and deleted original",
@@ -740,16 +738,16 @@ mod tests {
 
                 repositories::add(&cloned_repo, path).await?;
                 let commit = repositories::commit(&cloned_repo, "Adding file for first time")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // Try to push upstream branch
-                let push_result = repositories::push::push_remote_branch(
-                    &cloned_repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await;
+                let push_result = repositories::push::push_remote_branch(&cloned_repo, &opts).await;
 
-                log::debug!("Push result: {:?}", push_result);
+                log::debug!("Push result: {push_result:?}");
 
                 assert!(push_result.is_ok());
 
@@ -1241,8 +1239,8 @@ mod tests {
                 let cloned_repo =
                     repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // 2 test, 5 train, 1 labels
-                assert_eq!(8, cloned_num_files);
+                // 4 test, 7 train, 1 labels
+                assert_eq!(12, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 
@@ -1259,7 +1257,7 @@ mod tests {
             // Track a file
             let filename = "annotations/train/bounding_box.csv";
             let file_path = repo.path.join(filename);
-            let og_df = tabular::read_df(&file_path, DFOpts::empty())?;
+            let og_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
             let og_contents = util::fs::read_from_path(&file_path)?;
 
             repositories::add(&repo, &file_path).await?;
@@ -1282,7 +1280,7 @@ mod tests {
                     repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
                 let file_path = cloned_repo.path.join(filename);
 
-                let cloned_df = tabular::read_df(&file_path, DFOpts::empty())?;
+                let cloned_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
                 let cloned_contents = util::fs::read_from_path(&file_path)?;
                 assert_eq!(og_df.height(), cloned_df.height());
                 assert_eq!(og_df.width(), cloned_df.width());
@@ -1316,7 +1314,7 @@ mod tests {
                 .join("annotations")
                 .join("train.tsv");
             let file_path = repo.path.join(filename);
-            let og_df = tabular::read_df(&file_path, DFOpts::empty())?;
+            let og_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
             let og_sentiment_contents = util::fs::read_from_path(&file_path)?;
 
             let commit = repositories::commits::head_commit(&repo)?;
@@ -1344,7 +1342,7 @@ mod tests {
                     .join("annotations")
                     .join("train.tsv");
                 let file_path = cloned_repo.path.join(&filename);
-                let cloned_df = tabular::read_df(&file_path, DFOpts::empty())?;
+                let cloned_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
                 let cloned_contents = util::fs::read_from_path(&file_path)?;
                 assert_eq!(og_df.height(), cloned_df.height());
                 assert_eq!(og_df.width(), cloned_df.width());
@@ -1485,10 +1483,8 @@ mod tests {
                 let mut synced_commits = 0;
                 log::debug!("total n remote commits {}", remote_commits.len());
                 for commit in remote_commits {
-                    if core::commit_sync_status::commit_is_synced(
-                        &user_a_repo,
-                        &MerkleHash::from_str(&commit.id)?,
-                    ) {
+                    if core::commit_sync_status::commit_is_synced(&user_a_repo, &commit.id.parse()?)
+                    {
                         synced_commits += 1;
                     }
                 }
@@ -1917,14 +1913,14 @@ mod tests {
                 // 4. Add and commit the new file
                 repositories::add(&repo, &new_file).await?;
                 repositories::commit(&repo, "Adding new file in dir1")?;
+                let opts = PushOpts {
+                    remote: constants::DEFAULT_REMOTE_NAME.to_string(),
+                    branch: branch_name.to_string(),
+                    ..Default::default()
+                };
 
                 // 5. Push to origin branch1
-                repositories::push::push_remote_branch(
-                    &repo,
-                    constants::DEFAULT_REMOTE_NAME,
-                    branch_name,
-                )
-                .await?;
+                repositories::push::push_remote_branch(&repo, &opts).await?;
 
                 // 6. Pull from main
                 let pull_result = repositories::pull_remote_branch(
@@ -1954,6 +1950,50 @@ mod tests {
             .await?;
 
             Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    // Pull and merge a non-empty remote with a non-empty repo
+    #[tokio::test]
+    async fn test_pull_and_merge_non_empty_repos() -> Result<(), OxenError> {
+        // Create a remote repo with a commit
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let remote_repo_clone = remote_repo.clone();
+            test::run_empty_dir_test_async(|dir| async move {
+                // Create an empty repo locally
+                let mut local_repo = LocalRepository::new(dir, None)?;
+
+                // Add and commit a new file
+                let hello_file = local_repo.path.join("dir").join("hello.txt");
+                util::fs::write_to_path(
+                    &hello_file,
+                    "Oxen.ai is the best data version control system.",
+                )?;
+
+                repositories::add(&local_repo, &hello_file).await?;
+                repositories::commit(&local_repo, "Hello!")?;
+
+                // Set the remote
+                let url = remote_repo_clone.url();
+                command::config::set_remote(&mut local_repo, "origin", url)?;
+
+                // Pull the remote
+                repositories::pull(&local_repo).await?;
+
+                // Both files should exist in the local repo
+                assert!(hello_file.exists());
+                assert!(PathBuf::from("README.md").exists());
+
+                // There should be 3 total commits: The two divergent commits, and the merge commit
+                let commits = repositories::commits::list_all(&local_repo)?;
+                assert_eq!(commits.len(), 3);
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo)
         })
         .await
     }

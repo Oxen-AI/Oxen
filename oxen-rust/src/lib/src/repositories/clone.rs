@@ -10,8 +10,8 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote, RemoteRepository};
-use crate::opts::fetch_opts::FetchOpts;
 use crate::opts::CloneOpts;
+use crate::opts::{FetchOpts, StorageOpts};
 use crate::{api, util};
 
 pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
@@ -51,6 +51,8 @@ async fn _clone(
         url: url.as_ref().to_string(),
         dst: dst.as_ref().to_owned(),
         fetch_opts,
+        storage_opts: StorageOpts::from_path(dst.as_ref(), true),
+        is_vfs: false,
         is_remote: false,
     };
     clone(&opts).await
@@ -58,12 +60,14 @@ async fn _clone(
 
 async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenError> {
     log::debug!(
-        "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {} -> is remote? {}",
+        "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {} -> storage backend? {:?} -> is vfs? {} -> is remote? {}",
         opts.url,
         opts.dst,
         opts.fetch_opts.subtree_paths,
         opts.fetch_opts.depth,
         opts.fetch_opts.all,
+        opts.storage_opts.type_,
+        opts.is_vfs,
         opts.is_remote,
     );
 
@@ -143,6 +147,7 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::model::RepoNew;
+    use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -388,7 +393,7 @@ mod tests {
                 // We remove the test/ directory in one of the commits, so make sure we can go
                 // back in the history to that commit
                 let test_dir_path = cloned_repo.path.join("test");
-                println!("test_clone_dash_all test_dir_path: {:?}", test_dir_path);
+                println!("test_clone_dash_all test_dir_path: {test_dir_path:?}");
                 let commit = repositories::commits::first_by_message(&cloned_repo, "Adding test/")?;
                 assert!(commit.is_some());
                 assert!(!test_dir_path.exists());
@@ -402,12 +407,14 @@ mod tests {
                 let test_dir_files = util::fs::list_files_in_dir(&test_dir_path);
                 println!("test_dir_files: {:?}", test_dir_files.len());
                 for file in test_dir_files.iter() {
-                    println!("file: {:?}", file);
+                    println!("file: {file:?}");
                 }
-                assert_eq!(test_dir_files.len(), 2);
+                assert_eq!(test_dir_files.len(), 4);
 
                 assert!(test_dir_path.join("1.jpg").exists());
                 assert!(test_dir_path.join("2.jpg").exists());
+                assert!(test_dir_path.join("3.jpg").exists());
+                assert!(test_dir_path.join("4.jpg").exists());
 
                 Ok(())
             })
@@ -439,13 +446,20 @@ mod tests {
                     constants::DEFAULT_NAMESPACE,
                     repo_name,
                     test::test_host(),
+                    None,
                 );
                 api::client::repositories::create_from_local(&cloned_repo, repo_new).await?;
 
                 command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
 
+                let opts = PushOpts {
+                    remote: remote_name.to_string(),
+                    branch: "main".to_string(),
+                    ..Default::default()
+                };
+
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 Ok(())
             })
@@ -486,13 +500,13 @@ mod tests {
             test::write_txt_file_to_path(&filepath, "Adding back new")?;
             repositories::add(&local_repo, &filepath).await?;
             repositories::commit(&local_repo, "Adding back file_to_modify.txt")?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: DEFAULT_BRANCH_NAME.to_string(),
+                ..Default::default()
+            };
 
-            repositories::push::push_remote_branch(
-                &local_repo,
-                DEFAULT_REMOTE_NAME,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Clone with the --all flag
             test::run_empty_dir_test_async(|new_repo_dir| async move {
@@ -509,13 +523,20 @@ mod tests {
                     constants::DEFAULT_NAMESPACE,
                     repo_name,
                     test::test_host(),
+                    None,
                 );
                 api::client::repositories::create_empty(repo_new).await?;
 
                 command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
 
+                let opts = PushOpts {
+                    remote: remote_name.to_string(),
+                    branch: "main".to_string(),
+                    ..Default::default()
+                };
+
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, remote_name, "main").await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
 
                 Ok(())
             })
@@ -561,8 +582,8 @@ mod tests {
                 )
                 .await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // 2 test, 5 train, 1 labels
-                assert_eq!(8, cloned_num_files);
+                // 4 test, 7 train, 1 labels
+                assert_eq!(12, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 
@@ -690,12 +711,13 @@ mod tests {
             )?;
             repositories::add(&local_repo, &new_file_full_path).await?;
             repositories::commit(&local_repo, "Added new_on_feature.txt to annotations/test")?;
-            repositories::push::push_remote_branch(
-                &local_repo,
-                DEFAULT_REMOTE_NAME,
-                feature_branch_name,
-            )
-            .await?;
+
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: feature_branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Switch original_local_repo back to main for good measure, though not strictly necessary for this test's focus
             repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
@@ -768,60 +790,6 @@ mod tests {
                     .join("annotations")
                     .join("train")
                     .exists());
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            let local_head_commit = repositories::commits::head_commit(&local_repo)?;
-            let local_root =
-                repositories::tree::get_root_with_children(&local_repo, &local_head_commit)?;
-
-            test::run_empty_dir_test_async(|repo_dir| async move {
-                // Clone repo in remote mode
-                let mut clone_opts =
-                    CloneOpts::new(&remote_repo.remote.url, repo_dir.join("new_repo"));
-                clone_opts.is_remote = true;
-
-                let cloned_repo = repositories::clone(&clone_opts).await?;
-                assert!(cloned_repo.is_remote_mode());
-
-                // Merkle tree matches original local repo
-                let cloned_head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                let cloned_root =
-                    repositories::tree::get_root_with_children(&cloned_repo, &cloned_head_commit)?;
-                assert_eq!(local_root, cloned_root);
-
-                // Versions dir is empty
-                let versions_dir = util::fs::oxen_hidden_dir(&cloned_repo.path)
-                    .join(constants::VERSIONS_DIR)
-                    .join(constants::OBJECT_FILES_DIR);
-                let mut versions_iter = std::fs::read_dir(versions_dir)?;
-                assert!(versions_iter.next().is_none());
-
-                // Workspace was initialized
-                let workspace_name = cloned_repo.workspace_name;
-                assert!(workspace_name.is_some());
-
-                let workspace_name = workspace_name.unwrap();
-                let workspace =
-                    api::client::workspaces::get_by_name(&remote_repo, &workspace_name).await?;
-
-                // Workspaces initialized by remote-mode clone are named
-                assert!(workspace.is_some());
-
-                let workspace = workspace.unwrap();
-                assert!(workspace.name.is_some());
-                assert_eq!(workspace.name.unwrap(), workspace_name);
 
                 Ok(())
             })

@@ -12,7 +12,6 @@ use crate::util;
 use crate::view::{PaginatedCommits, StatusMessage};
 use crate::{core, resource};
 
-use derive_more::FromStr;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -62,6 +61,17 @@ pub fn commit_with_user(
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::commit_with_user(repo, message, user),
+    }
+}
+
+/// # Commit with --allow-empty flag
+///
+/// Allows creating a commit even when there are no staged changes.
+/// This reuses the existing create_empty_commit infrastructure.
+pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::commits::commit_allow_empty(repo, message),
     }
 }
 
@@ -231,7 +241,7 @@ pub fn list_between(
     }
 }
 
-/// Get a list commits by the commit message
+/// Get a list of commits by the commit message
 pub fn get_by_message(
     repo: &LocalRepository,
     msg: impl AsRef<str>,
@@ -273,18 +283,52 @@ pub fn list_from_paginated(
     revision: &str,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
-    let commits = list_from(repo, revision)?;
-    log::info!(
-        "list_from_paginated {} got {} commits before pagination",
-        revision,
-        commits.len()
-    );
-    let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
-    Ok(PaginatedCommits {
-        status: StatusMessage::resource_found(),
-        commits,
-        pagination,
-    })
+    let _perf = crate::perf_guard!("commits::list_from_paginated");
+
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            // Calculate skip and limit based on pagination parameters
+            let skip = if pagination.page_num == 0 {
+                0
+            } else {
+                (pagination.page_num - 1) * pagination.page_size
+            };
+            let limit = pagination.page_size;
+
+            let _perf_list = crate::perf_guard!("commits::list_from_paginated_optimized");
+            let (commits, total_entries, cached) =
+                core::v_latest::commits::list_from_paginated_impl(repo, revision, skip, limit)?;
+            log::info!(
+                "list_from_paginated {} got {} commits out of {} total (cached: {})",
+                revision,
+                commits.len(),
+                total_entries,
+                cached
+            );
+            drop(_perf_list);
+
+            // Calculate pagination metadata
+            let total_pages = if pagination.page_size > 0 {
+                (total_entries as f64 / pagination.page_size as f64).ceil() as usize
+            } else {
+                0
+            };
+
+            let pagination = crate::view::Pagination {
+                page_size: pagination.page_size,
+                page_number: pagination.page_num,
+                total_pages,
+                total_entries,
+            };
+
+            Ok(PaginatedCommits {
+                status: StatusMessage::resource_found(),
+                commits,
+                pagination,
+            })
+        }
+    }
 }
 
 /// List paginated commits by resource
@@ -294,10 +338,22 @@ pub fn list_by_path_from_paginated(
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
-    log::info!("list_by_path_from_paginated: {:?} {:?}", commit, path);
+    let _perf = crate::perf_guard!("commits::list_by_path_from_paginated");
+
+    log::info!("list_by_path_from_paginated: {commit:?} {path:?}");
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list_by_path_from_paginated(repo, commit, path, pagination),
+    }
+}
+
+pub fn count_from(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+) -> Result<(usize, bool), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
+        _ => core::v_latest::commits::count_from(repo, revision),
     }
 }
 
@@ -313,8 +369,7 @@ pub fn commit_history_is_complete(
     if !maybe_initial_commit.parent_ids.is_empty() {
         // If it has parents, it isn't an initial commit
         log::debug!(
-            "commit_history_is_complete ❌ last commit has parents: {}",
-            maybe_initial_commit
+            "commit_history_is_complete ❌ last commit has parents: {maybe_initial_commit}"
         );
         return Ok(false);
     }
@@ -322,16 +377,13 @@ pub fn commit_history_is_complete(
     // Ensure all commits and their parents are synced
     // Initialize commit reader
     for c in &history {
-        log::debug!(
-            "commit_history_is_complete checking if commit is synced: {}",
-            c
-        );
+        log::debug!("commit_history_is_complete checking if commit is synced: {c}");
 
-        if !core::commit_sync_status::commit_is_synced(repo, &MerkleHash::from_str(&c.id)?) {
-            log::debug!("commit_history_is_complete ❌ commit is not synced: {}", c);
+        if !core::commit_sync_status::commit_is_synced(repo, &c.id.parse()?) {
+            log::debug!("commit_history_is_complete ❌ commit is not synced: {c}");
             return Ok(false);
         } else {
-            log::debug!("commit_history_is_complete ✅ commit is synced: {}", c);
+            log::debug!("commit_history_is_complete ✅ commit is synced: {c}");
         }
     }
     Ok(true)
@@ -340,11 +392,9 @@ pub fn commit_history_is_complete(
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::str::FromStr;
 
     use crate::error::OxenError;
     use crate::model::EntryDataType;
-    use crate::model::MerkleHash;
     use crate::model::StagedEntryStatus;
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
@@ -634,7 +684,7 @@ mod tests {
 
             // Get the hash of the file at this timestamp
             let hash_when_add =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
+                util::hasher::hash_file_contents(&text_path)?.parse::<MerkleHash>()?;
             repositories::add(&repo, &text_path).await?;
 
             let status = repositories::status(&repo)?;
@@ -647,8 +697,7 @@ mod tests {
             util::fs::write_to_path(&text_path, "Goodbye, world!")?;
 
             // Get the new hash
-            let hash_after_modification =
-                MerkleHash::from_str(&util::hasher::hash_file_contents(&text_path)?)?;
+            let hash_after_modification = util::hasher::hash_file_contents(&text_path)?.parse()?;
 
             // Add and commit the file
             repositories::add(&repo, &text_path).await?;
@@ -869,6 +918,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_commit_allow_empty() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create and commit an initial file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+            let first_commit = repositories::commit(&repo, "Initial commit")?;
+
+            // Try to create an empty commit without --allow-empty (should fail)
+            let result = repositories::commit(&repo, "Empty commit");
+            assert!(result.is_err());
+
+            // Create an empty commit with --allow-empty (should succeed)
+            let empty_commit = commit_allow_empty(&repo, "Empty commit")?;
+            assert_eq!(empty_commit.message, "Empty commit");
+            assert_eq!(empty_commit.parent_ids, vec![first_commit.id.clone()]);
+
+            // Verify the tree is the same as the parent
+            let first_tree =
+                repositories::tree::get_root_with_children(&repo, &first_commit)?.unwrap();
+            let empty_tree =
+                repositories::tree::get_root_with_children(&repo, &empty_commit)?.unwrap();
+
+            // Both trees should have the same file
+            let first_file = first_tree.get_by_path(Path::new("hello.txt"))?;
+            let empty_file = empty_tree.get_by_path(Path::new("hello.txt"))?;
+            assert!(first_file.is_some());
+            assert!(empty_file.is_some());
+            assert_eq!(first_file.unwrap().hash, empty_file.unwrap().hash);
+
+            // Verify commit history
+            let history = repositories::commits::list(&repo)?;
+            assert_eq!(history.len(), 2);
+            assert_eq!(history[0].message, "Empty commit");
+            assert_eq!(history[1].message, "Initial commit");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_commit_allow_empty_with_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create and commit an initial file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Initial commit")?;
+
+            // Stage a new file
+            let goodbye_file = repo.path.join("goodbye.txt");
+            util::fs::write_to_path(&goodbye_file, "Goodbye World")?;
+            repositories::add(&repo, &goodbye_file).await?;
+
+            // commit_allow_empty should commit the staged changes normally
+            let commit = commit_allow_empty(&repo, "Add goodbye")?;
+            assert_eq!(commit.message, "Add goodbye");
+
+            // Verify both files are in the tree
+            let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
+            assert!(tree.get_by_path(Path::new("hello.txt"))?.is_some());
+            assert!(tree.get_by_path(Path::new("goodbye.txt"))?.is_some());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_commit_10k_files_vnode_size_10k() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
@@ -877,7 +996,7 @@ mod tests {
             util::fs::create_dir_all(&dir_repo_path)?;
 
             for i in 0..10000 {
-                let file_path = dir_path.join(format!("file_{}.txt", i));
+                let file_path = dir_path.join(format!("file_{i}.txt"));
                 let file_repo_path = repo.path.join(&file_path);
                 util::fs::write_to_path(&file_repo_path, "test")?;
             }
@@ -1105,8 +1224,7 @@ A: Oxen.ai
             for (i, commit) in paginated_result.commits.iter().enumerate() {
                 assert_eq!(
                     commit.id, expected_commits[i].id,
-                    "Commits should match expected list at index {}",
-                    i
+                    "Commits should match expected list at index {i}"
                 );
             }
 

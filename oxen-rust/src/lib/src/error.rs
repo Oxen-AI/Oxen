@@ -11,6 +11,7 @@ use std::num::ParseIntError;
 use std::path::Path;
 use std::path::PathBuf;
 use std::path::StripPrefixError;
+use tokio::task::JoinError;
 
 use crate::model::Schema;
 use crate::model::Workspace;
@@ -57,6 +58,9 @@ pub enum OxenError {
     RemoteBranchLocked(StringError),
     UpstreamMergeConflict(StringError),
 
+    // Remote Mode
+    // RemoteModeCommandNotAvailable(StringError),
+
     // Branches/Commits
     BranchNotFound(Box<StringError>),
     RevisionNotFound(Box<StringError>),
@@ -93,6 +97,7 @@ pub enum OxenError {
 
     // Metadata
     ImageMetadataParseError(StringError),
+    ThumbnailingNotEnabled(StringError),
 
     // SQL
     SQLParseError(StringError),
@@ -142,9 +147,11 @@ pub enum OxenError {
 impl fmt::Display for OxenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OxenError::OxenUpdateRequired(err) | OxenError::Basic(err) => write!(f, "{}", err),
+            OxenError::OxenUpdateRequired(err)
+            | OxenError::Basic(err)
+            | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
             _ => {
-                write!(f, "{:?}", self)
+                write!(f, "{self:?}")
             }
         }
     }
@@ -153,6 +160,10 @@ impl fmt::Display for OxenError {
 impl OxenError {
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
+    }
+
+    pub fn thumbnailing_not_enabled(s: impl AsRef<str>) -> Self {
+        OxenError::ThumbnailingNotEnabled(StringError::from(s.as_ref()))
     }
 
     pub fn authentication(s: impl AsRef<str>) -> Self {
@@ -186,7 +197,7 @@ impl OxenError {
     pub fn remote_not_set(name: impl AsRef<str>) -> Self {
         let name = name.as_ref();
         OxenError::basic_str(
-            format!("Remote not set, you can set a remote by running:\n\noxen config --set-remote {} <url>\n", name)
+            format!("Remote not set, you can set a remote by running:\n\noxen config --set-remote {name} <url>\n")
         )
     }
 
@@ -284,10 +295,6 @@ impl OxenError {
 
     pub fn email_and_name_not_set() -> OxenError {
         OxenError::user_config_not_found(EMAIL_AND_NAME_NOT_FOUND.to_string().into())
-    }
-
-    pub fn auth_token_not_set() -> OxenError {
-        OxenError::basic_str(AUTH_TOKEN_NOT_FOUND)
     }
 
     pub fn remote_repo_not_found(url: impl AsRef<str>) -> OxenError {
@@ -460,8 +467,7 @@ impl OxenError {
             .join("\n  ");
 
         OxenError::basic_str(format!(
-            "\nError: your local changes to the following files would be overwritten. Please commit the following changes before continuing:\n\n  {}\n",
-            paths_str
+            "\nError: your local changes to the following files would be overwritten. Please commit the following changes before continuing:\n\n  {paths_str}\n"
         ))
     }
 
@@ -528,12 +534,12 @@ impl OxenError {
     }
 
     pub fn column_name_already_exists(column_name: &str) -> OxenError {
-        let err = format!("Column name already exists: {:?}", column_name);
+        let err = format!("Column name already exists: {column_name:?}");
         OxenError::ColumnNameAlreadyExists(StringError::from(err))
     }
 
     pub fn column_name_not_found(column_name: &str) -> OxenError {
-        let err = format!("Column name not found: {:?}", column_name);
+        let err = format!("Column name not found: {column_name:?}");
         OxenError::ColumnNameNotFound(StringError::from(err))
     }
 
@@ -670,7 +676,7 @@ impl From<std::env::VarError> for OxenError {
 
 impl From<StripPrefixError> for OxenError {
     fn from(error: StripPrefixError) -> Self {
-        OxenError::basic_str(format!("Error stripping prefix: {}", error))
+        OxenError::basic_str(format!("Error stripping prefix: {error}"))
     }
 }
 impl From<ParseIntError> for OxenError {
@@ -679,9 +685,15 @@ impl From<ParseIntError> for OxenError {
     }
 }
 
+impl From<JoinError> for OxenError {
+    fn from(error: JoinError) -> Self {
+        OxenError::basic_str(error.to_string())
+    }
+}
+
 impl From<std::string::FromUtf8Error> for OxenError {
     fn from(error: std::string::FromUtf8Error) -> Self {
-        OxenError::basic_str(format!("UTF8 conversion error: {}", error))
+        OxenError::basic_str(format!("UTF8 conversion error: {error}"))
     }
 }
 

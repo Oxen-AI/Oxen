@@ -59,9 +59,9 @@ pub fn get_meta_entry(
         .ok_or(OxenError::parsed_resource_not_found(
             parsed_resource.clone(),
         ))?;
-    log::debug!("get_meta_entry path: {:?} commit: {}", path, commit);
-    let node = repositories::tree::get_dir_without_children(repo, &commit, path)?;
-    log::debug!("get_meta_entry node: {:?}", node);
+    log::debug!("get_meta_entry path: {path:?} commit: {commit}");
+    let node = repositories::tree::get_dir_without_children(repo, &commit, path, None)?;
+    log::debug!("get_meta_entry node: {node:?}");
 
     if let Some(node) = node {
         log::debug!(

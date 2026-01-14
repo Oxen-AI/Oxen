@@ -57,6 +57,9 @@ pub use load::LoadCmd;
 pub mod log;
 pub use log::LogCmd;
 
+pub mod ls;
+pub use ls::LsCmd;
+
 pub mod migrate;
 pub use migrate::MigrateCmd;
 
@@ -68,9 +71,6 @@ pub use merge::MergeCmd;
 
 pub mod node;
 pub use node::NodeCmd;
-
-pub mod notebook;
-pub use notebook::NotebookCmd;
 
 pub mod pack;
 pub use pack::PackCmd;
@@ -113,6 +113,9 @@ pub use upload::UploadCmd;
 
 pub mod workspace;
 pub use workspace::WorkspaceCmd;
+
+pub mod prune;
+pub use prune::PruneCmd;
 
 #[async_trait]
 pub trait RunCmd {

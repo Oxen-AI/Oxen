@@ -246,6 +246,32 @@ class RemoteRepo:
             self._repo.download(src, dst, self.revision)
         else:
             self._repo.download(src, dst, revision)
+        
+    def download_zip(
+        self, src: str, dst: Optional[str] = None, revision: Optional[str] = None
+    ):
+        """
+        Download the contents of a directory as a zip file
+
+        Args:
+            src: `str`
+                The path to the remote dir to download files from. This must be a directory
+            dst: `str | None`
+                The path to the local file. If None, will download to `{src}.zip`
+            revision: `str | None`
+                The branch or commit id to download. Defaults to `self.revision`
+        """
+        if dst is None:
+            dst = f"{src}.zip"
+            # create parent dir if it does not exist
+            directory = os.path.dirname(dst)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+
+        if revision is None:
+            self._repo.download_zip(src, dst, self.revision)
+        else:
+            self._repo.download_zip(src, dst, revision)
 
     def get_file(self, src: str, revision: Optional[str] = None):
         """
@@ -363,6 +389,32 @@ class RemoteRepo:
             self._workspace = None
         return commit
 
+    def delete_file(
+        self,
+        path: str,
+        commit_message: Optional[str] = None,
+        branch: Optional[str] = None,
+    ):
+        """
+        Delete from the remote repo. This can be used with a committed file or dir
+        Args:
+            path: `str`
+                The path to the remote file to remove
+            commit_message: `str` | None
+                The message to commit with. Defaults to "Removed '{path}'"
+            branch: `str | None`
+                The branch to remove the file from. Defaults to `self.revision`
+        """
+        if branch is None:
+            branch = self.revision
+        if commit_message is None:
+            message = f"Removed '{path}'"
+        else:
+            message = commit_message
+        user = oxen_user.current_user()
+
+        self._repo.delete_file(branch, path, message, user)
+
     def upload(
         self,
         src: str,
@@ -377,6 +429,8 @@ class RemoteRepo:
         Args:
             src: `str`
                 The path to the local file to upload
+            commit_message: `str`
+                The message to commit with. Defaults to "Uploaded '{src}'"
             file_name: `str | None`
                 The name of the file to upload. If None, will use the name of the file in `src`
             dst_dir: `str | None`
@@ -388,6 +442,8 @@ class RemoteRepo:
             branch = self.revision
         if file_name is None:
             file_name = os.path.basename(src)
+        if commit_message is None:
+            commit_message = f"Uploaded {src}"
         user = oxen_user.current_user()
 
         self._repo.put_file(branch, dst_dir, src, file_name, commit_message, user)

@@ -42,7 +42,7 @@ impl PyTabularDiff {
 
 impl From<&TabularDiff> for PyTabularDiff {
     fn from(other: &TabularDiff) -> Self {
-        let df = &other.contents;
+        let df = other.contents.clone();
         let summary = &other.summary;
         let rows = AddRemoveModifyCounts {
             added: summary.modifications.row_counts.added,
@@ -52,9 +52,9 @@ impl From<&TabularDiff> for PyTabularDiff {
         let mods = PyTabularDiffMods { rows };
         let summary = PyTabularDiffSummary {
             modifications: mods,
-            schema: Schema::from_polars(df.schema()),
+            schema: Schema::from_polars(df.clone().schema()),
         };
-        let data = PyDataFrame(df.clone());
+        let data = PyDataFrame(df);
         Self { summary, data }
     }
 }

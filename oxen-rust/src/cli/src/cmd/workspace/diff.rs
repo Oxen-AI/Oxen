@@ -57,8 +57,8 @@ impl RunCmd for WorkspaceDiffCmd {
             DEFAULT_PAGE_SIZE,
         )
         .await?;
-        let remote_df = diff.view.to_df();
-        println!("{:?}", remote_df);
+        let remote_df = diff.view.to_df().await;
+        println!("{remote_df:?}");
 
         // TODO: Allow them to save a remote diff to disk
 

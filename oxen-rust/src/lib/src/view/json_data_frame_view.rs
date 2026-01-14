@@ -6,6 +6,7 @@ use std::str;
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use utoipa::ToSchema;
 
 use super::data_frames::DataFrameColumnChange;
 use super::data_frames::DataFrameRowChange;
@@ -22,7 +23,7 @@ use crate::view::entries::ResourceVersion;
 use crate::view::Pagination;
 use crate::{model::Schema, opts::DFOpts};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrameView {
     pub schema: Schema,
     pub size: DataFrameSize,
@@ -32,13 +33,13 @@ pub struct JsonDataFrameView {
     pub opts: DFOptsView,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrameViews {
     pub source: DataFrameSchemaSize,
     pub view: JsonDataFrameView,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrameViewResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -96,7 +97,7 @@ pub struct JsonDataFrameColumnResponse {
     pub resource: Option<ResourceVersion>,
     pub derived_resource: Option<DerivedDFResource>,
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DFResourceType {
     Compare,
@@ -104,7 +105,7 @@ pub enum DFResourceType {
     Query,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct DerivedDFResource {
     pub resource_id: String,
     pub path: String,
@@ -112,10 +113,10 @@ pub struct DerivedDFResource {
 }
 
 impl WorkspaceJsonDataFrameViewResponse {
-    pub fn empty() -> WorkspaceJsonDataFrameViewResponse {
+    pub async fn empty() -> WorkspaceJsonDataFrameViewResponse {
         WorkspaceJsonDataFrameViewResponse {
             status: StatusMessage::resource_found(),
-            data_frame: Some(JsonDataFrameViews::empty()),
+            data_frame: Some(JsonDataFrameViews::empty().await),
             commit: None,
             resource: None,
             derived_resource: None,
@@ -125,8 +126,9 @@ impl WorkspaceJsonDataFrameViewResponse {
 }
 
 impl JsonDataFrameViews {
-    pub fn empty() -> JsonDataFrameViews {
+    pub async fn empty() -> JsonDataFrameViews {
         JsonDataFrameViews::from_df_and_opts(DataFrame::empty(), Schema::empty(), &DFOpts::empty())
+            .await
     }
 }
 
@@ -135,7 +137,11 @@ impl JsonDataFrameView {
         JsonDataFrameView::empty_with_schema(&Schema::empty(), 0, &DFOpts::empty())
     }
 
-    pub fn from_df_opts(df: DataFrame, og_schema: Schema, opts: &DFOpts) -> JsonDataFrameView {
+    pub async fn from_df_opts(
+        df: DataFrame,
+        og_schema: Schema,
+        opts: &DFOpts,
+    ) -> JsonDataFrameView {
         let full_width = df.width();
         let full_height = df.height();
 
@@ -153,9 +159,9 @@ impl JsonDataFrameView {
             return JsonDataFrameView::empty_with_schema(&og_schema, full_height, &opts);
         };
 
-        opts.slice = Some(format!("{}..{}", start, end));
+        opts.slice = Some(format!("{start}..{end}"));
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts).unwrap();
+        let mut sliced_df = tabular::transform(df, opts).await.unwrap();
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
@@ -178,7 +184,7 @@ impl JsonDataFrameView {
         }
     }
 
-    pub fn from_df_opts_unpaginated(
+    pub async fn from_df_opts_unpaginated(
         df: DataFrame,
         og_schema: Schema,
         og_height: usize,
@@ -192,14 +198,14 @@ impl JsonDataFrameView {
         opts.slice = None;
 
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts.clone()).unwrap();
+        let mut sliced_df = tabular::transform(df, opts.clone()).await.unwrap();
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
-        log::debug!("OG schema {:?}", og_schema);
-        log::debug!("Pre-Slice schema {:?}", slice_schema);
+        log::debug!("OG schema {og_schema:?}");
+        log::debug!("Pre-Slice schema {slice_schema:?}");
         slice_schema.update_metadata_from_schema(&og_schema);
-        log::debug!("Slice schema {:?}", slice_schema);
+        log::debug!("Slice schema {slice_schema:?}");
 
         let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
         let page_number = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -223,13 +229,13 @@ impl JsonDataFrameView {
         }
     }
 
-    pub fn to_df(&self) -> DataFrame {
+    pub async fn to_df(&self) -> DataFrame {
         if self.data == serde_json::Value::Null {
             DataFrame::empty()
         } else {
             // The fields were coming out of order, so we need to reorder them
             let columns = self.schema.fields_names();
-            log::debug!("Got columns: {:?}", columns);
+            log::debug!("Got columns: {columns:?}");
 
             match &self.data {
                 serde_json::Value::Array(arr) => {
@@ -240,7 +246,7 @@ impl JsonDataFrameView {
                         let df = JsonReader::new(content).finish().unwrap();
 
                         let opts = DFOpts::from_column_names(columns);
-                        tabular::transform(df, opts).unwrap()
+                        tabular::transform(df, opts).await.unwrap()
                     } else {
                         let cols = columns
                             .iter()
@@ -263,7 +269,7 @@ impl JsonDataFrameView {
     }
 
     pub fn json_from_df(df: &mut DataFrame) -> serde_json::Value {
-        log::debug!("Serializing df: [{}]", df);
+        log::debug!("Serializing df: [{df}]");
 
         sanitize_df_for_serialization(df).expect("Error cleaning df before serialization");
 
@@ -306,22 +312,27 @@ impl JsonDataFrameView {
 }
 
 impl JsonDataFrameViews {
-    pub fn from_df_and_opts(df: DataFrame, og_schema: Schema, opts: &DFOpts) -> JsonDataFrameViews {
+    pub async fn from_df_and_opts(
+        df: DataFrame,
+        og_schema: Schema,
+        opts: &DFOpts,
+    ) -> JsonDataFrameViews {
         let source = DataFrameSchemaSize::from_df(&df, &og_schema);
-        let view = JsonDataFrameView::from_df_opts(df, og_schema, opts);
+        let view = JsonDataFrameView::from_df_opts(df, og_schema, opts).await;
         JsonDataFrameViews { source, view }
     }
 
     // To avoid duplicate pagination when the pagination has already been applied
     // most commonly from duckdb / other sql
-    pub fn from_df_and_opts_unpaginated(
+    pub async fn from_df_and_opts_unpaginated(
         df: DataFrame,
         og_schema: Schema,
         og_height: usize,
         opts: &DFOpts,
     ) -> JsonDataFrameViews {
         let source = DataFrameSchemaSize::from_df(&df, &og_schema);
-        let view = JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts);
+        let view =
+            JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts).await;
         JsonDataFrameViews { source, view }
     }
 }
@@ -335,23 +346,32 @@ fn sanitize_df_for_serialization(df: &mut DataFrame) -> Result<(), OxenError> {
         let series = df.select_at_idx(idx).unwrap();
 
         if let Some(new_series) = match series.dtype() {
-            DataType::Binary => Some(cast_binary_to_string_with_fallback(series, "[binary]")),
+            DataType::Binary | DataType::BinaryOffset => {
+                Some(cast_binary_to_string_with_fallback(series, "[binary]"))
+            }
             DataType::Struct(subfields) => {
-                let mut cast_series = series.clone();
-                for subfield in subfields {
-                    if let DataType::Binary = subfield.dtype() {
-                        cast_series = cast_binary_to_string_with_fallback(
-                            series,
-                            &format!("struct[{}]", subfields.len()),
-                        );
-                        break;
-                    }
+                if has_binary_in_struct(subfields) {
+                    Some(cast_binary_to_string_with_fallback(
+                        series,
+                        &format!("struct[{}]", subfields.len()),
+                    ))
+                } else {
+                    None
                 }
-                Some(cast_series)
             }
             DataType::List(subtype) => match **subtype {
-                DataType::Binary => {
-                    Some(cast_binary_to_string_with_fallback(series, "List[binary]"))
+                DataType::Binary | DataType::BinaryOffset => Some(
+                    cast_binary_to_string_with_fallback(series, "[list[binary]]"),
+                ),
+                DataType::Struct(ref subfields) => {
+                    if has_binary_in_struct(subfields) {
+                        Some(cast_binary_to_string_with_fallback(
+                            series,
+                            &format!("[list[struct[{}]]]", subfields.len()),
+                        ))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             },
@@ -367,6 +387,13 @@ fn sanitize_df_for_serialization(df: &mut DataFrame) -> Result<(), OxenError> {
     }
 
     Ok(())
+}
+
+fn has_binary_in_struct(subfields: &[Field]) -> bool {
+    subfields.iter().any(|field| {
+        matches!(field.dtype(), DataType::Binary | DataType::BinaryOffset)
+            || field.dtype().to_string().contains("Binary")
+    })
 }
 
 fn cast_binary_to_string_with_fallback(series: &Column, out: &str) -> Column {

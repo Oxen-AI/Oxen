@@ -67,7 +67,7 @@ impl RunCmd for DeleteRemoteCmd {
             .map(String::from)
             .unwrap_or("https".to_string());
 
-        let url = format!("{}://{host}/{namespace_name}", scheme);
+        let url = format!("{scheme}://{host}/{namespace_name}");
         let Some(remote_repo) = api::client::repositories::get_by_url(&url).await? else {
             return Err(OxenError::basic_str(format!(
                 "Remote repository not found: {namespace_name}"

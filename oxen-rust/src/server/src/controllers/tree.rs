@@ -1,20 +1,18 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use bytesize::ByteSize;
 use futures_util::stream::StreamExt as _;
+use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
-use liboxen::view::tree::merkle_hashes::NodeHashes;
 use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use liboxen::model::MerkleHash;
 use liboxen::repositories;
 use liboxen::view::tree::nodes::{
     CommitNodeResponse, DirNodeResponse, FileNodeResponse, VNodeResponse,
@@ -32,10 +30,9 @@ pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse,
     let repo_name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = MerkleHash::from_str(&hash_str)?;
 
-    let node =
-        repositories::tree::get_node_by_id(&repository, &hash)?.ok_or(OxenHttpError::NotFound)?;
+    let node = repositories::tree::get_node_by_id(&repository, &hash_str.parse()?)?
+        .ok_or(OxenHttpError::NotFound)?;
 
     node_to_json(node)
 }
@@ -96,52 +93,10 @@ pub async fn list_missing_file_hashes_from_commits(
         &request.hashes,
         &subtree_paths,
         &query.depth,
-    )?;
+    )
+    .await?;
     log::debug!(
         "list_missing_file_hashes_from_commits found {} missing node ids",
-        hashes.len()
-    );
-    Ok(HttpResponse::Ok().json(MerkleHashesResponse {
-        status: StatusMessage::resource_found(),
-        hashes,
-    }))
-}
-
-pub async fn list_missing_file_hashes_from_nodes(
-    req: HttpRequest,
-    query: web::Query<TreeDepthQuery>,
-    mut body: web::Payload,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let mut bytes = web::BytesMut::new();
-    while let Some(item) = body.next().await {
-        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
-    }
-
-    let request: NodeHashes = serde_json::from_slice(&bytes)?;
-    log::debug!(
-        "list_missing_file_hashes_from_nodes checking {} commit ids with {} dirs/vnodes already found",
-        request.commit_hashes.len(),
-        request.dir_hashes.len(),
-    );
-
-    let commit_hashes = request.commit_hashes;
-    let mut shared_hashes = request.dir_hashes;
-
-    let subtree_paths = get_subtree_paths(&query.subtrees)?;
-    let hashes = repositories::tree::list_missing_file_hashes_from_nodes(
-        &repository,
-        &commit_hashes,
-        &mut shared_hashes,
-        &subtree_paths,
-        &query.depth,
-    )?;
-    log::debug!(
-        "list_missing_file_hashes_from_nodes found {} missing node ids",
         hashes.len()
     );
     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
@@ -158,14 +113,43 @@ pub async fn list_missing_file_hashes(
     let repo_name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = MerkleHash::from_str(&hash_str)?;
+    let hash = hash_str.parse()?;
 
-    let hashes = repositories::tree::list_missing_file_hashes(&repository, &hash)?;
+    let hashes = repositories::tree::list_missing_file_hashes(&repository, &hash).await?;
     log::debug!(
         "list_missing_file_hashes {} got {} hashes",
         hash,
         hashes.len()
     );
+    Ok(HttpResponse::Ok().json(MerkleHashesResponse {
+        status: StatusMessage::resource_found(),
+        hashes,
+    }))
+}
+
+pub async fn mark_nodes_as_synced(
+    req: HttpRequest,
+    mut body: web::Payload,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let mut bytes = web::BytesMut::new();
+    while let Some(item) = body.next().await {
+        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+    }
+
+    let request: MerkleHashes = serde_json::from_slice(&bytes)?;
+    let hashes = request.hashes;
+    log::debug!("mark_nodes_as_synced marking {} node hashes", &hashes.len());
+
+    for hash in &hashes {
+        node_sync_status::mark_node_as_synced(&repository, hash)?;
+    }
+
+    log::debug!("successfully marked {} commit hashes", &hashes.len());
     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
         status: StatusMessage::resource_found(),
         hashes,
@@ -238,7 +222,7 @@ pub async fn download_tree_nodes(
     let base_head_str = path_param(&req, "base_head")?;
     let is_download = query.is_download.unwrap_or(false);
 
-    log::debug!("download_tree_nodes for base_head: {}", base_head_str);
+    log::debug!("download_tree_nodes for base_head: {base_head_str}");
     log::debug!(
         "download_tree_nodes subtrees: {:?}, depth: {:?}",
         query.subtrees,
@@ -320,7 +304,7 @@ pub async fn download_node(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let hash_str = path_param(&req, "hash")?;
-    let hash = MerkleHash::from_str(&hash_str)?;
+    let hash = hash_str.parse()?;
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let buffer = repositories::tree::compress_node(&repository, &hash)?;

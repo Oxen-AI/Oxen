@@ -1,12 +1,14 @@
 use http::Uri;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::constants::DEFAULT_HOST;
 use crate::error::OxenError;
 use crate::model::commit::Commit;
 use crate::model::file::FileNew;
+use crate::opts::StorageOpts;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct RepoNew {
     pub namespace: String,
     pub name: String,
@@ -23,6 +25,9 @@ pub struct RepoNew {
     pub description: Option<String>,
     // Files that you want to seed the repo with
     pub files: Option<Vec<FileNew>>,
+    // Storage backend opts for the repo
+    #[serde(default)]
+    pub storage_opts: Option<StorageOpts>,
 }
 
 impl std::fmt::Display for RepoNew {
@@ -55,7 +60,7 @@ impl RepoNew {
     }
 
     /// repo_id is the "{namespace}/{repo_name}"
-    pub fn new(repo_id: String) -> Result<RepoNew, OxenError> {
+    pub fn new(repo_id: String, storage_opts: Option<StorageOpts>) -> Result<RepoNew, OxenError> {
         if !repo_id.contains('/') {
             return Err(OxenError::basic_str(format!(
                 "Invalid repo id: {repo_id:?}"
@@ -74,6 +79,7 @@ impl RepoNew {
             root_commit: None,
             description: None,
             files: None,
+            storage_opts,
         })
     }
 
@@ -86,7 +92,11 @@ impl RepoNew {
         }
     }
 
-    pub fn from_namespace_name(namespace: impl AsRef<str>, name: impl AsRef<str>) -> RepoNew {
+    pub fn from_namespace_name(
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
+        storage_opts: Option<StorageOpts>,
+    ) -> RepoNew {
         RepoNew {
             namespace: String::from(namespace.as_ref()),
             name: String::from(name.as_ref()),
@@ -96,6 +106,7 @@ impl RepoNew {
             root_commit: None,
             description: None,
             files: None,
+            storage_opts,
         }
     }
 
@@ -103,6 +114,7 @@ impl RepoNew {
         namespace: impl AsRef<str>,
         name: impl AsRef<str>,
         host: impl AsRef<str>,
+        storage_opts: Option<StorageOpts>,
     ) -> RepoNew {
         RepoNew {
             namespace: String::from(namespace.as_ref()),
@@ -113,6 +125,7 @@ impl RepoNew {
             root_commit: None,
             description: None,
             files: None,
+            storage_opts,
         }
     }
 
@@ -130,6 +143,7 @@ impl RepoNew {
             root_commit: Some(root_commit),
             description: None,
             files: None,
+            storage_opts: None,
         }
     }
 
@@ -137,6 +151,7 @@ impl RepoNew {
         namespace: impl AsRef<str>,
         name: impl AsRef<str>,
         files: Vec<FileNew>,
+        storage_opts: Option<StorageOpts>,
     ) -> RepoNew {
         RepoNew {
             namespace: String::from(namespace.as_ref()),
@@ -147,6 +162,7 @@ impl RepoNew {
             root_commit: None,
             description: None,
             files: Some(files),
+            storage_opts,
         }
     }
 
@@ -170,6 +186,7 @@ impl RepoNew {
             root_commit: None,
             description: None,
             files: None,
+            storage_opts: None,
         })
     }
 }

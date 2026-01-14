@@ -1,14 +1,13 @@
 use std::path::Path;
 
-use crate::api;
 use crate::api::client;
-use crate::constants;
 use crate::error::OxenError;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
 use crate::model::RemoteRepository;
 use crate::view::entries::EMetadataEntry;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
+use crate::{api, constants};
 
 pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEntries, OxenError> {
     list(
@@ -108,6 +107,7 @@ mod tests {
     use crate::view::entries::EMetadataEntry;
 
     use std::path::Path;
+    use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_list_dir_has_correct_commits() -> Result<(), OxenError> {
@@ -175,7 +175,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 3);
 
             for entry in &root_entries.entries {
-                println!("entry: {:?}", entry);
+                println!("entry: {entry:?}");
             }
             println!("----------------------");
 
@@ -243,7 +243,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 4);
 
             for entry in &root_entries.entries {
-                println!("entry: {:?}", entry);
+                println!("entry: {entry:?}");
             }
 
             // Make sure the commit hash for "a_data" is correct.
@@ -332,7 +332,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 1);
 
             for entry in &root_entries.entries {
-                println!("entry: {:?}", entry);
+                println!("entry: {entry:?}");
             }
 
             // Find the README.md entry among the metadata entries.
@@ -417,9 +417,18 @@ mod tests {
     #[tokio::test]
     async fn test_get_dir_with_workspace() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let file_path = "annotations/train/file.txt";
+            let file_path = PathBuf::from("annotations")
+                .join("train")
+                .join("file.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
             let workspace_id = "test_workspace_id";
-            let directory_name = "annotations/train";
+            let directory_name = PathBuf::from("annotations")
+                .join("train")
+                .to_str()
+                .unwrap()
+                .to_string();
 
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -433,7 +442,7 @@ mod tests {
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                directory_name.clone(),
                 &full_path,
             )
             .await;
@@ -449,9 +458,13 @@ mod tests {
                 &full_path,
             )
             .await;
-
+            let train_path = PathBuf::from("annotations")
+                .join("train")
+                .to_str()
+                .unwrap()
+                .to_string();
             let response =
-                api::client::dir::get_dir(&remote_repo, workspace_id, "annotations/train").await?;
+                api::client::dir::get_dir(&remote_repo, workspace_id, train_path).await?;
 
             for entry in response.entries.entries.iter() {
                 if let EMetadataEntry::WorkspaceMetadataEntry(ws_entry) = entry {

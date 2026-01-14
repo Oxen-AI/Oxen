@@ -26,8 +26,14 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
             let video_tracks: Vec<&Mp4Track> = video
                 .tracks()
                 .values()
-                .filter(|t| t.track_type().unwrap() == TrackType::Video)
-                .collect();
+                .filter_map(|t| match t.track_type() {
+                    Ok(TrackType::Video) => Some(Ok(t)),
+                    Ok(_) => None,
+                    Err(e) => Some(Err(OxenError::basic_str(format!(
+                        "Could not get track type: {e:?}"
+                    )))),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
             let video = video_tracks
                 .first()
@@ -40,7 +46,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
             ))
         }
         Err(err) => {
-            let err = format!("Could not get video metadata {:?}", err);
+            let err = format!("Could not get video metadata {err:?}");
             Err(OxenError::basic_str(err))
         }
     }
@@ -60,7 +66,7 @@ mod tests {
     fn test_get_metadata_video_mp4() {
         let file = test::test_video_file_with_name("basketball.mp4");
         let metadata = repositories::metadata::get(file).unwrap();
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 23599);
         assert_eq!(metadata.data_type, EntryDataType::Video);
@@ -80,7 +86,7 @@ mod tests {
     fn test_get_metadata_video_mov() {
         let file = test::test_video_file_with_name("dog_skatez.mov");
         let metadata = repositories::metadata::get(file).unwrap();
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 11657299);
         assert_eq!(metadata.data_type, EntryDataType::Video);

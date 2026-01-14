@@ -1,33 +1,50 @@
 use crate::api::client;
-use crate::constants::AVG_CHUNK_SIZE;
+use crate::constants::{chunk_size, max_retries};
+use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
-use crate::model::RemoteRepository;
+use crate::model::{LocalRepository, RemoteRepository};
+use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
-use crate::{api, view::workspaces::ValidateUploadFeasibilityRequest};
+use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
+use futures_util::StreamExt;
+use glob_match::glob_match;
+use parking_lot::Mutex;
 use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
-use walkdir::WalkDir;
+
+use futures::stream;
+use tokio_stream::wrappers::ReceiverStream;
+
+use crate::util::hasher;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
-const MAX_RETRIES: usize = 5;
+const WORKSPACE_ADD_LIMIT: u64 = 100_000_000;
+
 #[derive(Debug)]
 pub struct UploadResult {
     pub files_to_add: Vec<FileWithHash>,
     pub err_files: Vec<ErrorFileInfo>,
 }
 
+// TODO: Test adding removed files
 pub async fn add(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
@@ -37,29 +54,61 @@ pub async fn add(
         return Ok(());
     }
 
-    let mut expanded_paths = Vec::new();
-    for path in paths.clone() {
-        if path.is_dir() {
-            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    expanded_paths.push(entry.path().to_path_buf());
-                }
-            }
-        } else {
-            expanded_paths.push(path);
+    // Parse glob paths
+    let glob_opts = GlobOpts {
+        paths,
+        staged_db: false,
+        merkle_tree: false,
+        working_dir: true,
+        walk_dirs: true,
+    };
+
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref())?;
+    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+    // TODO: add a progress bar
+    // TODO: need to handle error files and not display the `oxen added` message if files weren't added
+    match upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        directory,
+        expanded_paths.clone(),
+        local_repo,
+    )
+    .await
+    {
+        Ok(()) => {
+            println!(
+                "🐂 oxen added {} entries to workspace {}",
+                expanded_paths.len(),
+                workspace_id
+            );
+        }
+        Err(e) => {
+            return Err(e);
         }
     }
 
-    // TODO: add a progress bar
-    upload_multiple_files(remote_repo, workspace_id, directory, expanded_paths).await?;
+    Ok(())
+}
 
-    // TODO: We should only be printing this if files were actually added
-    /*
-    println!(
-        "🐂 oxen successfully added paths {paths:?} to workspace {}",
-        workspace_id
-    );
-    */
+pub async fn add_bytes(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    path: PathBuf,
+    buf: &[u8],
+) -> Result<(), OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let directory = directory.as_ref();
+
+    match upload_bytes_as_file(remote_repo, workspace_id, directory, &path, buf).await {
+        Ok(path) => {
+            println!("🐂 oxen added entry {path:?} to workspace {workspace_id}");
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
 
     Ok(())
 }
@@ -78,13 +127,15 @@ pub async fn upload_single_file(
 
     log::debug!("Uploading file with size: {}", metadata.len());
     // If the file is larger than AVG_CHUNK_SIZE, use the parallel upload strategy
-    if metadata.len() > AVG_CHUNK_SIZE {
+    if metadata.len() > chunk_size() {
         let directory = directory.as_ref();
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             path,
             Some(directory),
             Some(workspace_id.as_ref().to_string()),
+            None,
+            None,
         )
         .await
         {
@@ -97,11 +148,22 @@ pub async fn upload_single_file(
     }
 }
 
+pub async fn upload_bytes_as_file(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    buf: &[u8],
+) -> Result<PathBuf, OxenError> {
+    p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
+}
+
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -115,17 +177,31 @@ async fn upload_multiple_files(
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
 
+    let repo_path = if let Some(local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
+
     // Group files by size
     for path in paths {
+        // Adjustment for remote-mode repos
+        let path = if local_repo.is_some() {
+            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+            repo_path.join(&relative_path)
+        } else {
+            path
+        };
+
         if !path.exists() {
-            log::warn!("File does not exist: {:?}", path);
+            log::warn!("File does not exist: {path:?}");
             continue;
         }
 
         match path.metadata() {
             Ok(metadata) => {
                 let file_size = metadata.len();
-                if file_size > AVG_CHUNK_SIZE {
+                if file_size > chunk_size() {
                     // Large file goes directly to parallel upload
                     large_files.push((path, file_size));
                 } else {
@@ -135,7 +211,7 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                log::warn!("Failed to get metadata for file {:?}: {}", path, err);
+                log::warn!("Failed to get metadata for file {path:?}: {err}");
                 continue;
             }
         }
@@ -145,20 +221,20 @@ async fn upload_multiple_files(
     let total_size = large_files_size + small_files_size;
 
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
-
     // Process large files individually with parallel upload
-    for (path, size) in large_files {
-        log::info!("Uploading large file: {:?} ({} bytes)", path, size);
+    for (path, _size) in large_files {
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
             Some(directory),
             Some(workspace_id.to_string()),
+            None,
+            None,
         )
         .await
         {
-            Ok(_) => log::debug!("Successfully uploaded large file: {:?}", path),
-            Err(err) => log::error!("Failed to upload large file {:?}: {}", path, err),
+            Ok(_) => log::debug!("Successfully uploaded large file: {path:?}"),
+            Err(err) => log::error!("Failed to upload large file {path:?}: {err}"),
         }
     }
 
@@ -169,6 +245,7 @@ async fn upload_multiple_files(
         directory,
         small_files,
         small_files_size,
+        local_repo,
     )
     .await?;
 
@@ -181,157 +258,416 @@ async fn parallel_batched_small_file_upload(
     directory: impl AsRef<Path>,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
+    local_repo: &Option<LocalRepository>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
     }
 
     // Batch small files in chunks of ~AVG_CHUNK_SIZE
-    log::info!(
+    log::debug!(
         "Uploading {} small files (total {} bytes)",
         small_files.len(),
         small_files_size
     );
 
-    let workspace_id = workspace_id.as_ref();
-    let directory_str = directory.as_ref().to_string_lossy();
+    let workspace_id = workspace_id.as_ref().to_string();
+    let directory = directory.as_ref().to_str().unwrap_or_default().to_string();
 
-    // create batches
-    let mut batches = Vec::new();
-    let mut current_batch = Vec::new();
+    // Represents unprocessed batches
+    type PieceOfWork = Vec<(PathBuf, u64)>;
+
+    // Represents processed batches
+    type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
+
+    // Split files into batches
+    let mut file_batches: Vec<PieceOfWork> = Vec::new();
+    let mut current_batch: Vec<(PathBuf, u64)> = Vec::new();
     let mut current_batch_size = 0;
+    let mut total_size = 0;
 
     for (idx, (path, file_size)) in small_files.iter().enumerate() {
-        current_batch.push(path.clone());
+        current_batch.push((path.clone(), *file_size));
         current_batch_size += file_size;
 
-        if current_batch_size > AVG_CHUNK_SIZE || idx >= small_files.len() - 1 {
-            batches.push(current_batch.clone());
-            current_batch = Vec::new();
+        if current_batch_size > chunk_size() || idx >= small_files.len() - 1 {
+            file_batches.push(current_batch.clone());
+
+            current_batch.clear();
+            total_size += current_batch_size;
             current_batch_size = 0;
         }
     }
 
-    type PieceOfWork = (Vec<PathBuf>, String, String, RemoteRepository);
-    type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
-    type FinishedTaskQueue = deadqueue::limited::Queue<bool>;
-
-    let worker_count = concurrency::num_threads_for_items(batches.len());
-    let queue = Arc::new(TaskQueue::new(batches.len()));
-    let finished_queue = Arc::new(FinishedTaskQueue::new(batches.len()));
-
-    for batch in batches {
-        queue
-            .try_push((
-                batch,
-                workspace_id.to_string(),
-                directory_str.to_string(),
-                remote_repo.clone(),
-            ))
-            .unwrap();
-        finished_queue.try_push(false).unwrap();
-    }
-
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let repo_path = if let Some(ref local_repo) = local_repo {
+        local_repo.path.clone()
+    } else {
+        PathBuf::new()
+    };
 
-    for worker in 0..worker_count {
-        let queue = queue.clone();
-        let finished_queue = finished_queue.clone();
-        let client = client.clone();
+    let head_commit_maybe = if let Some(ref local_repo) = local_repo {
+        repositories::commits::head_commit_maybe(local_repo)?
+    } else {
+        None
+    };
 
-        tokio::spawn(async move {
-            loop {
-                let (batch, workspace_id, directory_str, remote_repo) = queue.pop().await;
-                log::debug!(
-                    "worker[{}] processing batch of {} files",
-                    worker,
-                    batch.len()
-                );
+    // For individual files
+    let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
 
-                // first, upload the files to the version store
-                match api::client::versions::workspace_multipart_batch_upload_versions_with_retry(
-                    &remote_repo,
-                    client.clone(),
-                    batch,
-                )
-                .await
-                {
-                    Ok(result) => {
-                        log::debug!("Successfully uploaded batch of files");
-                        // second, stage the files to workspace
-                        match add_version_files_to_workspace_with_retry(
-                            &remote_repo,
-                            client.clone(),
-                            workspace_id,
-                            Arc::new(result.files_to_add),
-                            directory_str,
-                        )
-                        .await
-                        {
-                            Ok(_err_files) => {
-                                log::debug!("Successfully added version files to workspace");
-                                // TODO: return err files info to the user
-                            }
-                            Err(err) => {
-                                log::error!("Failed to add version files to workspace: {}", err)
-                            }
+    // For operations as a whole
+    let errors = Arc::new(Mutex::new(Vec::new()));
+
+    let worker_count = concurrency::num_threads_for_items(file_batches.len());
+    let (tx, rx) = mpsc::channel(worker_count);
+
+    let progress = Arc::new(PushProgress::new_with_totals(
+        small_files.len() as u64,
+        total_size,
+    ));
+
+    let producer_errors = Arc::clone(&errors);
+    let maybe_local_repo = local_repo.clone();
+
+    // Initiate the producer
+    let producer_handle = tokio::spawn(async move {
+        stream::iter(file_batches)
+            .for_each_concurrent(worker_count, |batch| {
+                let repo_path_clone = repo_path.clone();
+                let head_commit_maybe_clone = head_commit_maybe.clone();
+                let local_repo_clone = maybe_local_repo.clone();
+                let errors = Arc::clone(&producer_errors);
+                let tx_clone = tx.clone();
+
+                async move {
+                    let repo_path_clone = repo_path_clone.clone();
+                    let local_repo_clone = local_repo_clone.clone();
+                    let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+
+                    let result: Result<(), OxenError> = async move {
+                        let mut batch_size = 0;
+                        let mut batch_parts = Vec::new();
+                        let mut files_to_stage = Vec::new();
+
+                        // Build the multiparts for each file
+                        log::debug!("Starting file processing loop with {:?} files", batch.len());
+                        for (path, size) in batch {
+                            let local_repo_clone = local_repo_clone.clone();
+                            let repo_path_clone = repo_path_clone.clone();
+                            let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+
+                            let file_data_maybe: Option<(
+                                reqwest::multipart::Part,
+                                String,
+                                PathBuf,
+                                u64,
+                            )> = tokio::task::spawn_blocking(move || {
+                                let relative_path =
+                                    util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
+
+                                // In remote-mode repos, skip adding files already present in tree
+                                if let Some(ref head_commit) = head_commit_maybe_clone {
+                                    if let Some(file_node) = repositories::tree::get_file_by_path(
+                                        &local_repo_clone.unwrap(),
+                                        head_commit,
+                                        &relative_path,
+                                    )? {
+                                        if !util::fs::is_modified_from_node(&path, &file_node)? {
+                                            log::debug!("Skipping add on unmodified path {path:?}");
+                                            return Ok(None);
+                                        }
+                                    }
+                                }
+
+                                // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name
+                                let staging_path = if head_commit_maybe_clone.is_some() {
+                                    relative_path
+                                } else {
+                                    PathBuf::from(relative_path.file_name().unwrap())
+                                };
+
+                                let file = std::fs::read(&path).map_err(|e| {
+                                    OxenError::basic_str(format!(
+                                        "Failed to read file '{path:?}': {e}"
+                                    ))
+                                })?;
+
+                                let hash = hasher::hash_buffer(&file);
+
+                                let mut encoder =
+                                    GzEncoder::new(Vec::new(), Compression::default());
+                                std::io::copy(&mut file.as_slice(), &mut encoder).map_err(|e| {
+                                    OxenError::basic_str(format!(
+                                        "Failed to copy file '{path:?}' to encoder: {e}"
+                                    ))
+                                })?;
+
+                                let file_part = {
+                                    let compressed_bytes = match encoder.finish() {
+                                        Ok(bytes) => bytes,
+                                        Err(e) => {
+                                            // If compressing a file fails, cancel the operation
+                                            return Err(OxenError::basic_str(format!(
+                                                "Failed to finish gzip for file {}: {}",
+                                                &hash, e
+                                            )));
+                                        }
+                                    };
+
+                                    reqwest::multipart::Part::bytes(compressed_bytes)
+                                        .file_name(hash.clone())
+                                        .mime_str("application/gzip")?
+                                };
+
+                                Ok(Some((file_part, hash, staging_path, size)))
+                            })
+                            .await??;
+
+                            let (file_part, file_hash, file_path, file_size) = match file_data_maybe
+                            {
+                                Some(data) => data,
+                                None => continue,
+                            };
+
+                            batch_parts.push(file_part);
+                            files_to_stage.push(FileWithHash {
+                                hash: file_hash,
+                                path: file_path,
+                            });
+
+                            batch_size += file_size;
+                        }
+
+                        // Once all the files in the batch are processed,
+                        // Send them to the receiver for upload
+                        let processed_batch: ProcessedBatch =
+                            (batch_parts, files_to_stage, batch_size);
+                        match tx_clone.send(processed_batch).await {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
                         }
                     }
-                    Err(err) => log::error!("Failed to upload batch of files: {}", err),
+                    .await;
+
+                    if let Err(e) = result {
+                        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                    }
                 }
+            })
+            .await;
+    });
 
-                finished_queue.pop().await;
-            }
-        });
-    }
+    let client_clone = client.clone();
+    let workspace_id_clone = workspace_id.clone();
+    let remote_repo_clone = remote_repo.clone();
+    let directory_clone = directory.clone();
+    let local_repo_clone = local_repo.clone();
 
-    while !finished_queue.is_empty() {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+    let consumer_err_files = Arc::clone(&err_files);
+    let consumer_errors = Arc::clone(&errors);
+    let progress_clone = Arc::clone(&progress);
+
+    // Initiate the receiver
+    let consumer_handle = tokio::spawn(async move {
+        let rx_stream = ReceiverStream::new(rx);
+        rx_stream
+            .for_each_concurrent(
+                worker_count,
+                |processed_batch| {
+
+                    let client_clone = client_clone.clone();
+                    let remote_repo_clone = remote_repo_clone.clone();
+                    let workspace_id_clone = workspace_id_clone.clone();
+                    let directory_str = directory_clone.clone();
+                    let local_repo_clone = local_repo_clone.clone();
+
+                    let err_files_clone = Arc::clone(&consumer_err_files);
+                    let errors = Arc::clone(&consumer_errors);
+                    let bar = Arc::clone(&progress_clone);
+
+                    async move {
+                        let result: Result<(), OxenError> = async move {
+                            let (current_batch_parts, files_to_stage, current_batch_size) = processed_batch;
+                            let num_entries = current_batch_parts.len();
+
+                            // Build the multipart form
+                            let mut form = reqwest::multipart::Form::new();
+                            for part in current_batch_parts {
+                                form = form.part("file[]", part);
+                            }
+
+                            let mut files_to_retry = files_to_stage.clone();
+                            match api::client::versions::workspace_multipart_batch_upload_parts_with_retry(
+                                &remote_repo_clone,
+                                Arc::clone(&client_clone),
+                                form,
+                                &mut files_to_retry,
+                                &local_repo_clone.clone(),
+                            )
+                            .await
+                            {
+                                Ok(upload_err_files) => {
+                                    if !upload_err_files.is_empty() {
+                                        let mut err_files = err_files_clone.lock();
+                                        err_files.extend(upload_err_files.clone());
+                                    }
+
+                                    log::debug!(
+                                        "Version file upload successful with {:?} err files. Beginning staging for {:?} files",
+                                        upload_err_files.len(),
+                                        files_to_stage.len()
+                                    );
+                                    match stage_files_to_workspace_with_retry(
+                                        &remote_repo_clone,
+                                        client_clone,
+                                        &workspace_id_clone,
+                                        Arc::new(files_to_stage),
+                                        &directory_str,
+                                        upload_err_files,
+                                    )
+                                    .await
+                                    {
+                                        // If the staging operation returned successfully, record the err_files for re-upload
+                                        Ok(staging_err_files) => {
+                                            log::debug!("Successfully staged files to workspace with errs {:?}", staging_err_files.len());
+
+                                            bar.add_bytes(current_batch_size);
+                                            bar.add_files(num_entries as u64);
+
+                                            if !staging_err_files.is_empty() {
+                                                let mut err_files = err_files_clone.lock();
+                                                err_files.extend(staging_err_files.clone());
+                                            }
+                                        }
+                                        // If staging failed, cancel the operation
+                                        Err(e) => {
+                                            log::error!("failed to stage files to workspace: {e}");
+                                            return Err(OxenError::basic_str(format!(
+                                                "failed to stage to workspace: {e}"
+                                            )));
+                                        }
+                                    }
+
+                                    Ok(())
+                                }
+                                // If uploading the version files fails, cancel the operation
+                                Err(e) => {
+                                    let mut err_files = err_files_clone.lock();
+                                    err_files.extend(
+                                        files_to_stage
+                                            .iter()
+                                            .map(|f| ErrorFileInfo {
+                                                hash: f.hash.clone(),
+                                                path: Some(f.path.clone()),
+                                                error: format!("{e:?}"),
+                                            })
+                                            .collect::<Vec<ErrorFileInfo>>()
+                                    );
+
+                                    log::error!("failed to upload version files to workspace: {e}");
+                                    Err(OxenError::basic_str(format!(
+                                        "failed to upload version files to workspace: {e}"
+                                    )))
+                                }
+                            }
+                        }.await;
+
+                        if let Err(e) = result {
+                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                        }
+                    }
+                }
+            )
+            .await;
+    });
+
+    // Join the tasks and run to completion
+    tokio::try_join!(producer_handle, consumer_handle)?;
+
+    // Get the err_files from both processes
+    let mutex = match Arc::try_unwrap(err_files) {
+        Ok(mutex) => mutex,
+        Err(e) => {
+            let err = format!("Couldn't acquire mutex guard for err_files: {e:?}");
+            log::error!("{err}");
+            return Err(OxenError::basic_str(&err));
+        }
+    };
+
+    let err_files = mutex.into_inner();
+
     log::debug!("All upload tasks completed");
-
+    progress.finish();
     tokio::time::sleep(Duration::from_millis(100)).await;
+
+    if !err_files.is_empty() {
+        return Err(OxenError::basic_str(format!(
+            "Failed to upload {} files after retry",
+            err_files.len()
+        )));
+    }
 
     Ok(())
 }
 
-pub async fn add_version_files_to_workspace_with_retry(
+// Retry stage_files_to_workspace until successful or retry limit breached
+// If individual files fail, return them to be re-tried at the end
+pub async fn stage_files_to_workspace_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     workspace_id: impl AsRef<str>,
     files_to_add: Arc<Vec<FileWithHash>>,
     directory_str: impl AsRef<str>,
+    err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let mut first_try = true;
     let mut retry_count: usize = 0;
-    let mut err_files: Vec<ErrorFileInfo> = vec![];
     let directory_str = directory_str.as_ref();
     let workspace_id = workspace_id.as_ref().to_string();
+    let max_retries = max_retries();
 
-    while (first_try || !err_files.is_empty()) && retry_count < MAX_RETRIES {
-        first_try = false;
+    while retry_count < max_retries {
         retry_count += 1;
 
-        err_files = add_version_files_to_workspace(
+        match stage_files_to_workspace(
             remote_repo,
             client.clone(),
             &workspace_id,
             files_to_add.clone(),
             directory_str,
-            err_files,
+            err_files.clone(),
         )
-        .await?;
-
-        if !err_files.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-            sleep(Duration::from_millis(wait_time as u64)).await;
+        .await
+        {
+            // If successful, return individual files that failed to stage
+            Ok(stage_err_files) => {
+                return Ok(stage_err_files);
+            }
+            Err(e) => {
+                log::error!("Error staging files to workspace: {e:?}");
+                if retry_count == max_retries {
+                    return Err(OxenError::basic_str(format!(
+                        "failed to stage files to workspace after retries: {e:?}"
+                    )));
+                }
+            }
         }
+
+        let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+        sleep(Duration::from_millis(wait_time as u64)).await;
     }
-    Ok(err_files)
+
+    log::error!(
+        "Error: Failed to stage files_to_add: {:?}",
+        files_to_add.len()
+    );
+    Err(OxenError::basic_str(
+        "failed to stage files to workspace after retries",
+    ))
 }
 
-pub async fn add_version_files_to_workspace(
+// Stage files to the workspace, filtering out files that previously failed to upload to version store
+pub async fn stage_files_to_workspace(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     workspace_id: impl AsRef<str>,
@@ -341,7 +677,7 @@ pub async fn add_version_files_to_workspace(
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory_str = directory_str.as_ref();
-    let uri = format!("/workspaces/{}/versions/{directory_str}", workspace_id);
+    let uri = format!("/workspaces/{workspace_id}/versions/{directory_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let files_to_send = if !err_files.is_empty() {
@@ -349,12 +685,14 @@ pub async fn add_version_files_to_workspace(
             err_files.iter().map(|f| f.hash.clone()).collect();
         files_to_add
             .iter()
-            .filter(|f| err_hashes.contains(&f.hash))
+            .filter(|f| !err_hashes.contains(&f.hash))
             .cloned()
             .collect()
     } else {
         files_to_add.to_vec()
     };
+
+    log::debug!("Files to send: {:?}", files_to_send.len());
 
     let response = client.post(&url).json(&files_to_send).send().await?;
     let body = client::parse_json_body(&url, response).await?;
@@ -373,7 +711,7 @@ async fn p_upload_single_file(
     let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
     let path = path.as_ref();
-    log::debug!("multipart_file_upload path: {:?}", path);
+    log::debug!("multipart_file_upload path: {path:?}");
     let Ok(file) = std::fs::read(path) else {
         let err = format!("Error reading file at path: {path:?}");
         return Err(OxenError::basic_str(err));
@@ -383,20 +721,82 @@ async fn p_upload_single_file(
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!(
-        "api::client::workspaces::files::add sending file_name: {:?}",
-        file_name
-    );
+    log::info!("api::client::workspaces::files::add sending file_name: {file_name:?}");
 
     let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
     let form = reqwest::multipart::Form::new().part("file", file_part);
     let client = client::new_for_url(&url)?;
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
+    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match result {
         Ok(val) => {
-            log::debug!("File path response: {:?}", val);
+            log::debug!("File path response: {val:?}");
+            if let Some(path) = val.paths.first() {
+                Ok(path.clone())
+            } else {
+                Err(OxenError::basic_str("No file path returned from server"))
+            }
+        }
+        Err(err) => {
+            let err = format!("api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
+async fn p_upload_bytes_as_file(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    path: impl AsRef<Path>,
+    mut buf: &[u8],
+) -> Result<PathBuf, OxenError> {
+    // Check if the total size of the files is too large (over 100mb for now)
+    let limit = WORKSPACE_ADD_LIMIT;
+    let total_size: u64 = buf.len().try_into().unwrap();
+    if total_size > limit {
+        let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
+        return Err(OxenError::basic_str(error_msg));
+    }
+
+    let workspace_id = workspace_id.as_ref();
+    let directory = directory.as_ref();
+    let directory_name = directory.to_string_lossy();
+    let path = path.as_ref();
+    log::debug!("multipart_file_upload path: {path:?}");
+
+    let file_name: String = path.file_name().unwrap().to_string_lossy().into();
+    log::info!("uploading bytes with file_name: {file_name:?}");
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    std::io::copy(&mut buf, &mut encoder)?;
+    let compressed_bytes = match encoder.finish() {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(OxenError::basic_str(format!(
+                "Failed to finish gzip for file {}: {}",
+                &file_name, e
+            )));
+        }
+    };
+
+    let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+        .file_name(file_name)
+        .mime_str("application/gzip")?;
+
+    let form = reqwest::multipart::Form::new().part("file[]", file_part);
+
+    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let response = client.post(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, response).await?;
+    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
+    match result {
+        Ok(val) => {
+            log::debug!("File path response: {val:?}");
             if let Some(path) = val.paths.first() {
                 Ok(path.clone())
             } else {
@@ -419,7 +819,7 @@ pub async fn add_many(
     let workspace_id = workspace_id.as_ref();
     let directory_name = directory_name.as_ref();
     // Check if the total size of the files is too large (over 100mb for now)
-    let limit = 100_000_000;
+    let limit = WORKSPACE_ADD_LIMIT;
     let total_size: u64 = paths.iter().map(|p| p.metadata().unwrap().len()).sum();
     if total_size > limit {
         let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
@@ -473,54 +873,139 @@ pub async fn rm(
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/files/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_file {}", url);
+    log::debug!("rm_file {url}");
     let client = client::new_for_url(&url)?;
     let response = client.delete(&url).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_file got body: {}", body);
+    log::debug!("rm_file got body: {body}");
     Ok(())
 }
 
 pub async fn rm_files(
+    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
 
+    // Parse glob paths
+    let glob_opts = GlobOpts {
+        paths: paths.clone(),
+        staged_db: false,
+        merkle_tree: true,
+        working_dir: false,
+        walk_dirs: false,
+    };
+
+    let expanded_paths: HashSet<PathBuf> =
+        util::glob::parse_glob_paths(&glob_opts, Some(local_repo))?;
+
+    // Convert to relative paths
+    let repo_path = &local_repo.path;
+    let expanded_paths: Vec<PathBuf> = expanded_paths
+        .iter()
+        .map(|p| util::fs::path_relative_to_dir(p, repo_path).unwrap())
+        .collect();
+
     let uri = format!("/workspaces/{workspace_id}/versions");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_files: {}", url);
+    log::debug!("rm_files: {url}");
     let client = client::new_for_url(&url)?;
-    let response = client.delete(&url).json(&paths).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_files got body: {}", body);
+    let response = client.delete(&url).json(&expanded_paths).send().await?;
 
-    // TODO: We should only be printing this if files were actually removed
-    /*
-    println!(
-        "🐂 oxen successfully staged paths {paths:?} as removed for workspace {}",
-        workspace_id
-    );
-    */
+    if response.status().is_success() {
+        let _body = client::parse_json_body(&url, response).await?;
+        println!("🐂 oxen staged paths {paths:?} as removed in workspace {workspace_id}");
+
+        // Remove files locally
+        for path in expanded_paths {
+            let full_path = local_repo.path.join(&path);
+            if full_path.is_dir() {
+                util::fs::remove_dir_all(&full_path)?;
+            }
+
+            if full_path.is_file() {
+                util::fs::remove_file(&full_path)?;
+            }
+        }
+    } else {
+        log::error!("rm_files failed with status: {}", response.status());
+        let body = client::parse_json_body(&url, response).await?;
+
+        return Err(OxenError::basic_str(format!(
+            "Error: Could not remove paths {body:?}"
+        )));
+    }
 
     Ok(())
 }
 
 pub async fn rm_files_from_staged(
+    local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
 
+    // Parse glob paths
+    let repo_path = local_repo.path.clone();
+    let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
+
+    for path in paths.clone() {
+        let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
+        let full_path = repo_path.join(&relative_path);
+        if util::fs::is_glob_path(&full_path) {
+            let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
+            else {
+                // TODO: Better error message?
+                return Err(OxenError::basic_str(
+                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
+                ));
+            };
+            let glob_pattern = relative_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            let root_path = PathBuf::from("");
+            let parent_path = relative_path.parent().unwrap_or(&root_path);
+
+            // If dir not found in tree, skip glob path
+            let Some(dir_node) = repositories::tree::get_dir_with_children(
+                local_repo,
+                head_commit,
+                parent_path,
+                None,
+            )?
+            else {
+                continue;
+            };
+
+            let dir_children = dir_node.list_paths()?;
+            for child_path in dir_children {
+                let child_str = child_path.to_string_lossy().to_string();
+                if glob_match(&glob_pattern, &child_str) {
+                    expanded_paths.insert(parent_path.join(child_path.clone()));
+                }
+            }
+        } else {
+            expanded_paths.insert(relative_path);
+        }
+    }
+
+    log::debug!("expanded paths: {expanded_paths:?}");
+
+    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+
     let uri = format!("/workspaces/{workspace_id}/staged");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_files: {}", url);
+    log::debug!("rm_files: {url}");
     let client = client::new_for_url(&url)?;
-    let response = client.delete(&url).json(&paths).send().await?;
+    let response = client.delete(&url).json(&expanded_paths).send().await?;
     let body = client::parse_json_body(&url, response).await?;
-    log::debug!("rm_files got body: {}", body);
+    log::debug!("rm_files got body: {body}");
     Ok(())
 }
 
@@ -541,10 +1026,35 @@ pub async fn download(
     log::debug!("Downloading file from {url}");
     let client = client::new_for_url(&url)?;
     let response = client.get(&url).send().await?;
-    // Save the raw file contents from the response
-    let file_contents = response.bytes().await?;
-    let output_path = output_path.unwrap_or_else(|| Path::new(path));
-    util::fs::write(output_path, file_contents)?;
+
+    if response.status().is_success() {
+        // Save the raw file contents from the response stream
+        let output_path = output_path.unwrap_or_else(|| Path::new(path));
+        let output_dir = output_path.parent().unwrap_or(Path::new(""));
+
+        if !output_dir.exists() {
+            util::fs::create_dir_all(output_dir)?;
+        }
+
+        let mut file = tokio::fs::File::create(&output_path).await?;
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+        }
+        file.flush().await?;
+    } else {
+        log::error!(
+            "api::client::workspace::files::download failed with status: {}",
+            response.status()
+        );
+        let body = client::parse_json_body(&url, response).await?;
+
+        return Err(OxenError::basic_str(format!(
+            "Error: Could not remove paths {body:?}"
+        )));
+    }
 
     Ok(())
 }
@@ -590,6 +1100,7 @@ mod tests {
     use std::path::PathBuf;
 
     use std::path::Path;
+    use tempfile::TempDir;
     use uuid;
 
     #[tokio::test]
@@ -616,6 +1127,7 @@ mod tests {
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -669,6 +1181,7 @@ mod tests {
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -761,7 +1274,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -801,7 +1314,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -826,7 +1339,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             // Upload a new broken data frame
             let workspace =
@@ -842,7 +1355,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -867,7 +1380,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             Ok(remote_repo)
         })
@@ -892,7 +1405,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -932,7 +1445,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -957,7 +1470,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             // Upload a new broken data frame
             let workspace =
@@ -973,7 +1486,7 @@ mod tests {
                 file_to_post,
             )
             .await;
-            println!("result: {:?}", result);
+            println!("result: {result:?}");
             assert!(result.is_ok());
 
             let body = NewCommitBody {
@@ -998,7 +1511,7 @@ mod tests {
             )
             .await?;
             assert_eq!(entries.len(), 2);
-            println!("entries: {:?}", entries);
+            println!("entries: {entries:?}");
 
             Ok(remote_repo)
         })
@@ -1069,7 +1582,7 @@ mod tests {
                 assert_eq!(local_commit.id, commit.id);
 
                 // The file should exist locally
-                println!("Looking for file at path: {:?}", path);
+                println!("Looking for file at path: {path:?}");
                 assert!(path.exists());
 
                 Ok(())
@@ -1317,9 +1830,14 @@ mod tests {
             let directory = "test_data";
 
             // Call the add function with multiple files
-            let result =
-                api::client::workspaces::files::add(&remote_repo, &workspace_id, directory, paths)
-                    .await;
+            let result = api::client::workspaces::files::add(
+                &remote_repo,
+                &workspace_id,
+                directory,
+                paths,
+                &None,
+            )
+            .await;
             assert!(result.is_ok());
 
             // Verify that both files were added
@@ -1367,6 +1885,7 @@ mod tests {
                 &workspace_id,
                 directory_name,
                 vec![path],
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -1397,23 +1916,37 @@ mod tests {
         .await
     }
 
-    // Test adding and committing file in remote mode in empty repo
-    /*
+    // Download file from the workspace's base repo using the workspace download endpoint
+    #[tokio::test]
+    async fn test_download_version_file_from_workspace() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let branch_name = constants::DEFAULT_BRANCH_NAME;
 
-        1. Make remote mode repo w/ empty remote;
-        2. Check whether repo exists, is_remote, has a branch, has created workspace
-        3. Create file in the working dir: run status, ensure that the file is untracked
-        4. Add the file; Call status, check for added file
-        5. Commit; Call status, check for is_clean message; check for new file node locally
-        6. Modify file locally; Call status, check for modified file
-        7. Add + Commit; Call status, check for is_clean message; check for new file node locally
-        8. Clone new local repo with same remote. Check for identical commit tree, both files in the versions folder, modified file in the working dir
+            let workspace_id = uuid::Uuid::new_v4().to_string();
+            let workspace =
+                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            assert_eq!(workspace.id, workspace_id);
 
-    */
+            let bounding_box_path = PathBuf::from("README.md");
 
-    // Test adding/committing multiple files in remote mode from populated repo
-    /*
-        Copy/Paste the above, except with populated repo. Add multiple files before committing, track which are modified when
+            // Create a temporary directory for the output file
+            let temp_dir = TempDir::new()?;
+            let output_path = temp_dir.path().join("output.md");
 
-    */
+            // Download the bounding box from the base repo to a new path
+            api::client::workspaces::files::download(
+                &remote_repo,
+                &workspace_id,
+                bounding_box_path.to_str().unwrap(),
+                Some(&output_path),
+            )
+            .await?;
+
+            assert!(output_path.exists());
+
+            // TempDir will automatically clean up when it goes out of scope
+            Ok(remote_repo)
+        })
+        .await
+    }
 }

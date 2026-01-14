@@ -24,23 +24,26 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Cache based on dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            oxen-rust/target/
-            oxen-python/target/
-          key: ${{ runner.os }}-cargo-dependencies-${{ hashFiles('**/Cargo.lock') }}
+          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
+          # Other branches will still use the cache but won't save it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            oxen-rust
+            oxen-python
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
 
       - name: Cargo Check
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          cargo build
-          # cargo check --all-targets --all-features
+          # cargo build
+          cargo check --all-features
 
           cd ${{ github.workspace }}/oxen-python
           cargo build

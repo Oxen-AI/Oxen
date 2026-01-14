@@ -1,11 +1,11 @@
+use rocksdb::IteratorMode;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
 
-use rocksdb::{DBWithThreadMode, IteratorMode, MultiThreaded};
-
-use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR};
-use crate::core::db;
+use crate::core::db::dir_hashes::dir_hashes_db::{
+    dir_hash_db_path, dir_hash_db_path_from_commit_id, with_dir_hash_db_manager,
+};
 use crate::core::db::merkle_node::MerkleNodeDB;
 
 use crate::model::merkle_tree::node::EMerkleTreeNode;
@@ -16,9 +16,7 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode};
 
-use crate::util::{self, hasher};
-
-use std::str::FromStr;
+use crate::util::hasher;
 
 pub struct CommitMerkleTree {
     pub root: MerkleTreeNode,
@@ -26,250 +24,55 @@ pub struct CommitMerkleTree {
 }
 
 impl CommitMerkleTree {
-    // Commit db is the directories per commit
-    // This helps us skip to a directory in the tree
-    // .oxen/history/{COMMIT_ID}/dir_hashes
-    fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
-        util::fs::oxen_hidden_dir(&repo.path)
-            .join(Path::new(HISTORY_DIR))
-            .join(&commit.id)
-            .join(DIR_HASHES_DIR)
-    }
-
-    pub fn dir_hash_db_path_from_commit_id(
-        repo: &LocalRepository,
-        commit_id: MerkleHash,
-    ) -> PathBuf {
-        util::fs::oxen_hidden_dir(&repo.path)
-            .join(Path::new(HISTORY_DIR))
-            .join(commit_id.to_string())
-            .join(DIR_HASHES_DIR)
-    }
-
-    // MODULARIZE: We don't need to use this directly, go through repositories::tree
-
-    pub fn root_with_children(
+    /// The dir hashes allow you to skip to a directory in the tree
+    pub fn dir_hashes(
         repo: &LocalRepository,
         commit: &Commit,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
-        CommitMerkleTree::read_node(repo, &node_hash, true)
+    ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
+        let dir_hashes = with_dir_hash_db_manager(repo, &commit.id, |dir_hashes_db| {
+            let mut dir_hashes = HashMap::new();
+            let iterator = dir_hashes_db.iterator(IteratorMode::Start);
+            for item in iterator {
+                match item {
+                    Ok((key, value)) => {
+                        let key = str::from_utf8(&key)?;
+                        let value = str::from_utf8(&value)?;
+                        let hash = value.parse()?;
+                        dir_hashes.insert(PathBuf::from(key), hash);
+                    }
+                    _ => {
+                        return Err(OxenError::basic_str(
+                            "Could not read iterate over db values",
+                        ));
+                    }
+                }
+            }
+
+            Ok(dir_hashes)
+        })?;
+
+        Ok(dir_hashes)
     }
 
-    // MODULARIZE: We don't need to use this directly, go through repositories::tree
-
-    pub fn root_without_children(
-        repo: &LocalRepository,
-        commit: &Commit,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
-        // Read the root node at depth 1 to get the directory node as well
-        CommitMerkleTree::read_depth(repo, &node_hash, 1)
+    pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &String) -> PathBuf {
+        dir_hash_db_path_from_commit_id(repo, commit_id)
     }
 
-    // MODULARIZE: This needs an access method in repositories::tree
-
-    // Used in the checkout logic to simultaneously load in the target tree and find all of its dir and vnode hashes
-    // Saves an extra tree traversal needed to list these hashes
-    pub fn root_with_children_and_hashes(
-        repo: &LocalRepository,
-        commit: &Commit,
-        hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
-        CommitMerkleTree::read_node_with_hashes(repo, &node_hash, hashes)
-    }
-
-    // MODULARIZE: This needs an access method in repositories::tree
-
-    // Used in the checkout logic to simultaneosuly:
-    // A: load only the children of the from tree which aren't present in the target tree
-    // B: list the shared dir and vnode hashes between the trees
-    // C: find all of its unique nodes, reduced to 'PartialNodes' to save memory
-
-    // Saves 2 extra tree traversals needed to list the shared hashes and the unique nodes
-    pub fn root_with_unique_children(
-        repo: &LocalRepository,
-        commit: &Commit,
-        base_hashes: &mut HashSet<MerkleHash>,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
-        CommitMerkleTree::read_unique_nodes(
-            repo,
-            &node_hash,
-            base_hashes,
-            shared_hashes,
-            partial_nodes,
-        )
-    }
-
-    pub fn get_unique_children_for_commit(
-        repo: &LocalRepository,
-        commit: &Commit,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_hash = MerkleHash::from_str(&commit.id)?;
-        CommitMerkleTree::read_unique_children_for_commit(
-            repo,
-            &node_hash,
-            shared_hashes,
-            unique_hashes,
-        )
+    pub fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
+        dir_hash_db_path(repo, commit)
     }
 
     pub fn from_commit(repo: &LocalRepository, commit: &Commit) -> Result<Self, OxenError> {
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
-        let node_hash = MerkleHash::from_str(&commit.id)?;
         let root =
-            CommitMerkleTree::read_node(repo, &node_hash, true)?.ok_or(OxenError::basic_str(
+            CommitMerkleTree::root_with_children(repo, commit)?.ok_or(OxenError::basic_str(
                 format!("Merkle tree hash not found for commit: '{}'", commit.id),
             ))?;
+
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
         Ok(Self { root, dir_hashes })
-    }
-
-    pub fn from_path_recursive(
-        repo: &LocalRepository,
-        commit: &Commit,
-        path: impl AsRef<Path>,
-    ) -> Result<Self, OxenError> {
-        let load_recursive = true;
-        CommitMerkleTree::from_path(repo, commit, path, load_recursive)
-    }
-
-    pub fn from_path_depth(
-        repo: &LocalRepository,
-        commit: &Commit,
-        path: impl AsRef<Path>,
-        depth: i32,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
-            node_path = PathBuf::from("");
-        }
-        log::debug!(
-            "Read path {:?} in commit {:?} depth: {}",
-            node_path,
-            commit,
-            depth
-        );
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
-            log::debug!(
-                "dir_hashes {:?} does not contain path: {:?}",
-                dir_hashes,
-                node_path
-            );
-            return Err(OxenError::basic_str(format!(
-                "Can only load a subtree with an existing directory path: '{}'",
-                node_path.to_str().unwrap()
-            )));
-        };
-
-        let Some(root) = CommitMerkleTree::read_depth(repo, &node_hash, depth)? else {
-            return Err(OxenError::basic_str(format!(
-                "Merkle tree hash not found for: '{}' hash: {:?}",
-                node_path.to_str().unwrap(),
-                node_hash
-            )));
-        };
-        Ok(Some(root))
-    }
-
-    pub fn from_path_depth_children_and_hashes(
-        repo: &LocalRepository,
-        commit: &Commit,
-        path: impl AsRef<Path>,
-        depth: i32,
-        hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
-            node_path = PathBuf::from("");
-        }
-        log::debug!(
-            "Read path {:?} in commit {:?} depth: {}",
-            node_path,
-            commit,
-            depth
-        );
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
-            log::debug!(
-                "dir_hashes {:?} does not contain path: {:?}",
-                dir_hashes,
-                node_path
-            );
-            return Err(OxenError::basic_str(format!(
-                "Can only load a subtree with an existing directory path: '{}'",
-                node_path.to_str().unwrap()
-            )));
-        };
-
-        let Some(root) =
-            CommitMerkleTree::read_depth_children_and_hashes(repo, &node_hash, depth, hashes)?
-        else {
-            return Err(OxenError::basic_str(format!(
-                "Merkle tree hash not found for: '{}' hash: {:?}",
-                node_path.to_str().unwrap(),
-                node_hash
-            )));
-        };
-        Ok(Some(root))
-    }
-
-    pub fn from_path_depth_unique_children(
-        repo: &LocalRepository,
-        commit: &Commit,
-        path: impl AsRef<Path>,
-        depth: i32,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
-            node_path = PathBuf::from("");
-        }
-        log::debug!(
-            "Read path {:?} in commit {:?} depth: {}",
-            node_path,
-            commit,
-            depth
-        );
-
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let Some(node_hash) = dir_hashes.get(&node_path).cloned() else {
-            /*log::debug!(
-                "dir_hashes {:?} does not contain path: {:?}",
-                dir_hashes,
-                node_path
-            );*/
-            return Err(OxenError::basic_str(format!(
-                "Can only load a subtree with an existing directory path: '{}'",
-                node_path.to_str().unwrap()
-            )));
-        };
-
-        let Some(root) = CommitMerkleTree::read_depth_unique_children(
-            repo,
-            &node_hash,
-            depth,
-            shared_hashes,
-            unique_hashes,
-        )?
-        else {
-            return Err(OxenError::basic_str(format!(
-                "Merkle tree hash not found for: '{}' hash: {:?}",
-                node_path.to_str().unwrap(),
-                node_hash
-            )));
-        };
-        Ok(Some(root))
     }
 
     pub fn from_path(
@@ -278,125 +81,77 @@ impl CommitMerkleTree {
         path: impl AsRef<Path>,
         load_recursive: bool,
     ) -> Result<Self, OxenError> {
-        let node_path = path.as_ref();
-        log::debug!("Read path {:?} in commit {:?}", node_path, commit);
+        // This debug log is to help make sure we don't load the tree too many times
+        // if you see it in the logs being called too much, it could be why the code is slow.
+        log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
+        let node = CommitMerkleTree::read_from_path(repo, commit, path, load_recursive)?.ok_or(
+            OxenError::basic_str(format!(
+                "Merkle tree hash not found for commit: '{}'",
+                commit.id
+            )),
+        )?;
+
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
 
-        let root = if let Some(node_hash) = node_hash {
-            // We are reading a node with children
-            log::debug!("Look up dir 🗂️ {:?}", node_path);
-            CommitMerkleTree::read_node(repo, &node_hash, load_recursive)?.ok_or(
-                OxenError::basic_str(format!(
-                    "Merkle tree hash not found for dir: '{}' in commit: '{}'",
-                    node_path.to_str().unwrap(),
-                    commit.id
-                )),
-            )?
-        } else {
-            // We are skipping to a file in the tree using the dir_hashes db
-            log::debug!("Look up file 📄 {:?}", node_path);
-            CommitMerkleTree::read_file(repo, &dir_hashes, node_path)?.ok_or(
-                OxenError::basic_str(format!(
-                    "Merkle tree hash not found for file: '{}' in commit: '{}'",
-                    node_path.to_str().unwrap(),
-                    commit.id
-                )),
-            )?
-        };
-        Ok(Self { root, dir_hashes })
+        Ok(Self {
+            root: node,
+            dir_hashes,
+        })
     }
 
-    pub fn dir_without_children_with_dirhash(
-        repo: &LocalRepository,
-        path: impl AsRef<Path>,
-        dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
-        if let Some(node_hash) = node_hash {
-            // We are reading a node with children
-            log::debug!("Look up dir 🗂️ {:?}", node_path);
-            CommitMerkleTree::read_node(repo, &node_hash, false)
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Read the dir metadata from the path, without reading the children
-    pub fn dir_without_children(
+    pub fn root_with_children(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
-        if let Some(node_hash) = node_hash {
-            // We are reading a node with children
-            log::debug!("Look up dir 🗂️ {:?}", node_path);
-            CommitMerkleTree::read_node(repo, &node_hash, false)
-        } else {
-            Ok(None)
-        }
+        let node_hash = commit.id.parse()?;
+        CommitMerkleTree::read_node(repo, &node_hash, true)
     }
 
-    pub fn dir_with_children_from_dirhash(
+    pub fn root_without_children(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
-        dir_hashes: &HashMap<PathBuf, MerkleHash>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
-        log::debug!("Read path {:?} in commit {:?}", node_path, commit);
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
-        if let Some(node_hash) = node_hash {
-            // We are reading a node with children
-            log::debug!("Look up dir {:?}", node_path);
-            // Read the node at depth 1 to get VNodes and Sub-Files/Dirs
-            // We don't count VNodes in the depth
-            CommitMerkleTree::read_depth(repo, &node_hash, 1)
-        } else {
-            Ok(None)
-        }
+        let node_hash = commit.id.parse()?;
+        // Read the root node at depth 1 to get the directory node as well
+        CommitMerkleTree::read_node(repo, &node_hash, false)
     }
 
-    pub fn dir_with_children(
+    pub fn root_with_children_and_node_hashes(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
-        if let Some(node_hash) = node_hash {
-            // We are reading a node with children
-            log::debug!("Look up dir {:?}", node_path);
-            // Read the node at depth 1 to get VNodes and Sub-Files/Dirs
-            // We don't count VNodes in the depth
-            CommitMerkleTree::read_depth(repo, &node_hash, 1)
-        } else {
-            Ok(None)
-        }
+        let node_hash = commit.id.parse()?;
+
+        CommitMerkleTree::read_node_and_collect_hashes(
+            repo,
+            &node_hash,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+        )
     }
 
-    pub fn dir_with_children_recursive(
+    pub fn root_with_children_and_partial_nodes(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
-        log::debug!("Read path {:?} in commit {:?}", node_path, commit);
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
-        if let Some(node_hash) = node_hash {
-            // We are reading a node with children
-            log::debug!("Look up dir 🗂️ {:?}", node_path);
-            // Read the node at depth 2 to get VNodes and Sub-Files/Dirs
-            CommitMerkleTree::read_node(repo, &node_hash, true)
-        } else {
-            Ok(None)
-        }
+        let node_hash = commit.id.parse()?;
+
+        CommitMerkleTree::read_node_and_collect_partial_nodes(
+            repo,
+            &node_hash,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            partial_nodes,
+        )
     }
 
     pub fn read_node(
@@ -404,194 +159,9 @@ impl CommitMerkleTree {
         hash: &MerkleHash,
         recurse: bool,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
-            return Ok(None);
-        }
+        let depth = if recurse { -1 } else { 1 };
 
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        CommitMerkleTree::load_children_from_node(repo, &mut node, recurse)?;
-        // log::debug!("read_node done: {:?} recurse: {}", node.hash, recurse);
-        Ok(Some(node))
-    }
-
-    fn read_node_with_hashes(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-        hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
-            return Ok(None);
-        }
-
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        CommitMerkleTree::load_children_with_hashes(repo, &mut node, hashes)?;
-        Ok(Some(node))
-    }
-
-    fn read_unique_nodes(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-        base_hashes: &mut HashSet<MerkleHash>,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
-            return Ok(None);
-        }
-
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        let start_path = PathBuf::new();
-        CommitMerkleTree::load_unique_children(
-            repo,
-            &mut node,
-            &start_path,
-            base_hashes,
-            shared_hashes,
-            partial_nodes,
-        )?;
-        Ok(Some(node))
-    }
-
-    fn read_unique_children_for_commit(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
-            return Ok(None);
-        }
-
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        let start_path = PathBuf::new();
-
-        CommitMerkleTree::load_unique_children_for_commit(
-            repo,
-            &mut node,
-            &start_path,
-            shared_hashes,
-            unique_hashes,
-        )?;
-        Ok(Some(node))
-    }
-
-    pub fn read_depth(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-        depth: i32,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read depth {} node hash [{}]", depth, hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            log::debug!(
-                "read_depth merkle node db does not exist for hash: {}",
-                hash
-            );
-            return Ok(None);
-        }
-
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        CommitMerkleTree::load_children_until_depth(repo, &mut node, depth, 0)?;
-        // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
-        Ok(Some(node))
-    }
-
-    pub fn read_depth_children_and_hashes(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-        depth: i32,
-        hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read depth {} node hash [{}]", depth, hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            log::debug!(
-                "read_depth merkle node db does not exist for hash: {}",
-                hash
-            );
-            return Ok(None);
-        }
-
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-
-        CommitMerkleTree::load_children_until_depth_children_and_hashes(
-            repo, &mut node, depth, 0, hashes,
-        )?;
-        // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
-        Ok(Some(node))
-    }
-
-    pub fn read_depth_unique_children(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-        depth: i32,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        // log::debug!("Read depth {} node hash [{}]", depth, hash);
-        if !MerkleNodeDB::exists(repo, hash) {
-            log::debug!(
-                "read_depth merkle node db does not exist for hash: {}",
-                hash
-            );
-            return Ok(None);
-        }
-
-        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        let start_path = PathBuf::new();
-
-        CommitMerkleTree::load_children_until_depth_unique_children(
-            repo,
-            &mut node,
-            &start_path,
-            depth,
-            0,
-            shared_hashes,
-            unique_hashes,
-        )?;
-        // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
-        Ok(Some(node))
-    }
-
-    /// The dir hashes allow you to skip to a directory in the tree
-    pub fn dir_hashes(
-        repo: &LocalRepository,
-        commit: &Commit,
-    ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
-        let node_db_dir = CommitMerkleTree::dir_hash_db_path(repo, commit);
-        log::debug!("loading dir_hashes from: {:?}", node_db_dir);
-        let opts = db::key_val::opts::default();
-        let node_db: DBWithThreadMode<MultiThreaded> =
-            DBWithThreadMode::open_for_read_only(&opts, node_db_dir, false)?;
-        let mut dir_hashes = HashMap::new();
-        let iterator = node_db.iterator(IteratorMode::Start);
-        for item in iterator {
-            match item {
-                Ok((key, value)) => {
-                    let key = str::from_utf8(&key)?;
-                    let value = str::from_utf8(&value)?;
-                    let hash = MerkleHash::from_str(value)?;
-                    dir_hashes.insert(PathBuf::from(key), hash);
-                }
-                _ => {
-                    return Err(OxenError::basic_str(
-                        "Could not read iterate over db values",
-                    ));
-                }
-            }
-        }
-        // log::debug!(
-        //     "read {} dir_hashes from commit: {}",
-        //     dir_hashes.len(),
-        //     commit
-        // );
-        Ok(dir_hashes)
+        CommitMerkleTree::read_depth(repo, hash, depth)
     }
 
     pub fn read_nodes(
@@ -618,16 +188,475 @@ impl CommitMerkleTree {
 
             // log::debug!("Loading node for path: {:?} hash: {}", path, hash);
             let Some(node) = CommitMerkleTree::read_depth(repo, hash, 1)? else {
-                log::warn!(
-                    "Merkle tree hash not found for parent: {:?} hash: {:?}",
-                    path,
-                    hash
-                );
+                log::warn!("Merkle tree hash not found for parent: {path:?} hash: {hash:?}");
                 continue;
             };
             nodes.insert(path.clone(), node);
         }
+
         Ok(nodes)
+    }
+
+    pub fn read_node_and_collect_hashes(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        if !MerkleNodeDB::exists(repo, hash) {
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            return Ok(None);
+        }
+
+        let depth = -1;
+
+        CommitMerkleTree::read_depth_and_collect_hashes(
+            repo,
+            hash,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            depth,
+        )
+    }
+
+    pub fn read_node_and_collect_paths(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        base_hashes: Option<&HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        shared_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        unique_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        // log::debug!("Read node hash [{}]", hash);
+        if !MerkleNodeDB::exists(repo, hash) {
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            return Ok(None);
+        }
+
+        let depth = -1;
+
+        CommitMerkleTree::read_depth_and_collect_paths(
+            repo,
+            hash,
+            base_hashes,
+            shared_hashes,
+            unique_hashes,
+            depth,
+        )
+    }
+
+    pub fn read_node_and_collect_partial_nodes(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        // log::debug!("Read node hash [{}]", hash);
+        if !MerkleNodeDB::exists(repo, hash) {
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            return Ok(None);
+        }
+
+        let depth = -1;
+
+        CommitMerkleTree::read_depth_and_collect_partial_nodes(
+            repo,
+            hash,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            partial_nodes,
+            depth,
+        )
+    }
+
+    pub fn read_depth(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        // log::debug!("Read depth {} node hash [{}]", depth, hash);
+        if !MerkleNodeDB::exists(repo, hash) {
+            log::debug!("read_depth merkle node db does not exist for hash: {hash}");
+            return Ok(None);
+        }
+
+        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
+
+        let base_hashes = None;
+        let unique_hashes = None;
+        let shared_hashes = None;
+
+        CommitMerkleTree::load_children(
+            repo,
+            &mut node,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            depth,
+            0,
+        )?;
+
+        Ok(Some(node))
+    }
+
+    pub fn read_depth_and_collect_hashes(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        if !MerkleNodeDB::exists(repo, hash) {
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            return Ok(None);
+        }
+
+        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
+
+        CommitMerkleTree::load_children(
+            repo,
+            &mut node,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            depth,
+            0,
+        )?;
+
+        Ok(Some(node))
+    }
+
+    pub fn read_depth_and_collect_paths(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        base_hashes: Option<&HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        shared_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        unique_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        // log::debug!("Read node hash [{}]", hash);
+        if !MerkleNodeDB::exists(repo, hash) {
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            return Ok(None);
+        }
+
+        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
+        let start_path = PathBuf::new();
+
+        CommitMerkleTree::load_children_and_collect_paths(
+            repo,
+            &mut node,
+            &start_path,
+            base_hashes,
+            shared_hashes,
+            unique_hashes,
+            depth,
+            0,
+        )?;
+
+        Ok(Some(node))
+    }
+
+    pub fn read_depth_and_collect_partial_nodes(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        // log::debug!("Read node hash [{}]", hash);
+        if !MerkleNodeDB::exists(repo, hash) {
+            // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
+            return Ok(None);
+        }
+
+        let mut node = MerkleTreeNode::from_hash(repo, hash)?;
+        let start_path = PathBuf::new();
+
+        CommitMerkleTree::load_children_and_collect_partial_nodes(
+            repo,
+            &mut node,
+            &start_path,
+            base_hashes,
+            unique_hashes,
+            shared_hashes,
+            partial_nodes,
+            depth,
+            0,
+        )?;
+
+        Ok(Some(node))
+    }
+
+    pub fn read_from_path(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        load_recursive: bool,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let depth = if load_recursive { -1 } else { 1 };
+
+        CommitMerkleTree::read_depth_from_path(repo, commit, path, depth)
+    }
+
+    pub fn read_from_path_maybe(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        load_recursive: bool,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let maybe_tree_node = CommitMerkleTree::read_from_path(repo, commit, path, load_recursive);
+
+        match maybe_tree_node {
+            Ok(node) => Ok(node),
+            Err(_) => Ok(None),
+        }
+    }
+
+    pub fn read_depth_from_path(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let mut node_path = path.as_ref().to_path_buf();
+        if node_path == PathBuf::from(".") {
+            node_path = PathBuf::from("");
+        }
+
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        let root = if let Some(node_hash) = dir_hashes.get(&node_path).cloned() {
+            // We are reading a node with children
+            let Some(root) = CommitMerkleTree::read_depth(repo, &node_hash, depth)? else {
+                return Err(OxenError::basic_str(format!(
+                    "Merkle tree hash not found for dir: '{}' in commit: {:?}",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )));
+            };
+
+            root
+        } else {
+            // We are skipping to a file in the tree using the dir_hashes db
+            log::debug!("Look up file 📄 {node_path:?}");
+            CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
+                OxenError::basic_str(format!(
+                    "Merkle tree hash not found for file: '{}' in commit: '{}'",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )),
+            )?
+        };
+
+        Ok(Some(root))
+    }
+
+    pub fn read_depth_from_path_and_collect_hashes(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let mut node_path = path.as_ref().to_path_buf();
+        if node_path == PathBuf::from(".") {
+            node_path = PathBuf::from("");
+        }
+
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        let root = if let Some(node_hash) = dir_hashes.get(&node_path).cloned() {
+            // We are reading a node with children
+            let Some(root) = CommitMerkleTree::read_depth_and_collect_hashes(
+                repo,
+                &node_hash,
+                base_hashes,
+                unique_hashes,
+                shared_hashes,
+                depth,
+            )?
+            else {
+                return Err(OxenError::basic_str(format!(
+                    "Merkle tree hash not found for dir: '{}' in commit: {:?}",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )));
+            };
+
+            root
+        } else {
+            // We are skipping to a file in the tree using the dir_hashes db
+            log::debug!("Look up file 📄 {node_path:?}");
+            CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
+                OxenError::basic_str(format!(
+                    "Merkle tree hash not found for file: '{}' in commit: '{}'",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )),
+            )?
+        };
+
+        Ok(Some(root))
+    }
+
+    pub fn read_depth_from_path_and_collect_paths(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        base_hashes: Option<&HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        shared_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        unique_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        depth: i32,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let mut node_path = path.as_ref().to_path_buf();
+        if node_path == PathBuf::from(".") {
+            node_path = PathBuf::from("");
+        }
+
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        let root = if let Some(node_hash) = dir_hashes.get(&node_path).cloned() {
+            // We are reading a node with children
+            let Some(root) = CommitMerkleTree::read_depth_and_collect_paths(
+                repo,
+                &node_hash,
+                base_hashes,
+                unique_hashes,
+                shared_hashes,
+                depth,
+            )?
+            else {
+                return Err(OxenError::basic_str(format!(
+                    "Merkle tree hash not found for dir: '{}' in commit: {:?}",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )));
+            };
+
+            root
+        } else {
+            // We are skipping to a file in the tree using the dir_hashes db
+            log::debug!("Look up file 📄 {node_path:?}");
+            CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
+                OxenError::basic_str(format!(
+                    "Merkle tree hash not found for file: '{}' in commit: '{}'",
+                    node_path.to_str().unwrap(),
+                    commit.id
+                )),
+            )?
+        };
+
+        Ok(Some(root))
+    }
+
+    pub fn dir_without_children(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        let dir_hashes = if let Some(dir_hashes) = dir_hashes {
+            dir_hashes
+        } else {
+            &CommitMerkleTree::dir_hashes(repo, commit)?
+        };
+
+        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
+        if let Some(node_hash) = node_hash {
+            // We are reading a node with children
+            log::debug!("Look up dir 🗂️ {node_path:?}");
+
+            // Read at depth 0 to skip loading file nodes
+            CommitMerkleTree::read_depth(repo, &node_hash, 0)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn dir_with_children(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        let dir_hashes = if let Some(dir_hashes) = dir_hashes {
+            dir_hashes
+        } else {
+            &CommitMerkleTree::dir_hashes(repo, commit)?
+        };
+
+        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
+        if let Some(node_hash) = node_hash {
+            // Read the node at depth 1 to get VNodes and Sub-Files/Dirs
+            // We don't count VNodes in the depth
+            CommitMerkleTree::read_depth(repo, &node_hash, 1)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn dir_with_unique_children(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        base_hashes: &HashSet<MerkleHash>,
+        unique_hashes: &mut HashSet<MerkleHash>,
+        dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        let dir_hashes = if let Some(dir_hashes) = dir_hashes {
+            dir_hashes
+        } else {
+            &CommitMerkleTree::dir_hashes(repo, commit)?
+        };
+
+        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
+        if let Some(node_hash) = node_hash {
+            log::debug!("Look up dir {node_path:?}");
+            // Read the node at depth 1 to get VNodes and Sub-Files/Dirs
+            // We don't count VNodes in the depth
+            CommitMerkleTree::read_node_and_collect_hashes(
+                repo,
+                &node_hash,
+                Some(base_hashes),
+                Some(unique_hashes),
+                None,
+            )
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn dir_with_children_recursive(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+        dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        log::debug!("Read path {node_path:?} in commit {commit:?}");
+        let dir_hashes = if let Some(dir_hashes) = dir_hashes {
+            dir_hashes
+        } else {
+            &CommitMerkleTree::dir_hashes(repo, commit)?
+        };
+
+        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
+        if let Some(node_hash) = node_hash {
+            log::debug!("Look up dir 🗂️ {node_path:?}");
+            CommitMerkleTree::read_depth(repo, &node_hash, -1)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn has_dir(&self, path: impl AsRef<Path>) -> bool {
@@ -662,6 +691,7 @@ impl CommitMerkleTree {
         self.root.list_dir_paths()
     }
 
+    // call node_files_and_filders
     pub fn files_and_folders(
         &self,
         path: impl AsRef<Path>,
@@ -671,8 +701,7 @@ impl CommitMerkleTree {
             .root
             .get_by_path(path)?
             .ok_or(OxenError::basic_str(format!(
-                "Merkle tree hash not found for parent: {:?}",
-                path
+                "Merkle tree hash not found for parent: {path:?}"
             )))?;
         let mut children = HashSet::new();
         for child in &node.children {
@@ -681,30 +710,9 @@ impl CommitMerkleTree {
         Ok(children)
     }
 
-    // MODULARIZE: List_files_and_folders in repositories::tree
-    pub fn node_files_and_folders(node: &MerkleTreeNode) -> Result<Vec<MerkleTreeNode>, OxenError> {
-        if MerkleTreeNodeType::Dir != node.node.node_type() {
-            return Err(OxenError::basic_str(format!(
-                "node_files_and_folders Merkle tree node is not a directory: '{:?}'",
-                node.node.node_type()
-            )));
-        }
-
-        // The dir node will have vnode children
-        let mut children = Vec::new();
-        for child in &node.children {
-            if let EMerkleTreeNode::VNode(_) = &child.node {
-                children.extend(child.children.iter().cloned());
-            }
-        }
-        Ok(children)
-    }
-
     pub fn total_vnodes(&self) -> usize {
         self.root.total_vnodes()
     }
-
-    // MODULARIZE: dir_entries_with_paths
 
     pub fn dir_entries(node: &MerkleTreeNode) -> Result<Vec<FileNode>, OxenError> {
         let mut file_entries = Vec::new();
@@ -745,21 +753,16 @@ impl CommitMerkleTree {
         };
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
-        log::debug!(
-            "read_file path {:?} parent_path {:?} file_name {:?}",
-            path,
-            parent_path,
-            file_name
-        );
+        log::debug!("read_file path {path:?} parent_path {parent_path:?} file_name {file_name:?}");
 
         // Look up the directory hash
         let node_hash: Option<MerkleHash> = dir_hashes.get(parent_path).cloned();
         let Some(node_hash) = node_hash else {
-            log::debug!("read_file could not find parent dir: {:?}", parent_path);
+            log::debug!("read_file could not find parent dir: {parent_path:?}");
             return Ok(None);
         };
 
-        log::debug!("read_file parent node_hash: {:?}", node_hash);
+        log::debug!("read_file parent node_hash: {node_hash:?}");
 
         // Read the directory node at depth 0 to get all the vnodes
         let dir_merkle_node = CommitMerkleTree::read_depth(repo, &node_hash, 0)?;
@@ -767,29 +770,18 @@ impl CommitMerkleTree {
             return Ok(None);
         };
 
-        let EMerkleTreeNode::Directory(dir_node) = &dir_merkle_node.node else {
-            return Err(OxenError::basic_str(format!(
-                "Expected directory node, got {:?}",
-                dir_merkle_node.node.node_type()
-            )));
-        };
-
         // log::debug!("read_file merkle_node: {:?}", dir_merkle_node);
 
         let vnodes = dir_merkle_node.children;
-
         // log::debug!("read_file vnodes: {}", vnodes.len());
 
         // Calculate the total number of children in the vnodes
         // And use this to skip to the correct vnode
-        // log::debug!("read_file dir_node {:?}", dir_node);
-        let total_children = dir_node.num_entries();
         let vnode_size = repo.vnode_size();
-        let num_vnodes = (total_children as f32 / vnode_size as f32).ceil() as u128;
+        let num_vnodes = vnodes.len() as u128;
 
-        log::debug!("read_file total_children: {}", total_children);
-        log::debug!("read_file vnode_size: {}", vnode_size);
-        log::debug!("read_file num_vnodes: {}", num_vnodes);
+        log::debug!("read_file vnode_size: {vnode_size}");
+        log::debug!("read_file num_vnodes: {num_vnodes}");
 
         if num_vnodes == 0 {
             log::debug!("read_file num_vnodes is 0, returning None");
@@ -800,7 +792,7 @@ impl CommitMerkleTree {
         let path_hash = hasher::hash_buffer_128bit(path.to_str().unwrap().as_bytes());
         let bucket = path_hash % num_vnodes;
 
-        log::debug!("read_file bucket: {}", bucket);
+        log::debug!("read_file bucket: {bucket}");
 
         // We did not load recursively, so we need to load the children for the specific vnode
         let vnode_without_children = &vnodes[bucket as usize];
@@ -817,15 +809,21 @@ impl CommitMerkleTree {
         vnode_with_children.get_by_path(file_name)
     }
 
-    fn load_children_until_depth(
+    // TODO: We might want to simplify to one tree-loading method
+    // The advantage of multiple is that it saves us tree traversals, when we want to collect something as we load in the tree
+    // However, I'm not sure that's worth the cost of extending the code base. We could probably cut this file in half if we're willing to do extra tree traversals
+    fn load_children(
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        mut unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        mut shared_hashes: Option<&mut HashSet<MerkleHash>>,
         requested_depth: i32,
         traversed_depth: i32,
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
         // log::debug!(
-        //     "load_children_until_depth requested_depth {} traversed_depth {} node {}",
+        //     "load_children requested_depth {} traversed_depth {} node {}",
         //     requested_depth,
         //     traversed_depth,
         //     node
@@ -838,9 +836,23 @@ impl CommitMerkleTree {
             return Ok(());
         }
 
+        if let Some(base_hashes) = base_hashes {
+            if base_hashes.contains(&node.hash) {
+                if let Some(ref mut shared_hashes) = shared_hashes {
+                    shared_hashes.insert(node.hash);
+                }
+
+                return Ok(());
+            }
+        }
+
+        if let Some(ref mut unique_hashes) = unique_hashes {
+            unique_hashes.insert(node.hash);
+        }
+
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
         // log::debug!(
-        //     "load_children_until_depth requested_depth node {} traversed_depth {} Got {} children",
+        //     "load_children requested_depth node {} traversed_depth {} Got {} children",
         //     node,
         //     traversed_depth,
         //     children.len()
@@ -849,7 +861,7 @@ impl CommitMerkleTree {
         for (_key, child) in children {
             let mut child = child.to_owned();
             // log::debug!(
-            //     "load_children_until_depth {} child: {} -> {}",
+            //     "load_children {} child: {} -> {}",
             //     depth,
             //     key,
             //     child
@@ -859,132 +871,6 @@ impl CommitMerkleTree {
                 MerkleTreeNodeType::Commit
                 | MerkleTreeNodeType::Dir
                 | MerkleTreeNodeType::VNode => {
-                    if requested_depth > traversed_depth || requested_depth == -1 {
-                        // Depth that is passed in is the number of dirs to traverse
-                        // VNodes should not increase the depth
-                        let traversed_depth = if child.node.node_type() == MerkleTreeNodeType::VNode
-                        {
-                            traversed_depth
-                        } else {
-                            traversed_depth + 1
-                        };
-                        CommitMerkleTree::load_children_until_depth(
-                            repo,
-                            &mut child,
-                            requested_depth,
-                            traversed_depth,
-                        )?;
-                    }
-                    node.children.push(child);
-                }
-                // FileChunks and Schemas are leaf nodes
-                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    node.children.push(child);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn load_children_until_depth_children_and_hashes(
-        repo: &LocalRepository,
-        node: &mut MerkleTreeNode,
-        requested_depth: i32,
-        traversed_depth: i32,
-        hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<(), OxenError> {
-        let dtype = node.node.node_type();
-        if dtype != MerkleTreeNodeType::Commit
-            && dtype != MerkleTreeNodeType::Dir
-            && dtype != MerkleTreeNodeType::VNode
-        {
-            return Ok(());
-        }
-
-        hashes.insert(node.hash);
-        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-
-        for (_key, child) in children {
-            let mut child = child.to_owned();
-
-            match &child.node.node_type() {
-                // Commits, Directories, and VNodes have children
-                MerkleTreeNodeType::Commit
-                | MerkleTreeNodeType::Dir
-                | MerkleTreeNodeType::VNode => {
-                    if requested_depth > traversed_depth || requested_depth == -1 {
-                        // Depth that is passed in is the number of dirs to traverse
-                        // VNodes should not increase the depth
-                        let traversed_depth = if child.node.node_type() == MerkleTreeNodeType::VNode
-                        {
-                            traversed_depth
-                        } else {
-                            traversed_depth + 1
-                        };
-
-                        // Here we have to not panic on error, because if we clone a subtree we might not have all of the children nodes of a particular dir
-                        // given that we are only loading the nodes that are needed.
-                        CommitMerkleTree::load_children_until_depth_children_and_hashes(
-                            repo,
-                            &mut child,
-                            requested_depth,
-                            traversed_depth,
-                            hashes,
-                        )?;
-                    }
-                    node.children.push(child);
-                }
-                // FileChunks and Schemas are leaf nodes
-                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    node.children.push(child);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn load_children_until_depth_unique_children(
-        repo: &LocalRepository,
-        node: &mut MerkleTreeNode,
-        current_path: &PathBuf,
-        requested_depth: i32,
-        traversed_depth: i32,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<(), OxenError> {
-        let dtype = node.node.node_type();
-        log::debug!(
-             "load_children_until_depth_unique_children requested_depth {} traversed_depth {} node {} ",
-             requested_depth,
-             traversed_depth,
-             node,
-         );
-
-        if dtype != MerkleTreeNodeType::Commit
-            && dtype != MerkleTreeNodeType::Dir
-            && dtype != MerkleTreeNodeType::VNode
-        {
-            return Ok(());
-        }
-
-        if shared_hashes.contains(&node.hash) {
-            return Ok(());
-        }
-
-        unique_hashes.insert(node.hash);
-        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-
-        for (_key, child) in children {
-            let mut child = child.to_owned();
-            match &child.node.node_type() {
-                // Commits, Directories, and VNodes have children
-                MerkleTreeNodeType::Commit
-                | MerkleTreeNodeType::Dir
-                | MerkleTreeNodeType::VNode => {
-                    // TODO: '(requested_depth == 0 && child.node.node_type() == MerkleTreeNodeType::VNode)' is a hack
-                    // Figure out why repositories::tree::get_node_hashes_between_commits needs this
                     if requested_depth > traversed_depth
                         || requested_depth == -1
                         || (requested_depth == 0
@@ -992,13 +878,113 @@ impl CommitMerkleTree {
                     {
                         // Depth that is passed in is the number of dirs to traverse
                         // VNodes should not increase the depth
-                        let traversed_depth = if child.node.node_type() != MerkleTreeNodeType::Dir {
+                        let traversed_depth = if child.node.node_type() == MerkleTreeNodeType::VNode
+                        {
                             traversed_depth
                         } else {
                             traversed_depth + 1
                         };
 
-                        // Update current_path so that the partial nodes will have the correct path
+                        CommitMerkleTree::load_children(
+                            repo,
+                            &mut child,
+                            base_hashes,
+                            unique_hashes.as_deref_mut(),
+                            shared_hashes.as_deref_mut(),
+                            requested_depth,
+                            traversed_depth,
+                        )?;
+                    }
+                    node.children.push(child);
+                }
+                // FileChunks and Schemas are leaf nodes
+                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
+                    node.children.push(child);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // TODO: The (MerkkleHash, MerkleTreeNodeType) keys are a bit strange
+    // Consider refactoring to eliminate the need for them
+    #[allow(clippy::too_many_arguments)]
+    fn load_children_and_collect_paths(
+        repo: &LocalRepository,
+        node: &mut MerkleTreeNode,
+        current_path: &PathBuf,
+        base_hashes: Option<&HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        mut unique_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        mut shared_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
+        requested_depth: i32,
+        traversed_depth: i32,
+    ) -> Result<(), OxenError> {
+        let dtype = node.node.node_type();
+        // log::debug!(
+        //     "load_children_and_collect_hashes requested_depth {} traversed_depth {} node {}",
+        //     requested_depth,
+        //     traversed_depth,
+        //     node
+        // );
+
+        if dtype != MerkleTreeNodeType::Commit
+            && dtype != MerkleTreeNodeType::Dir
+            && dtype != MerkleTreeNodeType::VNode
+        {
+            return Ok(());
+        }
+
+        if let Some(base_hashes) = base_hashes {
+            if base_hashes.contains_key(&(node.hash, dtype)) {
+                if let Some(ref mut shared_hashes) = shared_hashes {
+                    shared_hashes.insert((node.hash, dtype), current_path.to_path_buf());
+                }
+
+                return Ok(());
+            }
+        }
+
+        if let Some(ref mut unique_hashes) = unique_hashes {
+            unique_hashes.insert((node.hash, dtype), current_path.to_path_buf());
+        }
+
+        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
+        // log::debug!(
+        //     "load_children_and_collect_hashes requested_depth node {} traversed_depth {} Got {} children",
+        //     node,
+        //     traversed_depth,
+        //     children.len()
+        // );
+
+        for (_key, child) in children {
+            let mut child = child.to_owned();
+            // log::debug!(
+            //     "load_children_and_collect_hashes {} child: {} -> {}",
+            //     depth,
+            //     key,
+            //     child
+            // );
+            match &child.node.node_type() {
+                // Commits, Directories, and VNodes have children
+                MerkleTreeNodeType::Commit
+                | MerkleTreeNodeType::Dir
+                | MerkleTreeNodeType::VNode => {
+                    if requested_depth > traversed_depth
+                        || requested_depth == -1
+                        || (requested_depth == 0
+                            && child.node.node_type() == MerkleTreeNodeType::VNode)
+                    {
+                        // Depth that is passed in is the number of dirs to traverse
+                        // VNodes should not increase the depth
+                        let traversed_depth = if child.node.node_type() == MerkleTreeNodeType::VNode
+                        {
+                            traversed_depth
+                        } else {
+                            traversed_depth + 1
+                        };
+
+                        // Update current_path with the dir name
                         let new_path = if let EMerkleTreeNode::Directory(dir_node) = &child.node {
                             let name = PathBuf::from(dir_node.name());
                             &current_path.join(name)
@@ -1006,22 +992,125 @@ impl CommitMerkleTree {
                             current_path
                         };
 
-                        // Here we have to not panic on error, because if we clone a subtree we might not have all of the children nodes of a particular dir
-                        // given that we are only loading the nodes that are needed.
-                        CommitMerkleTree::load_children_until_depth_unique_children(
+                        CommitMerkleTree::load_children_and_collect_paths(
                             repo,
                             &mut child,
                             new_path,
+                            base_hashes,
+                            unique_hashes.as_deref_mut(),
+                            shared_hashes.as_deref_mut(),
                             requested_depth,
                             traversed_depth,
-                            shared_hashes,
-                            unique_hashes,
                         )?;
                     }
                     node.children.push(child);
                 }
                 // FileChunks and Schemas are leaf nodes
                 MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
+                    node.children.push(child);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn load_children_and_collect_partial_nodes(
+        repo: &LocalRepository,
+        node: &mut MerkleTreeNode,
+        current_path: &PathBuf,
+        base_hashes: Option<&HashSet<MerkleHash>>,
+        mut unique_hashes: Option<&mut HashSet<MerkleHash>>,
+        mut shared_hashes: Option<&mut HashSet<MerkleHash>>,
+        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
+        requested_depth: i32,
+        traversed_depth: i32,
+    ) -> Result<(), OxenError> {
+        let dtype = node.node.node_type();
+
+        if dtype != MerkleTreeNodeType::Commit
+            && dtype != MerkleTreeNodeType::Dir
+            && dtype != MerkleTreeNodeType::VNode
+        {
+            return Ok(());
+        }
+
+        if let Some(base_hashes) = base_hashes {
+            if base_hashes.contains(&node.hash) {
+                if let Some(ref mut shared_hashes) = shared_hashes {
+                    shared_hashes.insert(node.hash);
+                }
+
+                return Ok(());
+            }
+        }
+
+        if let Some(ref mut unique_hashes) = unique_hashes {
+            unique_hashes.insert(node.hash);
+        }
+
+        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
+        // log::debug!("load_children_and_collect_partial_nodes Got {} children", children.len());
+        for (_key, child) in children {
+            let mut child = child.to_owned();
+            // log::debug!("load_children_and_collect_partial_nodes child: {} -> {}", key, child);
+            match &child.node.node_type() {
+                // Commits, Directories, and VNodes have children
+                MerkleTreeNodeType::Commit
+                | MerkleTreeNodeType::Dir
+                | MerkleTreeNodeType::VNode => {
+                    if requested_depth > traversed_depth
+                        || requested_depth == -1
+                        || (requested_depth == 0
+                            && child.node.node_type() == MerkleTreeNodeType::VNode)
+                    {
+                        // log::debug!("load_children_and_collect_partial_nodes  recurse: {:?}", child.hash);
+                        // Update current_path so that the partial nodes will have the correct path
+
+                        let traversed_depth = if child.node.node_type() == MerkleTreeNodeType::VNode
+                        {
+                            traversed_depth
+                        } else {
+                            traversed_depth + 1
+                        };
+
+                        let new_path = if let EMerkleTreeNode::Directory(dir_node) = &child.node {
+                            let name = PathBuf::from(dir_node.name());
+                            &current_path.join(name)
+                        } else {
+                            current_path
+                        };
+
+                        // log::debug!("load_children_and_collect_partial_nodes opened node_db: {:?}", child.hash);
+                        CommitMerkleTree::load_children_and_collect_partial_nodes(
+                            repo,
+                            &mut child,
+                            new_path,
+                            base_hashes,
+                            unique_hashes.as_deref_mut(),
+                            shared_hashes.as_deref_mut(),
+                            partial_nodes,
+                            requested_depth,
+                            traversed_depth,
+                        )?;
+                    }
+
+                    node.children.push(child);
+                }
+                // FileChunks and Files are leaf nodes
+                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
+                    if let EMerkleTreeNode::File(file_node) = &child.node {
+                        let file_path = current_path.join(PathBuf::from(file_node.name()));
+                        let partial_node = PartialNode::from(
+                            *file_node.hash(),
+                            file_node.last_modified_seconds(),
+                            file_node.last_modified_nanoseconds(),
+                            file_node.num_bytes(),
+                        );
+                        partial_nodes.insert(file_path, partial_node);
+                    }
+
                     node.children.push(child);
                 }
             }
@@ -1038,167 +1127,13 @@ impl CommitMerkleTree {
         self.root.walk_tree_without_leaves(f);
     }
 
-    fn load_children_from_node(
-        repo: &LocalRepository,
-        node: &mut MerkleTreeNode,
-        recurse: bool,
-    ) -> Result<(), OxenError> {
-        let dtype = node.node.node_type();
-        if dtype != MerkleTreeNodeType::Commit
-            && dtype != MerkleTreeNodeType::Dir
-            && dtype != MerkleTreeNodeType::VNode
-            || !recurse
-        {
-            return Ok(());
-        }
-
-        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("load_children_from_node Got {} children", children.len());
-
-        for (_key, child) in children {
-            let mut child = child.to_owned();
-            // log::debug!("load_children_from_node child: {} -> {}", key, child);
-            match &child.node.node_type() {
-                // Commits, Directories, and VNodes have children
-                MerkleTreeNodeType::Commit
-                | MerkleTreeNodeType::Dir
-                | MerkleTreeNodeType::VNode => {
-                    if recurse {
-                        // log::debug!("load_children_from_node recurse: {:?}", child.hash);
-                        // log::debug!("load_children_from_node opened node_db: {:?}", child.hash);
-                        CommitMerkleTree::load_children_from_node(repo, &mut child, recurse)?;
-                    }
-                    node.children.push(child);
-                }
-                // FileChunks and Files are leaf nodes
-                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    node.children.push(child);
-                }
-            }
-        }
-
-        // log::debug!("load_children_from_node done: {:?}", node.hash);
-
-        Ok(())
-    }
-
-    fn load_children_with_hashes(
-        repo: &LocalRepository,
-        node: &mut MerkleTreeNode,
-        hashes: &mut HashSet<MerkleHash>,
-    ) -> Result<(), OxenError> {
-        let dtype = node.node.node_type();
-        if dtype != MerkleTreeNodeType::Commit
-            && dtype != MerkleTreeNodeType::Dir
-            && dtype != MerkleTreeNodeType::VNode
-        {
-            return Ok(());
-        }
-
-        hashes.insert(node.hash);
-        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("load_children_with_hashes Got {} children", children.len());
-
-        for (_key, child) in children {
-            let mut child = child.to_owned();
-            // log::debug!("load_children_with_hashes child: {} -> {}", key, child);
-            match &child.node.node_type() {
-                // Commits, Directories, and VNodes have children
-                MerkleTreeNodeType::Commit
-                | MerkleTreeNodeType::Dir
-                | MerkleTreeNodeType::VNode => {
-                    // log::debug!("load_children_with_hashes recurse: {:?}", child.hash);
-                    CommitMerkleTree::load_children_with_hashes(repo, &mut child, hashes)?;
-                    node.children.push(child);
-                }
-                // FileChunks and Files are leaf nodes
-                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    node.children.push(child);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn load_unique_children(
-        repo: &LocalRepository,
-        node: &mut MerkleTreeNode,
-        current_path: &PathBuf,
-        base_hashes: &mut HashSet<MerkleHash>,
-        shared_hashes: &mut HashSet<MerkleHash>,
-        partial_nodes: &mut HashMap<PathBuf, PartialNode>,
-    ) -> Result<(), OxenError> {
-        let dtype = node.node.node_type();
-
-        if dtype != MerkleTreeNodeType::Commit
-            && dtype != MerkleTreeNodeType::Dir
-            && dtype != MerkleTreeNodeType::VNode
-        {
-            return Ok(());
-        }
-
-        if base_hashes.contains(&node.hash) {
-            shared_hashes.insert(node.hash);
-            return Ok(());
-        }
-
-        let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
-        // log::debug!("load_unique_children Got {} children", children.len());
-        for (_key, child) in children {
-            let mut child = child.to_owned();
-            // log::debug!("load_unique_children child: {} -> {}", key, child);
-            match &child.node.node_type() {
-                // Commits, Directories, and VNodes have children
-                MerkleTreeNodeType::Commit
-                | MerkleTreeNodeType::Dir
-                | MerkleTreeNodeType::VNode => {
-                    // log::debug!("load_unique_children  recurse: {:?}", child.hash);
-                    // Update current_path so that the partial nodes will have the correct path
-                    let new_path = if let EMerkleTreeNode::Directory(dir_node) = &child.node {
-                        let name = PathBuf::from(dir_node.name());
-                        &current_path.join(name)
-                    } else {
-                        current_path
-                    };
-
-                    // log::debug!("load_unique_children  opened node_db: {:?}", child.hash);
-                    CommitMerkleTree::load_unique_children(
-                        repo,
-                        &mut child,
-                        new_path,
-                        base_hashes,
-                        shared_hashes,
-                        partial_nodes,
-                    )?;
-                    node.children.push(child);
-                }
-                // FileChunks and Files are leaf nodes
-                MerkleTreeNodeType::FileChunk | MerkleTreeNodeType::File => {
-                    if let EMerkleTreeNode::File(file_node) = &child.node {
-                        let file_path = current_path.join(PathBuf::from(file_node.name()));
-                        let partial_node = PartialNode::from(
-                            *file_node.hash(),
-                            file_node.last_modified_seconds(),
-                            file_node.last_modified_nanoseconds(),
-                        );
-                        partial_nodes.insert(file_path, partial_node);
-                    }
-
-                    node.children.push(child);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn load_unique_children_for_commit(
+    pub fn load_unique_children_list(
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
         current_path: &PathBuf,
         shared_hashes: &mut HashSet<MerkleHash>,
         unique_hashes: &mut HashSet<MerkleHash>,
+        list_hashes: &mut HashSet<(MerkleHash, MerkleTreeNode)>,
     ) -> Result<(), OxenError> {
         let dtype = node.node.node_type();
 
@@ -1218,6 +1153,7 @@ impl CommitMerkleTree {
         unique_hashes.insert(node.hash);
 
         let children = MerkleTreeNode::read_children_from_hash(repo, &node.hash)?;
+        list_hashes.insert((node.hash, node.clone()));
         // log::debug!("load_unique_children Got {} children", children.len());
         for (_key, child) in children {
             let mut child = child.to_owned();
@@ -1236,12 +1172,13 @@ impl CommitMerkleTree {
                     };
 
                     // log::debug!("load_unique_children  opened node_db: {:?}", child.hash);
-                    CommitMerkleTree::load_unique_children_for_commit(
+                    CommitMerkleTree::load_unique_children_list(
                         repo,
                         &mut child,
                         new_path,
                         shared_hashes,
                         unique_hashes,
+                        list_hashes,
                     )?;
                     node.children.push(child);
                 }
@@ -1358,7 +1295,7 @@ mod tests {
 
             println!("Got {} dir_hashes", dir_hashes.len());
             for (key, value) in &dir_hashes {
-                println!("dir: {:?} hash: {}", key, value);
+                println!("dir: {key:?} hash: {value}");
             }
 
             // Should have ["", "files", "files/dir_0", "files/dir_1", "files/dir_2"]
@@ -1376,7 +1313,7 @@ mod tests {
 
             println!("loaded {} nodes", loaded_nodes.len());
             for (_, node) in loaded_nodes {
-                println!("node: {}", node);
+                println!("node: {node}");
                 CommitMerkleTree::print_node_depth(&node, 1);
                 assert!(node.node.node_type() == MerkleTreeNodeType::Dir);
                 assert!(node.parent_id.is_some());

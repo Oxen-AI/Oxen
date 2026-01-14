@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
@@ -14,9 +15,8 @@ use super::dir_diff_summary::DirDiffSummary;
 use super::generic_diff::GenericDiff;
 use super::generic_diff_summary::GenericDiffSummary;
 use super::tabular_diff_summary::TabularDiffWrapper;
-use super::DiffResult;
 
-#[derive(Default, Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct DiffEntry {
     pub status: String,
     pub data_type: EntryDataType,
@@ -44,7 +44,7 @@ impl DiffEntry {
         // TODO: size is an old check, because we didn't have hashes on dirs before
         match (&self.head_entry, &self.base_entry) {
             (Some(head), Some(base)) => {
-                log::debug!("got metadata entries for diff {:?} and {:?}", head, base);
+                log::debug!("got metadata entries for diff {head:?} and {base:?}");
                 head.hash != base.hash || head.size != base.size
             }
             _ => {
@@ -68,11 +68,11 @@ impl DiffEntry {
         let mut base_entry = DiffEntry::metadata_from_dir(repo, base_dir, base_commit);
         let mut head_entry = DiffEntry::metadata_from_dir(repo, head_dir, head_commit);
 
-        log::debug!("from_dir base_entry: {:?}", base_entry);
-        log::debug!("from_dir head_entry: {:?}", head_entry);
+        log::debug!("from_dir base_entry: {base_entry:?}");
+        log::debug!("from_dir head_entry: {head_entry:?}");
 
-        log::debug!("from_dir base_dir: {:?}", base_dir);
-        log::debug!("from_dir head_dir: {:?}", head_dir);
+        log::debug!("from_dir base_dir: {base_dir:?}");
+        log::debug!("from_dir head_dir: {head_dir:?}");
         // Need to check whether we have the head or base entry to check data about the file
         let (current_dir, current_entry) = if let Some(dir) = head_dir {
             (dir, head_entry.to_owned().unwrap())
@@ -160,7 +160,7 @@ impl DiffEntry {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn from_file_nodes(
+    pub async fn from_file_nodes(
         repo: &LocalRepository,
         file_path: impl AsRef<Path>,
         base_entry: Option<FileNode>,
@@ -171,11 +171,7 @@ impl DiffEntry {
         should_do_full_diff: bool,
         df_opts: Option<DFOpts>, // only for tabular
     ) -> Result<DiffEntry, OxenError> {
-        log::debug!(
-            "from_file_nodes: base_entry: {:?}, head_entry: {:?}",
-            base_entry,
-            head_entry
-        );
+        log::debug!("from_file_nodes: base_entry: {base_entry:?}, head_entry: {head_entry:?}");
         let file_path = file_path.as_ref().to_path_buf();
         // Need to check whether we have the head or base entry to check data about the file
         let (current_entry, data_type) = if let Some(entry) = &head_entry {
@@ -216,7 +212,7 @@ impl DiffEntry {
             if data_type == EntryDataType::Tabular && should_do_full_diff {
                 log::debug!("doing full diff for tabular");
                 let diff =
-                    TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts);
+                    TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts).await;
                 return Ok(DiffEntry {
                     status: status.to_string(),
                     data_type: data_type.clone(),
@@ -230,24 +226,23 @@ impl DiffEntry {
                     diff_summary: Some(GenericDiffSummary::TabularDiffWrapper(
                         diff.clone().tabular.summary.to_wrapper(),
                     )),
-                    diff: Some(GenericDiff::TabularDiff(diff)),
+                    diff: Some(GenericDiff::TabularDiff(Box::new(diff))),
                 });
             }
         }
 
         // TODO: handle all diff types more generically
-        let diff = if should_do_full_diff && data_type == EntryDataType::Text {
-            if base_entry.is_some() && head_entry.is_some() {
-                match repositories::diffs::diff_text_file_nodes(
-                    repo,
-                    &base_entry.clone().unwrap(),
-                    &head_entry.clone().unwrap(),
-                )? {
-                    DiffResult::Text(diff) => Some(GenericDiff::TextDiff(diff)),
-                    _ => None,
-                }
-            } else {
-                None
+        let diff: Option<GenericDiff> = if should_do_full_diff && data_type == EntryDataType::Text {
+            // Use the Option-aware API to also support add/remove scenarios
+            match repositories::diffs::diff_text_file_nodes(
+                repo,
+                base_entry.as_ref(),
+                head_entry.as_ref(),
+            )
+            .await
+            {
+                Ok(text_diff) => Some(GenericDiff::TextDiff(text_diff)),
+                Err(_) => None,
             }
         } else {
             None

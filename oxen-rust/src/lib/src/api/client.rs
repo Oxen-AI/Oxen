@@ -20,11 +20,13 @@ pub mod data_frames;
 pub mod diff;
 pub mod dir;
 pub mod entries;
+pub mod export;
 pub mod file;
+pub mod import;
 pub mod merger;
 pub mod metadata;
-pub mod notebooks;
 pub mod oxen_version;
+pub mod prune;
 pub mod repositories;
 pub mod revisions;
 pub mod schemas;
@@ -59,7 +61,7 @@ pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError
 
 fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
     match builder_for_host(host.as_ref(), should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::DEFAULT_TIMEOUT_SECS))
+        .timeout(time::Duration::from_secs(constants::timeout()))
         .build()
     {
         Ok(client) => Ok(client),
@@ -92,12 +94,16 @@ fn builder_for_host<S: AsRef<str>>(
         Ok(builder_no_user_agent())
     };
 
+    // If auth_config.toml isn't found, return without authorizing
     let config = match AuthConfig::get() {
         Ok(config) => config,
-        Err(err) => {
-            log::debug!("remote::client::new_for_host error getting config: {}", err);
-
-            return Err(OxenError::must_supply_valid_api_key());
+        Err(e) => {
+            log::debug!(
+                "Error getting config: {}. No auth token found for host {}",
+                e,
+                host.as_ref()
+            );
+            return builder;
         }
     };
     if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
@@ -105,8 +111,8 @@ fn builder_for_host<S: AsRef<str>>(
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
-            Err(err) => {
-                log::debug!("remote::client::new invalid header value: {}", err);
+            Err(e) => {
+                log::debug!("Invalid header value: {e}");
                 return Err(OxenError::basic_str(
                     "Error setting request auth. Please check your Oxen config.",
                 ));
@@ -159,8 +165,8 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
         let _ = match AuthConfig::get() {
             Ok(config) => config,
             Err(err) => {
-                log::debug!("remote::client::new_for_host error getting config: {}", err);
-                return Err(OxenError::auth_token_not_set());
+                log::debug!("Error getting config: {err}");
+                return Err(OxenError::must_supply_valid_api_key());
             }
         };
     }
@@ -169,7 +175,7 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
 }
 
 /// Used to override error message when parsing json body
-pub async fn parse_json_body_with_err_msg(
+async fn parse_json_body_with_err_msg(
     url: &str,
     res: reqwest::Response,
     response_type: Option<&str>,
@@ -178,9 +184,10 @@ pub async fn parse_json_body_with_err_msg(
     let status = res.status();
     let body = res.text().await?;
 
-    log::debug!("url: {url}\nstatus: {status}\nbody: {body}");
+    log::debug!("url: {url}\nstatus: {status}");
 
     let response: Result<OxenResponse, serde_json::Error> = serde_json::from_str(&body);
+    log::debug!("response: {response:?}");
     match response {
         Ok(response) => parse_status_and_message(
             url,
@@ -191,9 +198,9 @@ pub async fn parse_json_body_with_err_msg(
             response_msg_override,
         ),
         Err(err) => {
-            log::debug!("Err: {}", err);
+            log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
-                "Could not deserialize response from [{url}]\n{status}\n'{body}'"
+                "Could not deserialize response from [{url}]\n{status}"
             )))
         }
     }
@@ -230,6 +237,7 @@ fn parse_status_and_message(
         }
         http::STATUS_ERROR => {
             log::debug!("Status error: {status}");
+
             if let Some(msg) = response_msg_override {
                 if let Some(response_type) = response_type {
                     if response.desc_or_msg() == response_type {

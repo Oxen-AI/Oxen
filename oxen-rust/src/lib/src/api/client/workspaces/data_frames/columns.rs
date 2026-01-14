@@ -18,8 +18,7 @@ pub async fn create(
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -40,7 +39,7 @@ pub async fn create(
             let response: Result<JsonDataFrameColumnResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
-                Ok(val) => Ok(val.data_frame.view.to_df()),
+                Ok(val) => Ok(val.data_frame.view.to_df().await),
                 Err(err) => {
                     let err = format!("api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}");
                     Err(OxenError::basic_str(err))
@@ -62,8 +61,7 @@ pub async fn delete(
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -77,11 +75,11 @@ pub async fn delete(
     match client.delete(&url).send().await {
         Ok(res) => {
             let body: String = client::parse_json_body(&url, res).await?;
-            log::debug!("rm_df_mod got body: {}", body);
+            log::debug!("rm_df_mod got body: {body}");
             let response: Result<JsonDataFrameColumnResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
-                Ok(val) => Ok(val.data_frame.view.to_df()),
+                Ok(val) => Ok(val.data_frame.view.to_df().await),
                 Err(err) => {
                     let err = format!("api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}");
                     Err(OxenError::basic_str(err))
@@ -104,8 +102,7 @@ pub async fn update(
 ) -> Result<JsonDataFrameColumnResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -151,8 +148,7 @@ pub async fn add_column_metadata(
 ) -> Result<(), OxenError> {
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
-            "Path must be a string: {:?}",
-            path
+            "Path must be a string: {path:?}"
         )));
     };
 
@@ -223,7 +219,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let column_name = "test";
-            let data = format!(r#"{{"name":"{}", "data_type": "str"}}"#, column_name);
+            let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
 
             api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
             let result = api::client::workspaces::data_frames::columns::create(
@@ -251,7 +247,7 @@ mod tests {
                 .iter()
                 .any(|field| field.name == column_name)
             {
-                panic!("Column {} does not exist in the data frame", column_name);
+                panic!("Column {column_name} does not exist in the data frame");
             }
 
             assert!(result.is_ok());
@@ -456,7 +452,7 @@ mod tests {
             let column = binding.view.schema.fields.get(4).unwrap();
 
             let new_name = "renamed_column";
-            let data = format!(r#"{{"new_name":"{}"}}"#, new_name);
+            let data = format!(r#"{{"new_name":"{new_name}"}}"#);
             let metadata = json!({
                 "column_name": new_name,
                 "metadata": {
@@ -537,7 +533,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             let column_name = "new_column";
-            let data = format!(r#"{{"name":"{}", "data_type": "str"}}"#, column_name);
+            let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
             let metadata = json!({
                 "column_name": column_name,
                 "metadata": {
@@ -650,7 +646,7 @@ mod tests {
             .await?;
 
             let new_name = "renamed_column";
-            let data = format!(r#"{{"new_name":"{}"}}"#, new_name);
+            let data = format!(r#"{{"new_name":"{new_name}"}}"#);
 
             api::client::workspaces::data_frames::columns::update(
                 &remote_repo,
@@ -759,7 +755,7 @@ mod tests {
             api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
 
             let new_name = "renamed_column";
-            let data = format!(r#"{{"new_name":"{}"}}"#, new_name);
+            let data = format!(r#"{{"new_name":"{new_name}"}}"#);
 
             api::client::workspaces::data_frames::columns::update(
                 &remote_repo,

@@ -7,6 +7,7 @@ use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository};
+use crate::opts::PushOpts;
 
 /// # Get a log of all the commits
 ///
@@ -57,12 +58,11 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
 /// Push to a specific remote branch on the default remote repository
 pub async fn push_remote_branch(
     repo: &LocalRepository,
-    remote: impl AsRef<str>,
-    branch_name: impl AsRef<str>,
+    opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is deprecated"),
-        _ => core::v_latest::push::push_remote_branch(repo, remote, branch_name).await,
+        _ => core::v_latest::push::push_remote_branch(repo, opts).await,
     }
 }
 
@@ -71,12 +71,12 @@ mod tests {
     use crate::api;
     use crate::command;
     use crate::constants;
-    use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
+    use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
     use crate::core::progress::push_progress::PushProgress;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
-    use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
+    use crate::opts::{CloneOpts, PushOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -281,12 +281,12 @@ mod tests {
             // Create subdirs with files
             let num_dirs = 5;
             for i in 0..num_dirs {
-                let dir_path = data_dir.join(format!("{}", i));
+                let dir_path = data_dir.join(format!("{i}"));
                 util::fs::create_dir_all(&dir_path)?;
                 let file_path = dir_path.join("file.txt");
-                let file_path = test::write_txt_file_to_path(file_path, format!("file -> {}", i))?;
+                let file_path = test::write_txt_file_to_path(file_path, format!("file -> {i}"))?;
                 repositories::add(&repo, &file_path).await?;
-                repositories::commit(&repo, &format!("Adding file -> data/{}/file.txt", i))?;
+                repositories::commit(&repo, &format!("Adding file -> data/{i}/file.txt"))?;
             }
 
             // modify the 3rd file
@@ -438,12 +438,12 @@ mod tests {
             repositories::branches::create_checkout(&repo, new_branch_name)?;
 
             // Push new branch, without any new commits, should still create the branch
-            repositories::push::push_remote_branch(
-                &repo,
-                constants::DEFAULT_REMOTE_NAME,
-                new_branch_name,
-            )
-            .await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: new_branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&repo, &opts).await?;
 
             let remote_branches = api::client::branches::list(&remote_repo).await?;
             assert_eq!(2, remote_branches.len());
@@ -611,12 +611,12 @@ mod tests {
             repositories::commit(&local_repo, "Adding first file path.")?;
 
             // Push new branch to remote without first syncing main
-            repositories::push::push_remote_branch(
-                &local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                new_branch_name,
-            )
-            .await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: new_branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Should now have 26 commits on remote on new branch
             let history_new =
@@ -627,7 +627,7 @@ mod tests {
             // Should still have no commits on main
             let history_main =
                 api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME).await;
-            log::debug!("history_main: {:?}", history_main);
+            log::debug!("history_main: {history_main:?}");
             // assert_eq!(history_main.len(), 1);
             assert!(history_main.is_err());
 
@@ -830,7 +830,7 @@ mod tests {
                     repositories::add(&user_a_repo, &a_mod_file_path).await?;
                     let commit_a =
                         repositories::commit(&user_a_repo, "User A modifying the README.")?;
-                    log::debug!("commit_a: {}", commit_a);
+                    log::debug!("commit_a: {commit_a}");
                     repositories::push(&user_a_repo).await?;
 
                     // User B tries to modify the same README.md and push
@@ -840,11 +840,11 @@ mod tests {
                     repositories::add(&user_b_repo, &b_mod_file_path).await?;
                     let commit_b =
                         repositories::commit(&user_b_repo, "User B modifying the README.")?;
-                    log::debug!("commit_b: {}", commit_b);
+                    log::debug!("commit_b: {commit_b}");
 
                     // Push should fail! Remote is ahead
                     let first_push_result = repositories::push(&user_b_repo).await;
-                    log::debug!("first_push_result: {:?}", first_push_result);
+                    log::debug!("first_push_result: {first_push_result:?}");
                     assert!(first_push_result.is_err());
 
                     // Pull should error because there are conflicts
@@ -904,7 +904,7 @@ mod tests {
                 // Log out all files in this directory with fs
                 let files = util::fs::rlist_paths_in_dir(&user_a_repo_dir);
                 for item in files {
-                    log::debug!("\nfile or dir: {:?}\n", item)
+                    log::debug!("\nfile or dir: {item:?}\n")
                 }
 
                 // User A: add files in `nlp`
@@ -973,7 +973,7 @@ mod tests {
                 // Log out all files in this directory with fs
                 let files = util::fs::rlist_paths_in_dir(&user_a_repo_dir);
                 for item in files {
-                    log::debug!("\nfile or dir: {:?}\n", item)
+                    log::debug!("\nfile or dir: {item:?}\n")
                 }
 
                 // User A: add files in `nlp`
@@ -1010,7 +1010,7 @@ mod tests {
                         &user_b_repo.path.join("annotations").join("train"),
                     );
                     for item in files {
-                        log::debug!("\npre file or dir: {:?}\n", item)
+                        log::debug!("\npre file or dir: {item:?}\n")
                     }
                     // User A modifies
                     test::write_txt_file_to_path(&modify_path_a, "fancy new file contents")?;
@@ -1025,7 +1025,7 @@ mod tests {
                         &user_b_repo.path.join("annotations").join("train"),
                     );
                     for item in files {
-                        log::debug!("\npost file or dir: {:?}\n", item)
+                        log::debug!("\npost file or dir: {item:?}\n")
                     }
                     repositories::add(&user_b_repo, &modify_path_b).await?;
                     // also add a file
@@ -1036,7 +1036,7 @@ mod tests {
                     let head = repositories::commits::head_commit(&user_b_repo)?;
                     let pre_b =
                         repositories::tree::get_root_with_children(&user_b_repo, &head)?.unwrap();
-                    log::debug!("b head before is {:?}", head);
+                    log::debug!("b head before is {head:?}");
 
                     let maybe_b_entry = pre_b.get_by_path(
                         PathBuf::from("annotations")
@@ -1044,7 +1044,7 @@ mod tests {
                             .join("annotations.txt"),
                     )?;
 
-                    log::debug!("maybe_b_entry before commit is {:?}", maybe_b_entry);
+                    log::debug!("maybe_b_entry before commit is {maybe_b_entry:?}");
 
                     let commit_b =
                         repositories::commit(&user_b_repo, "user B deleting file path.")?;
@@ -1058,23 +1058,23 @@ mod tests {
                             .join("annotations.txt"),
                     )?;
 
-                    log::debug!("maybe_b_entry after commitis {:?}", maybe_b_entry);
+                    log::debug!("maybe_b_entry after commitis {maybe_b_entry:?}");
 
-                    log::debug!("commit_a is {:?}", commit_a);
-                    log::debug!("commit_b is {:?}", commit_b);
+                    log::debug!("commit_a is {commit_a:?}");
+                    log::debug!("commit_b is {commit_b:?}");
 
                     let commit_a =
                         repositories::commits::get_by_id(&user_a_repo, &commit_a.id)?.unwrap();
                     let commit_b =
                         repositories::commits::get_by_id(&user_b_repo, &commit_b.id)?.unwrap();
 
-                    log::debug!("commit_a pre is {:?}", commit_a);
-                    log::debug!("commit_b pre is {:?}", commit_b);
+                    log::debug!("commit_a pre is {commit_a:?}");
+                    log::debug!("commit_b pre is {commit_b:?}");
 
                     // Push should fail
                     let res = repositories::push(&user_b_repo).await;
 
-                    log::debug!("here's the result and why it failed: {:?}", res);
+                    log::debug!("here's the result and why it failed: {res:?}");
 
                     assert!(res.is_err());
 
@@ -1199,7 +1199,7 @@ A: Oxen.ai is a great tool for this! It can handle any size dataset, and is opti
                 let commit = repositories::commit(&local_repo, "Added another file")?;
 
                 let result = repositories::push(&local_repo).await;
-                println!("push result: {:?}", result);
+                println!("push result: {result:?}");
 
                 assert!(result.is_ok());
 
@@ -1246,7 +1246,7 @@ A: Checkout Oxen.ai
                 let commit = repositories::commit(&local_repo, "adding README.md to the test dir")?;
 
                 let result = repositories::push(&local_repo).await;
-                println!("push result: {:?}", result);
+                println!("push result: {result:?}");
 
                 assert!(result.is_ok());
 
@@ -1259,7 +1259,7 @@ A: Checkout Oxen.ai
                     100,
                 )
                 .await?;
-                println!("dir_entries: {:?}", dir_entries);
+                println!("dir_entries: {dir_entries:?}");
 
                 // Make sure we have the new file
                 assert!(dir_entries
@@ -1291,6 +1291,7 @@ A: Checkout Oxen.ai
                     Some(vec![PathBuf::from("nlp").join("classification")]);
                 clone_opts.fetch_opts.depth = Some(2);
                 let user_a_repo = repositories::clone(&clone_opts).await?;
+                println!("user_a_repo: {user_a_repo:?}");
 
                 // User adds a file and pushes
                 let new_file = PathBuf::from("nlp")
@@ -1319,6 +1320,7 @@ A: Checkout Oxen.ai
                     .any(|entry| entry.filename() == "new_data.tsv"));
 
                 // Make sure the root directory is in tact
+                // TODO: HERE'S THE ISSUE! And I think it has to do with push? I wasn't wholly sure what the point of the ancestor bs was before, but this is the best bet
                 let root_dir_entries =
                     api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                         .await?;
@@ -1666,7 +1668,11 @@ A: Checkout Oxen.ai
             api::client::tree::create_nodes(
                 &local_repo,
                 &remote_repo,
-                candidate_nodes.clone(),
+                candidate_nodes
+                    .clone()
+                    .into_iter()
+                    .map(|node| node.hash)
+                    .collect(),
                 &progress,
             )
             .await?;
@@ -1680,6 +1686,110 @@ A: Checkout Oxen.ai
                 api::client::tree::get_node_hash_by_path(&remote_repo, &commit.id, new_path)
                     .await?;
             Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_push_large_file_and_clone_verify() -> Result<(), OxenError> {
+        // Test pushing a 100MB file and cloning to verify all files
+        // 1) Create local repo with 100MB file
+        // 2) Push to remote
+        // 3) Clone to different directory
+        // 4) Verify file exists and contents match
+
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            // Create a 100MB file with random data
+            let file_size = 100 * 1024 * 1024; // 100MB
+            let file_path = local_repo.path.join("large_file.bin");
+
+            println!("Generating 100MB random data...");
+            let mut rng = rand::thread_rng();
+            let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen::<u8>()).collect();
+
+            // Write the data to the file
+            util::fs::write_data(&file_path, &random_data)?;
+
+            // Verify the file size is exactly 100MB
+            let metadata = util::fs::metadata(&file_path)?;
+            assert_eq!(
+                metadata.len(),
+                file_size as u64,
+                "File size should be exactly 100MB"
+            );
+
+            // Add and commit the file
+            println!("Adding and committing 100MB file...");
+            repositories::add(&local_repo, &file_path).await?;
+            let commit = repositories::commit(&local_repo, "Add 100MB file")?;
+
+            // Set up remote and push
+            println!("Setting up remote repository...");
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+
+            let mut local_repo_mut = local_repo.clone();
+            command::config::set_remote(
+                &mut local_repo_mut,
+                constants::DEFAULT_REMOTE_NAME,
+                &remote_repo.remote.url,
+            )?;
+
+            println!("Pushing 100MB file to remote...");
+            repositories::push(&local_repo_mut).await?;
+
+            // Verify the push was successful by checking the remote repository
+            let remote_commit_opt =
+                api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
+            assert!(remote_commit_opt.is_some(), "Remote commit should exist");
+
+            let remote_repo_clone = remote_repo.clone();
+            let random_data_clone = random_data.clone();
+
+            // Clone to a different directory and verify
+            test::run_empty_dir_test_async(|clone_dir| async move {
+                println!("Cloning repository to verify files...");
+                let clone_repo_path = clone_dir.join("cloned_repo");
+                let clone_repo =
+                    repositories::clone_url(&remote_repo_clone.remote.url, &clone_repo_path)
+                        .await?;
+
+                // Verify the cloned file exists
+                let cloned_file_path = clone_repo.path.join("large_file.bin");
+                assert!(
+                    cloned_file_path.exists(),
+                    "Cloned file should exist at {cloned_file_path:?}"
+                );
+
+                // Verify the file size matches
+                let cloned_metadata = util::fs::metadata(&cloned_file_path)?;
+                assert_eq!(
+                    cloned_metadata.len(),
+                    file_size as u64,
+                    "Cloned file size should match original (100MB)"
+                );
+
+                // Verify the file contents match the original data
+                println!("Verifying file contents match...");
+                let cloned_data = util::fs::read_bytes_from_path(&cloned_file_path)?;
+                assert_eq!(
+                    cloned_data.len(),
+                    random_data_clone.len(),
+                    "Cloned file data length should match original"
+                );
+                assert_eq!(
+                    cloned_data, random_data_clone,
+                    "Cloned file contents should match the original data"
+                );
+
+                println!("Successfully verified 100MB file after clone!");
+                Ok(())
+            })
+            .await?;
+
+            // Cleanup remote repo
+            api::client::repositories::delete(&remote_repo).await?;
+
+            Ok(())
         })
         .await
     }

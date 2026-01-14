@@ -7,6 +7,7 @@ use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::{Remote, RemoteRepository, RepoNew};
 use liboxen::opts::PaginateOpts;
+use liboxen::opts::StorageOpts;
 use liboxen::{api, repositories};
 
 use std::borrow::Cow;
@@ -51,8 +52,7 @@ impl PyRemoteRepo {
             Some((namespace, repo_name)) => (namespace.to_string(), repo_name.to_string()),
             None => {
                 return Err(OxenError::basic_str(format!(
-                    "Invalid repo name, must be in format namespace/repo_name. Got {}",
-                    repo
+                    "Invalid repo name, must be in format namespace/repo_name. Got {repo}"
                 ))
                 .into())
             }
@@ -131,13 +131,35 @@ impl PyRemoteRepo {
             .collect())
     }
 
-    fn create(&mut self, empty: bool, is_public: bool) -> Result<PyRemoteRepo, PyOxenError> {
+    #[pyo3(signature = (empty, is_public, storage_backend=None, storage_backend_path=None, storage_backend_bucket=None))]
+    fn create(
+        &mut self,
+        empty: bool,
+        is_public: bool,
+        storage_backend: Option<String>,
+        storage_backend_path: Option<String>,
+        storage_backend_bucket: Option<String>,
+    ) -> Result<PyRemoteRepo, PyOxenError> {
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            // parse storage backend options
+            if storage_backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some()) {
+                return Err(OxenError::basic_str(
+                    "storage_backend must be specified when storage_backend_path or storage_backend_bucket is provided"
+                ));
+            }
+
+            let storage_opts = StorageOpts::from_args(
+                storage_backend,
+                storage_backend_path,
+                storage_backend_bucket,
+            )?;
+
             if empty {
                 let mut repo = RepoNew::from_namespace_name_host(
                     self.repo.namespace.clone(),
                     self.repo.name.clone(),
                     self.host.clone(),
+                    storage_opts,
                 );
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());
@@ -150,7 +172,8 @@ impl PyRemoteRepo {
                     contents: FileContents::Text(format!("# {}\n", &self.repo.name)),
                     user: user.clone(),
                 }];
-                let mut repo = RepoNew::from_files(&self.repo.namespace, &self.repo.name, files);
+                let mut repo =
+                    RepoNew::from_files(&self.repo.namespace, &self.repo.name, files, storage_opts);
                 repo.host = Some(self.host.clone());
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());
@@ -204,6 +227,40 @@ impl PyRemoteRepo {
         Ok(())
     }
 
+    fn download_zip(
+        &self,
+        directory: PathBuf,
+        local_path: PathBuf,
+        revision: &str,
+    ) -> Result<u64, PyOxenError> {
+        let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            if !revision.is_empty() {
+                api::client::export::download_dir_as_zip(
+                    &self.repo,
+                    revision,
+                    &directory,
+                    &local_path,
+                )
+                .await
+            } else if let Some(revision) = &self.revision {
+                api::client::export::download_dir_as_zip(
+                    &self.repo,
+                    revision,
+                    &directory,
+                    &local_path,
+                )
+                .await
+            } else {
+                Err(OxenError::basic_str(
+                    "Invalid Revision: Cannot download zip file without a revision.",
+                ))
+            }
+        })?;
+
+        // Return total bytes downloaded
+        Ok(result)
+    }
+
     fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<[u8]>, PyOxenError> {
         let bytes = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::file::get_file(&self.repo, &revision, &remote_path).await
@@ -236,6 +293,26 @@ impl PyRemoteRepo {
                 Some(commit_body),
             )
             .await
+        })?;
+
+        Ok(())
+    }
+
+    fn delete_file(
+        &self,
+        branch: &str,
+        file_path: PathBuf,
+        commit_message: Option<&str>,
+        user: PyUser,
+    ) -> Result<(), PyOxenError> {
+        let commit_body = commit_message.map(|commit_message| NewCommitBody {
+            message: commit_message.to_string(),
+            author: user.name().to_string(),
+            email: user.email().to_string(),
+        });
+
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::file::delete_file(&self.repo, &branch, &file_path, commit_body).await
         })?;
 
         Ok(())
@@ -321,10 +398,8 @@ impl PyRemoteRepo {
         }) {
             Ok(Some(remote_metadata)) => {
                 let remote_hash = remote_metadata.entry.hash();
-                let local_hash =
-                    liboxen::util::hasher::hash_file_contents(&local_path).map_err(|e| {
-                        PyValueError::new_err(format!("Error hashing local file: {}", e))
-                    })?;
+                let local_hash = liboxen::util::hasher::hash_file_contents(&local_path)
+                    .map_err(|e| PyValueError::new_err(format!("Error hashing local file: {e}")))?;
                 Ok(remote_hash != local_hash)
             }
             Ok(None) => Err(PyValueError::new_err(format!(
@@ -332,8 +407,7 @@ impl PyRemoteRepo {
                 remote_path.display()
             ))),
             Err(e) => Err(PyValueError::new_err(format!(
-                "Error getting file metadata: {}",
-                e
+                "Error getting file metadata: {e}",
             ))),
         }
     }
@@ -371,10 +445,7 @@ impl PyRemoteRepo {
         match branch {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
-            Err(e) => Err(PyValueError::new_err(format!(
-                "Error getting branch: {}",
-                e
-            ))),
+            Err(e) => Err(PyValueError::new_err(format!("Error getting branch: {e}"))),
         }
     }
 
@@ -411,8 +482,7 @@ impl PyRemoteRepo {
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(PyValueError::new_err(format!(
-                "Could not delete branch: {}",
-                e
+                "Could not delete branch: {e}"
             ))),
         }
     }
@@ -458,7 +528,7 @@ impl PyRemoteRepo {
                 self.commit_id = Some(commit_id.clone());
                 Ok(commit_id)
             },
-            _ => Err(PyValueError::new_err(format!("{} is not a valid branch name or commit id. Consider creating it with `create_branch`", revision)))
+            _ => Err(PyValueError::new_err(format!("{revision} is not a valid branch name or commit id. Consider creating it with `create_branch`")))
         }
     }
 

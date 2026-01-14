@@ -35,23 +35,23 @@ pub async fn resolve(req: HttpRequest) -> HttpResponse {
         match repositories::get_by_namespace_and_name(&app_data.path, namespace, name) {
             Ok(Some(_)) => match req.url_for("repo_root", [namespace, name]) {
                 Ok(url) => {
-                    log::debug!("resolved repo URL: {}", url);
+                    log::debug!("resolved repo URL: {url}");
                     HttpResponse::Ok().json(ResolveResponse {
                         status: StatusMessage::resource_found(),
                         repository_api_url: url.to_string(),
                     })
                 }
                 Err(err) => {
-                    log::debug!("Error generating repo URL: {:?}", err);
+                    log::debug!("Error generating repo URL: {err:?}");
                     HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
                 }
             },
             Ok(None) => {
-                log::debug!("404 Could not find repo: {}", name);
+                log::debug!("404 Could not find repo: {name}");
                 HttpResponse::NotFound().json(StatusMessage::resource_not_found())
             }
             Err(err) => {
-                log::debug!("Err finding repo: {} => {:?}", name, err);
+                log::debug!("Err finding repo: {name} => {err:?}");
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
             }
         }

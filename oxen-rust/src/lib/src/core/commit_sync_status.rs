@@ -15,7 +15,7 @@ pub fn commit_is_synced(repo: &LocalRepository, commit_hash: &MerkleHash) -> boo
             "true" == value
         }
         Err(err) => {
-            log::debug!("Could not read is_synced file {is_synced_path:?}: {}", err);
+            log::debug!("Could not read is_synced file {is_synced_path:?}: {err}");
             false
         }
     }
@@ -39,8 +39,7 @@ pub fn mark_commit_as_synced(
             Ok(())
         }
         Err(err) => Err(OxenError::basic_str(format!(
-            "Could not write is_synced file: {}",
-            err
+            "Could not write is_synced file: {err}"
         ))),
     }
 }

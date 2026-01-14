@@ -17,7 +17,7 @@ pub async fn clone_repo(
     // if directory already exists -> return Err
     let repo_path = &opts.dst;
     if repo_path.exists() {
-        let err = format!("Directory already exists: {}", remote_repo.name);
+        let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
         return Err(OxenError::basic_str(err));
     }
 
@@ -35,6 +35,13 @@ pub async fn clone_repo(
     local_repo.set_min_version(remote_repo.min_version());
     local_repo.set_subtree_paths(opts.fetch_opts.subtree_paths.clone());
     local_repo.set_depth(opts.fetch_opts.depth);
+    local_repo.set_version_store(&opts.storage_opts).await?;
+
+    if opts.is_vfs {
+        local_repo.set_vfs(Some(true));
+    } else {
+        local_repo.set_vfs(None);
+    }
 
     local_repo.save()?;
 
@@ -63,7 +70,7 @@ pub async fn clone_repo_remote_mode(
     // if directory already exists -> return Err
     let repo_path = &opts.dst;
     if repo_path.exists() {
-        let err = format!("Directory already exists: {}", remote_repo.name);
+        let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
         return Err(OxenError::basic_str(err));
     }
 
@@ -88,8 +95,15 @@ pub async fn clone_repo_remote_mode(
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
     local_repo.set_min_version(remote_repo.min_version());
     local_repo.set_remote_mode(Some(true));
+    local_repo.set_version_store(&opts.storage_opts).await?;
 
-    let workspace = api::client::workspaces::create_with_path(
+    if opts.is_vfs {
+        local_repo.set_vfs(Some(true));
+    } else {
+        local_repo.set_vfs(None);
+    }
+
+    let workspace = api::client::workspaces::create_with_new_branch(
         &remote_repo,
         &branch_name,
         &workspace_id,
@@ -118,10 +132,7 @@ pub async fn clone_repo_remote_mode(
             return Err(OxenError::basic_str("Err: Cannot "));
         }
         other => {
-            println!(
-                "{}",
-                format!("Unexpected workspace status: {}", other).red()
-            );
+            println!("{}", format!("Unexpected workspace status: {other}").red());
         }
     }
     println!("{} {}", "Workspace ID:".green().bold(), workspace.id.bold());

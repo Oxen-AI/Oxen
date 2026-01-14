@@ -31,7 +31,7 @@ pub async fn pull_remote_branch(
     let remote = &fetch_opts.remote;
     let branch = &fetch_opts.branch;
     let mut fetch_opts = fetch_opts.clone();
-    println!("🐂 oxen pull {} {}", remote, branch);
+    println!("🐂 oxen pull {remote} {branch}");
 
     let remote = repo
         .get_remote(remote)
@@ -85,6 +85,7 @@ pub async fn pull_remote_branch(
 
         None => {
             repositories::branches::update(repo, branch, new_head_commit.id)?;
+            repositories::checkout::checkout(repo, branch).await?;
         }
     }
 

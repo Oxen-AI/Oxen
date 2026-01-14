@@ -358,7 +358,7 @@ pub fn add_column_metadata(
     let path = path.as_ref();
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
 
-    log::debug!("add_column_metadata: path: {:?}", path);
+    log::debug!("add_column_metadata: path: {path:?}");
 
     let column = column.as_ref();
 
@@ -380,9 +380,11 @@ pub fn add_column_metadata(
                 "Cannot add metadata, no commits found.",
             ));
         };
-        log::debug!("add_column_metadata: commit: {} path: {:?}", commit, path);
+        log::debug!("add_column_metadata: commit: {commit} path: {path:?}");
         let Some(node) = repositories::tree::get_node_by_path(repo, &commit, &path)? else {
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::basic_str(format!(
+                "path {path:?} not found in commit {commit:?}"
+            )));
         };
         let mut parent_id = node.parent_id;
         let mut dir_path = path.clone();
@@ -491,7 +493,7 @@ pub fn get_staged_db_read_only(
         match DBWithThreadMode::open_for_read_only(&opts, dunce::simplified(&path), false) {
             Ok(db) => Ok(Some(db)),
             Err(err) => {
-                log::debug!("Failed to open database in read-only mode: {:?}", err);
+                log::debug!("Failed to open database in read-only mode: {err:?}");
                 Ok(None)
             }
         }
@@ -500,7 +502,7 @@ pub fn get_staged_db_read_only(
 
 pub fn staged_db_path(path: &Path) -> Result<PathBuf, OxenError> {
     let path = util::fs::oxen_hidden_dir(path).join(Path::new(constants::STAGED_DIR));
-    log::debug!("staged_db_path {:?}", path);
+    log::debug!("staged_db_path {path:?}");
     if !path.exists() {
         util::fs::create_dir_all(&path)?;
     }

@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::str::FromStr;
 use time::OffsetDateTime;
 
 use crate::core::v_latest::model::merkle_tree::node::commit_node::CommitNodeData as CommitNodeDataV0_25_0;
@@ -78,11 +77,11 @@ impl CommitNode {
     pub fn from_commit(commit: Commit) -> CommitNode {
         CommitNode {
             node: ECommitNode::V0_25_0(CommitNodeDataV0_25_0 {
-                hash: MerkleHash::from_str(&commit.id).unwrap(),
+                hash: commit.id.parse().unwrap(),
                 parent_ids: commit
                     .parent_ids
                     .iter()
-                    .map(|id| MerkleHash::from_str(id).unwrap())
+                    .map(|id| id.parse().unwrap())
                     .collect(),
                 email: commit.email.clone(),
                 author: commit.author.clone(),
@@ -134,7 +133,7 @@ impl CommitNode {
                 // This is a fallback for old versions of the commit node
                 log::debug!("Deserializing old commit node version");
                 let commit: CommitNodeDataV0_19_0 = rmp_serde::from_slice(data)?;
-                log::debug!("Deserialized old commit node version: {:?}", commit);
+                log::debug!("Deserialized old commit node version: {commit:?}");
                 Self {
                     node: ECommitNode::V0_19_0(commit),
                 }

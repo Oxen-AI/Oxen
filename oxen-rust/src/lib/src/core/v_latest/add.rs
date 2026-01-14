@@ -1,6 +1,5 @@
 use filetime::FileTime;
 use futures::stream::{self, Stream, StreamExt};
-use glob::glob;
 use par_stream::prelude::*;
 use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, MultiThreaded};
@@ -23,11 +22,13 @@ use crate::core::oxenignore;
 use crate::core::staged::staged_db_manager::{with_staged_db_manager, StagedDBManager};
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
+use crate::model::workspace::Workspace;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
-use crate::opts::RmOpts;
+use crate::opts::{GlobOpts, RmOpts};
 use crate::storage::version_store::VersionStore;
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
+use derive_more::FromStr;
 use ignore::gitignore::Gitignore;
 use pathdiff::diff_paths;
 use std::ops::AddAssign;
@@ -78,57 +79,46 @@ pub async fn add<T: AsRef<Path>>(
 
     // Check if the repo is in the working tree
     let mut repo_path = repo.path.clone();
-    let repo_in_working_tree = repo_path.exists();
+    let mut repo_in_working_tree = repo_path.exists();
 
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
-    for path in paths {
-        let path_str = path
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| OxenError::basic_str("Invalid path string"))?;
 
+    for path in paths {
+        let path = path.as_ref();
+
+        let glob_opts = GlobOpts {
+            paths: vec![path.to_path_buf()],
+            staged_db: false,
+            merkle_tree: true,
+            working_dir: true,
+            walk_dirs: false,
+        };
+
+        let matching_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+
+        expanded_paths.extend(matching_paths);
+
+        // Adjust repo path if outside working tree
         if !repo_in_working_tree {
-            // If adding from outside the scope of the repo, only allow absolute paths
-            if !util::fs::is_canonical(&path)? {
+            // If outside the scope of the repo, only allow absolute paths
+
+            if !util::fs::is_canonical(path)? {
                 return Err(OxenError::basic_str(
-                    "Err: Cannot add relative paths from outside repo scope",
+                    "Err: Cannot use relative paths outside repo scope",
                 ));
             }
 
-            repo_path = util::fs::full_path_from_child_path(&repo_path, &path)?;
-        }
-
-        // TODO: At least on Windows, this is improperly case sensitive
-        if util::fs::is_glob_path(path_str) {
-            log::debug!("glob path: {}", path_str);
-            // Match against any untracked entries in the current dir
-            for entry in glob(path_str)? {
-                expanded_paths.insert(entry?);
-            }
-
-            // For removed files?
-            if let Some(commit) = repositories::commits::head_commit_maybe(repo)? {
-                let pattern_entries =
-                    repositories::commits::search_entries(repo, &commit, path_str)?;
-                log::debug!("pattern entries: {:?}", pattern_entries);
-                expanded_paths.extend(pattern_entries);
-            }
-        } else {
-            // Non-glob path
-            expanded_paths.insert(path.as_ref().to_path_buf());
+            repo_path = util::fs::full_path_from_child_path(&repo_path, path)?;
+            repo_in_working_tree = true;
         }
     }
-
-    log::debug!("final repo path: {repo_path:?}");
 
     // Get the version store from the repository
     let version_store = repo.version_store()?;
 
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
-
     let db_path = repo_path.join(OXEN_HIDDEN_DIR).join(STAGED_DIR);
-    log::debug!("staged_db path: {db_path:?}");
 
     let staged_db: Arc<DBWithThreadMode<MultiThreaded>> =
         Arc::new(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?);
@@ -145,7 +135,7 @@ pub async fn add_files(
     staged_db: Arc<DBWithThreadMode<MultiThreaded>>,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<CumulativeStats, OxenError> {
-    log::debug!("add files: {:?}", paths);
+    log::debug!("add files got paths: {:?}", paths.len());
     let cwd = std::env::current_dir()?;
 
     // Start a timer
@@ -162,16 +152,22 @@ pub async fn add_files(
     let excluded_hashes: HashSet<MerkleHash> = HashSet::new();
     let gitignore = oxenignore::create(repo);
 
+    let mut paths_to_remove = HashSet::new();
+    let mut rm_opts = RmOpts::new();
+    rm_opts.recursive = true;
+
     for path in paths {
         let corrected_path = match (path.is_absolute(), repo_path.is_absolute()) {
             (true, true) | (true, false) => path.clone(),
             (false, true) => repo_path.join(path),
             (false, false) => match diff_paths(repo_path, &cwd) {
                 Some(correct_path) => correct_path.join(path),
-                None => path.clone(),
+                None => {
+                    let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+                    repo_path.join(&relative_path)
+                }
             },
         };
-        log::debug!("corrected path is {corrected_path:?}");
 
         if corrected_path.is_dir() {
             total += add_dir_inner(
@@ -185,11 +181,16 @@ pub async fn add_files(
                 &gitignore,
             )
             .await?;
+
+            // Collect removed paths in the dir
+            // Correction for `oxen add .`
+            let removed_paths = util::glob::collect_removed_paths(repo, &corrected_path)?;
+
+            paths_to_remove.extend(removed_paths);
         } else if corrected_path.is_file() {
             if oxenignore::is_ignored(&corrected_path, &gitignore, corrected_path.is_dir()) {
                 continue;
             }
-
             let entry = add_file_inner(
                 repo,
                 repo_path,
@@ -213,25 +214,24 @@ pub async fn add_files(
                 }
             }
         } else if corrected_path.is_symlink() {
-            log::debug!("Skipping symlink: {:?}", corrected_path);
+            log::debug!("Skipping symlink: {corrected_path:?}");
             continue;
         } else {
             log::debug!("Found nonexistent path {path:?}. Staging for removal. Recursive flag set");
-            let mut opts = RmOpts::from_path(path);
-            opts.recursive = true;
-            core::v_latest::rm::rm_with_staged_db(paths, repo, &opts, &staged_db)?;
-
-            // TODO: Make rm_with_staged_db return the stats of the files it removes
-
-            return Ok(total);
+            paths_to_remove.insert(path.to_owned());
         }
+    }
+
+    // Stage the non-existant paths as removed
+    // TODO: Make rm_with_staged_db return the stats of the files it removes
+    if !paths_to_remove.is_empty() {
+        core::v_latest::rm::rm_with_staged_db(&paths_to_remove, repo, &rm_opts, &staged_db)?;
     }
 
     // Stop the timer, and round the duration to the nearest second
     let duration = Duration::from_millis(start.elapsed().as_millis() as u64);
-    log::debug!("---END--- oxen add: {:?} duration: {:?}", paths, duration);
+    log::debug!("---END--- oxen add: {paths:?} duration: {duration:?}");
 
-    // oxen staged?
     println!(
         "🐂 oxen added {} files ({}) in {}",
         total.total_files,
@@ -518,7 +518,7 @@ pub async fn process_add_dir(
                                                     .fetch_add(1, Ordering::Relaxed);
                                             }
                                             Err(e) => {
-                                                log::error!("Error adding file: {:?}", e);
+                                                log::error!("Error adding file: {e:?}");
                                             }
                                         }
 
@@ -527,7 +527,7 @@ pub async fn process_add_dir(
 
                                     // Capture errors in process_file
                                     if let Err(e) = process_file().await {
-                                        log::error!("Error processing file: {}", e);
+                                        log::error!("Error processing file: {e}");
                                     }
                                 }
                             }
@@ -539,7 +539,7 @@ pub async fn process_add_dir(
 
                 // Capture errors in process_directory
                 if let Err(e) = process_directory().await {
-                    log::error!("Error processing directory: {}", e);
+                    log::error!("Error processing directory: {e}");
                 }
             }
         })
@@ -583,9 +583,14 @@ fn get_dir_status_compared_to_head(
     maybe_head_commit: &Option<Commit>,
     dir_hashes: &Option<HashMap<PathBuf, MerkleHash>>,
 ) -> Result<StagedEntryStatus, OxenError> {
-    if let (Some(dir_hashes), Some(_)) = (dir_hashes, maybe_head_commit) {
+    if let (Some(dir_hashes), Some(head_commit)) = (dir_hashes, maybe_head_commit) {
         // Check if the directory exists in the head commit's tree
-        match CommitMerkleTree::dir_without_children_with_dirhash(repo, dir_path, dir_hashes)? {
+        match repositories::tree::get_dir_without_children(
+            repo,
+            head_commit,
+            dir_path,
+            Some(dir_hashes),
+        )? {
             Some(_) => {
                 // Directory exists in HEAD.
                 Ok(StagedEntryStatus::Unmodified)
@@ -609,7 +614,7 @@ fn maybe_load_directory(
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     if let (Some(head_commit), Some(dir_hashes)) = (maybe_head_commit, dir_hashes) {
         let dir_node =
-            CommitMerkleTree::dir_with_children_from_dirhash(repo, head_commit, path, dir_hashes)?;
+            repositories::tree::get_dir_with_children(repo, head_commit, path, Some(dir_hashes))?;
         Ok(dir_node)
     } else {
         Ok(None)
@@ -647,7 +652,8 @@ async fn add_file_inner(
     if let Some(head_commit) = maybe_head_commit {
         let path = util::fs::path_relative_to_dir(path, repo_path)?;
         let parent_path = path.parent().unwrap_or(Path::new(""));
-        maybe_dir_node = CommitMerkleTree::dir_with_children(repo, head_commit, parent_path)?;
+        maybe_dir_node =
+            repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?;
     }
 
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -681,48 +687,28 @@ pub fn determine_file_status(
     // Check if the file is already in the head commit
     let file_path = file_name.as_ref();
     let data_path = data_path.as_ref();
-    log::debug!(
-        "determine_file_status data_path {:?} file_name {:?}",
-        data_path,
-        file_path
-    );
+    log::debug!("determine_file_status data_path {data_path:?} file_name {file_path:?}",);
+
     let maybe_file_node = get_file_node(maybe_dir_node, file_path)?;
     let mut previous_oxen_metadata: Option<GenericMetadata> = None;
     // This is ugly - but makes sure we don't have to rehash the file if it hasn't changed
     let (status, hash, num_bytes, mtime) = if let Some(file_node) = &maybe_file_node {
-        log::debug!(
-            "got existing file_node: {} data_path {:?}",
-            file_node,
-            data_path
-        );
+        log::debug!("got existing file_node: {file_node} data_path {data_path:?}");
 
         // first check if the file timestamp is different
         let metadata = util::fs::metadata(data_path)?;
         let mtime = FileTime::from_last_modification_time(&metadata);
+        let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
+        let num_bytes = metadata.len();
+
         previous_oxen_metadata = file_node.metadata();
-        if util::fs::is_modified_from_node(data_path, file_node)? {
-            log::debug!("has_different_modification_time true {}", file_node);
-            let hash = util::hasher::get_hash_given_metadata(data_path, &metadata)?;
-            if file_node.hash().to_u128() != hash {
-                log::debug!(
-                    "has_different_modification_time hash is different true {}",
-                    file_node
-                );
-                let num_bytes = metadata.len();
-                (
-                    StagedEntryStatus::Modified,
-                    MerkleHash::new(hash),
-                    num_bytes,
-                    mtime,
-                )
-            } else {
-                (
-                    StagedEntryStatus::Unmodified,
-                    MerkleHash::new(hash),
-                    file_node.num_bytes(),
-                    mtime,
-                )
-            }
+        if util::fs::is_modified_from_node_with_metadata(data_path, file_node, Ok(metadata))? {
+            (
+                StagedEntryStatus::Modified,
+                MerkleHash::new(hash),
+                num_bytes,
+                mtime,
+            )
         } else {
             (
                 StagedEntryStatus::Unmodified,
@@ -763,13 +749,13 @@ pub fn process_add_file(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     merge_conflicts: &HashSet<PathBuf>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    log::debug!("process_add_file {:?}", path);
+    log::debug!("process_add_file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
     let full_path = repo_path.join(&relative_path);
 
     if !full_path.is_file() {
         // If path is not canonical, we cannot recover the absolute repo path
-        log::debug!("file is not a file - skipping add on {:?}", full_path);
+        log::debug!("file is not a file - skipping add on {full_path:?}");
         return Ok(Some(StagedMerkleTreeNode {
             status: StagedEntryStatus::Added,
             node: MerkleTreeNode::default_dir(),
@@ -864,14 +850,14 @@ pub fn process_add_file_with_staged_db_manager(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     merge_conflicts: &HashSet<PathBuf>,
 ) -> Result<(), OxenError> {
-    log::debug!("process_add_file {:?}", path);
+    log::debug!("process_add_file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
     let full_path = repo_path.join(&relative_path);
 
     if !full_path.is_file() {
         // If it's not a file - no need to add it
         // We handle directories by traversing the parents of files below
-        log::debug!("file is not a file - skipping add on {:?}", full_path);
+        log::debug!("file is not a file - skipping add on {full_path:?}");
         return Ok(());
     }
 
@@ -982,9 +968,7 @@ pub fn get_status_and_add_file(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
-    if let Some(parent) = dst_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+
     let file_name = dst_path.file_name().unwrap().to_string_lossy();
     let maybe_dir_node = None;
     let file_status =
@@ -998,6 +982,69 @@ pub fn get_status_and_add_file(
     let file_node = generate_file_node(repo, data_path, dst_path, &file_status)?;
 
     // Only add the file to the staged db if it has changed
+    if let Some(file_node) = file_node {
+        let status = file_status.status.clone();
+        add_file_node_and_parent_dir(
+            &file_node,
+            status,
+            &relative_path,
+            staged_db_manager,
+            seen_dirs,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn stage_file_with_hash(
+    workspace: &Workspace,
+    data_path: &Path,
+    dst_path: &Path,
+    hash: &str,
+    staged_db_manager: &StagedDBManager,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<(), OxenError> {
+    let workspace_repo = &workspace.workspace_repo;
+    let base_repo = &workspace.base_repo;
+    let head_commit = &workspace.commit;
+
+    let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
+    let metadata = util::fs::metadata(data_path)?;
+    let mtime = FileTime::from_last_modification_time(&metadata);
+    let maybe_file_node =
+        repositories::tree::get_file_by_path(base_repo, head_commit, &relative_path)?;
+
+    let file_status = if let Some(file_node) = maybe_file_node {
+        let previous_metadata = file_node.metadata();
+        let status = if util::fs::is_modified_from_node(data_path, &file_node)? {
+            StagedEntryStatus::Modified
+        } else {
+            // Don't add the file if it hasn't changed
+            log::info!("file {data_path:?} has not changed - skipping add");
+            return Ok(());
+        };
+
+        FileStatus {
+            data_path: data_path.to_path_buf(),
+            status,
+            hash: MerkleHash::from_str(hash)?,
+            num_bytes: metadata.len(),
+            mtime,
+            previous_metadata,
+            previous_file_node: Some(file_node),
+        }
+    } else {
+        FileStatus {
+            data_path: data_path.to_path_buf(),
+            status: StagedEntryStatus::Added,
+            hash: MerkleHash::from_str(hash)?,
+            num_bytes: metadata.len(),
+            mtime,
+            previous_metadata: None,
+            previous_file_node: None,
+        }
+    };
+
+    let file_node = generate_file_node(workspace_repo, data_path, dst_path, &file_status)?;
     if let Some(file_node) = file_node {
         let status = file_status.status.clone();
         add_file_node_and_parent_dir(
@@ -1120,11 +1167,8 @@ pub fn maybe_construct_generic_metadata_for_tabular(
     df_metadata: Option<GenericMetadata>,
     previous_oxen_metadata: GenericMetadata,
 ) -> Option<GenericMetadata> {
-    log::debug!(
-        "maybe_construct_generic_metadata_for_tabular {:?}",
-        df_metadata
-    );
-    log::debug!("previous_oxen_metadata {:?}", previous_oxen_metadata);
+    log::debug!("maybe_construct_generic_metadata_for_tabular {df_metadata:?}");
+    log::debug!("previous_oxen_metadata {previous_oxen_metadata:?}");
 
     if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {
         if let GenericMetadata::MetadataTabular(ref previous_oxen_metadata) = previous_oxen_metadata
@@ -1169,7 +1213,7 @@ pub fn p_add_file_node_to_staged_db(
         status,
         node: MerkleTreeNode::from_file(file_node.clone()),
     };
-    log::debug!("writing file: {}", staged_file_node);
+    log::debug!("writing file: {staged_file_node}");
 
     let mut buf = Vec::new();
     staged_file_node
@@ -1177,7 +1221,7 @@ pub fn p_add_file_node_to_staged_db(
         .unwrap();
 
     let relative_path_str = relative_path.to_str().unwrap_or_default();
-    log::debug!("writing to staged db {:?}", relative_path_str);
+    log::debug!("writing to staged db {relative_path_str:?}");
     staged_db.put(relative_path_str, &buf)?;
 
     // Add all the parent dirs to the staged db
@@ -1357,7 +1401,7 @@ mod tests {
             )?;
 
             let oxenignore_path = repo.path.join(".oxenignore");
-            test::write_txt_file_to_path(&oxenignore_path, format!("{}/", dir_to_ignore))?;
+            test::write_txt_file_to_path(&oxenignore_path, format!("{dir_to_ignore}/"))?;
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 
@@ -1367,21 +1411,21 @@ mod tests {
             assert!(status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file1.txt", normal_dir))));
+                .any(|path| path.0.ends_with(format!("{normal_dir}/file1.txt"))));
             assert!(status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file2.txt", normal_dir))));
+                .any(|path| path.0.ends_with(format!("{normal_dir}/file2.txt"))));
 
             // Files in ignored_dir should not be staged
             assert!(!status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file1.txt", dir_to_ignore))));
+                .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file1.txt"))));
             assert!(!status
                 .staged_files
                 .iter()
-                .any(|path| path.0.ends_with(format!("{}/file2.txt", dir_to_ignore))));
+                .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file2.txt"))));
 
             // The oxenignore file itself should be staged
             assert!(status

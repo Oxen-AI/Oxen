@@ -7,8 +7,8 @@ use std::env;
 use liboxen::api;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::opts::RestoreOpts;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::cmd::{restore::restore_args, RunCmd};
@@ -26,23 +26,16 @@ impl RunCmd for WorkspaceRestoreCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
-        let path = args.get_one::<String>("PATH").expect("required");
+        let paths: Vec<PathBuf> = args
+            .get_many::<String>("paths")
+            .expect("Must supply paths")
+            .map(|p| -> Result<PathBuf, OxenError> {
+                let path = PathBuf::from(p);
+                Ok(path)
+            })
+            .collect::<Result<Vec<PathBuf>, OxenError>>()?;
 
-        let opts = if let Some(source) = args.get_one::<String>("source") {
-            RestoreOpts {
-                path: PathBuf::from(path),
-                staged: args.get_flag("staged"),
-                is_remote: true,
-                source_ref: Some(String::from(source)),
-            }
-        } else {
-            RestoreOpts {
-                path: PathBuf::from(path),
-                staged: args.get_flag("staged"),
-                is_remote: true,
-                source_ref: None,
-            }
-        };
+        let paths: HashSet<PathBuf> = HashSet::from_iter(paths.iter().cloned());
 
         let repo_dir = env::current_dir().unwrap();
         let repository = LocalRepository::from_dir(&repo_dir)?;
@@ -50,13 +43,21 @@ impl RunCmd for WorkspaceRestoreCmd {
         check_repo_migration_needed(&repository)?;
 
         let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
-        let workspace_id = UserConfig::identifier()?;
-        api::client::workspaces::data_frames::restore(
-            &remote_repo,
-            &workspace_id,
-            opts.path.to_owned(),
-        )
-        .await?;
+        let workspace_identifier = if repository.is_remote_mode() {
+            repository.workspace_name.unwrap()
+        } else {
+            UserConfig::identifier()?
+        };
+
+        // TODO: Refactor this to restore all paths in 1 API call
+        for path in paths {
+            api::client::workspaces::data_frames::restore(
+                &remote_repo,
+                &workspace_identifier,
+                &path,
+            )
+            .await?;
+        }
 
         Ok(())
     }

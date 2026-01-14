@@ -1,7 +1,8 @@
 use crate::opts::PaginateOpts;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Default, Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct Pagination {
     pub page_size: usize,
     pub page_number: usize,

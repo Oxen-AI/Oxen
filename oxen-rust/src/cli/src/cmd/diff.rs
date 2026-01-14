@@ -20,7 +20,7 @@ pub const DIFFSEP: &str = "..";
 pub struct DiffCmd;
 
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    match writeln!(output, "{}", text) {
+    match writeln!(output, "{text}") {
         Ok(_) => Ok(()),
         Err(_) => Err(OxenError::basic_str("Could not write to pager")),
     }
@@ -82,7 +82,7 @@ impl RunCmd for DiffCmd {
         let opts = DiffCmd::parse_args(args);
         let output = opts.output.clone();
 
-        let mut diff_result = repositories::diffs::diff(opts)?;
+        let mut diff_result = repositories::diffs::diff(opts).await?;
 
         DiffCmd::print_diff_result(&diff_result)?;
         DiffCmd::maybe_save_diff_output(&mut diff_result, output)?;
@@ -225,8 +225,8 @@ impl DiffCmd {
                         &mut p,
                         &format!(
                             "--- from file: {}\n+++ to file: {}\n",
-                            diff.filename1.as_ref().unwrap(),
-                            diff.filename2.as_ref().unwrap()
+                            diff.filename1.as_ref().unwrap_or(&"".to_string()),
+                            diff.filename2.as_ref().unwrap_or(&"".to_string())
                         ),
                     )?;
                     DiffCmd::print_column_changes(&mut p, &diff.summary.modifications)?;
@@ -243,7 +243,7 @@ impl DiffCmd {
         match minus::page_all(p) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Error while paging: {}", e);
+                eprintln!("Error while paging: {e}");
             }
         }
 
@@ -304,12 +304,16 @@ impl DiffCmd {
     }
 
     fn print_text_diff(p: &mut Pager, diff: &TextDiff) -> Result<(), OxenError> {
+        let filename1 = diff.filename1.clone();
+        let filename2 = diff.filename2.clone();
+
+        //  TODO: Filename handle
         write_to_pager(
             p,
             &format!(
                 "--- from file: {}\n+++ to file: {}\n",
-                diff.filename1.as_ref().unwrap_or(&"<no file1>".to_string()),
-                diff.filename2.as_ref().unwrap_or(&"<no file1>".to_string())
+                filename1.unwrap_or(String::from("")),
+                filename2.unwrap_or(String::from("")),
             ),
         )?;
 

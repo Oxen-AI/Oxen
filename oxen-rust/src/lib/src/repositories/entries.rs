@@ -8,6 +8,7 @@ use crate::model::entry::commit_entry::{Entry, SchemaEntry};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::PaginateOpts;
 use crate::repositories;
+use crate::util::concurrency;
 use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
@@ -15,6 +16,7 @@ use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
+use futures::{stream, StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -102,9 +104,12 @@ pub fn list_directory_w_workspace(
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
+
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
+            let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
             let revision_str = revision.as_ref().to_string();
             let version_str = if let Some(workspace) = workspace.clone() {
                 workspace.id.clone()
@@ -122,6 +127,8 @@ pub fn list_directory_w_workspace(
                 version: PathBuf::from(&version_str),
                 resource: PathBuf::from(&version_str).join(directory.as_ref()),
             };
+            drop(_perf_setup);
+
             core::v_latest::entries::list_directory(
                 repo,
                 directory,
@@ -284,6 +291,71 @@ pub fn group_schemas_to_parent_dirs(
     }
 
     results
+}
+
+pub async fn list_missing_files_in_commit_range(
+    repo: &LocalRepository,
+    base_commit: &Option<Commit>,
+    head_commit: &Commit,
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let version_store = repo.version_store()?;
+
+    match base_commit {
+        Some(base_commit) => {
+            let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
+
+            let mut all_entries: Vec<CommitEntry> = Vec::new();
+            for commit in commits {
+                let entries = list_for_commit(repo, &commit)?;
+                all_entries.extend(entries);
+            }
+
+            all_entries.sort_by(|a, b| a.path.cmp(&b.path));
+            all_entries.dedup_by(|a, b| a.path == b.path);
+
+            let worker_count = concurrency::num_threads_for_items(all_entries.len());
+            let missing_files = stream::iter(all_entries)
+                .map(|entry| {
+                    let version_store = &version_store;
+                    async move {
+                        match version_store.version_exists(&entry.hash).await {
+                            Ok(true) => Ok(None),
+                            Ok(false) => Ok(Some(entry)),
+                            Err(e) => Err(e),
+                        }
+                    }
+                })
+                .buffer_unordered(worker_count)
+                .try_filter_map(|x| async move { Ok(x) })
+                .try_collect::<Vec<_>>()
+                .await?;
+
+            Ok(missing_files)
+        }
+        None => {
+            // we only receive a head commit, so we need to find all the commits between the head and the first commit
+            let entries = list_for_commit(repo, head_commit)?;
+
+            let worker_count = concurrency::num_threads_for_items(entries.len());
+            let missing_files = stream::iter(entries)
+                .map(|entry| {
+                    let version_store = &version_store;
+                    async move {
+                        match version_store.version_exists(&entry.hash).await {
+                            Ok(true) => Ok(None),
+                            Ok(false) => Ok(Some(entry)),
+                            Err(e) => Err(e),
+                        }
+                    }
+                })
+                .buffer_unordered(worker_count)
+                .try_filter_map(|x| async move { Ok(x) })
+                .try_collect::<Vec<_>>()
+                .await?;
+
+            Ok(missing_files)
+        }
+    }
 }
 
 pub fn list_tabular_files_in_repo(
@@ -476,8 +548,8 @@ mod tests {
             let dir_entries = paginated.entries;
             let size = paginated.total_entries;
 
-            assert_eq!(size, 5);
-            assert_eq!(dir_entries.len(), 5);
+            assert_eq!(size, 7);
+            assert_eq!(dir_entries.len(), 7);
 
             Ok(())
         })
@@ -521,7 +593,7 @@ mod tests {
                 Path::new("train"),
                 &commit.id,
                 &PaginateOpts {
-                    page_num: 2,
+                    page_num: 3,
                     page_size: 3,
                 },
             )?;
@@ -533,8 +605,8 @@ mod tests {
                 println!("{entry:?}");
             }
 
-            assert_eq!(total_entries, 5);
-            assert_eq!(dir_entries.len(), 2);
+            assert_eq!(total_entries, 7);
+            assert_eq!(dir_entries.len(), 1);
 
             Ok(())
         })
@@ -546,12 +618,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 8 directories
             for n in 0..8 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -592,12 +664,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 42 directories
             for n in 0..42 {
-                let dirname = format!("dir_{:0>3}", n);
+                let dirname = format!("dir_{n:0>3}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -618,7 +690,7 @@ mod tests {
             )?;
 
             for entry in paginated.entries.iter() {
-                println!("{:?}", entry.filename());
+                println!("{entry:?}");
             }
 
             assert_eq!(paginated.entries.first().unwrap().filename(), "dir_010");
@@ -638,12 +710,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 101 directories
             for n in 0..101 {
-                let dirname = format!("dir_{:0>3}", n);
+                let dirname = format!("dir_{n:0>3}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -684,12 +756,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 8 directories
             for n in 0..8 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -730,12 +802,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 7 directories
             for n in 0..7 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -776,12 +848,12 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create 9 directories
             for n in 0..9 {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
             // Create 2 files
             let filename = "labels.txt";
@@ -823,20 +895,20 @@ mod tests {
             // Create many directories
             let num_dirs = 32;
             for n in 0..num_dirs {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Create many files
             let num_files = 45;
             for n in 0..num_files {
-                let filename = format!("file_{}.txt", n);
+                let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {}", n))?;
+                util::fs::write(filepath, format!("helloooo {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -877,9 +949,9 @@ mod tests {
             // Create many files
             let num_files = 45;
             for n in 0..num_files {
-                let filename = format!("file_{}.txt", n);
+                let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {}", n))?;
+                util::fs::write(filepath, format!("helloooo {n}"))?;
             }
 
             // Add and commit all the dirs and files
@@ -914,20 +986,20 @@ mod tests {
             // Create many directories
             let num_dirs = 9;
             for n in 0..num_dirs {
-                let dirname = format!("dir_{}", n);
+                let dirname = format!("dir_{n}");
                 let dir_path = repo.path.join(dirname);
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {}", n))?;
+                util::fs::write(&filepath, format!("Hi {n}"))?;
             }
 
             // Create many files
             let num_files = 8;
             for n in 0..num_files {
-                let filename = format!("file_{}.txt", n);
+                let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {}", n))?;
+                util::fs::write(filepath, format!("helloooo {n}"))?;
             }
 
             // Add and commit all the dirs and files

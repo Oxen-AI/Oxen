@@ -4,11 +4,24 @@ use crate::model::{
     entry::metadata_entry::{MetadataEntry, WorkspaceMetadataEntry},
     metadata::MetadataDir,
     parsed_resource::ParsedResourceView,
-    Branch, Commit, CommitEntry, EntryDataType, ParsedResource, RemoteEntry,
+    Branch, Commit, CommitEntry, EntryDataType, MerkleHash, ParsedResource, RemoteEntry,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::{Pagination, StatusMessage};
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct ListMissingFilesRequest {
+    pub file_hashes: Option<std::collections::HashSet<MerkleHash>>,
+}
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
+pub struct ListCommitEntryResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub entries: Vec<CommitEntry>,
+}
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct EntryResponse {
@@ -17,14 +30,14 @@ pub struct EntryResponse {
     pub entry: CommitEntry,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct RemoteEntryResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub entry: RemoteEntry,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct ResourceVersion {
     pub path: String,
     pub version: String,
@@ -50,14 +63,14 @@ pub struct PaginatedEntries {
     pub total_entries: usize,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct PaginatedMetadataEntries {
     pub entries: Vec<MetadataEntry>,
     #[serde(flatten)]
     pub pagination: Pagination,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct PaginatedMetadataEntriesResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -65,7 +78,10 @@ pub struct PaginatedMetadataEntriesResponse {
     pub entries: PaginatedMetadataEntries,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+// ignoring because the size difference isn't that big
+// look into updating at some point as a small optimization
+#[allow(clippy::large_enum_variant)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 #[serde(untagged)]
 pub enum EMetadataEntry {
     MetadataEntry(MetadataEntry),
@@ -146,7 +162,7 @@ impl EMetadataEntry {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct PaginatedDirEntries {
     pub dir: Option<EMetadataEntry>,
     pub entries: Vec<EMetadataEntry>,
@@ -173,7 +189,7 @@ impl PaginatedDirEntries {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct PaginatedDirEntriesResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -196,26 +212,27 @@ pub struct BranchEntryVersion {
     pub resource: ResourceVersion,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct CommitEntryVersion {
     pub commit: crate::model::Commit,
     pub resource: ResourceVersion,
     pub schema_hash: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct PaginatedEntryVersions {
     pub versions: Vec<CommitEntryVersion>,
     #[serde(flatten)]
     pub pagination: Pagination,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct PaginatedEntryVersionsResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     #[serde(flatten)]
     pub versions: PaginatedEntryVersions,
     pub branch: Branch,
+    #[schema(value_type = String)]
     pub path: PathBuf,
 }

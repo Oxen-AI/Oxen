@@ -96,7 +96,7 @@ impl RunCmd for WorkspaceDFGetCmd {
         let opts = self.parse_args(args)?;
 
         if let Some(output) = &opts.output {
-            println!("Downloading data frame to {:?}", output);
+            println!("Downloading data frame to {output:?}");
             api::client::workspaces::data_frames::download(
                 &remote_repo,
                 &workspace_id,
@@ -104,8 +104,8 @@ impl RunCmd for WorkspaceDFGetCmd {
                 &opts,
             )
             .await?;
-            let df = tabular::read_df(output, opts.clone())?;
-            println!("{:?}", df);
+            let df = tabular::read_df(output, opts.clone()).await?;
+            println!("{df:?}");
             return Ok(());
         }
 
@@ -115,9 +115,9 @@ impl RunCmd for WorkspaceDFGetCmd {
         {
             Ok(response) => {
                 if let Some(data_frame) = response.data_frame {
-                    let df = data_frame.view.to_df();
+                    let df = data_frame.view.to_df().await;
                     let df = tabular::strip_excluded_cols(df)?;
-                    println!("{:?}", df);
+                    println!("{df:?}");
                     println!("Query took: {:?}", start.elapsed());
                 } else {
                     return Err(OxenError::basic_str(
@@ -125,7 +125,7 @@ impl RunCmd for WorkspaceDFGetCmd {
                 }
             }
             Err(e) => {
-                return Err(OxenError::basic_str(format!("{:?}", e)));
+                return Err(OxenError::basic_str(format!("{e:?}")));
             }
         }
 

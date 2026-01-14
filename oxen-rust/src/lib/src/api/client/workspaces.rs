@@ -114,7 +114,7 @@ pub async fn create_with_path(
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
-    log::debug!("create workspace {}\n", url);
+    log::debug!("create workspace {url}\n");
 
     let body = NewWorkspace {
         branch_name: branch_name.to_string(),
@@ -130,7 +130,51 @@ pub async fn create_with_path(
     let res = client.put(&url).json(&body).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("create workspace got body: {}", body);
+    log::debug!("create workspace got body: {body}");
+    let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(val) => Ok(WorkspaceResponseWithStatus {
+            id: val.workspace.id,
+            name: val.workspace.name,
+            commit: val.workspace.commit,
+            status: val.status.status_message,
+        }),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+        ))),
+    }
+}
+
+// Creates a new branch on the remote and instantiates a workspace
+pub async fn create_with_new_branch(
+    remote_repo: &RemoteRepository,
+    branch_name: impl AsRef<str>,
+    workspace_id: impl AsRef<str>,
+    path: impl AsRef<Path>,
+    workspace_name: Option<String>,
+) -> Result<WorkspaceResponseWithStatus, OxenError> {
+    let branch_name = branch_name.as_ref();
+    let workspace_id = workspace_id.as_ref();
+    let path = path.as_ref();
+    let url =
+        api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}/new"))?;
+    log::debug!("create workspace {url} with new branch {branch_name}\n");
+
+    let body = NewWorkspace {
+        branch_name: branch_name.to_string(),
+        workspace_id: workspace_id.to_string(),
+        // These two are needed for the oxen hub right now, ignored by the server
+        resource_path: Some(path.to_str().unwrap().to_string()),
+        entity_type: Some("user".to_string()),
+        name: workspace_name,
+        force: Some(true),
+    };
+
+    let client = client::new_for_url(&url)?;
+    let res = client.put(&url).json(&body).send().await?;
+
+    let body = client::parse_json_body(&url, res).await?;
+    log::debug!("create_workspace_with_new_branch got body: {body}");
     let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(WorkspaceResponseWithStatus {
@@ -151,13 +195,13 @@ pub async fn delete(
 ) -> Result<WorkspaceResponse, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}"))?;
-    log::debug!("delete workspace {}\n", url);
+    log::debug!("delete workspace {url}\n");
 
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("delete workspace got body: {}", body);
+    log::debug!("delete workspace got body: {body}");
     let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.workspace),
@@ -169,13 +213,13 @@ pub async fn delete(
 
 pub async fn clear(remote_repo: &RemoteRepository) -> Result<(), OxenError> {
     let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
-    log::debug!("clear workspaces {}\n", url);
+    log::debug!("clear workspaces {url}\n");
 
     let client = client::new_for_url(&url)?;
     let res = client.delete(&url).send().await?;
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("delete workspace got body: {}", body);
+    log::debug!("delete workspace got body: {body}");
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_) => Ok(()),
@@ -401,7 +445,7 @@ mod tests {
                 // Index the dataset
                 repositories::workspaces::df::index(&cloned_repo, workspace_id, &path).await?;
 
-                log::debug!("the path in question is {:?}", path);
+                log::debug!("the path in question is {path:?}");
                 let mut opts = DFOpts::empty();
 
                 opts.add_row =
@@ -413,7 +457,7 @@ mod tests {
                 let mut opts = DFOpts::empty();
                 opts.add_col = Some("is_something:n/a:str".to_string());
                 opts.output = Some(full_path.to_path_buf()); // write back to same path
-                command::df(&full_path, opts)?;
+                command::df(&full_path, opts).await?;
                 repositories::add(&cloned_repo, &full_path).await?;
 
                 // Commit and push the changed schema
@@ -433,7 +477,6 @@ mod tests {
                     &body,
                 )
                 .await;
-                println!("{:?}", result);
                 assert!(result.is_err());
 
                 // Status should have one modified file

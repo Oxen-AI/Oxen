@@ -19,7 +19,7 @@ pub async fn checkout(
     value: impl AsRef<str>,
 ) -> Result<Option<Branch>, OxenError> {
     let value = value.as_ref();
-    log::debug!("--- CHECKOUT START {} ----", value);
+    log::debug!("--- CHECKOUT START {value} ----");
     if repositories::branches::exists(repo, value)? {
         if repositories::branches::is_checked_out(repo, value) {
             println!("Already on branch {value}");
@@ -128,7 +128,10 @@ pub async fn checkout_ours(
 
 /// # Combine Conflicting Tabular Data Files
 /// This overwrites the current file with the changes in their file
-pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Result<(), OxenError> {
+pub async fn checkout_combine<P: AsRef<Path>>(
+    repo: &LocalRepository,
+    path: P,
+) -> Result<(), OxenError> {
     let conflicts = repositories::merge::list_conflicts(repo)?;
 
     log::debug!(
@@ -153,7 +156,8 @@ pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Resu
                 &conflict.base_entry.path,
                 &conflict.base_entry.commit_id,
                 &DFOpts::empty(),
-            )?;
+            )
+            .await?;
             let df_merge_path = util::fs::version_path_from_hash_and_filename(
                 repo,
                 &conflict.merge_entry.hash,
@@ -165,18 +169,19 @@ pub fn checkout_combine<P: AsRef<Path>>(repo: &LocalRepository, path: P) -> Resu
                 &conflict.merge_entry.path,
                 &conflict.merge_entry.commit_id,
                 &DFOpts::empty(),
-            )?;
+            )
+            .await?;
 
-            log::debug!("GOT DF HEAD {}", df_base);
-            log::debug!("GOT DF MERGE {}", df_merge);
+            log::debug!("GOT DF HEAD {df_base}");
+            log::debug!("GOT DF MERGE {df_merge}");
 
             match df_base.vstack(&df_merge) {
                 Ok(result) => {
-                    log::debug!("GOT DF COMBINED {}", result);
+                    log::debug!("GOT DF COMBINED {result}");
                     match result.unique_stable(None, polars::frame::UniqueKeepStrategy::First, None)
                     {
                         Ok(mut uniq) => {
-                            log::debug!("GOT DF COMBINED UNIQUE {}", uniq);
+                            log::debug!("GOT DF COMBINED UNIQUE {uniq}");
                             let output_path = repo.path.join(&conflict.base_entry.path);
                             tabular::write_df(&mut uniq, &output_path)
                         }
@@ -633,7 +638,7 @@ mod tests {
             repositories::checkout(&repo, orig_branch.name).await?;
 
             // The file contents should be Hello, not World
-            log::debug!("HELLO FILE NAME: {:?}", hello_file);
+            log::debug!("HELLO FILE NAME: {hello_file:?}");
             assert!(hello_file.exists());
 
             // It should be reverted back to Hello
@@ -811,12 +816,14 @@ mod tests {
                 let test_dir_files = util::fs::list_files_in_dir(&test_dir_path);
                 println!("test_dir_files: {:?}", test_dir_files.len());
                 for file in test_dir_files.iter() {
-                    println!("file: {:?}", file);
+                    println!("file: {file:?}");
                 }
-                assert_eq!(test_dir_files.len(), 2);
+                assert_eq!(test_dir_files.len(), 4);
 
                 assert!(test_dir_path.join("1.jpg").exists());
                 assert!(test_dir_path.join("2.jpg").exists());
+                assert!(test_dir_path.join("3.jpg").exists());
+                assert!(test_dir_path.join("4.jpg").exists());
 
                 Ok(())
             })

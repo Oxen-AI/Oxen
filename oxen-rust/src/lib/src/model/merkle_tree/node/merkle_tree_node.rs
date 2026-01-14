@@ -77,7 +77,7 @@ impl MerkleTreeNode {
         let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, hash) else {
             // We don't return an error here because there are some situations where we won't have all the node files.
             // For example, when working in a subtree clone.
-            log::warn!("no child node db: {:?}", hash);
+            log::warn!("no child node db: {hash:?}");
             return Ok(Vec::new());
         };
         node_db.map()
@@ -213,9 +213,37 @@ impl MerkleTreeNode {
             return Ok(PathBuf::from(file_node.name()));
         }
         Err(OxenError::basic_str(format!(
-            "MerkleTreeNode::maybe_path called on non-file or non-dir node: {:?}",
-            self
+            "MerkleTreeNode::maybe_path called on non-file or non-dir node: {self:?}"
         )))
+    }
+
+    /// List all paths in the tree
+    pub fn list_paths(&self) -> Result<Vec<PathBuf>, OxenError> {
+        let mut paths = Vec::new();
+        let current_path = Path::new("");
+        self.list_paths_helper(current_path, &mut paths)?;
+        Ok(paths)
+    }
+
+    fn list_paths_helper(
+        &self,
+        current_path: &Path,
+        paths: &mut Vec<PathBuf>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(file_node) = &self.node {
+            paths.push(current_path.join(file_node.name()).to_path_buf());
+        }
+
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                paths.push(new_path.clone());
+                child.list_paths_helper(&new_path, paths)?;
+            } else {
+                child.list_paths_helper(current_path, paths)?;
+            }
+        }
+        Ok(())
     }
 
     /// List all the directories in the tree
@@ -330,6 +358,43 @@ impl MerkleTreeNode {
         Ok(())
     }
 
+    /// List all file and dir nodes in the tree
+    pub fn list_files_and_dirs(&self) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
+        let mut nodes = HashMap::new();
+        let mut current_path = PathBuf::new();
+        if let EMerkleTreeNode::Directory(dir) = &self.node {
+            current_path = current_path.join(dir.name());
+            nodes.insert(current_path.clone(), self.clone());
+        }
+
+        self.list_files_and_dirs_helper(&current_path, &mut nodes)?;
+        Ok(nodes)
+    }
+
+    fn list_files_and_dirs_helper(
+        &self,
+        current_path: &Path,
+        nodes: &mut HashMap<PathBuf, MerkleTreeNode>,
+    ) -> Result<(), OxenError> {
+        if let EMerkleTreeNode::File(file_node) = &self.node {
+            nodes.insert(
+                current_path.join(file_node.name()).to_path_buf(),
+                self.clone(),
+            );
+        }
+        for child in &self.children {
+            if let EMerkleTreeNode::Directory(dir) = &child.node {
+                let new_path = current_path.join(dir.name());
+                nodes.insert(new_path.clone(), child.clone());
+
+                child.list_files_and_dirs_helper(&new_path, nodes)?;
+            } else {
+                child.list_files_and_dirs_helper(current_path, nodes)?;
+            }
+        }
+        Ok(())
+    }
+
     /// List all the directory and vnode hashes in the tree
     pub fn list_dir_and_vnode_hashes(&self) -> Result<HashSet<MerkleHash>, OxenError> {
         let mut hashes = HashSet::new();
@@ -406,16 +471,20 @@ impl MerkleTreeNode {
     }
 
     /// List missing file hashes
-    pub fn list_missing_file_hashes(
+    pub async fn list_missing_file_hashes(
         &self,
         repo: &LocalRepository,
     ) -> Result<HashSet<MerkleHash>, OxenError> {
         let mut missing_hashes = HashSet::new();
         let version_store = repo.version_store()?;
+        // Todo: parallelize for S3
         for child in &self.children {
             if let EMerkleTreeNode::File(_) = &child.node {
                 // Check if the file exists in the version store
-                if !version_store.version_exists(&child.hash.to_string())? {
+                if !version_store
+                    .version_exists(&child.hash.to_string())
+                    .await?
+                {
                     missing_hashes.insert(child.hash);
                 }
             }
@@ -443,15 +512,13 @@ impl MerkleTreeNode {
         let path = path.as_ref();
         let Some(node) = self.get_by_path(path)? else {
             return Err(OxenError::basic_str(format!(
-                "Merkle tree directory not found: '{:?}'",
-                path
+                "Merkle tree directory not found: '{path:?}'"
             )));
         };
 
         if MerkleTreeNodeType::Dir != node.node.node_type() {
             return Err(OxenError::basic_str(format!(
-                "get_vnodes_for_dir Merkle tree node is not a directory: '{:?}'",
-                path
+                "get_vnodes_for_dir Merkle tree node is not a directory: '{path:?}'"
             )));
         }
 
@@ -498,7 +565,7 @@ impl MerkleTreeNode {
             // log::debug!(
             //     "get_by_path_helper {} is file! [{:?}] {:?} {:?}",
             //     self,
-            //     self.node.dtype(),
+            //     self.node.node_type(),
             //     file_path,
             //     path
             // );
@@ -824,7 +891,7 @@ impl MerkleTreeNode {
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for MerkleTreeNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{}\n=============", self)?;
+        writeln!(f, "{self}\n=============")?;
         writeln!(f, "hash: {}", self.hash)?;
         writeln!(f, "node: {:?}", self.node)?;
         writeln!(
@@ -837,7 +904,7 @@ impl fmt::Debug for MerkleTreeNode {
         writeln!(f, "=============")?;
 
         for child in &self.children {
-            writeln!(f, "{}", child)?;
+            writeln!(f, "{child}")?;
         }
         Ok(())
     }

@@ -4,7 +4,7 @@ use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
 use crate::model::entry::unsynced_commit_entry::UnsyncedCommitEntries;
-use crate::model::{Branch, Commit, LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::PaginateOpts;
 use crate::util::hasher::hash_buffer;
 use crate::util::progress_bar::{oxify_bar, ProgressBarType};
@@ -12,6 +12,7 @@ use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
 // use crate::util::ReadProgress;
+use crate::view::entries::ListCommitEntryResponse;
 use crate::view::{
     CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
     StatusMessage,
@@ -44,7 +45,7 @@ pub async fn get_by_id(
     let commit_id = commit_id.as_ref();
     let uri = format!("/commits/{commit_id}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("remote::commits::get_by_id {}", url);
+    log::debug!("remote::commits::get_by_id {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -53,7 +54,7 @@ pub async fn get_by_id(
     }
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("api::client::commits::get_by_id Got response {}", body);
+    log::debug!("api::client::commits::get_by_id Got response {body}");
     let response: Result<CommitResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(Some(j_res.commit)),
@@ -130,11 +131,15 @@ pub async fn list_all(remote_repo: &RemoteRepository) -> Result<Vec<Commit>, Oxe
 
 pub async fn list_missing_hashes(
     remote_repo: &RemoteRepository,
-    commit_hashes: HashSet<MerkleHash>,
-) -> Result<HashSet<MerkleHash>, OxenError> {
+    commits: Vec<Commit>,
+) -> Result<Vec<Commit>, OxenError> {
     let uri = "/commits/missing".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
+    let commit_hashes = commits
+        .iter()
+        .map(|c| c.hash().unwrap())
+        .collect::<HashSet<MerkleHash>>();
     let res = client
         .post(&url)
         .json(&MerkleHashes {
@@ -145,9 +150,41 @@ pub async fn list_missing_hashes(
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(response) => Ok(response.hashes),
+        Ok(response) => {
+            let hashes = response.hashes;
+            Ok(commits.iter().filter(|c| hashes.contains(&c.hash().unwrap())).cloned().collect())
+        },
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
+        ))),
+    }
+}
+
+pub async fn list_missing_files(
+    remote_repo: &RemoteRepository,
+    base_commit: Option<Commit>,
+    head_commit_id: &str,
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let url = match base_commit {
+        Some(base_commit) => {
+            let base_commit_id = base_commit.id;
+            let uri = format!("/commits/missing_files?base={base_commit_id}&head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+        None => {
+            let uri = format!("/commits/missing_files?head={head_commit_id}");
+            crate::api::endpoint::url_from_repo(remote_repo, &uri)?
+        }
+    };
+
+    let client = client::new_for_url(&url)?;
+    let res = client.get(&url).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<ListCommitEntryResponse, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(response) => Ok(response.entries),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "api::client::commits::list_missing_files() Could not deserialize response [{err}]\n{body}"
         ))),
     }
 }
@@ -277,12 +314,12 @@ pub async fn root_commit_maybe(
 ) -> Result<Option<Commit>, OxenError> {
     let uri = "/commits/root".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("remote::commits::root_commit {}", url);
+    log::debug!("remote::commits::root_commit {url}");
 
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.get(&url).send().await {
         let body = client::parse_json_body(&url, res).await?;
-        log::debug!("api::client::commits::root_commit Got response {}", body);
+        log::debug!("api::client::commits::root_commit Got response {body}");
         let response: Result<RootCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(j_res) => Ok(j_res.commit),
@@ -302,10 +339,7 @@ pub async fn download_dir_hashes_from_commit(
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!(
-        "calling download_dir_hashes_from_commit for commit {}",
-        commit_id
-    );
+    log::debug!("calling download_dir_hashes_from_commit for commit {commit_id}");
     download_dir_hashes_from_url(url, path).await
 }
 
@@ -318,9 +352,7 @@ pub async fn download_base_head_dir_hashes(
     let uri = format!("/commits/{base_commit_id}..{head_commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!(
-        "calling download_base_head_dir_hashes for commits {}..{}",
-        base_commit_id,
-        head_commit_id
+        "calling download_base_head_dir_hashes for commits {base_commit_id}..{head_commit_id}"
     );
     download_dir_hashes_from_url(url, path).await
 }
@@ -337,7 +369,7 @@ pub async fn download_dir_hashes_from_url(
             let path = path.as_ref();
             let reader = res
                 .bytes_stream()
-                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .map_err(futures::io::Error::other)
                 .into_async_read();
             let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
             let archive = Archive::new(decoder);
@@ -355,9 +387,9 @@ pub async fn download_dir_hashes_from_url(
             //     util::fs::create_dir_all(&tmp_path)?;
             // }
 
-            log::debug!("unpacking to {:?}", full_unpacked_path);
+            log::debug!("unpacking to {full_unpacked_path:?}");
             let archive_result = archive.unpack(&full_unpacked_path).await;
-            log::debug!("archive_result for url {} is {:?}", url, archive_result);
+            log::debug!("archive_result for url {url} is {archive_result:?}");
             archive_result?;
 
             // if !full_unpacked_path.exists() {
@@ -396,7 +428,7 @@ pub async fn download_dir_hashes_from_url(
             Ok(path.to_path_buf())
         }
         Err(err) => {
-            let error = format!("Error fetching commit db: {}", err);
+            let error = format!("Error fetching commit db: {err}");
             Err(OxenError::basic_str(error))
         }
     }
@@ -409,10 +441,7 @@ pub async fn download_dir_hashes_db_to_path(
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{commit_id}/commit_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!(
-        "calling download_dir_hashes_db_to_path for commit {}",
-        commit_id
-    );
+    log::debug!("calling download_dir_hashes_db_to_path for commit {commit_id}");
     log::debug!("{} downloading from {}", current_function!(), url);
     let client = client::new_for_url(&url)?;
     match client.get(url).send().await {
@@ -420,7 +449,7 @@ pub async fn download_dir_hashes_db_to_path(
             let path = path.as_ref();
             let reader = res
                 .bytes_stream()
-                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .map_err(futures::io::Error::other)
                 .into_async_read();
             let decoder = GzipDecoder::new(futures::io::BufReader::new(reader));
             let archive = Archive::new(decoder);
@@ -437,11 +466,7 @@ pub async fn download_dir_hashes_db_to_path(
             util::fs::create_dir_all(&tmp_path)?;
 
             let archive_result = archive.unpack(&tmp_path).await;
-            log::debug!(
-                "archive_result for commit {:?} is {:?}",
-                commit_id,
-                archive_result
-            );
+            log::debug!("archive_result for commit {commit_id:?} is {archive_result:?}");
             archive_result?;
 
             if full_unpacked_path.exists() {
@@ -465,7 +490,7 @@ pub async fn download_dir_hashes_db_to_path(
             }
 
             // Move the tmp path to the full path
-            log::debug!("renaming {:?} to {:?}", tmp_path, full_unpacked_path);
+            log::debug!("renaming {tmp_path:?} to {full_unpacked_path:?}");
 
             util::fs::rename(
                 tmp_path.join(HISTORY_DIR).join(commit_id),
@@ -477,7 +502,7 @@ pub async fn download_dir_hashes_db_to_path(
             Ok(path.to_path_buf())
         }
         Err(err) => {
-            let error = format!("Error fetching commit db: {}", err);
+            let error = format!("Error fetching commit db: {err}");
             Err(OxenError::basic_str(error))
         }
     }
@@ -513,9 +538,9 @@ pub async fn post_push_complete(
 ) -> Result<(), OxenError> {
     use serde_json::json;
     let commit_id = commit_id.as_ref();
-    let uri = format!("/commits/{}/complete", commit_id);
+    let uri = format!("/commits/{commit_id}/complete");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("post_push_complete: {}", url);
+    log::debug!("post_push_complete: {url}");
     let body = serde_json::to_string(&json!({
         "branch": {
             "name": branch.name,
@@ -548,7 +573,7 @@ pub async fn bulk_post_push_complete(
 
     let uri = "/commits/complete".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("bulk_post_push_complete: {}", url);
+    log::debug!("bulk_post_push_complete: {url}");
     let body = serde_json::to_string(&json!(commits)).unwrap();
 
     let client = client::new_for_url(&url)?;
@@ -637,7 +662,7 @@ pub async fn post_commits_to_server(
         let size = match fs_extra::dir::get_size(&commit_history_dir) {
             Ok(size) => size + entries_size,
             Err(err) => {
-                log::warn!("Err {}: {:?}", err, commit_history_dir);
+                log::warn!("Err {err}: {commit_history_dir:?}");
                 entries_size
             }
         };
@@ -756,12 +781,12 @@ pub async fn bulk_create_commit_obj_on_server(
     commits: &Vec<CommitWithBranchName>,
 ) -> Result<ListCommitResponse, OxenError> {
     let url = api::endpoint::url_from_repo(remote_repo, "/commits/bulk")?;
-    log::debug!("bulk_create_commit_obj_on_server {}\n{:?}", url, commits);
+    log::debug!("bulk_create_commit_obj_on_server {url}\n{commits:?}");
 
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.post(&url).json(commits).send().await {
         let body = client::parse_json_body(&url, res).await?;
-        log::debug!("bulk_create_commit_obj_on_server got response {}", body);
+        log::debug!("bulk_create_commit_obj_on_server got response {body}");
         let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(response) => Ok(response),
@@ -828,9 +853,7 @@ pub async fn upload_single_tarball_to_server_with_client_with_retry(
                 // Exponentially back off
                 let sleep_time = total_tries * total_tries;
                 log::debug!(
-                    "upload_single_tarball_to_server_with_retry upload failed sleeping {}: {:?}",
-                    sleep_time,
-                    err
+                    "upload_single_tarball_to_server_with_retry upload failed sleeping {sleep_time}: {err:?}"
                 );
                 std::thread::sleep(std::time::Duration::from_secs(sleep_time));
             }
@@ -873,10 +896,7 @@ async fn upload_data_to_server_in_chunks_with_client(
     filename: &Option<String>,
 ) -> Result<(), OxenError> {
     let total_size = buffer.len();
-    log::debug!(
-        "upload_data_to_server_in_chunks chunking data {} ...",
-        total_size
-    );
+    log::debug!("upload_data_to_server_in_chunks chunking data {total_size} ...");
     let chunks: Vec<&[u8]> = buffer.chunks(chunk_size).collect();
     let hash = hash_buffer(buffer);
     log::debug!(
@@ -912,7 +932,7 @@ async fn upload_data_to_server_in_chunks_with_client(
                 log::debug!("Success uploading chunk!")
             }
             Err(err) => {
-                log::error!("Err uploading chunk: {}", err)
+                log::error!("Err uploading chunk: {err}")
             }
         }
     }
@@ -950,19 +970,16 @@ pub async fn upload_data_chunk_to_server_with_retry(
                 // Exponentially back off
                 let sleep_time = total_tries * total_tries;
                 log::debug!(
-                    "upload_data_chunk_to_server_with_retry upload failed sleeping {}: {}",
-                    sleep_time,
-                    err
+                    "upload_data_chunk_to_server_with_retry upload failed sleeping {sleep_time}: {err}"
                 );
-                last_error = format!("{}", err);
+                last_error = format!("{err}");
                 std::thread::sleep(std::time::Duration::from_secs(sleep_time));
             }
         }
     }
 
     Err(OxenError::basic_str(format!(
-        "Upload chunk retry failed. {}",
-        last_error
+        "Upload chunk retry failed. {last_error}"
     )))
 }
 
@@ -1007,7 +1024,7 @@ async fn upload_data_chunk_to_server(
         .await?;
     let body = client::parse_json_body(&url, res).await?;
 
-    log::debug!("upload_data_chunk_to_server got response {}", body);
+    log::debug!("upload_data_chunk_to_server got response {body}");
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response),
@@ -1019,7 +1036,6 @@ async fn upload_data_chunk_to_server(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
 
     use crate::api;
     use crate::command;
@@ -1027,11 +1043,8 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
 
-    use crate::model::MerkleHash;
     use crate::repositories;
     use crate::test;
-
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_list_remote_commits_all() -> Result<(), OxenError> {
@@ -1207,7 +1220,7 @@ mod tests {
             let head_commit = &commit_history[1];
             let base_commit = &commit_history[4];
 
-            println!("base_commit: {}\nhead_commit: {}", base_commit, head_commit);
+            println!("base_commit: {base_commit}\nhead_commit: {head_commit}");
 
             let revision = format!("{}..{}", base_commit.id, head_commit.id);
 
@@ -1227,21 +1240,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_missing_commit_hashes() -> Result<(), OxenError> {
+    async fn test_list_unsynced_commit_hashes() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
-
-            println!("first commit_hash: {}", commit_hash);
-
-            let missing_commit_hashes = api::client::commits::list_missing_hashes(
-                &remote_repo,
-                HashSet::from([commit_hash]),
-            )
-            .await?;
+            let missing_commit_hashes =
+                api::client::commits::list_missing_hashes(&remote_repo, vec![commit]).await?;
 
             for hash in missing_commit_hashes.iter() {
-                println!("missing commit hash: {}", hash);
+                println!("missing commit hash: {hash}");
             }
 
             assert_eq!(missing_commit_hashes.len(), 0);
@@ -1251,22 +1257,16 @@ mod tests {
             let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
-            let commit_hash = MerkleHash::from_str(&commit.id)?;
+            let missing_commit_nodes =
+                api::client::commits::list_missing_hashes(&remote_repo, vec![commit.clone()])
+                    .await?;
 
-            println!("second commit_hash: {}", commit_hash);
-
-            let missing_node_hashes = api::client::commits::list_missing_hashes(
-                &remote_repo,
-                HashSet::from([commit_hash]),
-            )
-            .await?;
-
-            for hash in missing_node_hashes.iter() {
-                println!("missing commit hash: {}", hash);
+            for hash in missing_commit_nodes.iter() {
+                println!("missing commit hash: {hash}",);
             }
 
-            assert_eq!(missing_node_hashes.len(), 1);
-            assert!(missing_node_hashes.contains(&commit_hash));
+            assert_eq!(missing_commit_nodes.len(), 1);
+            assert!(missing_commit_nodes.contains(&commit));
 
             Ok(remote_repo)
         })

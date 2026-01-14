@@ -19,7 +19,6 @@ pub mod merge;
 pub mod message;
 pub mod mime_type_count;
 pub mod namespace;
-pub mod notebook;
 pub mod oxen_response;
 pub mod oxen_version;
 pub mod pagination;
@@ -70,8 +69,6 @@ pub use crate::view::branch::{
 };
 
 pub use crate::view::revision::ParseResourceResponse;
-
-pub use crate::view::compare::CompareResult;
 
 pub use crate::view::entry_metadata::MetadataEntryResponse;
 

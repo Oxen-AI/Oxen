@@ -67,15 +67,15 @@ where
             // Ensure directory exists
             if !refs_dir.exists() {
                 util::fs::create_dir_all(&refs_dir).map_err(|e| {
-                    log::error!("Failed to create refs directory: {}", e);
-                    OxenError::basic_str(format!("Failed to create refs directory: {}", e))
+                    log::error!("Failed to create refs directory: {e}");
+                    OxenError::basic_str(format!("Failed to create refs directory: {e}"))
                 })?;
             }
 
             let opts = db::key_val::opts::default();
             let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|e| {
-                log::error!("Failed to open refs database: {}", e);
-                OxenError::basic_str(format!("Failed to open refs database: {}", e))
+                log::error!("Failed to open refs database: {e}");
+                OxenError::basic_str(format!("Failed to open refs database: {e}"))
             })?;
             let arc_db = Arc::new(db);
             instances.put(refs_dir, arc_db.clone());
@@ -128,10 +128,7 @@ impl RefManager {
             Ok(Some(value)) => Ok(Some(String::from(str::from_utf8(&value)?))),
             Ok(None) => Ok(None),
             Err(err) => {
-                log::error!(
-                    "get_commit_id_for_branch error finding commit id for branch {}",
-                    name
-                );
+                log::error!("get_commit_id_for_branch error finding commit id for branch {name}");
                 Err(OxenError::basic_str(err))
             }
         }
@@ -163,20 +160,17 @@ impl RefManager {
 
     pub fn list_branches(&self) -> Result<Vec<Branch>, OxenError> {
         let mut branch_names: Vec<Branch> = vec![];
-        let maybe_head_ref = self.read_head_ref()?;
         let iter = self.refs_db.iterator(IteratorMode::Start);
         for item in iter {
             match item {
                 Ok((key, value)) => match (str::from_utf8(&key), str::from_utf8(&value)) {
                     (Ok(key_str), Ok(value)) => {
-                        if maybe_head_ref.is_some() {
-                            let ref_name = String::from(key_str);
-                            let id = String::from(value);
-                            branch_names.push(Branch {
-                                name: ref_name,
-                                commit_id: id,
-                            });
-                        }
+                        let ref_name = String::from(key_str);
+                        let id = String::from(value);
+                        branch_names.push(Branch {
+                            name: ref_name,
+                            commit_id: id,
+                        });
                     }
                     _ => {
                         return Err(OxenError::basic_str("Could not read utf8 val..."));
@@ -368,7 +362,7 @@ mod tests {
                 let handle = thread::spawn(move || {
                     // Each thread creates its own branch and reads all branches
                     with_ref_manager(&repo_clone, |manager| {
-                        manager.create_branch(format!("branch-{}", i), format!("commit-{}", i))?;
+                        manager.create_branch(format!("branch-{i}"), format!("commit-{i}"))?;
                         manager.list_branches()
                     })
                 });

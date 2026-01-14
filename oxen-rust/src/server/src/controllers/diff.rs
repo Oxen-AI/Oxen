@@ -35,6 +35,24 @@ use crate::params::{
     PageNumQuery,
 };
 
+/// List commits between base and head
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
+    tag = "list_between",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Commits found successfully", body = CompareCommitsResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 pub async fn commits(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -75,6 +93,24 @@ pub async fn commits(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// List file and directory entries changed between base and head
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/entries",
+    tag = "Compare",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 // TODO: Depreciate
 pub async fn entries(
     req: HttpRequest,
@@ -107,7 +143,8 @@ pub async fn entries(
         PathBuf::from(""),
         page,
         page_size,
-    )?;
+    )
+    .await?;
 
     let entries = entries_diff.entries;
     let pagination = entries_diff.pagination;
@@ -141,6 +178,22 @@ pub async fn entries(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get diff tree
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/tree",
+    tag = "get_diff_tree",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+    ),
+    responses(
+        (status = 200, description = "Directory diff tree found successfully", body = DirTreeDiffResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -159,7 +212,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit)?;
-    log::debug!("dir_diffs: {:?}", dir_diffs);
+    log::debug!("dir_diffs: {dir_diffs:?}");
 
     let dir_diff_tree = group_dir_diffs_by_dir(dir_diffs);
 
@@ -171,6 +224,25 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// List file and directory entries changed within a directory between revisions
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/dir/{dir}/entries",
+    tag = "Compare",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("dir" = String, Path, description = "The directory path to list entries for", example = "data/test"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
+        (status = 404, description = "Repository, revision, or directory not found")
+    )
+)]
 pub async fn dir_entries(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -205,9 +277,10 @@ pub async fn dir_entries(
         dir.clone(),
         page,
         page_size,
-    )?;
+    )
+    .await?;
 
-    log::debug!("entries_diff: {:?}", entries_diff);
+    log::debug!("entries_diff: {entries_diff:?}");
 
     // For this view, exclude anything that isn't a direct child of the directory in question
     let summary = GenericDiffSummary::DirDiffSummary(DirDiffSummary {
@@ -216,7 +289,7 @@ pub async fn dir_entries(
         },
     });
 
-    log::debug!("summary: {:?}", summary);
+    log::debug!("summary: {summary:?}");
 
     let self_entry =
         get_dir_diff_entry_with_summary(&repository, dir, &base_commit, &head_commit, summary)?;
@@ -236,6 +309,25 @@ pub async fn dir_entries(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get file diff
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/file/{resource}",
+    tag = "Compare",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("resource" = String, Path, description = "Path to the file (including branch)", example = "data/test/file.txt"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "File diff found successfully", body = CompareEntryResponse),
+        (status = 404, description = "Repository, revision, or file not found")
+    )
+)]
 pub async fn file(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
@@ -250,12 +342,12 @@ pub async fn file(
 
     // Parse the base and head from the base..head/resource string
     // For Example)
-    //   main..feature/add-data/path/to/file.txt
+    //   main..feature/add-data/path/to/file.txt
     let (base_commit, head_commit, resource) = parse_base_head_resource(&repository, &base_head)?;
 
-    log::debug!("base_commit: {:?}", base_commit);
-    log::debug!("head_commit: {:?}", head_commit);
-    log::debug!("resource: {:?}", resource);
+    log::debug!("base_commit: {base_commit:?}");
+    log::debug!("head_commit: {head_commit:?}");
+    log::debug!("resource: {resource:?}");
     let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
     let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
 
@@ -267,7 +359,7 @@ pub async fn file(
 
     let start = if page == 0 { 0 } else { page_size * (page - 1) };
     let end = page_size * page;
-    opts.slice = Some(format!("{}..{}", start, end));
+    opts.slice = Some(format!("{start}..{end}"));
 
     let diff = repositories::diffs::diff_entries(
         &repository,
@@ -277,7 +369,8 @@ pub async fn file(
         head_entry,
         &head_commit,
         opts,
-    )?;
+    )
+    .await?;
 
     let view = CompareEntryResponse {
         status: StatusMessage::resource_found(),
@@ -286,6 +379,26 @@ pub async fn file(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Create a tabular data frame diff
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+    ),
+    request_body(
+        content = TabularCompareBody,
+        description = "Tabular comparison configuration (files, revisions, keys, targets)",
+    ),
+    responses(
+        (status = 200, description = "Data frame diff created and cached successfully", body = CompareTabularResponse),
+        (status = 400, description = "Bad Request (e.g., failed to parse body)"),
+        (status = 404, description = "Repository, revision, or file not found"),
+    )
+)]
 pub async fn create_df_diff(
     req: HttpRequest,
     _query: web::Query<DFOptsQuery>,
@@ -294,37 +407,31 @@ pub async fn create_df_diff(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
+
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!(
-                "unable to parse tabular comparison data. Err: {}\n{}",
-                err,
-                body
-            );
+            log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
 
-    let resource_1 = PathBuf::from(data.left.path);
-    let resource_2 = PathBuf::from(data.right.path);
-    let keys = data.keys;
-    let targets = data.compare;
-    let display = data.display;
-
-    log::debug!("display is {:?}", display);
+    let resource_1 = PathBuf::from(data.left.path.clone());
+    let resource_2 = PathBuf::from(data.right.path.clone());
+    let keys = data.keys.clone();
+    let targets = data.compare.clone();
+    let display = data.display.clone();
 
     let display_by_column = get_display_by_columns(display);
 
-    log::debug!("display by col is {:?}", display_by_column);
-
-    let compare_id = data.compare_id;
+    let compare_id = data.compare_id.clone();
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
         .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
+
     let commit_2 = repositories::revisions::get(&repository, &data.right.version)?
         .ok_or_else(|| OxenError::revision_not_found(data.right.version.into()))?;
 
@@ -332,6 +439,7 @@ pub async fn create_df_diff(
         repositories::entries::get_file(&repository, &commit_1, &resource_1)?.ok_or_else(|| {
             OxenError::ResourceNotFound(format!("{}@{}", resource_1.display(), commit_1).into())
         })?;
+
     let node_2 =
         repositories::entries::get_file(&repository, &commit_2, &resource_2)?.ok_or_else(|| {
             OxenError::ResourceNotFound(format!("{}@{}", resource_2.display(), commit_2).into())
@@ -339,21 +447,23 @@ pub async fn create_df_diff(
 
     // TODO: Remove the next two lines when we want to allow mapping
     // different keys and targets from left and right file.
-    let keys = keys.iter().map(|k| k.left.clone()).collect();
+    let keys: Vec<String> = keys.iter().map(|k| k.left.clone()).collect();
     let targets = get_targets_from_req(targets);
 
     let diff_result = repositories::diffs::diff_tabular_file_nodes(
         &repository,
-        &node_1,
-        &node_2,
+        Some(&node_1),
+        Some(&node_2),
         keys,
         targets,
         display_by_column, // TODONOW: add display handling here
-    )?;
+    )
+    .await?;
 
     // Cache the diff on the server
     let entry_1 = CommitEntry::from_file_node(&node_1);
     let entry_2 = CommitEntry::from_file_node(&node_2);
+
     repositories::diffs::cache_tabular_diff(
         &repository,
         &compare_id,
@@ -364,10 +474,8 @@ pub async fn create_df_diff(
 
     let mut messages: Vec<OxenMessage> = vec![];
 
-    if diff_result.summary.dupes.left > 0 || diff_result.summary.dupes.right > 0 {
-        let cdupes = CompareDupes::from_tabular_diff_dupes(&diff_result.summary.dupes);
-        messages.push(cdupes.to_message());
-    }
+    let cdupes = CompareDupes::from_tabular_diff_dupes(&diff_result.summary.dupes);
+    messages.push(cdupes.to_message());
 
     let view = CompareTabularResponse {
         status: StatusMessage::resource_found(),
@@ -378,6 +486,27 @@ pub async fn create_df_diff(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Update tabular data frame diff
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session", example = "uuid-1234"),
+    ),
+    request_body(
+        content = TabularCompareBody,
+        description = "Updated tabular comparison configuration",
+    ),
+    responses(
+        (status = 200, description = "Data frame diff updated and cached successfully", body = CompareTabularResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Comparison ID, Repository, revision, or file not found"),
+    )
+)]
 pub async fn update_df_diff(
     req: HttpRequest,
     body: String,
@@ -392,11 +521,7 @@ pub async fn update_df_diff(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!(
-                "unable to parse tabular comparison data. Err: {}\n{}",
-                err,
-                body
-            );
+            log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -407,11 +532,11 @@ pub async fn update_df_diff(
     let targets = data.compare;
     let display = data.display;
 
-    log::debug!("display is {:?}", display);
+    log::debug!("display is {display:?}");
 
     let display_by_column = get_display_by_columns(display);
 
-    log::debug!("display by col is {:?}", display_by_column);
+    log::debug!("display by col is {display_by_column:?}");
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
         .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
@@ -434,12 +559,13 @@ pub async fn update_df_diff(
 
     let diff_result = repositories::diffs::diff_tabular_file_nodes(
         &repository,
-        &node_1,
-        &node_2,
+        Some(&node_1),
+        Some(&node_2),
         keys,
         targets,
         display_by_column, // TODONOW: add display handling here
-    )?;
+    )
+    .await?;
 
     let entry_1 = CommitEntry::from_file_node(&node_1);
     let entry_2 = CommitEntry::from_file_node(&node_2);
@@ -469,6 +595,27 @@ pub async fn update_df_diff(
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get a cached tabular data frame diff
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session", example = "uuid-1234"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+    ),
+    request_body(
+        content = TabularCompareBody,
+        description = "Tabular comparison information needed to fetch the correct cached diff (files, revisions)",
+    ),
+    responses(
+        (status = 200, description = "Cached data frame diff found successfully", body = CompareTabularResponse),
+        (status = 404, description = "Cached diff not found for the given ID and entries")
+    )
+)]
 pub async fn get_df_diff(
     req: HttpRequest,
     body: String,
@@ -510,7 +657,8 @@ pub async fn get_df_diff(
         &compare_id,
         Some(left_entry.clone()),
         Some(right_entry.clone()),
-    )?;
+    )
+    .await?;
 
     if let Some(diff) = maybe_cached_diff {
         let mut messages: Vec<OxenMessage> = vec![];
@@ -536,6 +684,22 @@ pub async fn get_df_diff(
     }
 }
 
+/// Delete DF Diff
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
+    tag = "Compare Data Frames",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session to delete", example = "uuid-1234"),
+    ),
+    responses(
+        (status = 200, description = "Data frame diff deleted successfully", body = StatusMessage),
+        (status = 404, description = "Repository or comparison ID not found")
+    )
+)]
 pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -548,6 +712,24 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
+/// Get Data Frame from Tabular Diff
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}/diff",
+    tag = "get_data_frame_from_tabular_diff",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
+        ("compare_id" = String, Path, description = "The unique ID of the comparison session", example = "uuid-1234"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+    ),
+    responses(
+        (status = 200, description = "Derived data frame found successfully", body = JsonDataFrameViewResponse),
+        (status = 404, description = "Repository or comparison ID not found"),
+    )
+)]
 pub async fn get_derived_df(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
@@ -566,12 +748,13 @@ pub async fn get_derived_df(
     // TODO: If this structure holds for diff + query, there is some amt of reusability with
     // controllers::df::get logic
 
-    let df = tabular::read_df(derived_df_path, DFOpts::empty())?;
+    let df = tabular::read_df(derived_df_path, DFOpts::empty()).await?;
+
     let og_schema = Schema::from_polars(df.schema());
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);
-    log::debug!("get_derived_df got opts: {:?}", opts);
+    log::debug!("get_derived_df got opts: {opts:?}");
 
     // Clear these for the first transform
     opts.page = None;
@@ -588,17 +771,17 @@ pub async fn get_derived_df(
     let opts_view = DFOptsView::from_df_opts(&opts);
 
     // We have to run the query param transforms, then paginate separately
-    match tabular::transform(df, opts) {
+    match tabular::transform(df, opts).await {
         Ok(view_df) => {
-            log::debug!("View df {:?}", view_df);
+            log::debug!("View df {view_df:?}");
 
             let view_width = view_df.width();
             let view_height = view_df.height();
 
             // Paginate after transform
             let mut paginate_opts = DFOpts::empty();
-            paginate_opts.slice = Some(format!("{}..{}", start, end));
-            let mut paginated_df = tabular::transform(view_df, paginate_opts)?;
+            paginate_opts.slice = Some(format!("{start}..{end}"));
+            let mut paginated_df = tabular::transform(view_df, paginate_opts).await?;
 
             let total_pages = (view_height as f64 / page_size as f64).ceil() as usize;
             let source_size = DataFrameSize {
@@ -608,11 +791,11 @@ pub async fn get_derived_df(
 
             // Merge the metadata from the original schema
             let mut view_schema = Schema::from_polars(paginated_df.schema());
-            log::debug!("OG schema {:?}", og_schema);
-            log::debug!("Pre-Slice schema {:?}", view_schema);
+            log::debug!("OG schema {og_schema:?}");
+            log::debug!("Pre-Slice schema {view_schema:?}");
             view_schema.update_metadata_from_schema(&og_schema);
 
-            log::debug!("View schema {:?}", view_schema);
+            log::debug!("View schema {view_schema:?}");
 
             let df = JsonDataFrame::from_slice(
                 &mut paginated_df,
@@ -647,7 +830,7 @@ pub async fn get_derived_df(
             let derived_resource = DerivedDFResource {
                 resource_type: DFResourceType::Compare,
                 resource_id: compare_id.clone(),
-                path: format!("/compare/data_frames/{}/diff", compare_id),
+                path: format!("/compare/data_frames/{compare_id}/diff"),
             };
 
             let response = JsonDataFrameViewResponse {
@@ -664,11 +847,11 @@ pub async fn get_derived_df(
             Ok(HttpResponse::Ok().json(response))
         }
         Err(OxenError::SQLParseError(sql)) => {
-            log::error!("Error parsing SQL: {}", sql);
+            log::error!("Error parsing SQL: {sql}");
             Err(OxenHttpError::SQLParseError(sql))
         }
         Err(e) => {
-            log::error!("Error transforming df: {}", e);
+            log::error!("Error transforming df: {e}");
             Err(OxenHttpError::InternalServerError)
         }
     }
@@ -678,7 +861,7 @@ fn parse_base_head_resource(
     repo: &LocalRepository,
     base_head: &str,
 ) -> Result<(Commit, Commit, PathBuf), OxenError> {
-    log::debug!("Parsing base_head_resource: {}", base_head);
+    log::debug!("Parsing base_head_resource: {base_head}");
 
     let mut split = base_head.split("..");
     let base = split
@@ -698,8 +881,8 @@ fn parse_base_head_resource(
     let mut resource: Option<PathBuf> = None;
 
     for s in split_head {
-        let maybe_revision = format!("{}{}", longest_str, s);
-        log::debug!("Checking maybe head revision: {}", maybe_revision);
+        let maybe_revision = format!("{longest_str}{s}");
+        log::debug!("Checking maybe head revision: {maybe_revision}");
         let commit = repositories::revisions::get(repo, &maybe_revision)?;
         if commit.is_some() {
             head_commit = commit;
@@ -708,11 +891,11 @@ fn parse_base_head_resource(
             r_str.remove(0);
             resource = Some(PathBuf::from(r_str));
         }
-        longest_str = format!("{}/", maybe_revision);
+        longest_str = format!("{maybe_revision}/");
     }
 
-    log::debug!("Got head_commit: {:?}", head_commit);
-    log::debug!("Got resource: {:?}", resource);
+    log::debug!("Got head_commit: {head_commit:?}");
+    log::debug!("Got resource: {resource:?}");
 
     let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
     let resource = resource.ok_or(OxenError::revision_not_found(head.into()))?;
@@ -724,10 +907,10 @@ fn get_display_by_columns(display: Vec<TabularCompareTargetBody>) -> Vec<String>
     let mut display_by_column = vec![];
     for d in display {
         if let Some(left) = d.left {
-            display_by_column.push(format!("{}.left", left));
+            display_by_column.push(format!("{left}.left"));
         }
         if let Some(right) = d.right {
-            display_by_column.push(format!("{}.right", right));
+            display_by_column.push(format!("{right}.right"));
         }
     }
     display_by_column

@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::view::DataTypeCount;
+use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataDir {
     pub dir: MetadataDirImpl,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct MetadataDirImpl {
     pub data_types: Vec<DataTypeCount>,
 }
@@ -24,7 +25,7 @@ impl std::fmt::Display for MetadataDir {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "MetadataDir(")?;
         for data_type in &self.dir.data_types {
-            write!(f, "{}", data_type)?;
+            write!(f, "{data_type}")?;
         }
         write!(f, ")")
     }

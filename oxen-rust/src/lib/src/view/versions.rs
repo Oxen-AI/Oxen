@@ -1,17 +1,18 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use crate::model::MerkleHash;
 
 use super::StatusMessage;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct VersionFile {
     pub hash: String,
     pub size: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct VersionFileResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
@@ -60,4 +61,25 @@ pub struct CreateVersionUploadRequest {
     pub file_name: String,
     pub size: u64,
     pub dst_dir: Option<PathBuf>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct CleanCorruptedVersionsResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub result: CleanCorruptedVersionsResult,
+}
+
+#[derive(Deserialize, Serialize, Default, Debug, Clone)]
+pub struct CleanCorruptedVersionsResult {
+    // Number of version files scanned
+    pub scanned: u64,
+    // Number of version files that were corrupted(hash mismatch)
+    pub corrupted: u64,
+    // Number of version files that were successfully deleted
+    pub cleaned: u64,
+    // Errors that occurred during the cleanup process
+    pub errors: u64,
+    // Elapsed time in seconds
+    pub elapsed: Duration,
 }

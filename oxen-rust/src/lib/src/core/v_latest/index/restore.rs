@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::STAGED_DIR;
 use crate::core::db::{self};
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, PartialNode};
@@ -15,6 +14,7 @@ use crate::storage::version_store::VersionStore;
 use crate::util;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct FileToRestore {
     pub file_node: FileNode,
     pub path: PathBuf,
@@ -23,72 +23,74 @@ pub struct FileToRestore {
 pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore: start");
     if opts.staged {
-        log::debug!("restore::restore: handling staged restore");
         return restore_staged(repo, opts);
     }
 
     // Get the version store from the repository
     let version_store = repo.version_store()?;
 
-    let path = opts.path;
+    let paths = opts.paths;
+    log::debug!("restore::restore got {:?} paths", paths.len());
+
     let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
-    log::debug!("restore::restore: got path {:?}", path);
 
-    let dir = CommitMerkleTree::dir_with_children_recursive(repo, &commit, &path)?;
+    let repo_path = repo.path.clone();
 
-    match dir {
-        Some(dir) => {
-            log::debug!("restore::restore: restoring directory");
-            restore_dir(repo, dir, &path, &version_store).await
-        }
-        None => {
-            log::debug!("restore::restore: restoring file");
-            match CommitMerkleTree::from_path(repo, &commit, &path, false) {
-                Ok(merkle_tree) => {
-                    log::debug!(
-                        "restore::restore: got merkle tree {:?}",
-                        merkle_tree.root.node
-                    );
-                    if !matches!(&merkle_tree.root.node, EMerkleTreeNode::File(_)) {
-                        return Err(OxenError::basic_str("Path is not a file"));
+    for path in paths {
+        let path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        let Some(node) = repositories::tree::get_node_by_path_with_children(repo, &commit, &path)?
+        else {
+            log::error!(
+                "path {:?} not found in tree for commit {:?}",
+                path,
+                commit.id
+            );
+            continue;
+        };
+
+        match &node.node {
+            EMerkleTreeNode::Directory(_dir_node) => {
+                log::debug!("restore::restore: restoring directory");
+                match restore_dir(repo, node, &path, &version_store).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!(
+                            "restore::restore_dir failed for dir {path:?} with error {e:?}"
+                        );
                     }
-
-                    let child_file = merkle_tree.root.file().unwrap();
-
-                    restore_file(repo, &child_file, &path, &version_store).await
                 }
-                Err(OxenError::Basic(msg))
-                    if msg.to_string().contains("Merkle tree hash not found") =>
-                {
-                    log::warn!("restore::restore: No file found at path {:?}", path);
-                    println!("No file found at the specified path: {:?}", path);
-                    Err(OxenError::basic_str("No file found at the specified path"))
+            }
+            EMerkleTreeNode::File(file_node) => {
+                match restore_file(repo, file_node, &path, &version_store).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!(
+                            "restore::restore_file failed for file {path:?} with error {e:?}"
+                        );
+                    }
                 }
-                Err(e) => Err(e),
+            }
+            _ => {
+                return Err(OxenError::basic_str("Error: Unexpected node type"));
             }
         }
     }
+
+    Ok(())
 }
 
 fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     log::debug!("restore::restore_staged: start");
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
+    let repo_path = repo.path.clone();
     if let Some(db) = open_staged_db(&db_path)? {
-        let mut batch = WriteBatch::default();
+        for path in &opts.paths {
+            let path = util::fs::path_relative_to_dir(path, &repo_path)?;
+            let mut batch = WriteBatch::default();
 
-        if opts.path == PathBuf::from(".") {
-            // If path is ".", remove all staged entries
-            for result in db.iterator(rocksdb::IteratorMode::Start) {
-                match result {
-                    Ok((key, _)) => batch.delete(key),
-                    Err(e) => return Err(OxenError::basic_str(&e)),
-                }
-            }
-            log::debug!("restore::restore_staged: prepared to clear all staged entries");
-        } else {
             // Remove specific staged entry or entries under a directory
-            let prefix = opts.path.to_string_lossy().into_owned();
+            let prefix = path.to_string_lossy().into_owned();
             for result in db.iterator(rocksdb::IteratorMode::From(
                 prefix.as_bytes(),
                 rocksdb::Direction::Forward,
@@ -100,8 +102,7 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                         if key_str.starts_with(&prefix) {
                             batch.delete(&key);
                             log::debug!(
-                                "restore::restore_staged: prepared to remove staged entry for path {:?}",
-                                key_str
+                                "restore::restore_staged: prepared to remove staged entry for path {key_str:?}"
                             );
                         } else {
                             break; // Stop when we've passed all entries with the given prefix
@@ -138,8 +139,7 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                 if !has_children {
                     parent_batch.delete(parent_str.as_bytes());
                     log::debug!(
-                        "restore::restore_staged: removed parent directory with no children: {:?}",
-                        parent_str
+                        "restore::restore_staged: removed parent directory with no children: {parent_str:?}"
                     );
                 } else {
                     break;
@@ -148,9 +148,8 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                 parent_path = parent.to_path_buf();
             }
             db.write(parent_batch)?;
+            log::debug!("restore::restore_staged: changes committed to the database");
         }
-
-        log::debug!("restore::restore_staged: changes committed to the database");
     } else {
         log::debug!("restore::restore_staged: no staged database found");
     }
@@ -183,7 +182,7 @@ async fn restore_dir(
         file_nodes_with_paths.len()
     );
 
-    let msg = format!("Restoring Directory: {:?}", dir);
+    let msg = format!("Restoring Directory: {path:?}");
     let bar =
         util::progress_bar::oxen_progress_bar_with_msg(file_nodes_with_paths.len() as u64, &msg);
 
@@ -203,11 +202,7 @@ async fn restore_dir(
         match restore_file(repo, file_node, file_path, version_store).await {
             Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
             Err(e) => {
-                log::error!(
-                    "restore::restore_dir: error restoring file {:?}: {:?}",
-                    file_path,
-                    e
-                );
+                log::error!("restore::restore_dir: error restoring file {file_path:?}: {e:?}");
             }
         }
         bar.inc(1);
@@ -223,7 +218,7 @@ async fn restore_dir(
     Ok(())
 }
 
-pub fn should_restore_partial(
+pub fn should_restore_partial_node(
     repo: &LocalRepository,
     base_node: Option<PartialNode>,
     file_node: &FileNode,
@@ -237,12 +232,14 @@ pub fn should_restore_partial(
         // Check metadata for changes first
         let meta = util::fs::metadata(&working_path)?;
         let file_last_modified = filetime::FileTime::from_last_modification_time(&meta);
+        let file_size = meta.len();
 
         // If there are modifications compared to the base node, we should not restore the file
         if let Some(base_node) = base_node {
             let node_last_modified = base_node.last_modified;
+            let node_size = base_node.size;
 
-            if file_last_modified == node_last_modified {
+            if file_last_modified == node_last_modified && file_size == node_size {
                 return Ok(true);
             }
 
@@ -285,7 +282,6 @@ pub fn should_restore_file(
 ) -> Result<bool, OxenError> {
     let path = path.as_ref();
     let working_path = repo.path.join(path);
-
     // Check to see if the file has been modified if it exists
     if working_path.exists() {
         // Check metadata for changes first
@@ -294,6 +290,7 @@ pub fn should_restore_file(
 
         // If there are modifications compared to the base node, we should not restore the file
         if let Some(base_node) = base_node {
+            // First, check the modified times
             let node_modified_nanoseconds = std::time::SystemTime::UNIX_EPOCH
                 + std::time::Duration::from_secs(base_node.last_modified_seconds() as u64)
                 + std::time::Duration::from_nanos(base_node.last_modified_nanoseconds() as u64);
@@ -305,11 +302,27 @@ pub fn should_restore_file(
                 return Ok(true);
             }
 
-            // If modified times are different, check hashes
-            let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
+            // Second, check the combined hashes
+            let file_hash = util::hasher::u128_hash_file_contents(&working_path)?;
+            let file_combined_hash = {
+                let mime_type = util::fs::file_mime_type(path);
+                let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
 
-            let base_node_hash = base_node.hash();
-            if hash != *base_node_hash {
+                let file_metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
+                let file_metadata_hash = util::hasher::maybe_get_metadata_hash(&file_metadata)?;
+
+                let combined_hash = util::hasher::get_combined_hash(file_metadata_hash, file_hash)?;
+                MerkleHash::new(combined_hash)
+            };
+
+            let node_combined_hash = file_node.combined_hash();
+            if file_combined_hash != *node_combined_hash {
+                return Ok(true);
+            }
+
+            let base_hash = base_node.combined_hash();
+
+            if file_combined_hash != *base_hash {
                 return Ok(false);
             }
         } else {
@@ -325,9 +338,21 @@ pub fn should_restore_file(
                 return Ok(true);
             }
 
-            // If modified times are different, check hashes
-            let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
-            if hash != *file_node.hash() {
+            // Second, check the combined hashes
+            let file_hash = util::hasher::u128_hash_file_contents(&working_path)?;
+            let file_combined_hash = {
+                let mime_type = util::fs::file_mime_type(path);
+                let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
+
+                let file_metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
+                let file_metadata_hash = util::hasher::maybe_get_metadata_hash(&file_metadata)?;
+
+                let combined_hash = util::hasher::get_combined_hash(file_metadata_hash, file_hash)?;
+                MerkleHash::new(combined_hash)
+            };
+
+            let node_combined_hash = file_node.combined_hash();
+            if file_combined_hash != *node_combined_hash {
                 return Ok(false);
             }
         }

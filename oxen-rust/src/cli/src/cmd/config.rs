@@ -5,6 +5,7 @@ use liboxen::command;
 use liboxen::config::{AuthConfig, UserConfig};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::opts::StorageOpts;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "config";
@@ -49,6 +50,28 @@ impl RunCmd for ConfigCmd {
                     .long("delete-remote")
                     .value_name("REMOTE_NAME")
                     .help("Delete a remote from the current working repository.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend")
+                    .long("storage-backend")
+                    .help("Set the location to store version files. --storage-backend local --storage-backend-path <path> or --storage-backend s3 --storage-backend-bucket <bucket> --storage-backend-path <prefix>")
+                    .default_value("local")
+                    .default_missing_value("local")
+                    .value_parser(["local", "s3"])
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-path")
+                    .long("storage-backend-path")
+                    .help("Set the path for local storage backend or the prefix for s3 storage backend. Must specify type.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("storage-backend-bucket")
+                    .long("storage-backend-bucket")
+                    .help("Set the bucket for s3 storage backend. Must specify type and path together.")
+                    .requires_if("s3", "storage-backend")
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -136,6 +159,29 @@ impl RunCmd for ConfigCmd {
             }
         }
 
+        if let Some(path) = args
+            .get_one::<String>("storage-backend-path")
+            .map(String::from)
+        {
+            let backend = args
+                .get_one::<String>("storage-backend")
+                .ok_or_else(|| {
+                    OxenError::basic_str(
+                        "storage-backend must be specified when storage-backend-path is provided",
+                    )
+                })?
+                .to_string();
+            let bucket = args
+                .get_one::<String>("storage-backend-bucket")
+                .map(String::from);
+            let storage_opts = StorageOpts::from_args(Some(backend), Some(path), bucket)?;
+
+            let mut repo = LocalRepository::from_current_dir()?;
+            self.set_version_store(&mut repo, storage_opts)
+                .await
+                .map_err(|e| OxenError::basic_str(format!("{e}")))?;
+        }
+
         Ok(())
     }
 }
@@ -165,6 +211,18 @@ impl ConfigCmd {
 
     pub fn delete_remote(&self, repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
         command::config::delete_remote(repo, name)?;
+
+        Ok(())
+    }
+
+    pub async fn set_version_store(
+        &self,
+        repo: &mut LocalRepository,
+        storage_opts: Option<StorageOpts>,
+    ) -> Result<(), OxenError> {
+        if let Some(storage_opts) = storage_opts {
+            command::config::set_version_store(repo, &storage_opts).await?;
+        }
 
         Ok(())
     }

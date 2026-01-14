@@ -49,6 +49,7 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::opts::FetchOpts;
+    use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;
 
@@ -59,7 +60,13 @@ mod tests {
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
 
@@ -79,7 +86,13 @@ mod tests {
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Checkout main and add a file to be ahead
             repositories::checkout(&local_repo, base).await?;
@@ -87,7 +100,12 @@ mod tests {
             test::write_txt_file_to_path(&path, "hello")?;
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "adding file 1")?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, base).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: base.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
 
@@ -106,7 +124,12 @@ mod tests {
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Modify README.md
             let path = local_repo.path.join("README.md");
@@ -124,14 +147,18 @@ mod tests {
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "adding file 2")?;
 
-            // Push commits
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
 
             println!("Got {} commits", mergeability.commits.len());
             for commit in &mergeability.commits {
-                println!("mergeability commit: {:?}", commit);
+                println!("mergeability commit: {commit:?}");
             }
 
             assert!(mergeability.is_mergeable);
@@ -150,7 +177,12 @@ mod tests {
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Modify README.md to have a conflict
             let path = local_repo.path.join("README.md");
@@ -170,7 +202,12 @@ mod tests {
 
             // Push commits
 
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Checkout main and modify README.md to have a conflict
             repositories::checkout(&local_repo, base).await?;
@@ -179,7 +216,12 @@ mod tests {
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "modifying readme on main")?;
 
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, base).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: base.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
 
@@ -199,7 +241,12 @@ mod tests {
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Modify a file on the head branch
             let new_file_name = "merge_file.txt";
@@ -207,9 +254,15 @@ mod tests {
             test::write_txt_file_to_path(&path, "hello")?;
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "adding file")?;
-            repositories::push::push_remote_branch(&local_repo, DEFAULT_REMOTE_NAME, head).await?;
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: head.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+
             // Merge the head branch into base
-            api::client::merger::merge(&remote_repo, base, head).await?;
+            let merge_result = api::client::merger::merge(&remote_repo, base, head).await?;
 
             repositories::checkout::checkout(&local_repo, base).await?;
             let commits_before = repositories::commits::list(&local_repo)?;
@@ -221,6 +274,10 @@ mod tests {
 
             let path = local_repo.path.join(new_file_name);
             assert!(path.exists());
+
+            // Check that the branch was updated
+            let new_head = repositories::branches::current_branch(&local_repo)?.unwrap();
+            assert_eq!(new_head.commit_id, merge_result.merge.id);
 
             Ok(remote_repo)
         })

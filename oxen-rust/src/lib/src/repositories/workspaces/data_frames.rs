@@ -1,3 +1,6 @@
+use crate::core::df::tabular::write_df_parquet;
+use crate::model::merkle_tree::node::FileNodeWithDir;
+use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
 
 use sql_query_builder::Select;
@@ -5,12 +8,13 @@ use sql_query_builder::Select;
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
+use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
 use crate::core::db::data_frames::{df_db, workspace_df_db};
 use crate::core::df::sql;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{Commit, LocalRepository, Workspace};
+use crate::model::{Branch, Commit, EntryDataType, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
 
@@ -20,6 +24,8 @@ use crate::model::diff::tabular_diff::{
 };
 use crate::model::diff::{AddRemoveModifyCounts, DiffResult, TabularDiff};
 
+use crate::core::db::data_frames::columns::polar_insert_column;
+use duckdb::arrow::array::RecordBatch;
 use std::path::{Path, PathBuf};
 
 pub mod columns;
@@ -35,14 +41,17 @@ pub fn is_behind(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, 
 
 pub fn is_indexed(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
     let path = path.as_ref();
-    log::debug!("checking dataset is indexed for {:?}", path);
+    log::debug!("checking dataset is indexed for {path:?}");
     let db_path = duckdb_path(workspace, path);
-    log::debug!("getting conn at path {:?}", db_path);
-    let conn = df_db::get_connection(db_path)?;
+    log::debug!("getting conn at path {db_path:?}");
 
-    let table_exists = df_db::table_exists(&conn, TABLE_NAME)?;
-    log::debug!("dataset_is_indexed() got table_exists: {:?}", table_exists);
-    Ok(table_exists)
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let table_exists = df_db::table_exists(conn, TABLE_NAME)?;
+            log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");
+            Ok(table_exists)
+        })
+    })
 }
 
 pub fn is_queryable_data_frame_indexed(
@@ -100,10 +109,13 @@ pub async fn rename(
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
-    df_db::drop_table(&conn, TABLE_NAME)?;
 
-    Ok(())
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            df_db::drop_table(conn, TABLE_NAME)?;
+            Ok(())
+        })
+    })
 }
 
 pub fn restore(
@@ -122,10 +134,13 @@ pub fn restore(
 
 pub fn count(workspace: &Workspace, path: impl AsRef<Path>) -> Result<usize, OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
 
-    let count = df_db::count(&conn, TABLE_NAME)?;
-    Ok(count)
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let count = df_db::count(conn, TABLE_NAME)?;
+            Ok(count)
+        })
+    })
 }
 
 pub fn query(
@@ -135,28 +150,36 @@ pub fn query(
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("query_staged_df() got db_path: {:?}", db_path);
-    log::debug!("query() opts: {:?}", opts);
+    log::debug!("query_staged_df() got db_path: {db_path:?}");
+    log::debug!("query() opts: {opts:?}");
 
-    let mut conn = df_db::get_connection(db_path)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn_mut(|conn| {
+            // Get the schema of this commit entry
+            let schema = df_db::get_schema(conn, TABLE_NAME)?;
 
-    // Get the schema of this commit entry
-    let schema = df_db::get_schema(&conn, TABLE_NAME)?;
+            let col_names = select_cols_from_schema(&schema)?;
 
-    let col_names = select_cols_from_schema(&schema)?;
+            // Right now embeddings and sql are mutually exclusive
+            let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+                log::debug!("querying embeddings: {embedding_opts:?}");
+                repositories::workspaces::data_frames::embeddings::query_with_conn(
+                    conn,
+                    workspace,
+                    &embedding_opts,
+                )?
+            } else if let Some(sql) = &opts.sql {
+                log::debug!("querying sql: {sql:?}");
+                return sql::query_df(conn, sql.clone(), None);
+            } else {
+                log::debug!("querying select cols: {col_names:?}");
+                let select = Select::new().select(&col_names).from(TABLE_NAME);
+                df_db::select(conn, &select, Some(opts))?
+            };
 
-    // Right now embeddings and sql are mutually exclusive
-    let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-        log::debug!("querying embeddings: {:?}", embedding_opts);
-        repositories::workspaces::data_frames::embeddings::query(workspace, &embedding_opts)?
-    } else if let Some(sql) = &opts.sql {
-        sql::query_df(&mut conn, sql.clone(), None)?
-    } else {
-        let select = Select::new().select(&col_names).from(TABLE_NAME);
-        df_db::select(&conn, &select, Some(opts))?
-    };
-
-    Ok(df)
+            Ok(df)
+        })
+    })
 }
 
 pub fn export(
@@ -167,47 +190,51 @@ pub fn export(
 ) -> Result<(), OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    log::debug!("export() got db_path: {:?}", db_path);
+    log::debug!("export() got db_path: {db_path:?}");
 
-    let conn = df_db::get_connection(db_path)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+                let exclude_cols = true;
+                repositories::workspaces::data_frames::embeddings::similarity_query_with_conn(
+                    conn,
+                    workspace,
+                    &embedding_opts,
+                    exclude_cols,
+                )?
+            } else if let Some(sql) = opts.sql.clone() {
+                add_exclude_to_sql(&sql)?
+            } else {
+                let sql = format!("SELECT * FROM {TABLE_NAME}");
+                add_exclude_to_sql(&sql)?
+            };
 
-    let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-        let exclude_cols = true;
-        repositories::workspaces::data_frames::embeddings::similarity_query(
-            workspace,
-            &embedding_opts,
-            exclude_cols,
-        )?
-    } else if let Some(sql) = opts.sql.clone() {
-        add_exclude_to_sql(&sql)?
-    } else {
-        let sql = format!("SELECT * FROM {}", TABLE_NAME);
-        add_exclude_to_sql(&sql)?
-    };
+            log::debug!("exporting data frame with sql: {sql:?}");
 
-    // log::debug!("exporting data frame with sql: {:?}", sql);
+            sql::export_df(conn, sql, Some(opts), temp_file)?;
 
-    sql::export_df(&conn, sql, Some(opts), temp_file)?;
-
-    Ok(())
+            Ok(())
+        })
+    })
 }
 
 pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DataFrame, OxenError> {
     let file_path = path.as_ref();
     let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-    let conn = df_db::get_connection(staged_db_path)?;
-    let diff_df = workspace_df_db::df_diff(&conn)?;
-    Ok(diff_df)
+
+    with_df_db_manager(staged_db_path, |manager| {
+        manager.with_conn(|conn| {
+            let diff_df = workspace_df_db::df_diff(conn)?;
+            Ok(diff_df)
+        })
+    })
 }
 
 pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult, OxenError> {
     let repo = &workspace.base_repo;
-    let commit = &workspace.commit;
     let path = path.as_ref();
     // Get commit for the branch head
     log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
-
-    repositories::CommitMerkleTree::from_path_recursive(repo, commit, path)?;
 
     if !is_indexed(workspace, path)? {
         return Err(OxenError::basic_str("Dataset is not indexed"));
@@ -215,43 +242,199 @@ pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffRe
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let conn = df_db::get_connection(db_path)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let diff_df = workspace_df_db::df_diff(conn)?;
+            log::debug!("full_diff() diff_df: {diff_df:?}");
 
-    let diff_df = workspace_df_db::df_diff(&conn)?;
-    log::debug!("full_diff() diff_df: {:?}", diff_df);
+            if diff_df.is_empty() {
+                return Ok(DiffResult::Tabular(TabularDiff::empty()));
+            }
 
-    if diff_df.is_empty() {
-        return Ok(DiffResult::Tabular(TabularDiff::empty()));
+            let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
+
+            let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
+
+            let schemas = TabularDiffSchemas {
+                left: schema.clone(),
+                right: schema.clone(),
+                diff: schema.clone(),
+            };
+
+            let diff_summary = TabularDiffSummary {
+                modifications: TabularDiffMods {
+                    row_counts: row_mods,
+                    col_changes: TabularSchemaDiff::empty(),
+                },
+                schemas,
+                dupes: TabularDiffDupes::empty(),
+            };
+
+            let diff_result = TabularDiff {
+                contents: diff_df,
+                parameters: TabularDiffParameters::empty(),
+                summary: diff_summary,
+                filename1: None,
+                filename2: None,
+            };
+
+            Ok(DiffResult::Tabular(diff_result))
+        })
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn from_directory(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    extra_columns: &[NewColumn],
+    recursive: bool,
+    new_commit: &NewCommitBody,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    let has_dir = repositories::tree::has_dir(repo, &workspace.commit, path.as_ref())?;
+    if !has_dir {
+        return Err(OxenError::basic_str(format!(
+            "Directory not found: {:?}",
+            path.as_ref()
+        )));
     }
 
-    let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
+    let depth = if recursive { -1 } else { 1 };
 
-    let schema = workspace_df_db::schema_without_oxen_cols(&conn, TABLE_NAME)?;
+    let subtree = repositories::tree::get_subtree(
+        repo,
+        &workspace.commit,
+        &Some(path.as_ref().to_path_buf()),
+        &Some(depth),
+    )?;
 
-    let schemas = TabularDiffSchemas {
-        left: schema.clone(),
-        right: schema.clone(),
-        diff: schema.clone(),
+    let files =
+        repositories::tree::list_all_files(&subtree.unwrap(), &path.as_ref().to_path_buf())?;
+
+    // Extract file paths from FileNodeWithDir
+    let file_paths: Vec<String> = files
+        .iter()
+        .map(|file_with_dir| {
+            file_with_dir
+                .dir
+                .join(file_with_dir.file_node.name())
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    let db_path = workspace.dir().join("temp_file_listing.db");
+
+    let mut df = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            // Create initial table with just file_path column
+            conn.execute("CREATE TABLE file_listing (file_path VARCHAR);", [])?;
+
+            // Insert file paths using bulk insert
+            if !file_paths.is_empty() {
+                let values_clause = file_paths
+                    .iter()
+                    .map(|_| "(?)")
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let bulk_insert_sql =
+                    format!("INSERT INTO file_listing (file_path) VALUES {values_clause}");
+
+                let params: Vec<&dyn duckdb::ToSql> = file_paths
+                    .iter()
+                    .map(|path| path as &dyn duckdb::ToSql)
+                    .collect();
+
+                conn.execute(&bulk_insert_sql, params.as_slice())?;
+            }
+
+            // Add each extra column using the existing function
+            for new_column in extra_columns {
+                polar_insert_column(conn, "file_listing", new_column)?;
+            }
+
+            // Get the final DataFrame
+            let sql_query = "SELECT * FROM file_listing";
+            let result_set: Vec<RecordBatch> = conn.prepare(sql_query)?.query_arrow([])?.collect();
+            df_db::record_batches_to_polars_df(result_set)
+        })
+    })?;
+
+    // Write the DataFrame as a parquet file
+    let output_path = workspace.dir().join(output_path);
+
+    // Check if output_path has a ".parquet" extension, if not, add it
+    let output_path = if output_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("parquet"))
+    {
+        output_path
+    } else {
+        output_path.with_extension("parquet")
     };
 
-    let diff_summary = TabularDiffSummary {
-        modifications: TabularDiffMods {
-            row_counts: row_mods,
-            col_changes: TabularSchemaDiff::empty(),
-        },
-        schemas,
-        dupes: TabularDiffDupes::empty(),
-    };
+    // Create parent directories if they don't exist
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
-    let diff_result = TabularDiff {
-        contents: diff_df,
-        parameters: TabularDiffParameters::empty(),
-        summary: diff_summary,
-        filename1: None,
-        filename2: None,
-    };
+    write_df_parquet(&mut df, &output_path)?;
 
-    Ok(DiffResult::Tabular(diff_result))
+    repositories::workspaces::files::add(workspace, &output_path).await?;
+
+    let files_vec: Vec<FileNodeWithDir> = files.iter().cloned().collect();
+    set_image_metadata_if_applicable(repo, workspace, &files_vec, &output_path).await?;
+
+    let commit =
+        repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await?;
+    println!(
+        "Created parquet file with {} file paths at: {:?}",
+        file_paths.len(),
+        output_path
+    );
+
+    Ok(commit)
+}
+
+pub async fn set_image_metadata_if_applicable(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    files: &[FileNodeWithDir],
+    output_path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let is_image_column: Vec<bool> = files
+        .iter()
+        .map(|file_with_dir| {
+            let data_type = file_with_dir.file_node.data_type();
+            *data_type == EntryDataType::Image
+        })
+        .collect();
+
+    // Only set metadata if all files are images
+    if !is_image_column.is_empty() && is_image_column.iter().all(|&x| x) {
+        let render_metadata = serde_json::json!({
+            "_oxen": {
+                "render": {
+                    "func": "image"
+                }
+            }
+        });
+
+        repositories::workspaces::data_frames::columns::add_column_metadata(
+            repo,
+            workspace,
+            output_path.as_ref().to_path_buf(),
+            "file_path".to_string(),
+            &render_metadata,
+        )?;
+    }
+
+    Ok(())
 }
 
 pub fn duckdb_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
@@ -309,7 +492,7 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
     // Create the EXCLUDE clause
     let excluded_cols = OXEN_COLS
         .iter()
-        .map(|col| format!("\"{}\"", col))
+        .map(|col| format!("\"{col}\""))
         .collect::<Vec<String>>()
         .join(", ");
 
@@ -337,15 +520,15 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
         before_from.trim().to_string()
     } else if before_from.trim().to_lowercase().ends_with("select *") {
         // For SELECT *, replace with SELECT * EXCLUDE (...)
-        format!("SELECT * EXCLUDE ({})", excluded_cols)
+        format!("SELECT * EXCLUDE ({excluded_cols})")
     } else {
         // For explicit column selections, add EXCLUDE after the columns
         let (select_part, columns_part) = before_from.split_at(select_idx + "select".len());
         let columns = columns_part.trim();
-        format!("{} {} EXCLUDE ({})", select_part, columns, excluded_cols)
+        format!("{select_part} {columns} EXCLUDE ({excluded_cols})")
     };
 
-    Ok(format!("{} {}", modified_select, after_from))
+    Ok(format!("{modified_select} {after_from}"))
 }
 
 #[cfg(test)]
@@ -461,7 +644,7 @@ mod tests {
 
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
-            log::debug!("status is {:?}", status);
+            log::debug!("status is {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             // List the staged mods
@@ -628,7 +811,7 @@ mod tests {
             }
 
             let status = repositories::status(&repo)?;
-            log::debug!("got this status {:?}", status);
+            log::debug!("got this status {status:?}");
 
             // Commit the new file
 
@@ -637,7 +820,7 @@ mod tests {
                 email: "email".to_string(),
                 message: "Deleting a row allegedly".to_string(),
             };
-            let commit_2 = workspaces::commit(&workspace, &new_commit, branch_name)?;
+            let commit_2 = workspaces::commit(&workspace, &new_commit, branch_name).await?;
 
             let file_1 = repositories::revisions::get_version_file_from_commit_id(
                 &repo, &commit.id, &file_path,
@@ -645,7 +828,7 @@ mod tests {
             // copy the file to the same path but with .csv as the extension
             let file_1_csv = file_1.with_extension("csv");
             util::fs::copy(&file_1, &file_1_csv)?;
-            log::debug!("copied file 1 to {:?}", file_1_csv);
+            log::debug!("copied file 1 to {file_1_csv:?}");
 
             let file_2 = repositories::revisions::get_version_file_from_commit_id(
                 &repo,
@@ -654,11 +837,12 @@ mod tests {
             )?;
             let file_2_csv = file_2.with_extension("csv");
             util::fs::copy(&file_2, &file_2_csv)?;
-            log::debug!("copied file 2 to {:?}", file_2_csv);
+            log::debug!("copied file 2 to {file_2_csv:?}");
             let diff_result =
-                repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])?;
+                repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])
+                    .await?;
 
-            log::debug!("diff result is {:?}", diff_result);
+            log::debug!("diff result is {diff_result:?}");
             match diff_result {
                 DiffResult::Tabular(tabular_diff) => {
                     let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
@@ -727,7 +911,7 @@ mod tests {
             )?;
             // List the files that are changed - this file should be back into unchanged state
             let status = workspaces::status::status(&workspace)?;
-            log::debug!("found mod entries: {:?}", status);
+            log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -795,7 +979,7 @@ mod tests {
             log::debug!("done deleting row");
             // List the files that are changed - this file should be back into unchanged state
             let status = workspaces::status::status(&workspace)?;
-            log::debug!("found mod entries: {:?}", status);
+            log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 0);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -881,7 +1065,7 @@ mod tests {
                 &json_data,
             )?;
 
-            log::debug!("res is... {:?}", res);
+            log::debug!("res is... {res:?}");
 
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 0);
@@ -942,7 +1126,7 @@ mod tests {
 
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -960,9 +1144,10 @@ mod tests {
                 &workspace,
                 &file_path,
                 &id_to_modify,
-            )?;
+            )
+            .await?;
 
-            log::debug!("res is... {:?}", res);
+            log::debug!("res is... {res:?}");
 
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 0);
@@ -1016,7 +1201,7 @@ mod tests {
             // Stage a deletion
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
             let status = workspaces::status::status(&workspace)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -1029,10 +1214,11 @@ mod tests {
             }
 
             // Now restore the row
-            workspaces::data_frames::rows::restore(&repo, &workspace, &file_path, &id_to_delete)?;
+            workspaces::data_frames::rows::restore(&repo, &workspace, &file_path, &id_to_delete)
+                .await?;
 
             let status = workspaces::status::status(&workspace)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             assert!(status.is_clean());
 
             let diff = workspaces::diff(&repo, &workspace, &file_path)?;
@@ -1109,14 +1295,14 @@ mod tests {
                 message: "Appending tabular data".to_string(),
             };
 
-            let commit = workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME)?;
+            let commit = workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME).await?;
 
             // Make sure version file is updated
             let entry = repositories::entries::get_commit_entry(&repo, &commit, &path)?.unwrap();
             let version_file = util::fs::version_path(&repo, &entry);
             let extension = entry.path.extension().unwrap().to_str().unwrap();
             let data_frame =
-                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty())?;
+                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty()).await?;
             println!("{data_frame}");
             assert_eq!(
                 format!("{data_frame}"),

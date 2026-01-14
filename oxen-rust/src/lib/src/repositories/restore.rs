@@ -55,6 +55,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -237,7 +238,7 @@ mod tests {
             let og_contents = util::fs::read_from_path(&bbox_path)?;
             util::fs::remove_file(&bbox_path)?;
 
-            println!("restoring {:?}", bbox_file);
+            println!("restoring {bbox_file:?}");
 
             repositories::restore::restore(
                 &repo,
@@ -267,7 +268,7 @@ mod tests {
 
             let mut opts = DFOpts::empty();
             opts.add_row = Some("{\"file\": \"train/dog_99.jpg\", \"label\": \"dog\", \"min_x\": 101.5, \"min_y\": 32.0, \"width\": 385, \"height\": 330}".to_string());
-            let mut df = tabular::read_df(&bbox_path, opts)?;
+            let mut df = tabular::read_df(&bbox_path, opts).await?;
             tabular::write_df(&mut df, &bbox_path)?;
 
             repositories::restore::restore(
@@ -356,7 +357,7 @@ mod tests {
             let ann_path = repo.path.join(&ann_file);
             let new_line = "new_data,123,456,789";
             append_line_txt_file(&ann_path, new_line)?;
-            let orig_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
             // Commit
@@ -371,7 +372,7 @@ mod tests {
                 .await?;
 
             // Make sure is same size
-            let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());
 
@@ -394,7 +395,7 @@ mod tests {
             let new_line = "new_data,123,456,789";
             append_line_txt_file(&ann_path, new_line)?;
 
-            let orig_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
 
             let og_contents = util::fs::read_from_path(&ann_path)?;
 
@@ -411,7 +412,7 @@ mod tests {
                 .await?;
 
             // Make sure is same size
-            let restored_df = tabular::read_df(&ann_path, DFOpts::empty())?;
+            let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
 
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());
@@ -503,7 +504,6 @@ mod tests {
         .await
     }
 
-    // FAILS BECAUSE OF search entries in commit
     #[tokio::test]
     async fn test_wildcard_restore_deleted_and_present() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|repo| async move {
@@ -545,9 +545,12 @@ mod tests {
             assert_eq!(status.staged_files.len(), 7);
             assert_eq!(status.removed_files.len(), 0);
 
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("images/*"));
+
             // Restore staged with wildcard
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("images/*"),
+                paths,
                 staged: true,
                 source_ref: None,
                 is_remote: false,
@@ -561,13 +564,15 @@ mod tests {
             assert_eq!(status.removed_files.len(), 7);
             assert_eq!(status.staged_files.len(), 0);
 
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("images/*"));
+
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("images/*"),
+                paths,
                 staged: false,
                 source_ref: None,
                 is_remote: false,
             };
-
             repositories::restore::restore(&repo, restore_opts).await?;
 
             let status = repositories::status(&repo)?;
@@ -581,7 +586,42 @@ mod tests {
         .await
     }
 
-    // FAILS BECAUSE OF STATUS IT SEEMS LIKE
+    #[tokio::test]
+    async fn test_restore_wildcard_prefix_staged() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            // Repo has 7 images in train/
+            let rm_opts = RmOpts {
+                path: PathBuf::from("train/*"),
+                recursive: false,
+                staged: false,
+            };
+            repositories::rm(&repo, &rm_opts)?;
+
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.staged_files.len(), 7); // 3 cats, 4 dogs
+
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("train/dog_*.jpg"));
+
+            // Restore just the dogs from the stage
+            let restore_opts = RestoreOpts {
+                paths,
+                staged: true,
+                source_ref: None,
+                is_remote: false,
+            };
+            repositories::restore::restore(&repo, restore_opts).await?;
+
+            let status = repositories::status(&repo)?;
+
+            assert_eq!(status.staged_files.len(), 3); // 3 cats should still be staged
+            assert_eq!(status.removed_files.len(), 4); // 4 dogs back in working dir
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
@@ -622,8 +662,11 @@ mod tests {
             assert_eq!(status.staged_schemas.len(), 2);
 
             // Restore *.csv
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("new_annotations").join(PathBuf::from("*.csv")));
+
             let restore_opts = RestoreOpts {
-                path: PathBuf::from("*.csv"),
+                paths,
                 staged: true,
                 source_ref: None,
                 is_remote: false,

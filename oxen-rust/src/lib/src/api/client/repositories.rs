@@ -76,7 +76,7 @@ pub async fn get_by_name_host_and_scheme(
 ) -> Result<Option<RemoteRepository>, OxenError> {
     let name = name.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme.as_ref());
-    log::debug!("get_by_name_host_and_scheme({}) remote url: {}", name, url);
+    log::debug!("get_by_name_host_and_scheme({name}) remote url: {url}");
     get_by_url(&url).await
 }
 
@@ -89,7 +89,7 @@ pub async fn get_by_name_host_and_remote(
     let name = name.as_ref();
     let scheme = scheme.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme);
-    log::debug!("get_by_name_host_and_remote({}) remote url: {}", name, url);
+    log::debug!("get_by_name_host_and_remote({name}) remote url: {url}");
     let remote = Remote {
         name: String::from(remote.as_ref()),
         url,
@@ -112,7 +112,7 @@ pub async fn get_by_url(url: &str) -> Result<Option<RemoteRepository>, OxenError
 
 pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, OxenError> {
     let url = api::endpoint::url_from_remote(remote, "")?;
-    log::debug!("get_by_remote url: {}", url);
+    log::debug!("get_by_remote url: {url}");
 
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -122,13 +122,13 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
     }
 
     let body = client::parse_json_body(&url, res).await?;
-    log::debug!("repositories::get_by_remote {}\n {}", url, body);
+    log::debug!("repositories::get_by_remote {url}\n {body}");
 
     let response: Result<RepositoryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(Some(RemoteRepository::from_view(&j_res.repository, remote))),
         Err(err) => {
-            log::debug!("Err: {}", err);
+            log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
                 "get_by_remote Could not deserialize repository [{url}]"
             )))
@@ -139,15 +139,9 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
 pub async fn get_repo_data_by_remote(
     remote: &Remote,
 ) -> Result<Option<RepositoryDataTypesView>, OxenError> {
-    log::debug!(
-        "api::client::repositories::get_repo_data_by_remote({:?})",
-        remote
-    );
+    log::debug!("api::client::repositories::get_repo_data_by_remote({remote:?})");
     let url = api::endpoint::url_from_remote(remote, "")?;
-    log::debug!(
-        "api::client::repositories::get_repo_data_by_remote url: {}",
-        url
-    );
+    log::debug!("api::client::repositories::get_repo_data_by_remote url: {url}");
 
     let client = client::new_for_url(&url)?;
     match client.get(&url).send().await {
@@ -157,14 +151,14 @@ pub async fn get_repo_data_by_remote(
             }
 
             let body = client::parse_json_body(&url, res).await?;
-            log::debug!("repositories::get_repo_data_by_remote {}\n {}", url, body);
+            log::debug!("repositories::get_repo_data_by_remote {url}\n {body}");
 
             let response: Result<RepositoryDataTypesResponse, serde_json::Error> =
                 serde_json::from_str(&body);
             match response {
                 Ok(j_res) => Ok(Some(j_res.repository)),
                 Err(err) => {
-                    log::debug!("Err: {}", err);
+                    log::debug!("Err: {err}");
                     Err(OxenError::basic_str(format!(
                         "api::repositories::get_repo_data_by_remote() Could not deserialize repository [{url}]"
                     )))
@@ -187,22 +181,22 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
     let scheme = repo.scheme();
 
     let url = api::endpoint::url_from_host_and_scheme(&host, "", &scheme);
-    let params = json!({
-        "name": repo_name,
-        "namespace": namespace,
-        "description": repo.description,
-        "is_public": repo.is_public(),
-    });
-    log::debug!("Create remote: {} {}\n{}", url, repo.repo_id(), params);
-
+    let body = serde_json::to_string(&repo)?;
+    log::debug!("Create remote: {} {}\n{}", url, repo.repo_id(), body);
     // no user agent, otherwise the create will fail when going through the hub
     let client = client::new_for_url_no_user_agent(&url)?;
-    log::debug!("client: {:?}", client);
-    match client.post(&url).json(&params).send().await {
+    log::debug!("client: {client:?}");
+
+    match client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
         Ok(res) => {
             let body = client::parse_json_body(&url, res).await?;
-
-            log::debug!("repositories::create response {}", body);
+            log::debug!("repositories::create response {body}");
             let response: RepositoryCreationResponse = serde_json::from_str(&body)?;
             Ok(RemoteRepository::from_creation_view(
                 &response.repository,
@@ -228,14 +222,14 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
     let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
 
     // convert repo_new to json with serde
-    log::debug!("Create remote: {}\n{:?}", url, repo_new);
+    log::debug!("Create remote: {url}\n{repo_new:?}");
 
     // no user agent, otherwise the create will fail when going through the hub
     let client = client::new_for_url_no_user_agent(&url)?;
     if let Ok(res) = client.post(&url).json(&repo_new).send().await {
         let body = client::parse_json_body(&url, res).await?;
 
-        log::debug!("repositories::create response {}", body);
+        log::debug!("repositories::create response {body}");
         let response: Result<RepositoryCreationResponse, serde_json::Error> =
             serde_json::from_str(&body);
         match response {
@@ -336,13 +330,13 @@ pub async fn create_from_local(
 
     // convert repo_new to json with serde
     // let params = serde_json::to_string(&repo_new)?;
-    log::debug!("repositories::create_from_local: {}\n{:?}", url, repo_new);
+    log::debug!("repositories::create_from_local: {url}\n{repo_new:?}");
 
     let client = client::new_for_url(&url)?;
     let res = client.post(&url).json(&repo_new).send().await?;
     let body = client::parse_json_body(&url, res).await?;
 
-    log::debug!("repositories::create_from_local response {}", body);
+    log::debug!("repositories::create_from_local response {body}");
     let response: Result<RepositoryCreationResponse, serde_json::Error> =
         serde_json::from_str(&body);
     match response {
@@ -369,8 +363,25 @@ pub async fn create_from_local(
 
 pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, OxenError> {
     let url = repository.api_url()?;
-    log::debug!("Deleting repository: {}", url);
 
+    let client = client::new_for_url(&url)?;
+    if let Ok(res) = client.delete(&url).send().await {
+        let body = client::parse_json_body(&url, res).await?;
+        let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
+        match response {
+            Ok(val) => Ok(val),
+            Err(_) => Err(OxenError::basic_str(format!(
+                "Could not delete repository \n\n{body}"
+            ))),
+        }
+    } else {
+        Err(OxenError::basic_str(
+            "api::repositories::delete() Request failed",
+        ))
+    }
+}
+
+pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.delete(&url).send().await {
         let body = client::parse_json_body(&url, res).await?;
@@ -534,7 +545,7 @@ async fn action_hook(
     state: ActionEventState,
     body: Option<value::Value>,
 ) -> Result<(), OxenError> {
-    let uri = format!("/action/{}/{}", state, action_name);
+    let uri = format!("/action/{state}/{action_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     let client = client::new_for_url(&url)?;
 
@@ -648,7 +659,8 @@ mod tests {
         test::run_empty_local_repo_test_async(|local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
-            let repo_new = RepoNew::from_namespace_name_host(namespace, &name, test::test_host());
+            let repo_new =
+                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
             let repository =
                 api::client::repositories::create_from_local(&local_repo, repo_new).await?;
             println!("got repository: {repository:?}");
@@ -674,7 +686,7 @@ mod tests {
                 contents: FileContents::Text(String::from("Hello world!")),
                 user,
             }];
-            let mut repo_new = RepoNew::from_files(namespace, &name, files);
+            let mut repo_new = RepoNew::from_files(namespace, &name, files, None);
             repo_new.host = Some(test::test_host());
             repo_new.scheme = Some("http".to_string());
             let repository = api::client::repositories::create(repo_new).await?;
@@ -723,7 +735,7 @@ mod tests {
             };
 
             let mut repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, test::test_host());
+                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
             repo_new.scheme = Some("http".to_string());
 
             let repository = api::client::repositories::create_repo_with_files(

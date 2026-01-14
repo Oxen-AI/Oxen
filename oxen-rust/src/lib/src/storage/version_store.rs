@@ -5,13 +5,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use image::DynamicImage;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncSeek};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
+use tokio_stream::Stream;
 
 use crate::constants;
 use crate::error::OxenError;
+use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::util;
+use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// Configuration for version storage backend
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -29,6 +34,12 @@ pub trait AsyncReadSeek: AsyncRead + AsyncSeek + Send + Sync + Unpin {}
 
 /// Implement AsyncReadSeek for any type that implements both AsyncRead and AsyncSeek
 impl<T: AsyncRead + AsyncSeek + Send + Sync + Unpin> AsyncReadSeek for T {}
+
+/// Trait for async write operations
+pub trait AsyncWriteSeek: AsyncWrite + AsyncSeek + Send + Sync + Unpin {}
+
+/// Implement AsyncWriteSeek for any type that implements both AsyncWrite and AsyncSeek
+impl<T: AsyncWrite + AsyncSeek + Send + Sync + Unpin> AsyncWriteSeek for T {}
 
 /// Trait for sync read and seek operations
 pub trait ReadSeek: Read + Seek + Send + Sync {}
@@ -71,14 +82,38 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `chunk_number` - The chunk number to store
+    /// * `offset` - The starting byte position of the chunk
     /// * `data` - The raw bytes to store
     async fn store_version_chunk(
         &self,
         hash: &str,
-        chunk_number: u32,
+        offset: u64,
         data: &[u8],
     ) -> Result<(), OxenError>;
+
+    /// Store a derived version file (resized, video thumbnail etc.)
+    ///
+    /// # Arguments
+    /// * `derived_image` - The derived image to store, used for local processing
+    /// * `image_buf` - The raw bytes to store, used for S3
+    /// * `derived_path` - Path/key to the derived version file
+    async fn store_version_derived(
+        &self,
+        derived_image: DynamicImage,
+        image_buf: Vec<u8>,
+        derived_path: &Path,
+    ) -> Result<(), OxenError>;
+
+    /// Get a writer for a chunk of a version file
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `offset` - The starting byte position of the chunk
+    async fn get_version_chunk_writer(
+        &self,
+        hash: &str,
+        offset: u64,
+    ) -> Result<Box<dyn AsyncWrite + Send + Unpin>, OxenError>;
 
     /// Retrieve a chunk of a version file
     ///
@@ -93,11 +128,24 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         size: u64,
     ) -> Result<Vec<u8>, OxenError>;
 
+    /// Get a chunk of a version file as a stream of bytes
+    ///    
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    /// * `offset` - The starting byte position of the chunk
+    /// * `size` - The chunk size
+    async fn get_version_chunk_stream(
+        &self,
+        hash: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+
     /// List all chunks for a version file
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u32>, OxenError>;
+    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
 
     /// Combine all the chunks for a version file into a single file
     ///
@@ -108,17 +156,35 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn combine_version_chunks(&self, hash: &str, cleanup: bool)
         -> Result<PathBuf, OxenError>;
 
-    /// Open a version file for async reading
+    /// Get metadata of a version file
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
-    fn open_version(&self, hash: &str) -> Result<Box<dyn ReadSeek + Send + Sync>, OxenError>;
+    async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError>;
 
     /// Retrieve a version file's contents as bytes (less efficient for large files)
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
+
+    /// Get a version file as a stream of bytes
+    ///    
+    /// # Arguments
+    /// * `hash` - The content hash of the version to retrieve
+    async fn get_version_stream(
+        &self,
+        hash: &str,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+
+    /// Get stream of a derived version file (resized, video thumbnail etc.)
+    ///
+    /// # Arguments
+    /// * `derived_path` - Path/key to the derived version file
+    async fn get_version_derived_stream(
+        &self,
+        derived_path: &Path,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
 
     /// Get the path to a version file (sync operation)
     ///
@@ -137,7 +203,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash to check
-    fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
+    async fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
 
     /// Delete a version
     ///
@@ -148,6 +214,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// List all versions
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;
 
+    /// Clean corrupted version files
+    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError>;
+
     /// Get the storage type identifier (e.g., "local", "s3")
     fn storage_type(&self) -> &str;
 
@@ -155,75 +224,48 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     fn storage_settings(&self) -> HashMap<String, String>;
 }
 
-/// Factory method to create the appropriate async version store (sync wrapper)
-/// TODO: Review this function when implementing S3 version store
+// This only creates a version store struct, it does not initialize it
 pub fn create_version_store(
-    path: impl AsRef<Path>,
-    storage_config: Option<&StorageConfig>,
+    repo_dir: &Path,
+    storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
-    // Handle async initialization in sync context
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // Use thread spawn - works in both single and multi-threaded runtimes
-        let path = path.as_ref().to_path_buf();
-        let storage_config = storage_config.cloned();
-        std::thread::spawn(move || {
-            handle.block_on(create_version_store_async(&path, storage_config.as_ref()))
-        })
-        .join()
-        .map_err(|_| OxenError::basic_str("Failed to join thread"))?
-    } else {
-        // If not in tokio runtime, use futures' block_on
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(create_version_store_async(path, storage_config))
-    }
-}
+    match storage_opts.type_.as_str() {
+        "local" => {
+            let Some(ref local_storage_opts) = storage_opts.local_storage_opts else {
+                return Err(OxenError::basic_str("local storage opts not found"));
+            };
 
-/// Async implementation of create_version_store
-pub async fn create_version_store_async(
-    path: impl AsRef<Path>,
-    storage_config: Option<&StorageConfig>,
-) -> Result<Arc<dyn VersionStore>, OxenError> {
-    let path = path.as_ref();
-    match storage_config {
-        Some(config) => match config.type_.as_str() {
-            "local" => {
-                let versions_dir = util::fs::oxen_hidden_dir(path)
+            let versions_dir = if let Some(path) = &local_storage_opts.path {
+                if path.starts_with(".oxen") {
+                    // if the path is relative, convert to absolute path
+                    repo_dir.join(path)
+                } else {
+                    path.clone()
+                }
+            } else {
+                util::fs::oxen_hidden_dir(repo_dir)
                     .join(constants::VERSIONS_DIR)
-                    .join(constants::FILES_DIR);
-                let store = LocalVersionStore::new(versions_dir);
-                store.init().await?;
-                Ok(Arc::new(store))
-            }
-            "s3" => {
-                let bucket = config
-                    .settings
-                    .get("bucket")
-                    .ok_or_else(|| OxenError::basic_str("S3 bucket not specified"))?;
-                let prefix = config
-                    .settings
-                    .get("prefix")
-                    .cloned()
-                    .unwrap_or_else(|| String::from("versions"));
-                let store = S3VersionStore::new(bucket, prefix);
-                store.init().await?;
-                Ok(Arc::new(store))
-            }
-            _ => Err(OxenError::basic_str(format!(
-                "Unsupported async storage type: {}",
-                config.type_
-            ))),
-        },
-        None => {
-            // Default to local storage
-            let versions_dir = util::fs::oxen_hidden_dir(path)
-                .join(constants::VERSIONS_DIR)
-                .join(constants::FILES_DIR);
+                    .join(constants::FILES_DIR)
+            };
+
             let store = LocalVersionStore::new(versions_dir);
-            store.init().await?;
+
             Ok(Arc::new(store))
         }
+        "s3" => {
+            let Some(ref s3_opts) = storage_opts.s3_opts else {
+                return Err(OxenError::basic_str("s3 storage opts not found"));
+            };
+
+            let bucket = s3_opts.bucket.clone();
+            let prefix = s3_opts.prefix.clone().unwrap_or("versions".to_string());
+            let store = S3VersionStore::new(bucket, prefix);
+
+            Ok(Arc::new(store))
+        }
+        _ => Err(OxenError::basic_str(format!(
+            "Unsupported async storage type: {}",
+            storage_opts.type_
+        ))),
     }
 }

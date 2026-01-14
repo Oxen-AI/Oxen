@@ -1,10 +1,13 @@
-use crate::core::db::data_frames::df_db;
+use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::df::tabular::transform_new;
 use crate::core::df::{sql, tabular};
+use crate::core::staged::with_staged_db_manager;
 use crate::error::OxenError;
 use crate::model::data_frame::{DataFrameSchemaSize, DataFrameSlice, DataFrameSliceSchemas};
+use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::metadata_tabular::MetadataTabularImpl;
+use crate::model::ParsedResource;
 use crate::model::{Commit, DataFrameSize, LocalRepository, Schema, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
@@ -14,17 +17,57 @@ use std::path::Path;
 
 pub mod schemas;
 
-pub fn get_slice(
+pub async fn get_slice(
     repo: &LocalRepository,
-    commit: &Commit,
+    resource: &ParsedResource,
     path: impl AsRef<Path>,
     opts: &DFOpts,
 ) -> Result<DataFrameSlice, OxenError> {
-    // Get the file node
-    let file_node = repositories::tree::get_file_by_path(repo, commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+    let workspace = resource.workspace.as_ref();
+    let commit = match workspace {
+        Some(ws) => ws.commit.clone(),
+        None => resource
+            .commit
+            .clone()
+            .ok_or(OxenError::basic_str("Commit not found"))?,
+    };
 
-    log::debug!("get_slice file_node {:?}", file_node);
+    let (staged_repo, base_repo) = match workspace {
+        Some(ws) => (&ws.workspace_repo, repo),
+        None => (repo, repo),
+    };
+
+    let file_node = match workspace {
+        Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
+            // Try staged DB first
+            if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
+                let file_node = match staged_node.node.node {
+                    EMerkleTreeNode::File(f) => Ok(f),
+                    _ => Err(OxenError::basic_str(
+                        "Only single file download is supported",
+                    )),
+                }?;
+                return Ok(file_node);
+            }
+
+            // Fall back to commit tree using workspace's commit
+            let commit = &ws.commit;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+            Ok(file_node)
+        }),
+        None => {
+            let commit = resource
+                .commit
+                .as_ref()
+                .ok_or(OxenError::basic_str("Commit not found"))?;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+            Ok(file_node)
+        }
+    }?;
+
+    log::debug!("get_slice file_node {file_node:?}");
 
     let metadata: Result<MetadataTabularImpl, OxenError> = match file_node.metadata() {
         Some(metadata) => match metadata {
@@ -38,7 +81,7 @@ pub fn get_slice(
         }
     };
     let metadata = metadata?;
-    log::debug!("get_slice metadata {:?}", metadata);
+    log::debug!("get_slice metadata {metadata:?}");
 
     let source_schema = metadata.schema;
     let data_frame_size = DataFrameSize {
@@ -46,13 +89,13 @@ pub fn get_slice(
         height: metadata.height,
     };
 
-    let handle_sql_result = handle_sql_querying(repo, commit, path, opts, &data_frame_size);
+    let handle_sql_result = handle_sql_querying(repo, &commit, path, opts, &data_frame_size).await;
     if let Ok(response) = handle_sql_result {
         return Ok(response);
     }
     // Read the data frame from the version path
     let version_path = util::fs::version_path_from_hash(repo, file_node.hash().to_string());
-    let df = tabular::read_df_with_extension(version_path, file_node.extension(), opts)?;
+    let df = tabular::read_df_with_extension(version_path, file_node.extension(), opts).await?;
     log::debug!("get_slice df {:?}", df.height());
 
     // Check what the view height is
@@ -65,7 +108,7 @@ pub fn get_slice(
     // Update the schema metadata from the source schema
     let mut slice_schema = Schema::from_polars(df.schema());
     slice_schema.update_metadata_from_schema(&source_schema);
-    log::debug!("get_slice slice_schema {:?}", slice_schema);
+    log::debug!("get_slice slice_schema {slice_schema:?}");
     // Return a DataFrameSlice
     Ok(DataFrameSlice {
         schemas: DataFrameSliceSchemas {
@@ -86,7 +129,7 @@ pub fn get_slice(
     })
 }
 
-fn handle_sql_querying(
+async fn handle_sql_querying(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
@@ -109,11 +152,11 @@ fn handle_sql_querying(
 
     if let (Some(sql), Some(workspace)) = (opts.sql.clone(), workspace) {
         let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-        let mut conn = df_db::get_connection(db_path)?;
-
-        let df = sql::query_df(&mut conn, sql, None)?;
-        log::debug!("handle_sql_querying got df {:?}", df);
-        let paginated_df = transform_new(df.clone().lazy(), opts.clone())?.collect()?;
+        let df = with_df_db_manager(db_path, |manager| {
+            manager.with_conn_mut(|conn| sql::query_df(conn, sql, None))
+        })?;
+        log::debug!("handle_sql_querying got df {df:?}");
+        let paginated_df = transform_new(df.clone().lazy(), opts).await?.collect()?;
 
         let source_schema = if let Some(schema) =
             repositories::data_frames::schemas::get_by_path(repo, &workspace.commit, path)?

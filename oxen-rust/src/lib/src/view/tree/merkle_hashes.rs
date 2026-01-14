@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::model::merkle_tree::merkle_hash::MerkleHashAsString;
-use crate::model::MerkleHash;
+use crate::model::{CommitEntry, MerkleHash};
 use crate::view::StatusMessage;
 
+use utoipa::ToSchema;
+
 #[serde_as]
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct MerkleHashes {
     #[serde_as(as = "HashSet<MerkleHashAsString>")]
     pub hashes: HashSet<MerkleHash>,
@@ -24,10 +26,18 @@ pub struct NodeHashes {
 }
 
 #[serde_as]
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct MerkleHashesResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     #[serde_as(as = "HashSet<MerkleHashAsString>")]
     pub hashes: HashSet<MerkleHash>,
+}
+
+#[serde_as]
+#[derive(Deserialize, Serialize, Debug)]
+pub struct ListCommitEntryResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub entries: Vec<CommitEntry>,
 }

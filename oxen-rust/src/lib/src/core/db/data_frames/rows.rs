@@ -83,11 +83,7 @@ pub fn modify_row(
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
-        log::error!(
-            "modify_row incompatible_schemas {:?}\n{:?}",
-            table_schema,
-            df_cols
-        );
+        log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
         return Err(OxenError::incompatible_schemas(table_schema));
     }
 
@@ -95,15 +91,20 @@ pub fn modify_row(
     let select_hash = Select::new()
         .select("*")
         .from(TABLE_NAME)
-        .where_clause(&format!("\"{}\" = '{}'", OXEN_ID_COL, uuid));
+        .where_clause(&format!("\"{OXEN_ID_COL}\" = '{uuid}'"));
     let maybe_db_data = df_db::select(conn, &select_hash, None)?;
 
     let mut new_row = maybe_db_data.clone().to_owned();
+
     for col in df.get_columns() {
-        // Replace that column in the existing df if it exists
+        // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
         let col_name = col.name();
-        let new_val = df.column(col_name)?.get(0)?;
-        new_row.with_column(Series::new(PlSmallStr::from_str(col_name), vec![new_val]))?;
+        let col_series = df.column(col_name)?;
+        if let Some(col_idx) = new_row.get_column_index(col_name) {
+            new_row.replace_column(col_idx, col_series.clone())?;
+        } else {
+            new_row.with_column(col_series.clone())?;
+        }
     }
 
     // TODO could use a struct to return these more safely
@@ -151,11 +152,7 @@ pub fn modify_rows(
             .collect();
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
-            log::error!(
-                "modify_row incompatible_schemas {:?}\n{:?}",
-                table_schema,
-                df_cols
-            );
+            log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
             return Err(OxenError::incompatible_schemas(table_schema));
         }
 
@@ -163,15 +160,19 @@ pub fn modify_rows(
         let select_hash = Select::new()
             .select("*")
             .from(TABLE_NAME)
-            .where_clause(&format!("\"{}\" = '{}'", OXEN_ID_COL, row_id));
+            .where_clause(&format!("\"{OXEN_ID_COL}\" = '{row_id}'"));
         let maybe_db_data = df_db::select(conn, &select_hash, None)?;
 
         let mut new_row = maybe_db_data.clone().to_owned();
         for col in df.get_columns() {
-            // Replace that column in the existing df if it exists
+            // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
             let col_name = col.name();
-            let new_val = df.column(col_name)?.get(0)?;
-            new_row.with_column(Series::new(PlSmallStr::from_str(col_name), vec![new_val]))?;
+            let col_series = df.column(col_name)?;
+            if let Some(col_idx) = new_row.get_column_index(col_name) {
+                new_row.replace_column(col_idx, col_series.clone())?;
+            } else {
+                new_row.with_column(col_series.clone())?;
+            }
         }
 
         // TODO could use a struct to return these more safely
@@ -210,7 +211,7 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
     let select_stmt = sql::Select::new()
         .select("*")
         .from(TABLE_NAME)
-        .where_clause(&format!("{} = '{}'", OXEN_ID_COL, uuid));
+        .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
 
     let row_to_delete = df_db::select(conn, &select_stmt, None)?;
 
@@ -226,15 +227,15 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
         Some(status) => status,
         None => return Err(OxenError::basic_str("Diff status column is not a string")),
     };
-    log::debug!("status is: {}", status);
+    log::debug!("status is: {status}");
 
     // Rows that weren't in previous commits are just removed from the staging df, rows in previous commits are tombstoned as "Removed"
     if status == StagedRowStatus::Added.to_string() {
         log::debug!("staged_df_db::delete_row() deleting row");
         let stmt = sql::Delete::new()
             .delete_from(TABLE_NAME)
-            .where_clause(&format!("{} = '{}'", OXEN_ID_COL, uuid));
-        log::debug!("staged_df_db::delete_row() sql: {:?}", stmt);
+            .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
+        log::debug!("staged_df_db::delete_row() sql: {stmt:?}");
         conn.execute(&stmt.to_string(), [])?;
     } else {
         log::debug!("staged_df_db::delete_row() updating row to indicate deletion");
@@ -245,8 +246,8 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
                 DIFF_STATUS_COL,
                 StagedRowStatus::Removed
             ))
-            .where_clause(&format!("{} = '{}'", OXEN_ID_COL, uuid));
-        log::debug!("staged_df_db::delete_row() sql: {:?}", stmt);
+            .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
+        log::debug!("staged_df_db::delete_row() sql: {stmt:?}");
         conn.execute(&stmt.to_string(), [])?;
     };
 

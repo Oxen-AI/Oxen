@@ -19,9 +19,44 @@ jobs:
             platform: windows
       fail-fast: false
 
+    env:
+      AWS_REGION: us-west-1
+      AWS_ROLE: arn:aws:iam::213020545630:role/ci-test-integration-role
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
+      - name: Free up disk space
+        if: matrix.platform == 'linux'
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+
+          # Remove unnecessary tools and files to free up space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+
+          # Clean apt cache
+          sudo apt-get clean
+
+          echo "=== After cleanup ==="
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Copy rust-toolchain.toml to root
         if: matrix.platform != 'windows'
@@ -36,35 +71,69 @@ jobs:
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.0"
-          bundler-cache: true
-
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.10" # Test against the earliest supported Python version
 
-      - name: Cache based on dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            oxen-rust/target/
-            oxen-python/target/
-          key: ${{ matrix.os }}-cargo-dependencies-${{ hashFiles('**/Cargo.lock') }}
+          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
+          # Other branches will still use the cache but won't save it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            oxen-rust
+            oxen-python
 
       - name: Install dependencies (macOS)
         if: matrix.platform == 'macos'
         run: |
           brew update
-          brew install ffmpeg imagemagick redis
+          brew install redis pkg-config
           brew services start redis
+
+          # NOTE: This adds a lot of bloat and takes a long time to build.
+          #       we have ffmpeg disabled by default in the CI pipeline
+          # Set PKG_CONFIG_PATH so pkg-config can find FFmpeg libraries
+          # brew install ffmpeg@7 imagemagick
+          # echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      # NOTE: This adds a lot of bloat to the Windows image and takes a long time to build.
+      #       we have ffmpeg disabled by default in the CI pipeline
+      # - name: Install dependencies (Linux)
+      #   if: matrix.platform == 'linux'
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
+
+      # - name: Install dependencies (Windows)
+      #   if: matrix.platform == 'windows'
+      #   run: |
+      #     # Install clang (via llvm) and pkg-config via Chocolatey
+      #     choco install -y llvm pkgconfiglite
+
+      #     # Install vcpkg for FFmpeg static development libraries (libavcodec, libavformat, libavutil, libavfilter, libavdevice)
+      #     # Using x64-windows-static-md for static libraries with dynamic MSVC runtime (better compatibility)
+      #     git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+      #     cd C:\vcpkg
+      #     .\bootstrap-vcpkg.bat
+
+      #     # Install FFmpeg (includes libavutil, libavcodec, libavformat, libavfilter, libavdevice)
+      #     # FFmpeg installation provides libavutil.pc and other .pc files needed by pkg-config
+      #     .\vcpkg.exe install ffmpeg:x64-windows-static-md
+
+      #     # Set VCPKG_ROOT for cargo to find FFmpeg libraries
+      #     echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+      #     # Set PKG_CONFIG_PATH so pkg-config can find libavutil.pc and other FFmpeg .pc files
+      #     # vcpkg installs pkg-config files in the installed/<triplet>/lib/pkgconfig directory
+      #     # This must be set before cargo build runs, as ffmpeg-sys-next uses pkg-config during build
+      #     $pkgConfigPath = "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+      #     echo "PKG_CONFIG_PATH=$pkgConfigPath" >> $env:GITHUB_ENV
+
+      - name: Install nextest runner
+        uses: taiki-e/install-action@nextest
 
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)
@@ -96,7 +165,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
-          .\target\debug\oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
           copy user_config.toml data\test\config\user_config.toml
 
       - name: Run oxen-rust tests (Linux/macOS)
@@ -104,35 +173,33 @@ jobs:
         run: |
           cd ${{ github.workspace }}/oxen-rust
           ./target/debug/oxen-server start &
-          cargo test -- --test-threads=3
+          cargo nextest run --profile ci
 
       - name: Run oxen-rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
           Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo test -- --test-threads=1
+          cargo nextest run --profile ci
 
-      # RSpec Tests
-      - name: Run RSpec tests (macOS)
-        if: matrix.platform == 'macos'
+      # CLI Tests
+      - name: Run CLI tests (Linux/macOS)
+        if: matrix.platform != 'windows'
         env:
           PATH: ${{ env.PATH }}:${{ github.workspace }}/oxen-rust/target/debug
         run: |
           cd ${{ github.workspace }}/oxen-rust/cli-test
-          bundle config path vendor/bundle
-          bundle install
-          bundle exec rspec spec/test_cases/**/tests.rb
+          uv sync
+          uv run pytest tests -v
 
-      - name: Run RSpec tests (Windows)
+      - name: Run CLI tests (Windows)
         if: matrix.platform == 'windows'
         env:
           PATH: ${{ env.PATH }};${{ github.workspace }}/oxen-rust/target/debug
         run: |
-          cd ${{ github.workspace }}/oxen-rust/cli-test
-          bundle config path vendor/bundle
-          bundle install
-          bundle exec rspec spec/test_cases/**/tests.rb
+          cd ${{ github.workspace }}\oxen-rust\cli-test
+          uv sync
+          uv run pytest tests -v
 
       # Oxen Python Tests
       - name: Copy binaries for Python tests (Linux/macOS)
@@ -154,8 +221,9 @@ jobs:
           ~/oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          uv run maturin develop --uv
-          uv run pytest -s tests
+          source .venv/bin/activate
+          maturin develop
+          pytest -s tests
 
       - name: Run oxen-python tests (Windows)
         if: matrix.platform == 'windows'
@@ -165,5 +233,7 @@ jobs:
           ${{ github.workspace }}\oxen.exe config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
           uv sync --no-install-project
-          uv run maturin develop --uv
-          uv run pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
+          dir .venv
+          .venv\Scripts\Activate.ps1
+          maturin develop
+          pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py

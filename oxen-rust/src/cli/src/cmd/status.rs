@@ -91,7 +91,7 @@ impl RunCmd for StatusCmd {
             is_remote,
             ignore: parse_ignore_files(args.get_one::<String>("ignore")),
         };
-        log::debug!("status opts: {:?}", opts);
+        log::debug!("status opts: {opts:?}");
 
         let repo_status = repositories::status::status_from_opts(&repository, &opts)?;
 

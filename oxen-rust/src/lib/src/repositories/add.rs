@@ -175,7 +175,7 @@ A: Oxen.ai
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
             test::modify_txt_file(one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
-            println!("status: {:?}", status);
+            println!("status: {status:?}");
             status.print();
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
@@ -227,6 +227,69 @@ A: Oxen.ai
             let num_files_after_add = util::fs::count_files_in_dir(&repo.path);
 
             assert_eq!(num_files, num_files_after_add);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_command_add_dot_can_add_removed_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Track a new file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Adding a file")?;
+
+            // Remove the file and add with dot
+            util::fs::remove_file(&hello_file)?;
+            repositories::add(&repo, &repo.path).await?;
+
+            // The new file should be staged as removed
+            let status = repositories::status(&repo)?;
+            status.print();
+            assert_eq!(status.staged_files.len(), 1);
+            assert!(!hello_file.exists());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_command_add_dot_only_adds_changed_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Track 3 new files
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&world_file, "World")?;
+
+            let third_file = repo.path.join("third.txt");
+            util::fs::write_to_path(&third_file, "!")?;
+
+            // Add all files with dot
+            repositories::add(&repo, &repo.path).await?;
+
+            // All files should be staged
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.staged_files.len(), 3);
+
+            repositories::commit(&repo, "Adding 3 files")?;
+
+            // Alter 2 files
+            util::fs::remove_file(&hello_file)?;
+            test::modify_txt_file(&world_file, "MODIFIED")?;
+
+            // Add all files again
+            repositories::add(&repo, &repo.path).await?;
+
+            // The modified and removed files should be staged
+            let status = repositories::status(&repo)?;
+            assert_eq!(status.staged_files.len(), 2);
 
             Ok(())
         })
@@ -470,7 +533,7 @@ A: Oxen.ai
 
             // There now there are no untracked directories
             let status = repositories::status(&repo)?;
-            println!("status after add: {:?}", status);
+            println!("status after add: {status:?}");
             status.print();
             let dirs = status.untracked_dirs;
             assert_eq!(dirs.len(), 0);
@@ -569,6 +632,31 @@ A: Oxen.ai
             assert!(status
                 .staged_files
                 .contains_key(&PathBuf::from("annotations/train/one_shot.csv")));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_wildcard_prefix_match() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // Data from populate_train_dir:
+            // train/cat_1.jpg, train/cat_2.jpg, train/cat_3.jpg
+            // train/dog_1.jpg, train/dog_2.jpg, train/dog_3.jpg, train/dog_4.jpg
+
+            // Add only the cats
+            repositories::add(&repo, "train/cat_*.jpg").await?;
+            let status = repositories::status(&repo)?;
+
+            assert_eq!(status.staged_files.len(), 3);
+
+            // Add the dogs
+            repositories::add(&repo, "train/dog_*.jpg").await?;
+            let status = repositories::status(&repo)?;
+
+            // Should stage all 7 files now
+            assert_eq!(status.staged_files.len(), 7);
 
             Ok(())
         })

@@ -11,6 +11,22 @@ use liboxen::view::merge::{
 };
 use liboxen::view::StatusMessage;
 
+/// Check if branches are mergeable
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/merge/{base_head}",
+    tag = "Merge",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+    ),
+    responses(
+        (status = 200, description = "Merge status returned successfully", body = MergeableResponse),
+        (status = 404, description = "Repository or one of the revisions not found")
+    )
+)]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -53,6 +69,23 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// Merge branches
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/merge/{base_head}",
+    tag = "Merge",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+    ),
+    responses(
+        (status = 200, description = "Branches merged successfully", body = MergeSuccessResponse),
+        (status = 409, description = "Merge conflict", body = StatusMessage),
+        (status = 404, description = "Repository or one of the revisions not found"),
+    )
+)]
 pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -77,6 +110,9 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     // Check if mergeable
     match repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await {
         Ok(Some(merge_commit)) => {
+            // If the merge was successful, update the branch
+            repositories::branches::update(&repo, &base_branch.name, &merge_commit.id)?;
+
             let response = MergeSuccessResponse {
                 status: StatusMessage::resource_found(),
                 commits: MergeResult {
@@ -95,7 +131,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
             )))?
         }
         Err(err) => {
-            log::debug!("Err merging branches {:?}", err);
+            log::debug!("Err merging branches {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
         }
     }

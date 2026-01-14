@@ -1,10 +1,14 @@
-use crate::constants::OXEN_HIDDEN_DIR;
+use crate::config::RepositoryConfig;
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::core;
+use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
+use crate::opts::StorageOpts;
 use crate::repositories;
+use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
 
 use crate::model::{workspace::WorkspaceConfig, Commit, LocalRepository, NewCommitBody, Workspace};
@@ -61,13 +65,13 @@ pub fn get_by_dir(
     let config_path = Workspace::config_path_from_dir(workspace_dir);
 
     if !config_path.exists() {
-        log::debug!("workspace::get workspace not found: {:?}", workspace_dir);
+        log::debug!("workspace::get workspace not found: {workspace_dir:?}");
         return Ok(None);
     }
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let config: WorkspaceConfig = toml::from_str(&config_contents)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
 
     let Some(commit) = repositories::commits::get_by_id(repo, &config.workspace_commit_id)? else {
         return Err(OxenError::basic_str(format!(
@@ -76,11 +80,19 @@ pub fn get_by_dir(
         )));
     };
 
+    // Read repo config file for the storage config
+    let config_file = repo.path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
+    let repo_config = RepositoryConfig::from_file(&config_file)?;
+    let storage_opts = repo_config
+        .storage
+        .map(|s| StorageOpts::from_repo_config(repo, &s))
+        .transpose()?;
+
     Ok(Some(Workspace {
         id: config.workspace_id.unwrap_or(workspace_id.to_owned()),
         name: config.workspace_name,
         base_repo: repo.clone(),
-        workspace_repo: LocalRepository::new(workspace_dir)?,
+        workspace_repo: LocalRepository::new(workspace_dir, storage_opts)?,
         commit,
         is_editable: config.is_editable,
     }))
@@ -122,16 +134,12 @@ pub fn create_with_name(
     let workspace_dir = Workspace::workspace_dir(base_repo, &workspace_id_hash);
     let oxen_dir = workspace_dir.join(OXEN_HIDDEN_DIR);
 
-    log::debug!("index::workspaces::create called! {:?}", oxen_dir);
+    log::debug!("index::workspaces::create called! {oxen_dir:?}");
 
     if oxen_dir.exists() {
-        log::debug!(
-            "index::workspaces::create already have oxen repo directory {:?}",
-            oxen_dir
-        );
+        log::debug!("index::workspaces::create already have oxen repo directory {oxen_dir:?}");
         return Err(OxenError::basic_str(format!(
-            "Workspace {} already exists",
-            workspace_id
+            "Workspace {workspace_id} already exists"
         )));
     }
     let workspaces = list(base_repo)?;
@@ -162,18 +170,14 @@ pub fn create_with_name(
         Ok(s) => s,
         Err(e) => {
             return Err(OxenError::basic_str(format!(
-                "Failed to serialize workspace config to TOML: {}",
-                e
+                "Failed to serialize workspace config to TOML: {e}"
             )));
         }
     };
 
     // Write the TOML string to WORKSPACE_CONFIG
     let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
-    log::debug!(
-        "index::workspaces::create writing workspace config to: {:?}",
-        workspace_config_path
-    );
+    log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
     util::fs::write_to_path(&workspace_config_path, toml_string)?;
 
     Ok(Workspace {
@@ -209,7 +213,7 @@ impl std::ops::Deref for TemporaryWorkspace {
 impl Drop for TemporaryWorkspace {
     fn drop(&mut self) {
         if let Err(e) = delete(&self.workspace) {
-            log::error!("Failed to delete temporary workspace: {}", e);
+            log::error!("Failed to delete temporary workspace: {e}");
         }
     }
 }
@@ -220,7 +224,7 @@ pub fn create_temporary(
     commit: &Commit,
 ) -> Result<TemporaryWorkspace, OxenError> {
     let workspace_id = Uuid::new_v4().to_string();
-    let workspace_name = format!("temporary-{}", workspace_id);
+    let workspace_name = format!("temporary-{workspace_id}");
     let workspace = create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true)?;
     Ok(TemporaryWorkspace { workspace })
 }
@@ -241,8 +245,7 @@ fn check_existing_workspace_name(
 ) -> Result<(), OxenError> {
     if workspace.name == Some(workspace_name.to_string()) || *workspace_name == workspace.id {
         return Err(OxenError::basic_str(format!(
-            "A workspace with the name {} already exists",
-            workspace_name
+            "A workspace with the name {workspace_name} already exists"
         )));
     }
     Ok(())
@@ -250,14 +253,14 @@ fn check_existing_workspace_name(
 
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
     let workspaces_dir = Workspace::workspaces_dir(repo);
-    log::debug!("workspace::list got workspaces_dir: {:?}", workspaces_dir);
+    log::debug!("workspace::list got workspaces_dir: {workspaces_dir:?}");
     if !workspaces_dir.exists() {
         // Return early if the workspaces directory does not exist
         return Ok(vec![]);
     }
 
     let workspaces_hashes = util::fs::list_dirs_in_dir(&workspaces_dir)
-        .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {}", e)))?;
+        .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {e}")))?;
 
     log::debug!("workspace::list got {} workspaces", workspaces_hashes.len());
 
@@ -267,11 +270,11 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
         match get_by_dir(repo, &workspace_hash) {
             Ok(Some(workspace)) => workspaces.push(workspace),
             Ok(None) => {
-                log::debug!("Workspace not found: {:?}", workspace_hash);
+                log::debug!("Workspace not found: {workspace_hash:?}");
                 continue;
             }
             Err(e) => {
-                log::error!("Failed to list workspace: {}", e);
+                log::error!("Failed to list workspace: {e}");
                 continue;
             }
         }
@@ -302,20 +305,14 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
         return Err(OxenError::workspace_not_found(workspace_id.into()));
     }
 
-    log::debug!(
-        "workspace::delete cleaning up workspace dir: {:?}",
-        workspace_dir
-    );
+    log::debug!("workspace::delete cleaning up workspace dir: {workspace_dir:?}");
 
     // Clean up caches before deleting the workspace
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
     match util::fs::remove_dir_all(&workspace_dir) {
-        Ok(_) => log::debug!(
-            "workspace::delete removed workspace dir: {:?}",
-            workspace_dir
-        ),
-        Err(e) => log::error!("workspace::delete error removing workspace dir: {:?}", e),
+        Ok(_) => log::debug!("workspace::delete removed workspace dir: {workspace_dir:?}"),
+        Err(e) => log::error!("workspace::delete error removing workspace dir: {e:?}"),
     }
 
     Ok(())
@@ -335,18 +332,14 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     let config_path = workspace.config_path();
 
     if !config_path.exists() {
-        log::error!("Workspace config not found: {:?}", config_path);
+        log::error!("Workspace config not found: {config_path:?}");
         return Err(OxenError::workspace_not_found(workspace.id.clone().into()));
     }
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
-        log::error!(
-            "Failed to parse workspace config: {:?}, err: {}",
-            config_path,
-            e
-        );
-        OxenError::basic_str(format!("Failed to parse workspace config: {}", e))
+        log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
+        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
     })?;
 
     log::debug!(
@@ -358,15 +351,8 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     config.workspace_commit_id = new_commit_id.to_string();
 
     let toml_string = toml::to_string(&config).map_err(|e| {
-        log::error!(
-            "Failed to serialize workspace config to TOML: {:?}, err: {}",
-            config_path,
-            e
-        );
-        OxenError::basic_str(format!(
-            "Failed to serialize workspace config to TOML: {}",
-            e
-        ))
+        log::error!("Failed to serialize workspace config to TOML: {config_path:?}, err: {e}");
+        OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
     })?;
 
     util::fs::write_to_path(&config_path, toml_string)?;
@@ -374,14 +360,14 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     Ok(())
 }
 
-pub fn commit(
+pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
     match workspace.workspace_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name),
+        _ => core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name).await,
     }
 }
 
@@ -407,6 +393,7 @@ fn init_workspace_repo(
 }
 
 pub fn populate_entries_with_workspace_data(
+    repo: &LocalRepository,
     directory: &Path,
     workspace: &Workspace,
     entries: &[MetadataEntry],
@@ -414,7 +401,6 @@ pub fn populate_entries_with_workspace_data(
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
     let mut dir_entries: Vec<EMetadataEntry> = Vec::new();
-
     let mut entries: Vec<WorkspaceMetadataEntry> = entries
         .iter()
         .map(|entry| WorkspaceMetadataEntry::from_metadata_entry(entry.clone()))
@@ -438,9 +424,27 @@ pub fn populate_entries_with_workspace_data(
     }
     for (file_path, status) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
-            let file_path_from_workspace = workspace.dir().join(file_path);
-            let metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
-            let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
+            let staged_node =
+                with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+                    staged_db_manager.read_from_staged_db(file_path)
+                })?
+                .expect("Staged node found in status not present in staged db");
+
+            let metadata = match staged_node.node.node {
+                EMerkleTreeNode::File(file_node) => {
+                    repositories::metadata::from_file_node(repo, &file_node, &workspace.commit)?
+                }
+                EMerkleTreeNode::Directory(dir_node) => {
+                    repositories::metadata::from_dir_node(repo, &dir_node, &workspace.commit)?
+                }
+                _ => {
+                    return Err(OxenError::basic_str(
+                        "Unexpected node type found in staged db",
+                    ));
+                }
+            };
+
+            let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
             ws_entry.changes = Some(WorkspaceChanges {
                 status: status.clone(),
             });
@@ -470,6 +474,7 @@ pub fn populate_entry_with_workspace_data(
 }
 
 pub fn get_added_entry(
+    repo: &LocalRepository,
     file_path: &Path,
     workspace: &Workspace,
     resource: &ParsedResource,
@@ -477,11 +482,33 @@ pub fn get_added_entry(
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, file_path)?;
     let (additions_map, _other_changes_map) = build_file_status_maps_for_file(&workspace_changes);
-    let status = additions_map.get(file_path.to_str().unwrap()).cloned();
-    let file_path_from_workspace = workspace.dir().join(file_path);
-    if status == Some(StagedEntryStatus::Added) {
-        let metadata_from_path = repositories::metadata::from_path(&file_path_from_workspace)?;
-        let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata_from_path);
+    if let Some(status) = additions_map.get(file_path.to_str().unwrap()).cloned() {
+        if status != StagedEntryStatus::Added {
+            return Err(OxenError::basic_str(
+                "Entry is not in the workspace's staged database",
+            ));
+        }
+
+        let staged_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+            staged_db_manager.read_from_staged_db(file_path)
+        })?
+        .expect("Staged node found in status not present in staged db");
+
+        let metadata = match staged_node.node.node {
+            EMerkleTreeNode::File(file_node) => {
+                repositories::metadata::from_file_node(repo, &file_node, &workspace.commit)?
+            }
+            EMerkleTreeNode::Directory(dir_node) => {
+                repositories::metadata::from_dir_node(repo, &dir_node, &workspace.commit)?
+            }
+            _ => {
+                return Err(OxenError::basic_str(
+                    "Unexpected node type found in staged db",
+                ));
+            }
+        };
+
+        let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
         ws_entry.changes = Some(WorkspaceChanges {
             status: StagedEntryStatus::Added,
         });
@@ -509,6 +536,7 @@ fn build_file_status_maps_for_directory(
 ) {
     let mut additions_map = HashMap::new();
     let mut other_changes_map = HashMap::new();
+    workspace_changes.print();
 
     for (file_path, entry) in workspace_changes.staged_files.iter() {
         let status = entry.status.clone();
@@ -585,7 +613,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
@@ -606,7 +635,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             Ok(())
@@ -641,7 +671,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
@@ -661,7 +692,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                );
+                )
+                .await;
 
                 // We should get a merge conflict error
                 assert!(result.is_err());
@@ -702,7 +734,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
@@ -724,7 +757,8 @@ mod tests {
                         email: "bessie@oxen.ai".to_string(),
                     },
                     DEFAULT_BRANCH_NAME,
-                )?;
+                )
+                .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             Ok(())
@@ -873,7 +907,7 @@ mod tests {
                 let repo = repo.clone();
                 let handle = tokio::spawn(async move {
                     // Create a unique branch for this task
-                    let branch_name = format!("branch-{}", i);
+                    let branch_name = format!("branch-{i}");
                     api::client::branches::create_from_branch(
                         &remote_repo,
                         &branch_name,
@@ -885,13 +919,13 @@ mod tests {
                     let workspace = api::client::workspaces::create(
                         &remote_repo,
                         &branch_name,
-                        &format!("workspace-{}", i),
+                        &format!("workspace-{i}"),
                     )
                     .await?;
 
                     // Add a unique file
-                    let file_path = repo.path.join(format!("file-{}.txt", i));
-                    util::fs::write_to_path(&file_path, format!("content {}", i))?;
+                    let file_path = repo.path.join(format!("file-{i}.txt"));
+                    util::fs::write_to_path(&file_path, format!("content {i}"))?;
                     api::client::workspaces::files::upload_single_file(
                         &remote_repo,
                         &workspace.id,
@@ -902,7 +936,7 @@ mod tests {
 
                     // Commit changes back to the task's branch
                     let commit_body = NewCommitBody {
-                        message: format!("Commit from task {}", i),
+                        message: format!("Commit from task {i}"),
                         author: "Test Author".to_string(),
                         email: "test@oxen.ai".to_string(),
                     };
@@ -924,7 +958,7 @@ mod tests {
             for handle in handles {
                 handle
                     .await
-                    .map_err(|e| OxenError::basic_str(format!("Task error: {}", e)))??;
+                    .map_err(|e| OxenError::basic_str(format!("Task error: {e}")))??;
             }
 
             Ok(remote_repo)

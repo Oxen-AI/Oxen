@@ -5,7 +5,6 @@ use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 use crate::core::merge::{db_path, node_merge_conflict_writer};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::{add, rm};
 use crate::error::OxenError;
 use crate::model::merge_conflict::NodeMergeConflict;
@@ -80,9 +79,13 @@ pub async fn can_merge_commits(
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<bool, OxenError> {
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+    // If there is no common ancestor, there are no merge conflicts
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)? else {
+        return Ok(true);
+    };
+
     let merge_commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
@@ -114,20 +117,19 @@ pub fn list_commits_between_branches(
     base_branch: &Branch,
     head_branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
-    log::debug!(
-        "list_commits_between_branches() base: {:?} head: {:?}",
-        base_branch,
-        head_branch
-    );
+    log::debug!("list_commits_between_branches() base: {base_branch:?} head: {head_branch:?}");
     let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
     let head_commit = get_commit_or_head(repo, Some(head_branch.commit_id.clone()))?;
 
-    let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)?;
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)? else {
+        return Err(OxenError::basic_str(format!(
+            "Error: head commit {:?} and base commit {:?} have no common ancestor",
+            head_commit.id, base_commit.id
+        )));
+    };
+
     log::debug!(
-        "list_commits_between_branches {:?} -> {:?} found lca {:?}",
-        base_commit,
-        head_commit,
-        lca
+        "list_commits_between_branches {base_commit:?} -> {head_commit:?} found lca {lca:?}"
     );
     list_between(repo, &lca, &head_commit)
 }
@@ -137,20 +139,16 @@ pub fn list_commits_between_commits(
     base_commit: &Commit,
     head_commit: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    log::debug!(
-        "list_commits_between_commits()\nbase: {}\nhead: {}",
-        base_commit,
-        head_commit
-    );
+    log::debug!("list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}");
 
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)?;
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)? else {
+        return Err(OxenError::basic_str(format!(
+            "Error: head commit {:?} and base commit {:?} have no common ancestor",
+            head_commit.id, base_commit.id
+        )));
+    };
 
-    log::debug!(
-        "For commits {:?} -> {:?} found lca {:?}",
-        base_commit,
-        head_commit,
-        lca
-    );
+    log::debug!("For commits {base_commit:?} -> {head_commit:?} found lca {lca:?}");
 
     log::debug!("Reading history from lca to head");
     list_between(repo, &lca, head_commit)
@@ -161,9 +159,13 @@ pub async fn list_conflicts_between_commits(
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<Vec<PathBuf>, OxenError> {
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+    // If there is no common ancestor, there are no merge conflicts
+    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)? else {
+        return Ok(vec![]);
+    };
+
     let merge_commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
@@ -185,11 +187,7 @@ pub async fn merge_into_base(
     merge_branch: &Branch,
     base_branch: &Branch,
 ) -> Result<Option<Commit>, OxenError> {
-    log::debug!(
-        "merge_into_base merge {} into {}",
-        merge_branch,
-        base_branch
-    );
+    log::debug!("merge_into_base merge {merge_branch} into {base_branch}");
 
     if merge_branch.commit_id == base_branch.commit_id {
         // If the merge branch is the same as the base branch, there is nothing to merge
@@ -200,12 +198,7 @@ pub async fn merge_into_base(
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
 
     let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
-    log::debug!(
-        "merge_into_base base: {:?} merge: {:?} lca: {:?}",
-        base_commit,
-        merge_commit,
-        lca
-    );
+    log::debug!("merge_into_base base: {base_commit:?} merge: {merge_commit:?} lca: {lca:?}");
 
     let commits = MergeCommits {
         lca,
@@ -244,10 +237,7 @@ pub async fn merge_commit_into_base(
 ) -> Result<Option<Commit>, OxenError> {
     let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
     log::debug!(
-        "merge_commit_into_base has lca {:?} for merge commit {:?} and base {:?}",
-        lca,
-        merge_commit,
-        base_commit
+        "merge_commit_into_base has lca {lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
     );
     let commits = MergeCommits {
         lca,
@@ -267,10 +257,7 @@ pub async fn merge_commit_into_base_on_branch(
     let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
 
     log::debug!(
-        "merge_commit_into_branch has lca {:?} for merge commit {:?} and base {:?}",
-        lca,
-        merge_commit,
-        base_commit
+        "merge_commit_into_branch has lca {lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
     );
 
     let merge_commits = MergeCommits {
@@ -284,7 +271,7 @@ pub async fn merge_commit_into_base_on_branch(
 
 pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> {
     let db_path = db_path(repo);
-    log::debug!("Merger::new() DB {:?}", db_path);
+    log::debug!("Merger::new() DB {db_path:?}");
     let opts = db::key_val::opts::default();
     let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -293,7 +280,7 @@ pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> 
 
 pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
     let db_path = db_path(repo);
-    log::debug!("Merger::new() DB {:?}", db_path);
+    log::debug!("Merger::new() DB {db_path:?}");
     let opts = db::key_val::opts::default();
     let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -339,8 +326,11 @@ async fn merge_commits_on_branch(
 
     log::debug!(
         "FOUND MERGE COMMITS:\nLCA: {} -> {}\nBASE: {} -> {}\nMerge: {} -> {}",
-        merge_commits.lca.id,
-        merge_commits.lca.message,
+        merge_commits.lca.as_ref().map_or("None", |c| c.id.as_str()),
+        merge_commits
+            .lca
+            .as_ref()
+            .map_or("None", |c| c.message.as_str()),
         merge_commits.base.id,
         merge_commits.base.message,
         merge_commits.merge.id,
@@ -365,7 +355,7 @@ async fn merge_commits_on_branch(
         log::debug!("Got {} conflicts", conflicts.len());
 
         if conflicts.is_empty() {
-            log::debug!("creating merge commit on branch {:?}", branch);
+            log::debug!("creating merge commit on branch {branch:?}");
             let commit =
                 create_merge_commit_on_branch(repo, merge_commits, branch, shared_hashes).await?;
             Ok(Some(commit))
@@ -383,7 +373,7 @@ Found {} conflicts, please resolve them before merging.
                 conflicts.len()
             );
             let db_path = db_path(repo);
-            log::debug!("Merger::new() DB {:?}", db_path);
+            log::debug!("Merger::new() DB {db_path:?}");
             let opts = db::key_val::opts::default();
             let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -403,7 +393,7 @@ Found {} conflicts, please resolve them before merging.
 pub fn lowest_common_ancestor(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
-) -> Result<Commit, OxenError> {
+) -> Result<Option<Commit>, OxenError> {
     let branch_name = branch_name.as_ref();
     let current_branch = repositories::branches::current_branch(repo)?
         .ok_or(OxenError::basic_str("No current branch"))?;
@@ -430,8 +420,13 @@ async fn fast_forward_merge(
     // Collect all dir and vnode hashes while loading the merge tree
     // This is done to identify shared dirs/vnodes between the merge and base trees while loading the base tree
     let mut merge_hashes = HashSet::new();
-    let Some(merge_tree) =
-        CommitMerkleTree::root_with_children_and_hashes(repo, merge_commit, &mut merge_hashes)?
+    let Some(merge_tree) = repositories::tree::get_root_with_children_and_node_hashes(
+        repo,
+        merge_commit,
+        None,
+        Some(&mut merge_hashes),
+        None,
+    )?
     else {
         return Err(OxenError::basic_str("Cannot get root node for base commit"));
     };
@@ -440,11 +435,12 @@ async fn fast_forward_merge(
     // These are done to skip checks for shared dirs/vnodes and avoid slow tree traversals when comparing files in the recursvie functions respectively
     let mut shared_hashes = HashSet::new();
     let mut partial_nodes = HashMap::new();
-    let Some(base_tree) = CommitMerkleTree::root_with_unique_children(
+    let Some(base_tree) = repositories::tree::get_root_with_children_and_partial_nodes(
         repo,
         base_commit,
-        &mut merge_hashes,
-        &mut shared_hashes,
+        Some(&merge_hashes),
+        None,
+        Some(&mut shared_hashes),
         &mut partial_nodes,
     )?
     else {
@@ -537,7 +533,7 @@ fn r_ff_merge_commit(
                 let base_file_node = &base_files[&file_path];
 
                 // determine if file should be restored from its hash and last modified time
-                let should_restore = restore::should_restore_partial(
+                let should_restore = restore::should_restore_partial_node(
                     repo,
                     Some(base_file_node.clone()),
                     merge_file_node,
@@ -553,10 +549,7 @@ fn r_ff_merge_commit(
                         results.cannot_overwrite_entries.push(file_path.clone());
                     }
                 } else {
-                    log::debug!(
-                        "Merge entry has not changed, but still !restore: {:?}",
-                        file_path
-                    );
+                    log::debug!("Merge entry has not changed, but still !restore: {file_path:?}");
                     if !should_restore {
                         results.cannot_overwrite_entries.push(file_path.clone());
                     }
@@ -592,7 +585,7 @@ fn r_ff_merge_commit(
             };
 
             for child in merge_children.iter() {
-                log::debug!("r_ff_merge_commit child_path {}", child);
+                log::debug!("r_ff_merge_commit child_path {child}");
                 r_ff_merge_commit(
                     repo,
                     child,
@@ -706,8 +699,11 @@ async fn merge_commits(
 
     log::debug!(
         "FOUND MERGE COMMITS:\nLCA: {} -> {}\nBASE: {} -> {}\nMerge: {} -> {}",
-        merge_commits.lca.id,
-        merge_commits.lca.message,
+        merge_commits.lca.as_ref().map_or("None", |c| c.id.as_str()),
+        merge_commits
+            .lca
+            .as_ref()
+            .map_or("None", |c| c.message.as_str()),
         merge_commits.base.id,
         merge_commits.base.message,
         merge_commits.merge.id,
@@ -753,7 +749,7 @@ Found {} conflicts, please resolve them before merging.
             Ok(Some(commit))
         } else {
             let db_path = db_path(repo);
-            log::debug!("Merger::new() DB {:?}", db_path);
+            log::debug!("Merger::new() DB {db_path:?}");
             let opts = db::key_val::opts::default();
             let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
 
@@ -784,7 +780,7 @@ async fn create_merge_commit(
         merge_commits.merge.id, merge_commits.base.id
     );
 
-    log::debug!("create_merge_commit {}", commit_msg);
+    log::debug!("create_merge_commit {commit_msg}");
 
     let parent_ids: Vec<String> = vec![
         merge_commits.base.id.to_owned(),
@@ -813,7 +809,7 @@ async fn create_merge_commit_on_branch(
         merge_commits.merge.id, merge_commits.base.id, branch.name
     );
 
-    log::debug!("create_merge_commit_on_branch {}", commit_msg);
+    log::debug!("create_merge_commit_on_branch {commit_msg}");
 
     // Create a commit with both parents
     // let commit_writer = CommitWriter::new(repo)?;
@@ -837,7 +833,7 @@ pub fn lowest_common_ancestor_from_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
-) -> Result<Commit, OxenError> {
+) -> Result<Option<Commit>, OxenError> {
     log::debug!(
         "lowest_common_ancestor_from_commits: base: {} merge: {}",
         base_commit.id,
@@ -853,19 +849,27 @@ pub fn lowest_common_ancestor_from_commits(
     let commit_depths_from_merge =
         repositories::commits::list_from_with_depth(repo, merge_commit.id.as_str())?;
 
+    // If the commits have no common ancestor (new repository), return None
+    let mut has_common_ancestor = false;
     let mut min_depth = usize::MAX;
     let mut lca: Commit = commit_depths_from_head.keys().next().unwrap().clone();
     for (commit, _) in commit_depths_from_merge.iter() {
         if let Some(depth) = commit_depths_from_head.get(commit) {
+            has_common_ancestor = true;
+
             if depth < &min_depth {
                 min_depth = *depth;
-                log::debug!("setting new lca, {:?}", commit);
+                log::debug!("setting new lca, {commit:?}");
                 lca = commit.clone();
             }
         }
     }
 
-    Ok(lca)
+    if has_common_ancestor {
+        Ok(Some(lca))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Will try a three way merge and return conflicts if there are any to indicate that the merge was unsuccessful
@@ -908,23 +912,29 @@ pub async fn find_merge_conflicts(
     let mut lca_hashes = HashSet::new();
     let mut base_hashes = HashSet::new();
 
-    // TODO: Could the partial nodes be used to replace 'unique_dir_entries' below?
-    let mut _partial_nodes = HashMap::new();
+    // If there's no LCA, let the LCA be the base commit
+    let lca = merge_commits
+        .lca
+        .clone()
+        .unwrap_or(merge_commits.base.clone());
 
-    // Use the same functions from the fast forward merge to load in only the entries found to be unique to each tree
-    // First, we load in every node from the LCA tree
-    let lca_commit_tree =
-        CommitMerkleTree::root_with_children_and_hashes(repo, &merge_commits.lca, &mut lca_hashes)?
-            .unwrap();
+    // Load in every node from the LCA tree
+    let lca_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
+        repo,
+        &lca,
+        None,
+        Some(&mut lca_hashes),
+        None,
+    )?
+    .unwrap();
 
-    // Then, we load in only the nodes of the base commit tree that weren't in the LCA tree
-    // We also track the shared hashes between them
-    let base_commit_tree = CommitMerkleTree::root_with_unique_children(
+    // Then, load in only the nodes of the base commit tree that weren't in the LCA tree
+    let base_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
         repo,
         &merge_commits.base,
-        &mut lca_hashes,
-        &mut base_hashes,
-        &mut _partial_nodes,
+        Some(&lca_hashes),
+        Some(&mut base_hashes),
+        Some(shared_hashes),
     )?
     .unwrap();
 
@@ -932,15 +942,16 @@ pub async fn find_merge_conflicts(
     // After this, 'shared hashes' will have all the dir/vnode hashes shared between all 3 trees
     // This lets us skip checking these nodes, and also lets us skip adding them when creating the merge commit later
 
-    let merge_commit_tree = CommitMerkleTree::root_with_unique_children(
+    let merge_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
         repo,
         &merge_commits.merge,
-        &mut base_hashes,
-        shared_hashes,
-        &mut _partial_nodes,
+        Some(&base_hashes),
+        None,
+        Some(shared_hashes),
     )?
     .unwrap();
-    // TODO: Remove this unless debugging
+
+    // Note: Remove this unless debugging
     // log::debug!("lca_hashes: {lca_hashes:?}");
     //lca_commit_tree.print();
     // log::debug!("base_hashes: {base_hashes:?}");
@@ -979,8 +990,8 @@ pub async fn find_merge_conflicts(
                     lca_file_node,
 
                 );*/
-                if base_file_node.hash() == lca_file_node.hash()
-                    && base_file_node.hash() != merge_file_node.hash()
+                if base_file_node.combined_hash() == lca_file_node.combined_hash()
+                    && base_file_node.combined_hash() != merge_file_node.combined_hash()
                     && write_to_disk
                 {
                     log::debug!("top update entry");
@@ -1000,9 +1011,9 @@ pub async fn find_merge_conflicts(
                 }
 
                 // If all three are different, mark as conflict
-                if base_file_node.hash() != lca_file_node.hash()
-                    && lca_file_node.hash() != merge_file_node.hash()
-                    && base_file_node.hash() != merge_file_node.hash()
+                if base_file_node.combined_hash() != lca_file_node.combined_hash()
+                    && lca_file_node.combined_hash() != merge_file_node.combined_hash()
+                    && base_file_node.combined_hash() != merge_file_node.combined_hash()
                 {
                     conflicts.push(NodeMergeConflict {
                         lca_entry: (lca_file_node.to_owned(), entry_path.to_path_buf()),
@@ -1012,7 +1023,7 @@ pub async fn find_merge_conflicts(
                 }
             } else {
                 // merge entry doesn't exist in LCA, so just check if it's different from base
-                if base_file_node.hash() != merge_file_node.hash() {
+                if base_file_node.combined_hash() != merge_file_node.combined_hash() {
                     conflicts.push(NodeMergeConflict {
                         lca_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
                         base_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
@@ -1040,6 +1051,34 @@ pub async fn find_merge_conflicts(
         let version_store = repo.version_store()?;
         for entry in entries_to_restore.iter() {
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
+
+            // If it's a tabular file, we also need to stage the schema
+            if util::fs::is_tabular(&entry.path) {
+                if let Some(schema) = repositories::data_frames::schemas::get_by_path(
+                    repo,
+                    &merge_commits.merge,
+                    &entry.path,
+                )? {
+                    for field in schema.fields {
+                        if let Some(metadata) = field.metadata {
+                            let _ = repositories::data_frames::schemas::add_column_metadata(
+                                repo,
+                                &entry.path,
+                                &field.name,
+                                &metadata,
+                            )?;
+                        }
+                    }
+
+                    if let Some(metadata) = schema.metadata {
+                        let _ = repositories::data_frames::schemas::add_schema_metadata(
+                            repo,
+                            &entry.path,
+                            &metadata,
+                        )?;
+                    }
+                }
+            }
         }
     } else {
         // If there are conflicts, return an error without restoring anything

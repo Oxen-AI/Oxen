@@ -12,7 +12,6 @@
 //! * Time to query the file
 //!
 
-use indicatif::ProgressBar;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
@@ -21,7 +20,6 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use rocksdb::DBWithThreadMode;
 use rocksdb::SingleThreaded;
@@ -31,12 +29,8 @@ use crate::constants::TREE_DIR;
 use crate::core::db;
 use crate::core::db::key_val::u128_kv_db;
 use crate::error::OxenError;
-use crate::model::CommitEntry;
 use crate::model::LocalRepository;
 use crate::util;
-use crate::util::hasher;
-use crate::util::progress_bar::oxen_progress_bar;
-use crate::util::progress_bar::ProgressBarType;
 
 // static chunk size of 16kb
 pub const CHUNK_SIZE: usize = 16 * 1024;
@@ -118,7 +112,7 @@ impl ChunkShardFile {
 
     pub fn shard_path(repo: &LocalRepository, file_idx: u32) -> PathBuf {
         let path = Self::db_path(repo);
-        path.join(format!("shard_{}", file_idx))
+        path.join(format!("shard_{file_idx}"))
     }
 
     pub fn shard_idx(path: &Path) -> u32 {
@@ -193,7 +187,7 @@ impl ChunkShardFile {
         self.file.seek(SeekFrom::Start(start as u64))?;
         let mut buffer = vec![0u8; offset.1 as usize];
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         Ok(buffer)
     }
 
@@ -201,12 +195,12 @@ impl ChunkShardFile {
         // read the index size
         let mut buffer = [0u8; 4]; // u32 is 4 bytes
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         let index_size = u32::from_le_bytes(buffer) as usize;
 
         let mut index_bytes = vec![0u8; index_size];
         let bytes_read = self.file.read(&mut index_bytes)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         self.index = bincode::deserialize(&index_bytes)?;
         self.data_start = index_size + 8; // 4 for size of index and 4 for data size
 
@@ -223,7 +217,7 @@ impl ChunkShardFile {
         // read the buffer size
         let mut buffer = [0u8; 4]; // u32 is 4 bytes
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
         self.offset = u32::from_le_bytes(buffer) as usize;
 
         log::debug!("read data with {:?} bytes", self.offset);
@@ -231,7 +225,7 @@ impl ChunkShardFile {
         // read the buffer
         let mut buffer = vec![0u8; self.offset];
         let bytes_read = self.file.read(&mut buffer)?;
-        log::debug!("read {} bytes", bytes_read);
+        log::debug!("read {bytes_read} bytes");
 
         // Allocate the full size for the buffer
         self.data = vec![0u8; SHARD_CAPACITY];
@@ -304,13 +298,13 @@ impl ChunkShardManager {
         let mut current_idx = 0;
         let mut current_file: Option<ChunkShardFile> = None;
         for path in shard_paths {
-            log::debug!("Opening shard file: {:?}", path);
+            log::debug!("Opening shard file: {path:?}");
             let file_idx = ChunkShardFile::shard_idx(&path);
             if let Ok(mut shard_file) = ChunkShardFile::open(&self.repo, file_idx) {
                 shard_file.read_index()?;
-                log::debug!("Opened shard file: {:?}", path);
+                log::debug!("Opened shard file: {path:?}");
                 if shard_file.has_capacity(CHUNK_SIZE) {
-                    log::debug!("Shard [{}] has capacity, using it", file_idx);
+                    log::debug!("Shard [{file_idx}] has capacity, using it");
                     shard_file.read_data()?;
                     current_idx = file_idx;
                     current_file = Some(shard_file);
@@ -326,7 +320,7 @@ impl ChunkShardManager {
             current_file = Some(ChunkShardFile::create(&self.repo, current_idx)?);
         }
 
-        log::debug!("Current shard index: {:?}", current_idx);
+        log::debug!("Current shard index: {current_idx:?}");
         self.current_idx = current_idx as i32; // can always cast u32 to i32
         self.current_file = current_file;
         Ok(())
@@ -341,11 +335,7 @@ impl ChunkShardManager {
             .db
             .get(hash)?
             .ok_or(OxenError::basic_str("Chunk not found"))?;
-        log::debug!(
-            "Reading chunk from shard: [{}] for hash: {}",
-            shard_idx,
-            hash
-        );
+        log::debug!("Reading chunk from shard: [{shard_idx}] for hash: {hash}");
         // Cache the current shard file for faster reads of the same shard
         if shard_idx as i32 != self.current_idx {
             self.current_file = Some(ChunkShardFile::open(&self.repo, shard_idx)?);
@@ -391,65 +381,66 @@ impl ChunkShardManager {
     }
 }
 
-pub struct FileChunker {
-    repo: LocalRepository,
-}
+// Deprecated: Not used anywhere
+// pub struct FileChunker {
+//     repo: LocalRepository,
+// }
 
-impl FileChunker {
-    pub fn new(repo: &LocalRepository) -> Self {
-        Self { repo: repo.clone() }
-    }
+// impl FileChunker {
+//     pub fn new(repo: &LocalRepository) -> Self {
+//         Self { repo: repo.clone() }
+//     }
 
-    pub fn save_chunks(
-        &self,
-        entry: &CommitEntry,
-        csm: &mut ChunkShardManager,
-    ) -> Result<Vec<u128>, OxenError> {
-        let version_store = &self.repo.version_store()?;
-        let mut read_file = version_store.open_version(&entry.hash)?;
+//     pub fn save_chunks(
+//         &self,
+//         entry: &CommitEntry,
+//         csm: &mut ChunkShardManager,
+//     ) -> Result<Vec<u128>, OxenError> {
+//         let version_store = &self.repo.version_store()?;
+//         let mut read_file = version_store.open_version(&entry.hash)?;
 
-        // Create a progress bar for larger files
-        let mut progress_bar: Option<Arc<ProgressBar>> =
-            if entry.num_bytes > (CHUNK_SIZE * 10) as u64 {
-                Some(oxen_progress_bar(entry.num_bytes, ProgressBarType::Bytes))
-            } else {
-                None
-            };
+//         // Create a progress bar for larger files
+//         let mut progress_bar: Option<Arc<ProgressBar>> =
+//             if entry.num_bytes > (CHUNK_SIZE * 10) as u64 {
+//                 Some(oxen_progress_bar(entry.num_bytes, ProgressBarType::Bytes))
+//             } else {
+//                 None
+//             };
 
-        // Read/Write chunks
-        let mut buffer = vec![0; CHUNK_SIZE]; // 16KB buffer
-        let mut hashes: Vec<u128> = Vec::new();
-        let mut num_new_chunks = 0;
-        while let Ok(bytes_read) = read_file.read(&mut buffer) {
-            if bytes_read == 0 {
-                break; // End of file
-            }
-            // Shrink buffer to size of bytes read
-            buffer.truncate(bytes_read);
+//         // Read/Write chunks
+//         let mut buffer = vec![0; CHUNK_SIZE]; // 16KB buffer
+//         let mut hashes: Vec<u128> = Vec::new();
+//         let mut num_new_chunks = 0;
+//         while let Ok(bytes_read) = read_file.read(&mut buffer) {
+//             if bytes_read == 0 {
+//                 break; // End of file
+//             }
+//             // Shrink buffer to size of bytes read
+//             buffer.truncate(bytes_read);
 
-            // Save the chunk to the database
-            let hash = hasher::hash_buffer_128bit(&buffer);
-            if !csm.has_chunk(hash) {
-                csm.write_chunk(hash, &buffer)?;
-                num_new_chunks += 1;
-            }
-            hashes.push(hash);
-            if let Some(progress_bar) = progress_bar.as_mut() {
-                progress_bar.inc(bytes_read as u64);
-            }
-        }
-        if entry.num_bytes > CHUNK_SIZE as u64 {
-            println!(
-                "Saved {} new chunks out of {} for {:?}",
-                num_new_chunks,
-                hashes.len(),
-                entry.path
-            );
-        }
+//             // Save the chunk to the database
+//             let hash = hasher::hash_buffer_128bit(&buffer);
+//             if !csm.has_chunk(hash) {
+//                 csm.write_chunk(hash, &buffer)?;
+//                 num_new_chunks += 1;
+//             }
+//             hashes.push(hash);
+//             if let Some(progress_bar) = progress_bar.as_mut() {
+//                 progress_bar.inc(bytes_read as u64);
+//             }
+//         }
+//         if entry.num_bytes > CHUNK_SIZE as u64 {
+//             println!(
+//                 "Saved {} new chunks out of {} for {:?}",
+//                 num_new_chunks,
+//                 hashes.len(),
+//                 entry.path
+//             );
+//         }
 
-        // Flush the progress to disk
-        csm.save_all()?;
+//         // Flush the progress to disk
+//         csm.save_all()?;
 
-        Ok(hashes)
-    }
-}
+//         Ok(hashes)
+//     }
+// }

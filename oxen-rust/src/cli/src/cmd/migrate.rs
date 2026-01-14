@@ -64,8 +64,7 @@ impl RunCmd for MigrateCmd {
                 let migration = migrations
                     .get(migration)
                     .ok_or(OxenError::basic_str(format!(
-                        "Unknown migration: {}",
-                        migration
+                        "Unknown migration: {migration}"
                     )))?;
                 let path_str = sub_matches.get_one::<String>("PATH").expect("required");
                 let path = Path::new(path_str);
@@ -83,8 +82,7 @@ impl RunCmd for MigrateCmd {
                     migration.down(path, all)?;
                 } else {
                     return Err(OxenError::basic_str(format!(
-                        "Unknown direction: {}",
-                        direction
+                        "Unknown direction: {direction}"
                     )));
                 }
             }

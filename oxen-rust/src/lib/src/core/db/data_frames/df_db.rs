@@ -17,24 +17,146 @@ use crate::opts::DFOpts;
 use crate::{model, util};
 use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::{params, ToSql};
+use lru::LruCache;
+use parking_lot::{Mutex, RwLock};
 use polars::prelude::*;
 use sqlparser::ast::{self, Expr as SqlExpr, SelectItem, Statement, Value as SqlValue};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::Path;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
 
 use sql_query_builder as sql;
+
+const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+
+// Static cache of DuckDB instances with LRU eviction
+static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<Mutex<duckdb::Connection>>>>> =
+    LazyLock::new(|| RwLock::new(LruCache::new(DF_DB_CACHE_SIZE)));
+
+/// Removes a database instance from the cache.
+pub fn remove_df_db_from_cache(db_path: impl AsRef<Path>) -> Result<(), OxenError> {
+    let db_path = db_path.as_ref().to_path_buf();
+    let mut instances = DF_DB_INSTANCES.write();
+    let _ = instances.pop(&db_path); // drop immediately
+    Ok(())
+}
+
+/// Removes a database instance and all its subdirectories from the cache.
+/// This is mostly useful in test cleanup to ensure all DB instances are removed.
+pub fn remove_df_db_from_cache_with_children(
+    db_path_prefix: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    let db_path_prefix = db_path_prefix.as_ref();
+
+    let mut dbs_to_remove: Vec<PathBuf> = vec![];
+    let mut instances = DF_DB_INSTANCES.write();
+    for (key, _) in instances.iter() {
+        if key.starts_with(db_path_prefix) {
+            dbs_to_remove.push(key.clone());
+        }
+    }
+
+    for db in dbs_to_remove {
+        let _ = instances.pop(&db); // drop immediately
+    }
+
+    Ok(())
+}
+
+#[derive(Clone)]
+pub struct DfDBManager {
+    df_db: Arc<Mutex<duckdb::Connection>>,
+}
+
+pub fn with_df_db_manager<F, T>(db_path: impl AsRef<Path>, operation: F) -> Result<T, OxenError>
+where
+    F: FnOnce(&DfDBManager) -> Result<T, OxenError>,
+{
+    let db_path = db_path.as_ref().to_path_buf();
+
+    let df_db = {
+        // 1. If df db exists in cache, return the existing connection
+        // Fast path: try to get a cloned handle under a short-lived read lock.
+        if let Some(db_lock) = {
+            let cache_r = DF_DB_INSTANCES.read();
+            cache_r.peek(&db_path).cloned()
+        } {
+            // Read lock has been dropped before executing user code.
+            return operation(&DfDBManager { df_db: db_lock });
+        }
+
+        // 2. If not exists, create the directory and open the db
+        let mut cache_w = DF_DB_INSTANCES.write();
+        if let Some(db_lock) = cache_w.get(&db_path) {
+            db_lock.clone()
+        } else {
+            // Cache miss: create directory and open DB
+            if let Some(parent) = db_path.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        log::error!("Failed to create df db directory: {e}");
+                        OxenError::basic_str(format!("Failed to create df db directory: {e}"))
+                    })?;
+                }
+            }
+
+            let conn = get_connection(&db_path).map_err(|e| {
+                log::error!("Failed to open df db: {e}");
+                OxenError::basic_str(format!("Failed to open df db: {e}"))
+            })?;
+
+            // Wrap the Connection in a Mutex and store it in the cache
+            let db_lock = Arc::new(Mutex::new(conn));
+            cache_w.put(db_path.clone(), db_lock.clone());
+            db_lock
+        }
+    };
+
+    let manager = DfDBManager { df_db };
+
+    // Execute the operation with our DfDBManager instance
+    operation(&manager)
+}
+
+impl DfDBManager {
+    /// Execute an operation with the database connection
+    pub fn with_conn<F, T>(&self, operation: F) -> Result<T, OxenError>
+    where
+        F: FnOnce(&duckdb::Connection) -> Result<T, OxenError>,
+    {
+        let conn = self.df_db.lock();
+
+        operation(&conn)
+    }
+
+    /// Execute an operation with the database connection (mutable access)
+    /// Note: This provides mutable access to the connection for functions that require it
+    pub fn with_conn_mut<F, T>(&self, operation: F) -> Result<T, OxenError>
+    where
+        F: FnOnce(&mut duckdb::Connection) -> Result<T, OxenError>,
+    {
+        let mut conn = self.df_db.lock();
+
+        operation(&mut conn)
+    }
+}
 
 /// Get a connection to a duckdb database.
 pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, OxenError> {
     let path = path.as_ref();
+    log::debug!("get_connection: Opening new DuckDB connection for path: {path:?}");
+
     if let Some(parent) = path.parent() {
+        log::debug!("get_connection: Ensuring parent directory exists: {parent:?}");
         util::fs::create_dir_all(parent)?;
     }
 
     let conn = duckdb::Connection::open(path)?;
+    log::info!("get_connection: Successfully created new DuckDB connection for path: {path:?}");
     Ok(conn)
 }
 
@@ -50,8 +172,8 @@ pub fn create_table_if_not_exists(
 /// Drop a table in a duckdb database.
 pub fn drop_table(conn: &duckdb::Connection, table_name: impl AsRef<str>) -> Result<(), OxenError> {
     let table_name = table_name.as_ref();
-    let sql = format!("DROP TABLE IF EXISTS {}", table_name);
-    log::debug!("drop_table sql: {}", sql);
+    let sql = format!("DROP TABLE IF EXISTS {table_name}");
+    log::debug!("drop_table sql: {sql}");
     conn.execute(&sql, []).map_err(OxenError::from)?;
     Ok(())
 }
@@ -60,12 +182,12 @@ pub fn table_exists(
     conn: &duckdb::Connection,
     table_name: impl AsRef<str>,
 ) -> Result<bool, OxenError> {
-    log::debug!("checking exists in path {:?}", conn);
+    log::debug!("checking exists in path {conn:?}");
     let table_name = table_name.as_ref();
     let sql = "SELECT EXISTS (SELECT 1 FROM duckdb_tables WHERE table_name = ?) AS table_exists";
     let mut stmt = conn.prepare(sql)?;
     let exists: bool = stmt.query_row(params![table_name], |row| row.get(0))?;
-    log::debug!("got exists: {}", exists);
+    log::debug!("got exists: {exists}");
     Ok(exists)
 }
 
@@ -78,8 +200,8 @@ fn p_create_table_if_not_exists(
     let table_name = table_name.as_ref();
     let columns: Vec<String> = fields.iter().map(|f| f.to_sql()).collect();
     let columns = columns.join(" NOT NULL,\n");
-    let sql = format!("CREATE TABLE IF NOT EXISTS {} (\n{});", table_name, columns);
-    log::debug!("create_table sql: {}", sql);
+    let sql = format!("CREATE TABLE IF NOT EXISTS {table_name} (\n{columns});");
+    log::debug!("create_table sql: {sql}");
     conn.execute(&sql, [])?;
     Ok(table_name.to_owned())
 }
@@ -91,8 +213,7 @@ pub fn get_schema(
 ) -> Result<Schema, OxenError> {
     let table_name = table_name.as_ref();
     let sql = format!(
-        "SELECT column_name, data_type FROM information_schema.columns WHERE table_name == '{}'",
-        table_name
+        "SELECT column_name, data_type FROM information_schema.columns WHERE table_name == '{table_name}'"
     );
     let mut stmt = conn.prepare(&sql)?;
 
@@ -150,7 +271,7 @@ pub fn get_schema_excluding_cols(
 /// Query number of rows in a table.
 pub fn count(conn: &duckdb::Connection, table_name: impl AsRef<str>) -> Result<usize, OxenError> {
     let table_name = table_name.as_ref();
-    let sql = format!("SELECT count(*) FROM {}", table_name);
+    let sql = format!("SELECT count(*) FROM {table_name}");
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
@@ -158,8 +279,7 @@ pub fn count(conn: &duckdb::Connection, table_name: impl AsRef<str>) -> Result<u
         Ok(size)
     } else {
         Err(OxenError::basic_str(format!(
-            "No rows in table {}",
-            table_name
+            "No rows in table {table_name}"
         )))
     }
 }
@@ -172,7 +292,7 @@ pub fn count_where(
 ) -> Result<usize, OxenError> {
     let table_name = table_name.as_ref();
     let where_clause = where_clause.as_ref();
-    let sql = format!("SELECT count(*) FROM {} WHERE {}", table_name, where_clause);
+    let sql = format!("SELECT count(*) FROM {table_name} WHERE {where_clause}");
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
@@ -180,8 +300,7 @@ pub fn count_where(
         Ok(size)
     } else {
         Err(OxenError::basic_str(format!(
-            "No rows in table {}",
-            table_name
+            "No rows in table {table_name}"
         )))
     }
 }
@@ -217,7 +336,7 @@ pub fn export(
         ));
     }
     let export_sql = wrap_sql_for_export(sql, tmp_path);
-    // log::debug!("export_sql: {}", export_sql);
+    log::debug!("export_sql: {export_sql}");
     conn.execute(&export_sql, [])?;
     Ok(())
 }
@@ -235,7 +354,7 @@ pub fn prepare_sql(
 
     if opts.sort_by.is_some() {
         let sort_by: String = opts.sort_by.clone().unwrap_or_default();
-        sql.push_str(&format!(" ORDER BY \"{}\"", sort_by));
+        sql.push_str(&format!(" ORDER BY \"{sort_by}\""));
     }
 
     let pagination_clause = if let Some(page) = opts.page {
@@ -246,7 +365,7 @@ pub fn prepare_sql(
         "".to_string()
     };
     sql.push_str(&pagination_clause);
-    log::debug!("select_str() running sql: {}", sql);
+    log::debug!("select_str() running sql: {sql}");
     Ok(sql)
 }
 
@@ -342,7 +461,7 @@ pub fn select_str(
     let sql = sql.as_ref();
     let sql = prepare_sql(conn, sql, opts)?;
     let df = select_raw(conn, &sql)?;
-    log::debug!("select_str() got raw df {:?}", df);
+    log::debug!("select_str() got raw df {df:?}");
     Ok(df)
 }
 
@@ -382,16 +501,13 @@ pub fn modify_row_with_polars_df(
 
     let set_clauses: String = column_names
         .iter()
-        .map(|col_name| format!("{} = ?", col_name))
+        .map(|col_name| format!("{col_name} = ?"))
         .collect::<Vec<String>>()
         .join(", ");
 
-    let where_clause = format!("\"{}\" = '{}'", OXEN_ID_COL, id);
+    let where_clause = format!("\"{OXEN_ID_COL}\" = '{id}'");
 
-    let sql = format!(
-        "UPDATE {} SET {} WHERE {} RETURNING *",
-        table_name, set_clauses, where_clause
-    );
+    let sql = format!("UPDATE {table_name} SET {set_clauses} WHERE {where_clause} RETURNING *");
 
     let values = df.get(0).unwrap(); // Checked above
 
@@ -442,7 +558,7 @@ pub fn modify_rows_with_polars_df(
 
             let boxed_value: Box<dyn ToSql> = Box::new(tabular::value_to_tosql(value));
 
-            case_clauses.push(format!("WHEN \"{}\" = '{}' THEN ?", OXEN_ID_COL, id));
+            case_clauses.push(format!("WHEN \"{OXEN_ID_COL}\" = '{id}' THEN ?"));
 
             all_params.push(boxed_value);
         }
@@ -482,35 +598,31 @@ pub fn modify_rows_with_polars_df(
 }
 
 pub fn index_file(path: &Path, conn: &duckdb::Connection) -> Result<(), OxenError> {
-    log::debug!("df_db:index_file() at path {:?}", path);
+    log::debug!("df_db:index_file() at path {path:?}");
     let extension: &str = &util::fs::extension_from_path(path);
     let path_str = path.to_string_lossy().to_string();
     match extension {
         "csv" => {
             let query = format!(
-                "CREATE TABLE {} AS SELECT * FROM read_csv('{}')",
-                DUCKDB_DF_TABLE_NAME, path_str
+                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_csv('{path_str}')"
             );
             conn.execute(&query, [])?;
         }
         "tsv" => {
             let query = format!(
-                "CREATE TABLE {} AS SELECT * FROM read_csv('{}')",
-                DUCKDB_DF_TABLE_NAME, path_str
+                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_csv('{path_str}')"
             );
             conn.execute(&query, [])?;
         }
         "parquet" => {
             let query = format!(
-                "CREATE TABLE {} AS SELECT * FROM read_parquet('{}')",
-                DUCKDB_DF_TABLE_NAME, path_str
+                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_parquet('{path_str}')"
             );
             conn.execute(&query, [])?;
         }
         "jsonl" | "json" | "ndjson" => {
             let query = format!(
-                "CREATE TABLE {} AS SELECT * FROM read_json('{}')",
-                DUCKDB_DF_TABLE_NAME, path_str
+                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_json('{path_str}')"
             );
             conn.execute(&query, [])?;
         }
@@ -530,14 +642,14 @@ pub fn index_file_with_id(
     conn: &duckdb::Connection,
     extension: &str,
 ) -> Result<(), OxenError> {
-    log::debug!("df_db:index_file() at path {:?} into path {:?}", path, conn);
+    log::debug!("df_db:index_file() at path {path:?} into path {conn:?}");
     let path_str = path.to_string_lossy().to_string();
     let counter = "counter";
     // Drop sequence if exists
-    let drop_sequence_query = format!("DROP SEQUENCE IF EXISTS {}", counter);
+    let drop_sequence_query = format!("DROP SEQUENCE IF EXISTS {counter}");
     conn.execute(&drop_sequence_query, [])?;
 
-    let add_row_id_sequence_query = format!("CREATE SEQUENCE {} START 1", counter);
+    let add_row_id_sequence_query = format!("CREATE SEQUENCE {counter} START 1");
     conn.execute(&add_row_id_sequence_query, [])?;
 
     match extension {
@@ -555,10 +667,25 @@ pub fn index_file_with_id(
         }
         "jsonl" | "json" | "ndjson" => {
             let query = format!(
-                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_json('{}');",
-                DUCKDB_DF_TABLE_NAME, OXEN_ID_COL, path_str
+                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT *, CAST(uuid() AS VARCHAR) AS {OXEN_ID_COL} FROM read_json('{path_str}');"
             );
             conn.execute(&query, [])?;
+
+            // Convert STRUCT columns to JSON to avoid binding issues
+            let alter_query = format!(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = '{DUCKDB_DF_TABLE_NAME}' AND data_type LIKE 'STRUCT%'"
+            );
+            let mut stmt = conn.prepare(&alter_query)?;
+            let struct_cols: Vec<String> = stmt
+                .query_map([], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for col in struct_cols {
+                let alter =
+                    format!("ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN \"{col}\" TYPE JSON");
+                conn.execute(&alter, [])?;
+            }
         }
         _ => {
             return Err(OxenError::basic_str(
@@ -568,15 +695,13 @@ pub fn index_file_with_id(
     }
 
     let add_default_query = format!(
-        "ALTER TABLE {} ALTER COLUMN {} SET DEFAULT CAST(uuid() AS VARCHAR);",
-        DUCKDB_DF_TABLE_NAME, OXEN_ID_COL
+        "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN {OXEN_ID_COL} SET DEFAULT CAST(uuid() AS VARCHAR);"
     );
 
     conn.execute(&add_default_query, [])?;
 
     let add_row_id_query = format!(
-        "ALTER TABLE {} ADD COLUMN {} INTEGER DEFAULT nextval('{}');",
-        DUCKDB_DF_TABLE_NAME, OXEN_ROW_ID_COL, counter
+        "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ADD COLUMN {OXEN_ROW_ID_COL} INTEGER DEFAULT nextval('{counter}');"
     );
     conn.execute(&add_row_id_query, [])?;
 
@@ -588,19 +713,19 @@ pub fn from_clause_from_disk_path(path: &Path) -> Result<String, OxenError> {
     match extension {
         "csv" => {
             let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{}')", str_path))
+            Ok(format!("read_csv('{str_path}')"))
         }
         "tsv" => {
             let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{}')", str_path))
+            Ok(format!("read_csv('{str_path}')"))
         }
         "parquet" => {
             let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_parquet('{}')", str_path))
+            Ok(format!("read_parquet('{str_path}')"))
         }
         "jsonl" | "json" | "ndjson" => {
             let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_json('{}')", str_path))
+            Ok(format!("read_json('{str_path}')"))
         }
         _ => Err(OxenError::basic_str(
             "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
@@ -613,7 +738,7 @@ pub fn preview(
     table_name: impl AsRef<str>,
 ) -> Result<DataFrame, OxenError> {
     let table_name = table_name.as_ref();
-    let query = format!("SELECT * FROM {} LIMIT 10", table_name);
+    let query = format!("SELECT * FROM {table_name} LIMIT 10");
     let df = select_raw(conn, &query)?;
     Ok(df)
 }
@@ -640,53 +765,8 @@ pub fn record_batches_to_polars_df(records: Vec<RecordBatch>) -> Result<DataFram
 #[cfg(test)]
 mod tests {
     use crate::test;
-    // use sql_query_builder as sql;
 
     use super::*;
-
-    /*
-    #[test]
-    fn test_df_db_count() -> Result<(), OxenError> {
-        // TODO: Create this db file in a temp dir
-        let db_file = Path::new("data")
-            .join("test")
-            .join("db")
-            .join("metadata.db");
-        let conn = get_connection(db_file)?;
-
-        let count = count(&conn, "metadata")?;
-
-        assert_eq!(count, 16);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_df_db_select() -> Result<(), OxenError> {
-        let db_file = Path::new("data")
-            .join("test")
-            .join("db")
-            .join("metadata.db");
-        let conn = get_connection(db_file)?;
-
-        let offset = 0;
-        let limit = 7;
-        let fields = ["filename", "data_type"];
-
-        let stmt = sql::Select::new()
-            .select(&fields.join(", "))
-            .offset(&offset.to_string())
-            .limit(&limit.to_string())
-            .from("metadata");
-
-        let df = select(&conn, &stmt)?;
-
-        assert!(df.width() == fields.len());
-        assert!(df.height() == limit);
-
-        Ok(())
-    }
-     */
 
     #[test]
     fn test_df_db_create() -> Result<(), OxenError> {

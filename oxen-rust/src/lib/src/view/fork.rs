@@ -1,14 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ForkRequest {
     pub namespace: String,
     pub new_repo_name: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub enum ForkStatus {
     Started,
     Counting(u32),
@@ -17,20 +18,20 @@ pub enum ForkStatus {
     Failed(String),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct ForkStatusFile {
     pub status: ForkStatus,
     pub progress: Option<f32>,
     pub error: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct ForkStartResponse {
     pub repository: String,
     pub fork_status: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 pub struct ForkStatusResponse {
     pub repository: String,
     pub status: String,
@@ -92,7 +93,7 @@ impl FromStr for ForkStatus {
             "complete" => Ok(ForkStatus::Complete),
             "failed" => Ok(ForkStatus::Failed(String::new())),
             "started" => Ok(ForkStatus::Started),
-            _ => Err(format!("Invalid status: {}", s)),
+            _ => Err(format!("Invalid status: {s}")),
         }
     }
 }

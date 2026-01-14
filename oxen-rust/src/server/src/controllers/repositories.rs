@@ -1,7 +1,7 @@
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param};
+use crate::params::{app_data, path_param};
 
 use futures_util::stream::StreamExt; // Import StreamExt for the next() method
 use futures_util::TryStreamExt;
@@ -9,7 +9,6 @@ use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::repositories;
-use liboxen::util;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
     DataTypeView, RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
@@ -23,11 +22,26 @@ use liboxen::view::{
 use actix_multipart::Multipart; // Gives us Multipart
 use liboxen::model::{RepoNew, User};
 
-use actix_files::NamedFile;
 use actix_web::{web, HttpRequest, HttpResponse, Result};
 use serde_json::from_slice;
 use std::path::PathBuf;
+use utoipa;
 
+/// List repositories
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}",
+    operation_id = "list_repositories",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace to list repositories from", example = "ox"),
+    ),
+    responses(
+        (status = 200, description = "List of repositories", body = ListRepositoryResponse),
+        (status = 404, description = "Namespace not found")
+    )
+)]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -49,6 +63,22 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
+/// Get repository details
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}",
+    operation_id = "get_repository",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    responses(
+        (status = 200, description = "Repository details", body = RepositoryDataTypesResponse),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -91,7 +121,22 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }))
 }
 
-// Need this endpoint to get the size and data types for a repo from the UI
+/// Get repository stats
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/stats",
+    operation_id = "get_repository_stats",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    responses(
+        (status = 200, description = "Repository statistics", body = RepositoryStatsResponse),
+        (status = 404, description = "Repository not found"),
+    )
+)]
 pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
@@ -119,11 +164,11 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
                 }))
             }
             Ok(None) => {
-                log::debug!("404 Could not find repo: {}", name);
+                log::debug!("404 Could not find repo: {name}");
                 Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
             }
             Err(err) => {
-                log::debug!("Err finding repo: {} => {:?}", name, err);
+                log::debug!("Err finding repo: {name} => {err:?}");
                 Ok(
                     HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()),
@@ -136,6 +181,22 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     }
 }
 
+/// Update repository size
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/size",
+    operation_id = "update_repository_size",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    responses(
+        (status = 200, description = "Repository size updated", body = StatusMessage),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -147,6 +208,22 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+/// Get repository size
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/size",
+    operation_id = "get_repository_size",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+    ),
+    responses(
+        (status = 200, description = "Repository size in bytes", body = u64),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -157,6 +234,33 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     Ok(HttpResponse::Ok().json(size))
 }
 
+/// Create repository
+#[utoipa::path(
+    post,
+    path = "/api/repos",
+    operation_id = "create_repository",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    request_body(
+        content = RepoNew,
+        description = "Repository creation payload (JSON or Multipart)",
+        content_type = "application/json",
+        example = json!({
+            "namespace": "ox",
+            "name": "Cat-Dog-Classifier",
+            "user": {
+                "name": "bessie",
+                "email": "bessie@oxen.ai"
+            },
+            "description": "A repository for image classification"
+        })
+    ),
+    responses(
+        (status = 200, description = "Repository created", body = RepositoryCreationResponse),
+        (status = 400, description = "Invalid payload"),
+        (status = 409, description = "Repository already exists"),
+    )
+)]
 pub async fn create(
     req: HttpRequest,
     mut payload: web::Payload,
@@ -168,13 +272,13 @@ pub async fn create(
             let mut body_bytes = Vec::new();
             while let Some(chunk) = payload.next().await {
                 let chunk = chunk.map_err(|e| {
-                    println!("Failed to read payload: {:?}", e);
+                    println!("Failed to read payload: {e:?}");
                     OxenHttpError::BadRequest("Failed to read payload".into())
                 })?;
                 body_bytes.extend_from_slice(&chunk);
             }
             let json_data: RepoNew = from_slice(&body_bytes).map_err(|e| {
-                println!("Failed to parse JSON: {:?}", e);
+                println!("Failed to parse JSON: {e:?}");
                 OxenHttpError::BadRequest("Invalid JSON".into())
             })?;
             return handle_json_creation(app_data, json_data).await;
@@ -225,18 +329,18 @@ async fn handle_json_creation(
             }
             Err(err) => {
                 println!("Err repositories::create: {err:?}");
-                log::error!("Err repositories::commits::latest_commit: {:?}", err);
+                log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
         Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
         Err(err) => {
             println!("Err repositories::create: {err:?}");
-            log::error!("Err repositories::create: {:?}", err);
+            log::error!("Err repositories::create: {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
@@ -364,22 +468,38 @@ async fn handle_multipart_creation(
                 }))
             }
             Err(err) => {
-                log::error!("Err repositories::commits::latest_commit: {:?}", err);
+                log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
         Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {:?}", path);
+            log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
         Err(err) => {
-            log::error!("Err repositories::create: {:?}", err);
+            log::error!("Err repositories::create: {err:?}");
             Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
         }
     }
 }
 
+/// Delete repository
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{namespace}/{repo_name}",
+    operation_id = "delete_repository",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
+    ),
+    responses(
+        (status = 200, description = "Repository deletion started", body = StatusMessage),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -391,13 +511,37 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 
     // Delete in a background thread because it could take awhile
     std::thread::spawn(move || match repositories::delete(&repository) {
-        Ok(_) => log::info!("Deleted repo: {}/{}", namespace, name),
-        Err(err) => log::error!("Err deleting repo: {}", err),
+        Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
+        Err(err) => log::error!("Err deleting repo: {err}"),
     });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
+/// Transfer repository namespace
+#[utoipa::path(
+    patch,
+    path = "/api/repos/{namespace}/{repo_name}/transfer",
+    operation_id = "transfer_namespace",
+    tag = "Repositories",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Current namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
+    ),
+    request_body(
+        content = NamespaceView,
+        description = "Target namespace to transfer the repository to.",
+        example = json!({
+            "namespace": "new_org"
+        })
+    ),
+    responses(
+        (status = 200, description = "Repository transferred successfully", body = RepositoryResponse),
+        (status = 400, description = "Invalid body or target namespace"),
+        (status = 404, description = "Repository not found")
+    )
+)]
 pub async fn transfer_namespace(
     req: HttpRequest,
     body: String,
@@ -409,11 +553,7 @@ pub async fn transfer_namespace(
     let data: NamespaceView = serde_json::from_str(&body)?;
     let to_namespace = data.namespace;
 
-    log::debug!(
-        "transfer_namespace from: {} to: {}",
-        from_namespace,
-        to_namespace
-    );
+    log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
     repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
     let repo =
@@ -430,169 +570,4 @@ pub async fn transfer_namespace(
             is_empty: repositories::is_empty(&repo)?,
         },
     }))
-}
-
-pub async fn get_file_for_branch(req: HttpRequest) -> Result<NamedFile, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let filepath: PathBuf = req.match_info().query("filename").parse().unwrap();
-    let branch_name: &str = req.match_info().get("branch_name").unwrap();
-
-    let branch = repositories::branches::get_by_name(&repo, branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(branch_name))?;
-    let version_path = util::fs::version_path_for_commit_id(&repo, &branch.commit_id, &filepath)?;
-    log::debug!(
-        "get_file_for_branch looking for {:?} -> {:?}",
-        filepath,
-        version_path
-    );
-    Ok(NamedFile::open(version_path)?)
-}
-
-pub async fn get_file_for_commit_id(req: HttpRequest) -> Result<NamedFile, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let resource = parse_resource(&req, &repo)?;
-    let commit = resource
-        .clone()
-        .commit
-        .ok_or(OxenError::resource_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
-
-    let version_path = util::fs::version_path_for_commit_id(&repo, &commit.id, &resource.path)?;
-    log::debug!(
-        "get_file_for_commit_id looking for {:?} -> {:?}",
-        resource.path,
-        version_path
-    );
-    Ok(NamedFile::open(version_path)?)
-}
-
-#[cfg(test)]
-mod tests {
-
-    use actix_web::http::{self};
-
-    use actix_web::body::to_bytes;
-
-    use liboxen::error::OxenError;
-
-    use liboxen::view::http::STATUS_SUCCESS;
-    use liboxen::view::{ListRepositoryResponse, NamespaceView, RepositoryResponse};
-
-    use crate::controllers;
-    use crate::test;
-
-    #[actix_web::test]
-    async fn test_controllers_repositories_index_empty() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-
-        let namespace = "repositories";
-        let uri = format!("/api/repos/{namespace}");
-        let req = test::namespace_request(&sync_dir, &uri, namespace);
-
-        let resp = controllers::repositories::index(req).await.unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListRepositoryResponse = serde_json::from_str(text)?;
-        assert_eq!(list.repositories.len(), 0);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_respositories_index_multiple_repos() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-
-        let namespace = "Test-Namespace";
-        test::create_local_repo(&sync_dir, namespace, "Testing-1")?;
-        test::create_local_repo(&sync_dir, namespace, "Testing-2")?;
-
-        let uri = format!("/api/repos/{namespace}");
-        let req = test::namespace_request(&sync_dir, &uri, namespace);
-        let resp = controllers::repositories::index(req).await.unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let list: ListRepositoryResponse = serde_json::from_str(text)?;
-        assert_eq!(list.repositories.len(), 2);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_respositories_show() -> Result<(), OxenError> {
-        log::info!("starting test");
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Test-Namespace";
-        let name = "Testing-Name";
-        test::create_local_repo(&sync_dir, namespace, name)?;
-        log::info!("test created local repo: {}", name);
-
-        let uri = format!("/api/repos/{namespace}/{name}");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let resp = controllers::repositories::show(req).await.unwrap();
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let repo_response: RepositoryResponse = serde_json::from_str(text)?;
-        assert_eq!(repo_response.status, STATUS_SUCCESS);
-        assert_eq!(repo_response.repository.name, name);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_controllers_repositories_transfer_namespace() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Test-Namespace";
-        let name = "Testing-Name";
-        test::create_local_repo(&sync_dir, namespace, name)?;
-
-        // Create new repo in a namespace so it exists
-        let new_namespace = "New-Namespace";
-        let new_name = "Newbie";
-        test::create_local_repo(&sync_dir, new_namespace, new_name)?;
-
-        let uri = format!("/api/repos/{namespace}/{name}/transfer");
-        let req = test::repo_request(&sync_dir, &uri, namespace, name);
-
-        let params = NamespaceView {
-            namespace: new_namespace.to_string(),
-        };
-        let resp =
-            controllers::repositories::transfer_namespace(req, serde_json::to_string(&params)?)
-                .await
-                .unwrap();
-
-        assert_eq!(resp.status(), http::StatusCode::OK);
-        let body = to_bytes(resp.into_body()).await.unwrap();
-        let text = std::str::from_utf8(&body).unwrap();
-        let repo_response: RepositoryResponse = serde_json::from_str(text)?;
-
-        assert_eq!(repo_response.status, STATUS_SUCCESS);
-        assert_eq!(repo_response.repository.name, name);
-        assert_eq!(repo_response.repository.namespace, new_namespace);
-
-        // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
-
-        Ok(())
-    }
 }

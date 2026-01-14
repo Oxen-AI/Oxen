@@ -62,7 +62,7 @@ impl AuthConfig {
         if std::env::var("TEST").is_ok() {
             config_file = PathBuf::from("data/test/config/auth_config.toml");
         }
-        log::trace!("looking for config file in...{:?}", config_file);
+        log::trace!("looking for config file in...{config_file:?}");
         if config_file.exists() {
             Ok(AuthConfig::new(&config_file))
         } else {
@@ -71,7 +71,7 @@ impl AuthConfig {
                 config_file,
                 std::env::current_dir().unwrap()
             );
-            Err(OxenError::auth_token_not_set())
+            Err(OxenError::must_supply_valid_api_key())
         }
     }
 
@@ -90,7 +90,7 @@ impl AuthConfig {
     pub fn save_default(&self) -> Result<(), OxenError> {
         let config_dir = util::fs::oxen_config_dir()?;
         let config_file = config_dir.join(Path::new(AUTH_CONFIG_FILENAME));
-        log::debug!("Saving config to {:?}", config_file);
+        log::debug!("Saving config to {config_file:?}");
         if !config_dir.exists() {
             fs::create_dir_all(config_dir)?;
         }
@@ -120,7 +120,7 @@ impl AuthConfig {
             }
             token.auth_token.clone()
         } else {
-            log::trace!("no host configuration found for {}", host);
+            log::trace!("no host configuration found for {host}");
             None
         }
     }

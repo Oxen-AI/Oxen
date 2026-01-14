@@ -8,11 +8,11 @@ use serde_json::Value;
 
 use crate::constants::DIFF_STATUS_COL;
 use crate::core::db;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::opts::DFOpts;
 
-use crate::core::db::data_frames::{df_db, rows};
+use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::workspaces;
@@ -38,18 +38,12 @@ pub fn add(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    log::debug!(
-        "add_row() path: {:?} got db_path: {:?}",
-        row_changes_path,
-        db_path
-    );
-    let conn = df_db::get_connection(db_path)?;
-
     let df = tabular::parse_json_to_df(data)?;
-    log::debug!("add() df: {:?}", df);
+    log::debug!("add() df: {df:?}");
 
-    let mut result = rows::append_row(&conn, &df)?;
-
+    let mut result = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::append_row(conn, &df))
+    })?;
     let oxen_id_col = result
         .column("_oxen_id")
         .expect("Column _oxen_id not found");
@@ -68,13 +62,13 @@ pub fn add(
     Ok(result)
 }
 
-pub fn restore(
+pub async fn restore(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     row_id: impl AsRef<str>,
 ) -> Result<DataFrame, OxenError> {
     let row_id = row_id.as_ref();
-    let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id)?;
+    let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id).await?;
     let diff = repositories::workspaces::data_frames::full_diff(workspace, path.as_ref())?;
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
@@ -114,11 +108,10 @@ pub fn delete(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut deleted_row = {
-        let conn = df_db::get_connection(db_path)?;
-        rows::delete_row(&conn, row_id)?
-    };
-    log::debug!("delete() deleted_row: {:?}", deleted_row);
+    let mut deleted_row = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::delete_row(conn, row_id))
+    })?;
+    log::debug!("delete() deleted_row: {deleted_row:?}");
 
     let row = JsonDataFrameView::json_from_df(&mut deleted_row);
 
@@ -136,7 +129,7 @@ pub fn delete(
 
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
-            log::debug!("no changes, deleting file from staged db {:?}", path);
+            log::debug!("no changes, deleting file from staged db {path:?}");
             // Restored to original state == delete file from staged db
             with_staged_db_manager(&workspace.workspace_repo, |manager| {
                 manager.remove_staged_recursively(
@@ -147,9 +140,9 @@ pub fn delete(
             })?;
         } else {
             log::debug!("there are still changes, not deleting file from staged db");
-            log::debug!("diff: {:?}", diff);
+            log::debug!("diff: {diff:?}");
             // We track that the file has been modified
-            log::debug!("rows::delete() tracking file to staged db: {:?}", path);
+            log::debug!("rows::delete() tracking file to staged db: {path:?}");
             workspaces::files::track_modified_data_frame(workspace, path)?;
         }
     }
@@ -164,14 +157,17 @@ pub fn update(
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
     let mut df = tabular::parse_json_to_df(data)?;
-
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
+    if row.height() == 0 {
+        return Err(OxenError::resource_not_found("row not found"));
+    }
 
-    let mut result = rows::modify_row(&conn, &mut df, row_id)?;
+    let mut result = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
+    })?;
 
     let row_before = JsonDataFrameView::json_from_df(&mut row);
 
@@ -186,7 +182,7 @@ pub fn update(
     )?;
 
     let diff = repositories::workspaces::data_frames::full_diff(workspace, path)?;
-    log::debug!("update() diff: {:?}", diff);
+    log::debug!("update() diff: {diff:?}");
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
             with_staged_db_manager(&workspace.workspace_repo, |manager| {
@@ -212,7 +208,6 @@ pub fn batch_update(
     let path = path.as_ref();
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let conn = df_db::get_connection(db_path)?;
 
     let Some(array) = data.as_array() else {
         return Err(OxenError::basic_str("Data is not an array"));
@@ -239,7 +234,9 @@ pub fn batch_update(
         })
         .collect::<Result<_, OxenError>>()?;
 
-    rows::modify_rows(&conn, row_map)?;
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| rows::modify_rows(conn, row_map))
+    })?;
 
     let results: Vec<UpdateResult> = keys
         .iter()
@@ -249,7 +246,7 @@ pub fn batch_update(
     Ok(results)
 }
 
-pub fn prepare_modified_or_removed_row(
+pub async fn prepare_modified_or_removed_row(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
@@ -259,35 +256,34 @@ pub fn prepare_modified_or_removed_row(
         .ok_or_else(|| OxenError::basic_str("Row index not found"))?;
     let row_idx_og = (row_idx - 1) as i64;
 
-    let commit_merkle_tree = CommitMerkleTree::from_path(repo, commit, &path, true)?;
-    let file_node = match commit_merkle_tree.root.node {
+    let Some(commit_merkle_tree) =
+        repositories::tree::get_node_by_path_with_children(repo, commit, &path)?
+    else {
+        return Err(OxenError::basic_str(format!(
+            "Merkle tree for commit {commit:?} not found"
+        )));
+    };
+
+    let file_node = match commit_merkle_tree.node {
         EMerkleTreeNode::File(file_node) => file_node,
         _ => return Err(OxenError::basic_str("File node not found")),
     };
 
     log::debug!(
         "prepare_modified_or_removed_row() commit_merkle_tree: {:?}",
-        &commit_merkle_tree.root.hash.to_string()
+        &commit_merkle_tree.hash.to_string()
     );
 
     // let scan_rows = 10000 as usize;
-    let committed_df_path = util::fs::version_path_from_node(
-        repo,
-        commit_merkle_tree.root.hash.to_string(),
-        path.as_ref(),
-    );
+    let committed_df_path =
+        util::fs::version_path_from_node(repo, commit_merkle_tree.hash.to_string(), path.as_ref());
 
-    log::debug!(
-        "prepare_modified_or_removed_row() committed_df_path: {:?}",
-        committed_df_path
-    );
+    log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 
     // TODONOW should not be using all rows - just need to parse delim
-    let lazy_df = tabular::read_df_with_extension(
-        committed_df_path,
-        file_node.extension(),
-        &DFOpts::empty(),
-    )?;
+    let lazy_df =
+        tabular::read_df_with_extension(committed_df_path, file_node.extension(), &DFOpts::empty())
+            .await?;
 
     // Get the row by index
     let mut row = lazy_df.slice(row_idx_og, 1_usize);
@@ -303,14 +299,13 @@ pub fn prepare_modified_or_removed_row(
     Ok(row)
 }
 
-pub fn restore_row_in_db(
+pub async fn restore_row_in_db(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     row_id: impl AsRef<str>,
 ) -> Result<DataFrame, OxenError> {
     let row_id = row_id.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path.as_ref());
-    let conn = df_db::get_connection(db_path)?;
     let opts = db::key_val::opts::default();
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, path.as_ref());
@@ -331,7 +326,9 @@ pub fn restore_row_in_db(
             // Row is added, just delete it
             log::debug!("restore_row() row is added, deleting");
             rows::revert_row_changes(&db, row_id.to_owned())?;
-            rows::delete_row(&conn, row_id)?
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| rows::delete_row(conn, row_id))
+            })?
         }
         StagedRowStatus::Modified | StagedRowStatus::Removed => {
             // Row is modified, just delete it
@@ -341,11 +338,14 @@ pub fn restore_row_in_db(
                 &workspace.commit,
                 path.as_ref(),
                 &row,
-            )?;
-            log::debug!("restore_row() insert_row: {:?}", insert_row);
+            )
+            .await?;
+            log::debug!("restore_row() insert_row: {insert_row:?}");
             rows::revert_row_changes(&db, row_id.to_owned())?;
             log::debug!("restore_row() after revert");
-            rows::modify_row(&conn, &mut insert_row, row_id)?
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| rows::modify_row(conn, &mut insert_row, row_id))
+            })?
         }
         StagedRowStatus::Unchanged => {
             // Row is unchanged, just return it
@@ -353,7 +353,7 @@ pub fn restore_row_in_db(
         }
     };
 
-    log::debug!("we're returning this row: {:?}", result_row);
+    log::debug!("we're returning this row: {result_row:?}");
 
     Ok(result_row)
 }

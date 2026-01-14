@@ -2,8 +2,8 @@ use duckdb::Connection;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
 use crate::core::db::data_frames::df_db;
+use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::staged::with_staged_db_manager;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use parking_lot::Mutex;
 use sql_query_builder::Delete;
@@ -18,7 +18,6 @@ use crate::model::{
 use crate::repositories;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 pub mod columns;
 pub mod rows;
@@ -60,7 +59,7 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
     path: &Path,
 ) -> Result<Workspace, OxenError> {
     let workspaces = repositories::workspaces::list(repo)?;
-    log::debug!("Looking for workspace with commit id {:?}", commit_id);
+    log::debug!("Looking for workspace with commit id {commit_id:?}");
 
     for workspace in workspaces {
         // log::debug!("is workspace editable: {:?}", workspace.is_editable);
@@ -88,7 +87,7 @@ pub fn get_queryable_data_frame_workspace(
     commit: &Commit,
 ) -> Result<Workspace, OxenError> {
     let path = path.as_ref();
-    log::debug!("get_queryable_data_frame_workspace path: {:?}", path);
+    log::debug!("get_queryable_data_frame_workspace path: {path:?}");
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
         .ok_or(OxenError::path_does_not_exist(path))?;
     if *file_node.data_type() != EntryDataType::Tabular {
@@ -96,11 +95,7 @@ pub fn get_queryable_data_frame_workspace(
             "File format not supported, must be tabular.",
         ));
     }
-    get_queryable_data_frame_workspace_from_file_node(
-        repo,
-        &MerkleHash::from_str(&commit.id)?,
-        path,
-    )
+    get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
 pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
@@ -114,62 +109,64 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
         ));
     }
 
-    log::debug!("core::v_latest::workspaces::data_frames::index({:?})", path);
+    log::debug!("core::v_latest::workspaces::data_frames::index({path:?})");
 
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
-    log::debug!(
-        "core::v_latest::workspaces::data_frames::index({:?}) got commit {:?}",
-        path,
-        commit
-    );
+    log::debug!("core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}");
 
-    let commit_merkle_tree = CommitMerkleTree::from_path(repo, commit, path, true)?;
-    let file_hash = commit_merkle_tree.root.hash;
+    let Ok(Some(commit_merkle_tree)) =
+        repositories::tree::get_node_by_path_with_children(repo, commit, path)
+    else {
+        return Err(OxenError::basic_str(format!(
+            "Merkle tree for commit {commit} not found"
+        )));
+    };
+
+    let file_hash = commit_merkle_tree.hash;
 
     log::debug!(
-        "core::v_latest::workspaces::data_frames::index({:?}) got file hash {:?}",
-        path,
-        file_hash
+        "core::v_latest::workspaces::data_frames::index({path:?}) got file hash {file_hash:?}"
     );
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
     let Some(parent) = db_path.parent() else {
         return Err(OxenError::basic_str(format!(
-            "Failed to get parent directory for {:?}",
-            db_path
+            "Failed to get parent directory for {db_path:?}"
         )));
     };
     util::fs::create_dir_all(parent)?;
 
-    let conn = df_db::get_connection(db_path)?;
-    if df_db::table_exists(&conn, TABLE_NAME)? {
-        df_db::drop_table(&conn, TABLE_NAME)?;
-    }
     let version_path = util::fs::version_path_from_node(repo, file_hash.to_string(), path);
 
     log::debug!(
-        "core::v_latest::index::workspaces::data_frames::index({:?}) got version path: {:?}",
-        path,
-        version_path
+        "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
     );
 
-    let extension = match &commit_merkle_tree.root.node {
+    let extension = match &commit_merkle_tree.node {
         EMerkleTreeNode::File(file_node) => file_node.extension(),
         _ => {
             return Err(OxenError::basic_str("File node is not a file node"));
         }
     };
 
-    df_db::index_file_with_id(&version_path, &conn, extension)?;
-    log::debug!(
-        "core::v_latest::index::workspaces::data_frames::index({:?}) finished!",
-        path
-    );
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            if df_db::table_exists(conn, TABLE_NAME)? {
+                df_db::drop_table(conn, TABLE_NAME)?;
+            }
 
-    add_row_status_cols(&conn)?;
+            df_db::index_file_with_id(&version_path, conn, extension)?;
+            log::debug!(
+                "core::v_latest::index::workspaces::data_frames::index({path:?}) finished!"
+            );
+
+            add_row_status_cols(conn)?;
+            Ok(())
+        })
+    })?;
 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =
@@ -221,9 +218,7 @@ pub async fn rename(
                 path,
             );
             log::debug!(
-                "rename: copying version path: {:?} to {:?}",
-                version_path,
-                workspace_file_path
+                "rename: copying version path: {version_path:?} to {workspace_file_path:?}"
             );
             util::fs::copy_mkdir(version_path, &workspace_file_path)?;
         }
@@ -236,9 +231,7 @@ pub async fn rename(
         )?
         .is_some();
         log::debug!(
-            "rename is_modified: {:?} workspace_file_path: {:?}",
-            is_modified,
-            workspace_file_path
+            "rename is_modified: {is_modified:?} workspace_file_path: {workspace_file_path:?}"
         );
 
         if is_modified {
@@ -251,12 +244,11 @@ pub async fn rename(
         staged_entry = with_staged_db_manager(workspace_repo, |staged_db_manager| {
             staged_db_manager.read_from_staged_db(new_path)
         })?;
-        log::debug!("rename: staged_entry after add: {:?}", staged_entry);
+        log::debug!("rename: staged_entry after add: {staged_entry:?}");
     }
 
     let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(format!(
-        "rename: staged entry not found: {:?}",
-        path
+        "rename: staged entry not found: {path:?}"
     )))?;
 
     // Update the file name in the staged entry
@@ -304,10 +296,8 @@ fn add_row_status_cols(conn: &Connection) -> Result<(), OxenError> {
     );
     conn.execute(&query_status, [])?;
 
-    let query_hash = format!(
-        "ALTER TABLE \"{}\" ADD COLUMN \"{}\" VARCHAR DEFAULT NULL",
-        TABLE_NAME, DIFF_HASH_COL
-    );
+    let query_hash =
+        format!("ALTER TABLE \"{TABLE_NAME}\" ADD COLUMN \"{DIFF_HASH_COL}\" VARCHAR DEFAULT NULL");
     conn.execute(&query_hash, [])?;
     Ok(())
 }
@@ -318,18 +308,14 @@ pub fn extract_file_node_to_working_dir(
     file_node: &FileNode,
 ) -> Result<PathBuf, OxenError> {
     let dir_path = dir_path.as_ref();
-    log::debug!(
-        "extract_file_node_to_working_dir dir_path: {:?} file_node: {}",
-        dir_path,
-        file_node
-    );
+    log::debug!("extract_file_node_to_working_dir dir_path: {dir_path:?} file_node: {file_node}");
     let workspace_repo = &workspace.workspace_repo;
     let path = PathBuf::from(file_node.name());
 
     let working_path = workspace_repo.path.join(&path);
-    log::debug!("extracting file node to working dir: {:?}", working_path);
+    log::debug!("extracting file node to working dir: {working_path:?}");
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
-    let conn = df_db::get_connection(db_path)?;
+
     // Match on the extension
     if !working_path.exists() {
         util::fs::create_dir_all(
@@ -339,19 +325,24 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
-    let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
-        "\"{}\" = '{}'",
-        DIFF_STATUS_COL,
-        StagedRowStatus::Removed
-    ));
-    let res = conn.execute(&delete.to_string(), [])?;
-    log::debug!("delete query result is: {:?}", res);
+    with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|conn| {
+            let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
+                "\"{}\" = '{}'",
+                DIFF_STATUS_COL,
+                StagedRowStatus::Removed
+            ));
+            let res = conn.execute(&delete.to_string(), [])?;
+            log::debug!("delete query result is: {res:?}");
 
-    let excluded_cols = get_existing_excluded_columns(&conn, TABLE_NAME)?;
-    let sql = format!("SELECT * EXCLUDE ({}) FROM '{}'", excluded_cols, TABLE_NAME);
-    let query = wrap_sql_for_export(&sql, &working_path);
-    log::debug!("extracting file node to working dir query: {:?}", query);
-    conn.execute(&query, [])?;
+            let excluded_cols = get_existing_excluded_columns(conn, TABLE_NAME)?;
+            let sql = format!("SELECT * EXCLUDE ({excluded_cols}) FROM '{TABLE_NAME}'");
+            let query = wrap_sql_for_export(&sql, &working_path);
+            log::debug!("extracting file node to working dir query: {query:?}");
+            conn.execute(&query, [])?;
+            Ok(())
+        })
+    })?;
 
     Ok(working_path)
 }
@@ -410,8 +401,7 @@ pub fn wrap_sql_for_export(sql: &str, path: impl AsRef<Path>) -> String {
 fn get_existing_excluded_columns(conn: &Connection, table_name: &str) -> Result<String, OxenError> {
     // Query to get existing columns in the table
     let existing_cols_query = format!(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = '{}'",
-        table_name
+        "SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
     );
 
     let mut stmt = conn.prepare(&existing_cols_query)?;
@@ -424,7 +414,7 @@ fn get_existing_excluded_columns(conn: &Connection, table_name: &str) -> Result<
     let filtered_excluded_cols: Vec<String> = EXCLUDE_OXEN_COLS
         .iter()
         .filter(|col| existing_cols.contains(&col.to_string()))
-        .map(|col| format!("\"{}\"", col))
+        .map(|col| format!("\"{col}\""))
         .collect();
 
     Ok(filtered_excluded_cols.join(", "))

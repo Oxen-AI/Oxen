@@ -39,8 +39,8 @@ mod tests {
             util::fs::create_dir_all(&dir)?;
             let num_files = 33;
             for i in 0..num_files {
-                let path = dir.join(format!("file_{}.txt", i));
-                util::fs::write_to_path(&path, format!("lol hi {}", i))?;
+                let path = dir.join(format!("file_{i}.txt"));
+                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -98,8 +98,8 @@ mod tests {
             util::fs::create_dir_all(&dir)?;
             let num_files = 5;
             for i in 0..num_files {
-                let path = dir.join(format!("file_{}.txt", i));
-                util::fs::write_to_path(&path, format!("lol hi {}", i))?;
+                let path = dir.join(format!("file_{i}.txt"));
+                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -160,8 +160,8 @@ mod tests {
             util::fs::create_dir_all(&dir)?;
             let num_files = 5;
             for i in 0..num_files {
-                let path = dir.join(format!("file_{}.txt", i));
-                util::fs::write_to_path(&path, format!("lol hi {}", i))?;
+                let path = dir.join(format!("file_{i}.txt"));
+                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;

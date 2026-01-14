@@ -2,10 +2,9 @@ use crate::error::OxenError;
 use crate::model::diff::change_type::ChangeType;
 use crate::model::diff::text_diff::LineDiff;
 use crate::model::diff::text_diff::TextDiff;
-use crate::util;
 
 use difference::{Changeset, Difference};
-use std::path::Path;
+use std::path::PathBuf;
 
 /// Adds a slice of lines from a text block to the result vector with a given modification type.
 fn add_lines_to_diff(
@@ -34,25 +33,26 @@ fn add_lines_to_diff(
 }
 
 pub fn diff(
-    version_file_1: impl AsRef<Path>,
-    version_file_2: impl AsRef<Path>,
+    original_data: Option<String>,
+    version_file_1: Option<PathBuf>,
+    compare_data: Option<String>,
+    version_file_2: Option<PathBuf>,
 ) -> Result<TextDiff, OxenError> {
-    log::debug!(
-        "diffing text files {:?} and {:?}",
-        version_file_1.as_ref(),
-        version_file_2.as_ref()
-    );
-
-    let original_data = util::fs::read_from_path(version_file_1.as_ref())?;
-    let compare_data = util::fs::read_from_path(version_file_2.as_ref())?;
-    let Changeset { diffs, .. } = Changeset::new(&original_data, &compare_data, "\n");
-    log::debug!("Changeset created with {} diffs", diffs.len());
-
     let mut result = TextDiff {
-        filename1: Some(version_file_1.as_ref().to_string_lossy().to_string()), //TODO: why is this so ugly? change result.filename1 to have Path,
-        filename2: Some(version_file_2.as_ref().to_string_lossy().to_string()),
+        filename1: version_file_1
+            .clone()
+            .map(|p| p.to_string_lossy().to_string()),
+        filename2: version_file_2
+            .clone()
+            .map(|p| p.to_string_lossy().to_string()),
         ..Default::default()
     };
+
+    let original_data = original_data.unwrap_or_default();
+    let compare_data = compare_data.unwrap_or_default();
+
+    let Changeset { diffs, .. } = Changeset::new(&original_data, &compare_data, "\n");
+    log::debug!("Changeset created with {} diffs", diffs.len());
 
     // Find the indices of all Add or Rem changes
     let change_indices: Vec<usize> = diffs
@@ -76,7 +76,7 @@ pub fn diff(
         if (change_idx as i32) <= last_processed_diff_idx {
             continue;
         }
-        log::debug!("Processing change at index: {}", change_idx);
+        log::debug!("Processing change at index: {change_idx}");
 
         if !is_first_chunk {
             result.lines.push(LineDiff {
@@ -99,9 +99,7 @@ pub fn diff(
                 let desired_start = lines.len().saturating_sub(3);
                 let actual_start = desired_start.max(pre_context_lines_to_skip);
                 log::debug!(
-                    "Adding pre-context from diff [{}], lines [{}..]",
-                    context_diff_idx,
-                    actual_start
+                    "Adding pre-context from diff [{context_diff_idx}], lines [{actual_start}..]"
                 );
                 add_lines_to_diff(
                     &mut result,
@@ -117,11 +115,11 @@ pub fn diff(
         while let Some(diff) = diffs.get(current_idx) {
             match diff {
                 Difference::Add(text) => {
-                    log::debug!("Adding Added block at index {}", current_idx);
+                    log::debug!("Adding Added block at index {current_idx}");
                     add_lines_to_diff(&mut result, text, ChangeType::Added, None);
                 }
                 Difference::Rem(text) => {
-                    log::debug!("Adding Removed block at index {}", current_idx);
+                    log::debug!("Adding Removed block at index {current_idx}");
                     add_lines_to_diff(&mut result, text, ChangeType::Removed, None);
                 }
                 Difference::Same(_) => {
@@ -135,11 +133,7 @@ pub fn diff(
         if let Some(Difference::Same(text)) = diffs.get(current_idx) {
             let lines: Vec<_> = text.split('\n').collect();
             let count = 2.min(lines.len());
-            log::debug!(
-                "Adding post-context from diff [{}], lines [..{}]",
-                current_idx,
-                count
-            );
+            log::debug!("Adding post-context from diff [{current_idx}], lines [..{count}]");
             add_lines_to_diff(&mut result, text, ChangeType::Unchanged, Some((0, count)));
 
             last_processed_diff_idx = current_idx as i32;

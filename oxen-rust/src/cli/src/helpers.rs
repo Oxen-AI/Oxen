@@ -72,9 +72,7 @@ pub async fn check_remote_version_blocking(
 
             if local_oxen_version < min_oxen_version {
                 return Err(OxenError::OxenUpdateRequired(format!(
-                    "Error: Oxen CLI out of date. Pushing to OxenHub requires version >= {:?}, found version {:?}.\n\nVisit https://docs.oxen.ai/getting-started/intro for update instructions.\n\nOn Mac:\n\n  brew update\n  brew install oxen\n\nOn Ubuntu:\n\n  wget https://github.com/Oxen-AI/Oxen/releases/latest/download/oxen-ubuntu-latest.deb\n  sudo dpkg -i oxen-ubuntu-latest.deb",
-                    min_oxen_version,
-                    local_oxen_version
+                    "Error: Oxen CLI out of date. Pushing to OxenHub requires version >= {min_oxen_version:?}, found version {local_oxen_version:?}.\n\nVisit https://docs.oxen.ai/getting-started/intro for update instructions.\n\nOn Mac:\n\n  brew update\n  brew upgrade oxen\n\nOn Ubuntu:\n\n  For x86-64:\n    wget https://github.com/Oxen-AI/Oxen/releases/latest/download/oxen-linux-x86_64.deb\n    sudo dpkg -i oxen-linux-x86_64.deb\n\n  For ARM64:\n    wget https://github.com/Oxen-AI/Oxen/releases/latest/download/oxen-linux-arm64.deb\n    sudo dpkg -i oxen-linux-arm64.deb"
                 ).into()));
             }
         }

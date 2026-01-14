@@ -2,3 +2,5 @@
 release/
 .oxen
 .DS_Store
+data/
+logs/

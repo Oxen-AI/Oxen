@@ -11,6 +11,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::MetadataEntry;
 use crate::model::RemoteRepository;
+use crate::repositories::LocalRepository;
 
 pub async fn download(
     repo: &RemoteRepository,
@@ -49,6 +50,30 @@ pub async fn download_dir(
     Ok(())
 }
 
+pub async fn download_dir_to_repo(
+    local_repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    entry: &MetadataEntry,
+    remote_path: impl AsRef<Path>,
+    local_path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    match remote_repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            core::v_latest::download::download_dir_entries(
+                local_repo,
+                remote_repo,
+                entry,
+                remote_path,
+                local_path,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -71,8 +96,8 @@ mod tests {
             util::fs::create_dir_all(&dir)?;
             let num_files = 33;
             for i in 0..num_files {
-                let path = dir.join(format!("file_{}.txt", i));
-                util::fs::write_to_path(&path, format!("lol hi {}", i))?;
+                let path = dir.join(format!("file_{i}.txt"));
+                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -97,8 +122,8 @@ mod tests {
 
             // Check that the files are there
             for i in 0..num_files {
-                let path = output_dir.join("train").join(format!("file_{}.txt", i));
-                println!("checking path: {:?}", path);
+                let path = output_dir.join("train").join(format!("file_{i}.txt"));
+                println!("checking path: {path:?}");
                 assert!(path.exists());
             }
 
@@ -146,7 +171,7 @@ mod tests {
                 .join("train")
                 .join("large_file")
                 .join("large_file.bin");
-            println!("downloaded_large_file: {:?}", downloaded_large_file);
+            println!("downloaded_large_file: {downloaded_large_file:?}");
             assert!(downloaded_large_file.exists());
             let metadata = util::fs::metadata(&downloaded_large_file)?;
             assert_eq!(metadata.len(), large_file_size);
@@ -164,8 +189,8 @@ mod tests {
             util::fs::create_dir_all(&dir)?;
             let num_files = 33;
             for i in 0..num_files {
-                let path = dir.join(format!("file_{}.txt", i));
-                util::fs::write_to_path(&path, format!("lol hi {}", i))?;
+                let path = dir.join(format!("file_{i}.txt"));
+                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -190,7 +215,7 @@ mod tests {
 
             // Check that the files are there
             for i in 0..num_files {
-                let path = output_dir.join("train").join(format!("file_{}.txt", i));
+                let path = output_dir.join("train").join(format!("file_{i}.txt"));
                 assert!(path.exists());
             }
 
@@ -252,7 +277,7 @@ mod tests {
 
                 assert!(dst_path.exists());
                 let result_dir = &dst_path.join(src_path);
-                println!("RESULT DIR: {:?}", result_dir);
+                println!("RESULT DIR: {result_dir:?}");
                 let dl_count = util::fs::rcount_files_in_dir(result_dir);
                 assert_eq!(dl_count, og_count);
 

@@ -6,13 +6,14 @@ use std::str;
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use utoipa::ToSchema;
 
 use crate::core::df::tabular;
 use crate::model::DataFrameSize;
 use crate::opts::PaginateOpts;
 use crate::{model::Schema, opts::DFOpts};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct JsonDataFrame {
     pub schema: Schema,
     pub view_schema: Schema,
@@ -55,7 +56,7 @@ impl JsonDataFrame {
         }
     }
 
-    pub fn from_df_paginated(df: DataFrame, opts: &PaginateOpts) -> JsonDataFrame {
+    pub async fn from_df_paginated(df: DataFrame, opts: &PaginateOpts) -> JsonDataFrame {
         let full_height = df.height();
         let full_width = df.width();
 
@@ -67,8 +68,8 @@ impl JsonDataFrame {
 
         let schema = Schema::from_polars(df.schema());
         let mut opts = DFOpts::empty();
-        opts.slice = Some(format!("{}..{}", start, end));
-        let mut view_df = tabular::transform(df, opts).unwrap();
+        opts.slice = Some(format!("{start}..{end}"));
+        let mut view_df = tabular::transform(df, opts).await.unwrap();
         let view_schema = Schema::from_polars(view_df.schema());
 
         JsonDataFrame {
@@ -86,12 +87,12 @@ impl JsonDataFrame {
         }
     }
 
-    pub fn from_df_opts(df: DataFrame, opts: DFOpts) -> JsonDataFrame {
+    pub async fn from_df_opts(df: DataFrame, opts: DFOpts) -> JsonDataFrame {
         let full_height = df.height();
         let full_width = df.width();
 
         let schema = Schema::from_polars(df.schema());
-        let mut view_df = tabular::transform(df, opts).unwrap();
+        let mut view_df = tabular::transform(df, opts).await.unwrap();
         let view_schema = Schema::from_polars(view_df.schema());
 
         JsonDataFrame {
@@ -109,24 +110,24 @@ impl JsonDataFrame {
         }
     }
 
-    pub fn to_df(&self) -> DataFrame {
+    pub async fn to_df(&self) -> DataFrame {
         if self.data == serde_json::Value::Null {
             DataFrame::empty()
         } else {
             // The fields were coming out of order, so we need to reorder them
             let columns = self.schema.fields_names();
-            log::debug!("Got columns: {:?}", columns);
+            log::debug!("Got columns: {columns:?}");
 
             match &self.data {
                 serde_json::Value::Array(arr) => {
                     if !arr.is_empty() {
                         let data = self.data.to_string();
                         let content = Cursor::new(data.as_bytes());
-                        log::debug!("Deserializing df: [{}]", data);
+                        log::debug!("Deserializing df: [{data}]");
                         let df = JsonReader::new(content).finish().unwrap();
 
                         let opts = DFOpts::from_column_names(columns);
-                        tabular::transform(df, opts).unwrap()
+                        tabular::transform(df, opts).await.unwrap()
                     } else {
                         let cols = columns
                             .iter()
@@ -167,7 +168,7 @@ impl JsonDataFrame {
     }
 
     fn json_data(df: &mut DataFrame) -> serde_json::Value {
-        log::debug!("Serializing df: [{}]", df);
+        log::debug!("Serializing df: [{df}]");
 
         // TODO: serialize to json
         let data: Vec<u8> = Vec::new();
