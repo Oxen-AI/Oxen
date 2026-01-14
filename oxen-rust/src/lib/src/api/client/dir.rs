@@ -1,14 +1,13 @@
 use std::path::Path;
 
-use crate::api;
 use crate::api::client;
-use crate::constants;
 use crate::error::OxenError;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
 use crate::model::RemoteRepository;
 use crate::view::entries::EMetadataEntry;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
+use crate::{api, constants};
 
 pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEntries, OxenError> {
     list(

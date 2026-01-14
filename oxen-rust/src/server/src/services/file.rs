@@ -12,12 +12,14 @@ pub fn file() -> Scope {
             "/{resource:.*}",
             web::delete().to(controllers::file::delete),
         )
+        // Note: the 'upload_zip' and 'import' routes here are deprecated.
+        // Please use the import module
         .route(
             "/upload_zip/{resource:.*}",
-            web::post().to(controllers::file::upload_zip),
+            web::post().to(controllers::import::upload_zip),
         )
         .route(
             "/import/{resource:.*}",
-            web::post().to(controllers::file::import),
+            web::post().to(controllers::import::import),
         )
 }
