@@ -26,6 +26,8 @@ use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
 
+use middleware::RequestIdMiddleware;
+
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
 use liboxen::model::metadata::{
     generic_metadata::GenericMetadata, MetadataAudio, MetadataDir, MetadataImage, MetadataTabular,
@@ -172,8 +174,11 @@ const SUPPORT: &str = "
         // Files (Repository)
         crate::controllers::file::get,
         crate::controllers::file::put,
-        crate::controllers::file::upload_zip,
-        crate::controllers::file::import,
+        // Import
+        crate::controllers::import::upload_zip,
+        crate::controllers::import::import,
+        // Export
+        crate::controllers::export::download_zip,
         // DataFrames
         crate::controllers::data_frames::get,
         crate::controllers::data_frames::index,
@@ -225,8 +230,8 @@ const SUPPORT: &str = "
             // Upload & Request Bodies
             crate::controllers::workspaces::files::FileUpload,
             crate::controllers::file::FileUploadBody,
-            crate::controllers::file::ZipUploadBody,
-            crate::controllers::file::ImportFileBody,
+            crate::controllers::import::ZipUploadBody,
+            crate::controllers::import::ImportFileBody,
             FromDirectoryRequest,
             // Metadata Schemas
             EMetadataEntryResponseView,
@@ -393,6 +398,7 @@ async fn main() -> std::io::Result<()> {
                     HttpServer::new(move || {
                         App::new()
                             .app_data(data.clone())
+                            .wrap(RequestIdMiddleware)
                             .route(
                                 "/api/version",
                                 web::get().to(controllers::oxen_version::index),

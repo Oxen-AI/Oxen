@@ -258,33 +258,25 @@ pub async fn import(
 }
 
 pub async fn upload_zip(
+    repo: &LocalRepository,
     commit_message: &str,
     user: &User,
     temp_files: Vec<TempFilePathNew>,
     workspace: &Workspace,
     branch: &Branch,
 ) -> Result<Commit, OxenError> {
+    // Unzip the files and add
     for temp_file in temp_files {
-        let files = decompress_zip(&temp_file.temp_file_path).await?;
-
-        for file in files.iter() {
-            // Skip files in __MACOSX directories
-            if file
-                .components()
-                .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
-            {
-                log::debug!("Skipping __MACOSX file: {file:?}");
-                continue;
-            }
-
-            repositories::workspaces::files::add(workspace, file).await?;
-        }
+        let files = decompress_zip(&temp_file.temp_file_path)?;
+        repositories::add::add_all(repo, &files).await?;
     }
+
     let data = NewCommitBody {
         message: commit_message.to_string(),
         author: user.name.clone(),
         email: user.email.clone(),
     };
+
     let res = repositories::workspaces::commit(workspace, &data, &branch.name).await;
     match res {
         Ok(commit) => {
@@ -400,7 +392,7 @@ async fn fetch_file(
 
     // decompress and stage file
     if is_zip {
-        let files = decompress_zip(&save_path).await?;
+        let files = decompress_zip(&save_path)?;
         log::debug!("workspace::files::import_file unzipped file");
 
         for file in files.iter() {
@@ -479,7 +471,7 @@ pub async fn save_stream(
     Ok(full_dir)
 }
 
-pub async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
+pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
     // File unzipped into the same directory
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
