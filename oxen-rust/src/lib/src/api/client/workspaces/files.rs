@@ -1030,6 +1030,12 @@ pub async fn download(
     if response.status().is_success() {
         // Save the raw file contents from the response stream
         let output_path = output_path.unwrap_or_else(|| Path::new(path));
+        let output_dir = output_path.parent().unwrap_or(Path::new(""));
+
+        if !output_dir.exists() {
+            util::fs::create_dir_all(output_dir)?;
+        }
+
         let mut file = tokio::fs::File::create(&output_path).await?;
         let mut stream = response.bytes_stream();
 
