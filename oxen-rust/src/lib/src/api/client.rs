@@ -184,7 +184,7 @@ async fn parse_json_body_with_err_msg(
     let status = res.status();
     let body = res.text().await?;
 
-    log::debug!("url: {url}\nstatus: {status}\nbody: {body}");
+    log::debug!("url: {url}\nstatus: {status}");
 
     let response: Result<OxenResponse, serde_json::Error> = serde_json::from_str(&body);
     log::debug!("response: {response:?}");
@@ -200,7 +200,7 @@ async fn parse_json_body_with_err_msg(
         Err(err) => {
             log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
-                "Could not deserialize response from [{url}]\n{status}\n'{body}'"
+                "Could not deserialize response from [{url}]\n{status}"
             )))
         }
     }
