@@ -5,7 +5,7 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use std::future::{ready, Ready};
 
-use crate::constants::OXEN_REQUEST_ID;
+use liboxen::constants::OXEN_REQUEST_ID;
 use liboxen::request_context::{extract_or_generate_request_id, REQUEST_ID};
 
 /// Middleware factory for request ID injection
