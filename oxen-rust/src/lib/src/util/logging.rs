@@ -41,7 +41,7 @@ pub fn init_logging() {
 
             // Add request ID if available
             let request_id_str = if let Some(request_id) = get_request_id() {
-                format!(" [request_id={}]", request_id)
+                format!(" [request_id={request_id}]")
             } else {
                 String::new()
             };
