@@ -269,7 +269,6 @@ pub async fn upload_zip(
     let commit_message = commit_message.unwrap_or("Upload zip file".to_string());
 
     let commit = repositories::workspaces::files::upload_zip(
-        &repo,
         &commit_message,
         &user,
         temp_files,

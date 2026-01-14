@@ -258,7 +258,6 @@ pub async fn import(
 }
 
 pub async fn upload_zip(
-    repo: &LocalRepository,
     commit_message: &str,
     user: &User,
     temp_files: Vec<TempFilePathNew>,
@@ -268,7 +267,19 @@ pub async fn upload_zip(
     // Unzip the files and add
     for temp_file in temp_files {
         let files = decompress_zip(&temp_file.temp_file_path)?;
-        repositories::add::add_all(repo, &files).await?;
+
+        for file in files.iter() {
+            // Skip files in __MACOSX directories
+            if file
+                .components()
+                .any(|component| component.as_os_str().to_string_lossy() == "__MACOSX")
+            {
+                log::debug!("Skipping __MACOSX file: {file:?}");
+                continue;
+            }
+
+            repositories::workspaces::files::add(workspace, file).await?;
+        }
     }
 
     let data = NewCommitBody {
