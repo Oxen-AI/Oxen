@@ -21,9 +21,12 @@ pub mod test;
 extern crate log;
 extern crate lru;
 
+use actix_web::http::KeepAlive;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
+
+use middleware::RequestIdMiddleware;
 
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
 use liboxen::model::metadata::{
@@ -49,6 +52,7 @@ use liboxen::view::repository::{
     RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView,
 };
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
+use liboxen::view::versions::{VersionFile, VersionFileResponse};
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
 use liboxen::view::{
     CommitEntryVersion, CommitResponse, CommitStatsResponse, DataTypeCount, ErrorFileInfo,
@@ -170,8 +174,11 @@ const SUPPORT: &str = "
         // Files (Repository)
         crate::controllers::file::get,
         crate::controllers::file::put,
-        crate::controllers::file::upload_zip,
-        crate::controllers::file::import,
+        // Import
+        crate::controllers::import::upload_zip,
+        crate::controllers::import::import,
+        // Export
+        crate::controllers::export::download_zip,
         // DataFrames
         crate::controllers::data_frames::get,
         crate::controllers::data_frames::index,
@@ -181,6 +188,11 @@ const SUPPORT: &str = "
         // Metadata
         crate::controllers::metadata::file,
         crate::controllers::metadata::update_metadata,
+        // Versions
+        crate::controllers::versions::metadata,
+        crate::controllers::versions::download,
+        crate::controllers::versions::batch_download,
+        crate::controllers::versions::batch_upload,
     ),
     components(
         // TODO: I'm not sure if these are all necessary to include
@@ -218,13 +230,15 @@ const SUPPORT: &str = "
             // Upload & Request Bodies
             crate::controllers::workspaces::files::FileUpload,
             crate::controllers::file::FileUploadBody,
-            crate::controllers::file::ZipUploadBody,
-            crate::controllers::file::ImportFileBody,
+            crate::controllers::import::ZipUploadBody,
+            crate::controllers::import::ImportFileBody,
             FromDirectoryRequest,
             // Metadata Schemas
             EMetadataEntryResponseView,
             GenericMetadata, MetadataDir, MetadataText, MetadataImage,
             MetadataVideo, MetadataAudio, MetadataTabular,
+            // Version Schemas,
+            VersionFile, VersionFileResponse,
         ),
     ),
     modifiers(
@@ -267,11 +281,22 @@ async fn main() -> std::io::Result<()> {
     }
 
     util::logging::init_logging();
+    util::perf::init_perf_logging();
 
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => dir,
         Err(_) => String::from("data"),
     };
+
+    let keep_alive_secs = env::var("OXEN_KEEP_ALIVE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
+
+    let client_request_timeout_secs = env::var("OXEN_CLIENT_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
 
     let command = Command::new("oxen-server")
         .version(VERSION)
@@ -373,6 +398,7 @@ async fn main() -> std::io::Result<()> {
                     HttpServer::new(move || {
                         App::new()
                             .app_data(data.clone())
+                            .wrap(RequestIdMiddleware)
                             .route(
                                 "/api/version",
                                 web::get().to(controllers::oxen_version::index),
@@ -408,6 +434,12 @@ async fn main() -> std::io::Result<()> {
                             .wrap(Logger::default())
                             .wrap(Logger::new("user agent is %a %{User-Agent}i"))
                     })
+                    .keep_alive(KeepAlive::Timeout(std::time::Duration::from_secs(
+                        keep_alive_secs,
+                    )))
+                    .client_request_timeout(std::time::Duration::from_secs(
+                        client_request_timeout_secs,
+                    ))
                     .bind((host.to_owned(), port))?
                     .run()
                     .await

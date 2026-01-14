@@ -17,7 +17,30 @@ use crate::{repositories, util};
 use std::path::PathBuf;
 use std::str;
 
+use crate::constants::COMMIT_COUNT_DIR;
+use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
+use rocksdb::{DBWithThreadMode, MultiThreaded};
+
+/// Configuration for commit traversal operations
+struct CommitTraversalConfig<'a> {
+    /// Repository to traverse
+    repo: &'a LocalRepository,
+    /// Starting commit for traversal
+    head_commit: Commit,
+    /// Optional base commit to stop at (exclusive)
+    stop_at_base: Option<&'a Commit>,
+    /// Set of visited commit IDs to avoid cycles
+    visited: &'a mut HashSet<String>,
+    /// Number of commits to skip (for pagination)
+    skip: usize,
+    /// Maximum number of commits to collect (for pagination)
+    limit: usize,
+    /// Optional cache database for count lookups
+    cache_db: Option<&'a DBWithThreadMode<MultiThreaded>>,
+    /// Known total count for early exit optimization
+    known_total_count: Option<usize>,
+}
 
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
     repositories::commits::commit_writer::commit(repo, message)
@@ -280,85 +303,179 @@ pub fn create_empty_commit(
 
 /// List commits on the current branch from HEAD
 pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
-    let mut results = vec![];
-    let mut visited = HashSet::new();
     if let Some(commit) = head_commit_maybe(repo)? {
-        list_recursive(repo, commit, &mut results, None, &mut visited)?;
+        let (results, _) = list_recursive_paginated(repo, commit, 0, usize::MAX, None, None)?;
+        Ok(results)
+    } else {
+        Ok(vec![])
     }
+}
+
+fn list_forward_paginated(
+    repo: &LocalRepository,
+    head_commit: Commit,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<Commit>, OxenError> {
+    let mut results = Vec::new();
+    let mut current = Some(head_commit);
+    let mut count = 0;
+    let end_idx = skip + limit;
+
+    while let Some(commit) = current {
+        if count >= skip && count < end_idx {
+            results.push(commit.clone());
+        }
+        count += 1;
+
+        if count >= end_idx {
+            break;
+        }
+
+        current = if let Some(parent_id) = commit.parent_ids.first() {
+            let parent_id: MerkleHash = parent_id.parse()?;
+            get_by_hash(repo, &parent_id)?
+        } else {
+            None
+        };
+    }
+
     Ok(results)
 }
 
-/// List commits recursively from the head commit
-/// Commits will be returned in reverse chronological order
-fn list_recursive(
+pub fn list_recursive_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
-    results: &mut Vec<Commit>,
+    skip: usize,
+    limit: usize,
     stop_at_base: Option<&Commit>,
-    visited: &mut HashSet<String>,
-) -> Result<(), OxenError> {
-    recurse_commit(repo, head_commit, results, stop_at_base, visited)?;
-    results.reverse();
-    Ok(())
+    known_total_count: Option<usize>,
+) -> Result<(Vec<Commit>, usize), OxenError> {
+    let mut results = vec![];
+    let mut visited = HashSet::new();
+
+    let config = CommitTraversalConfig {
+        repo,
+        head_commit,
+        stop_at_base,
+        visited: &mut visited,
+        skip,
+        limit,
+        cache_db: None,
+        known_total_count,
+    };
+
+    let total_count = traverse_commits(config, Some(&mut results))?;
+    Ok((results, total_count))
 }
 
-// post-order traversal of the commit tree
-// returns a Topological sort with priority to timestamp in case of multiple parents
-// Uses iterative approach to avoid stack overflow in debug builds
-fn recurse_commit(
+fn mark_ancestors_visited(
     repo: &LocalRepository,
-    head_commit: Commit,
-    results: &mut Vec<Commit>,
-    stop_at_base: Option<&Commit>,
+    commit: &Commit,
     visited: &mut HashSet<String>,
 ) -> Result<(), OxenError> {
-    // Stack to simulate recursion: (commit, processing_state)
-    // processing_state: false = need to process children, true = children processed, add to results
-    let mut stack: Vec<(Commit, bool)> = vec![(head_commit, false)];
+    let mut stack = vec![commit.clone()];
 
-    while let Some((commit, children_processed)) = stack.pop() {
-        // Check if we've already visited this commit
-        if visited.contains(&commit.id) {
+    while let Some(current) = stack.pop() {
+        if visited.contains(&current.id) {
             continue;
         }
+        visited.insert(current.id.clone());
 
-        if children_processed {
-            // All children have been processed, now add this commit to results
-            visited.insert(commit.id.clone());
-            results.push(commit);
-        } else {
-            // Check if this is the base commit we should stop at
-            if let Some(base) = stop_at_base {
-                if commit.id == base.id {
-                    visited.insert(commit.id.clone());
-                    results.push(commit);
-                    continue;
-                }
-            }
-
-            // Mark this commit for re-processing after children
-            stack.push((commit.clone(), true));
-
-            // Get and sort parent commits
-            let mut parent_commits: Vec<Commit> = Vec::new();
-            for parent_id in commit.parent_ids.clone() {
-                let parent_id = parent_id.parse()?;
-                if let Some(c) = get_by_hash(repo, &parent_id)? {
-                    parent_commits.push(c);
-                }
-            }
-
-            // Sort by timestamp and push in reverse order (so they're processed in correct order)
-            parent_commits.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
-            for parent_commit in parent_commits {
-                if !visited.contains(&parent_commit.id) {
-                    stack.push((parent_commit, false));
+        for parent_id in current.parent_ids.clone() {
+            let parent_id: MerkleHash = parent_id.parse()?;
+            if let Some(parent) = get_by_hash(repo, &parent_id)? {
+                if !visited.contains(&parent.id) {
+                    stack.push(parent);
                 }
             }
         }
     }
 
     Ok(())
+}
+
+fn traverse_commits(
+    config: CommitTraversalConfig,
+    mut results: Option<&mut Vec<Commit>>,
+) -> Result<usize, OxenError> {
+    let mut count = 0;
+    let mut stack: Vec<Commit> = vec![config.head_commit];
+    let end_idx = config.skip + config.limit;
+    let can_early_exit = config.known_total_count.is_some();
+    let collect_results = results.is_some();
+
+    while let Some(commit) = stack.pop() {
+        if config.visited.contains(&commit.id) {
+            continue;
+        }
+
+        config.visited.insert(commit.id.clone());
+
+        // Check for base case
+        if let Some(base) = config.stop_at_base {
+            if commit.id == base.id {
+                if count >= config.skip && count < end_idx {
+                    if let Some(ref mut res) = results {
+                        res.push(commit);
+                    }
+                }
+                count += 1;
+                continue;
+            }
+        }
+
+        // Check cache
+        if let Some(db) = config.cache_db {
+            if let Some(cached_count) = get_cached_count(db, &commit.id)? {
+                log::debug!(
+                    "Found cached count for commit {}: {} commits",
+                    &commit.id[..8],
+                    cached_count
+                );
+                mark_ancestors_visited(config.repo, &commit, config.visited)?;
+                count += cached_count;
+                continue;
+            }
+        }
+
+        // Process commit in pre-order (newest-first)
+        if count >= config.skip && count < end_idx {
+            if let Some(ref mut res) = results {
+                res.push(commit.clone());
+            }
+        }
+        count += 1;
+
+        if can_early_exit && collect_results && count >= end_idx {
+            log::debug!(
+                "Early exit: collected {} commits (skip={}, limit={})",
+                results.as_ref().map(|r| r.len()).unwrap_or(0),
+                config.skip,
+                config.limit
+            );
+            break;
+        }
+
+        // Push children to stack (sorted so newest is processed first)
+        let mut parent_commits: Vec<Commit> = Vec::new();
+        for parent_id in commit.parent_ids.clone() {
+            let parent_id = parent_id.parse()?;
+            if let Some(c) = get_by_hash(config.repo, &parent_id)? {
+                parent_commits.push(c);
+            }
+        }
+
+        // Sort by timestamp ascending, so when we push to stack, newest is on top
+        parent_commits.sort_by_key(|c| c.timestamp);
+        for parent_commit in parent_commits {
+            if !config.visited.contains(&parent_commit.id) {
+                stack.push(parent_commit);
+            }
+        }
+    }
+
+    Ok(config.known_total_count.unwrap_or(count))
 }
 
 /// List commits for the repository in no particular order
@@ -408,25 +525,23 @@ fn list_all_recursive(
     commit: Commit,
     commits: &mut HashSet<Commit>,
 ) -> Result<(), OxenError> {
-    let mut stack = vec![commit];
+    // Create a temporary Vec to collect results, then add to HashSet
+    let mut visited_ids = HashSet::new();
+    let mut results = Vec::new();
 
-    while let Some(current_commit) = stack.pop() {
-        // Skip if already processed
-        if commits.contains(&current_commit) {
-            continue;
-        }
+    let config = CommitTraversalConfig {
+        repo,
+        head_commit: commit,
+        stop_at_base: None,
+        visited: &mut visited_ids,
+        skip: 0,
+        limit: usize::MAX,
+        cache_db: None,
+        known_total_count: None,
+    };
 
-        commits.insert(current_commit.clone());
-
-        for parent_id in current_commit.parent_ids {
-            let parent_id = parent_id.parse()?;
-            if let Some(parent_commit) = get_by_hash(repo, &parent_id)? {
-                if !commits.contains(&parent_commit) {
-                    stack.push(parent_commit);
-                }
-            }
-        }
-    }
+    traverse_commits(config, Some(&mut results))?;
+    commits.extend(results);
     Ok(())
 }
 
@@ -435,8 +550,21 @@ pub fn list_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
 ) -> Result<Vec<Commit>, OxenError> {
+    let (commits, _, _) = list_from_paginated_impl(repo, revision, 0, usize::MAX)?;
+    Ok(commits)
+}
+
+pub fn list_from_paginated_impl(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+    skip: usize,
+    limit: usize,
+) -> Result<(Vec<Commit>, usize, bool), OxenError> {
+    let _perf = crate::perf_guard!("core::commits::list_from_paginated_impl");
+
     let revision = revision.as_ref();
     if revision.contains("..") {
+        let _perf_between = crate::perf_guard!("core::commits::list_between_range");
         let split: Vec<&str> = revision.split("..").collect();
         let base = split[0];
         let head = split[1];
@@ -444,15 +572,41 @@ pub fn list_from(
             .ok_or(OxenError::revision_not_found(base.into()))?;
         let head_commit = repositories::commits::get_by_id(repo, head)?
             .ok_or(OxenError::revision_not_found(head.into()))?;
-        return list_between(repo, &base_commit, &head_commit);
-    }
-    let mut results = vec![];
-    let commit = repositories::revisions::get(repo, revision)?;
-    if let Some(commit) = commit {
-        list_recursive(repo, commit, &mut results, None, &mut HashSet::new())?;
+
+        let (commits, total_count) =
+            list_recursive_paginated(repo, head_commit, skip, limit, Some(&base_commit), None)?;
+        return Ok((commits, total_count, false));
     }
 
-    Ok(results)
+    let _perf_get = crate::perf_guard!("core::commits::get_revision");
+    let commit = repositories::revisions::get(repo, revision)?;
+    drop(_perf_get);
+
+    if let Some(commit) = commit {
+        let _perf_count = crate::perf_guard!("core::commits::get_cached_count");
+        let (total_count, cached) = count_from(repo, &commit.id)?;
+        drop(_perf_count);
+
+        log::info!(
+            "list_from_paginated_impl: total_count={total_count}, cached={cached}, skip={skip}, limit={limit}"
+        );
+
+        if skip + limit <= 10 {
+            let _perf_fast = crate::perf_guard!("core::commits::list_forward_paginated");
+            let commits = list_forward_paginated(repo, commit, skip, limit)?;
+            drop(_perf_fast);
+            return Ok((commits, total_count, cached));
+        }
+
+        let _perf_recursive = crate::perf_guard!("core::commits::list_recursive_paginated");
+        let (commits, _) =
+            list_recursive_paginated(repo, commit, skip, limit, None, Some(total_count))?;
+        drop(_perf_recursive);
+
+        return Ok((commits, total_count, cached));
+    }
+
+    Ok((vec![], 0, false))
 }
 
 /// Get commit history given a revision (branch name or commit id)
@@ -498,6 +652,62 @@ fn list_recursive_with_depth(
     Ok(())
 }
 
+fn open_commit_count_db(
+    repo: &LocalRepository,
+) -> Result<DBWithThreadMode<MultiThreaded>, OxenError> {
+    let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
+    util::fs::create_dir_all(&db_path)?;
+    let opts = crate::core::db::key_val::opts::default();
+    Ok(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?)
+}
+
+fn get_cached_count(
+    db: &DBWithThreadMode<MultiThreaded>,
+    commit_id: &str,
+) -> Result<Option<usize>, OxenError> {
+    str_val_db::get(db, commit_id)
+}
+
+fn cache_count(
+    db: &DBWithThreadMode<MultiThreaded>,
+    commit_id: &str,
+    count: usize,
+) -> Result<(), OxenError> {
+    str_val_db::put(db, commit_id, &count)
+}
+
+pub fn count_from(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+) -> Result<(usize, bool), OxenError> {
+    let revision = revision.as_ref();
+
+    let commit = repositories::revisions::get(repo, revision)?
+        .ok_or_else(|| OxenError::revision_not_found(revision.into()))?;
+
+    let db = open_commit_count_db(repo)?;
+
+    if let Some(cached_count) = get_cached_count(&db, &commit.id)? {
+        return Ok((cached_count, true));
+    }
+
+    let config = CommitTraversalConfig {
+        repo,
+        head_commit: commit.clone(),
+        stop_at_base: None,
+        visited: &mut HashSet::new(),
+        skip: 0,
+        limit: usize::MAX,
+        cache_db: Some(&db),
+        known_total_count: None,
+    };
+    let count = traverse_commits(config, None)?;
+
+    cache_count(&db, &commit.id, count)?;
+
+    Ok((count, false))
+}
+
 /// List the history between two commits
 pub fn list_between(
     repo: &LocalRepository,
@@ -505,14 +715,8 @@ pub fn list_between(
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
     log::debug!("list_between()\nbase: {base}\nhead: {head}");
-    let mut results = vec![];
-    list_recursive(
-        repo,
-        head.clone(),
-        &mut results,
-        Some(base),
-        &mut HashSet::new(),
-    )?;
+    let (results, _) =
+        list_recursive_paginated(repo, head.clone(), 0, usize::MAX, Some(base), None)?;
     Ok(results)
 }
 
@@ -604,7 +808,10 @@ pub fn list_by_path_from_paginated(
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    let _perf = crate::perf_guard!("core::commits::list_by_path_from_paginated");
+
     // Check if the path is a directory or file
+    let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
         OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
     )?;
@@ -618,6 +825,9 @@ pub fn list_by_path_from_paginated(
         }
     };
     let last_commit_id = last_commit_id.to_string();
+    drop(_perf_node);
+
+    let _perf_recursive = crate::perf_guard!("core::commits::list_by_path_recursive");
     let mut commits: Vec<Commit> = Vec::new();
     list_by_path_recursive(repo, path, commit, &mut commits)?;
     log::info!(
@@ -625,10 +835,140 @@ pub fn list_by_path_from_paginated(
         last_commit_id,
         commits.len()
     );
+    drop(_perf_recursive);
+
+    let _perf_paginate = crate::perf_guard!("core::commits::paginate_path_commits");
     let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
+    drop(_perf_paginate);
+
     Ok(PaginatedCommits {
         status: StatusMessage::resource_found(),
         commits,
         pagination,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repositories;
+    use crate::test;
+
+    #[tokio::test]
+    async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create 15 commits to trigger the slow path (skip + limit > 10)
+            let mut commit_ids = Vec::new();
+
+            for i in 0..15 {
+                let filename = format!("file_{i}.txt");
+                let file_path = repo.path.join(&filename);
+                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
+
+                repositories::add(&repo, &file_path).await?;
+                let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
+                commit_ids.push(commit.id.clone());
+            }
+
+            // Commits should be ordered newest-first (C14, C13, C12, ...)
+            // Test: skip=9, limit=2 (total 11 > 10) to trigger the slow path
+            // This should return [C5, C4] (skip 9 newest, then take 2)
+            let (paginated_commits, _total, _cached) =
+                list_from_paginated_impl(&repo, "main", 9, 2)?;
+
+            assert_eq!(
+                paginated_commits.len(),
+                2,
+                "Should return exactly 2 commits"
+            );
+
+            // Expected: skip 9 newest (C14 down to C6), then take [C5, C4]
+            let expected_first = &commit_ids[5]; // C5 (0-indexed)
+            let expected_second = &commit_ids[4]; // C4
+
+            println!("Total commits: {}", commit_ids.len());
+            println!("Expected first: {expected_first} (C5 - Commit 5)");
+            println!("Expected second: {expected_second} (C4 - Commit 4)");
+            println!(
+                "Actual first: {} ({})",
+                paginated_commits[0].id, paginated_commits[0].message
+            );
+            println!(
+                "Actual second: {} ({})",
+                paginated_commits[1].id, paginated_commits[1].message
+            );
+
+            assert_eq!(
+                &paginated_commits[0].id, expected_first,
+                "First result should be C5 (Commit 5), but got {}",
+                paginated_commits[0].message
+            );
+            assert_eq!(
+                &paginated_commits[1].id, expected_second,
+                "Second result should be C4 (Commit 4), but got {}",
+                paginated_commits[1].message
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_pagination_with_forward_path() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create exactly 10 commits - this should use forward pagination (fast path)
+            let mut commit_ids = Vec::new();
+
+            for i in 0..10 {
+                let filename = format!("file_{i}.txt");
+                let file_path = repo.path.join(&filename);
+                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
+
+                repositories::add(&repo, &file_path).await?;
+                let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
+                commit_ids.push(commit.id.clone());
+            }
+
+            // With skip=1, limit=2, and total commits <= 10, should use forward path
+            let (paginated_commits, _total, _cached) =
+                list_from_paginated_impl(&repo, "main", 1, 2)?;
+
+            assert_eq!(
+                paginated_commits.len(),
+                2,
+                "Should return exactly 2 commits"
+            );
+
+            // Forward path should work correctly: skip C9, return [C8, C7]
+            let expected_first = &commit_ids[8]; // C8
+            let expected_second = &commit_ids[7]; // C7
+
+            println!("Forward path test:");
+            println!("Expected first: {expected_first} (C8)");
+            println!("Expected second: {expected_second} (C7)");
+            println!(
+                "Actual first: {} ({})",
+                paginated_commits[0].id, paginated_commits[0].message
+            );
+            println!(
+                "Actual second: {} ({})",
+                paginated_commits[1].id, paginated_commits[1].message
+            );
+
+            assert_eq!(
+                &paginated_commits[0].id, expected_first,
+                "First result should be C8, got {}",
+                paginated_commits[0].message
+            );
+            assert_eq!(
+                &paginated_commits[1].id, expected_second,
+                "Second result should be C7, got {}",
+                paginated_commits[1].message
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }

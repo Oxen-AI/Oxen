@@ -69,7 +69,6 @@ async fn async_main() -> ExitCode {
         Box::new(cmd::MigrateCmd),
         Box::new(cmd::MooCmd),
         Box::new(cmd::NodeCmd),
-        Box::new(cmd::NotebookCmd),
         // Box::new(cmd::PackCmd),
         Box::new(cmd::PruneCmd),
         Box::new(cmd::PullCmd),

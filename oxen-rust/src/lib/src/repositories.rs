@@ -4,6 +4,7 @@
 //!
 
 use crate::constants;
+use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
@@ -15,7 +16,7 @@ use crate::model::Commit;
 use crate::model::MetadataEntry;
 use crate::model::{LocalRepository, RepoNew};
 use crate::repositories;
-use crate::repositories::fork::FORK_STATUS_FILE;
+use crate::repositories::fork::FORK_STATUS_FILENAME;
 use crate::util;
 use fd_lock::RwLock;
 use jwalk::WalkDir;
@@ -93,7 +94,7 @@ pub fn get_by_namespace_and_name(
 }
 
 fn is_repo_forked(repo_dir: &Path) -> Result<Option<LocalRepository>, OxenError> {
-    let status_path = repo_dir.join(FORK_STATUS_FILE);
+    let status_path = repo_dir.join(OXEN_HIDDEN_DIR).join(FORK_STATUS_FILENAME);
 
     if status_path.exists() {
         Ok(Some(LocalRepository::from_dir(repo_dir)?))

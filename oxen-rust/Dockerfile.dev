@@ -1,0 +1,62 @@
+FROM rust:1.88-bookworm AS base
+
+RUN apt-get update && apt-get install -y \
+    clang \
+    lld \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libavfilter-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libjpeg-turbo-progs \
+    libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cargo install cargo-chef
+
+FROM base AS planner
+WORKDIR /usr/src/oxen-server
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM base AS builder
+WORKDIR /usr/src/oxen-server
+
+COPY --from=planner /usr/src/oxen-server/recipe.json recipe.json
+
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+
+RUN cargo chef cook --bin oxen-server --features ffmpeg,perf-logging --recipe-path recipe.json
+
+COPY . .
+RUN cargo build --bin oxen-server --features ffmpeg,perf-logging
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y \
+    openssl \
+    ca-certificates \
+    libavutil-dev \
+    libavformat-dev \
+    libavdevice-dev \
+    libavfilter-dev \
+    && rm -rfv /var/lib/apt/lists/*
+
+WORKDIR /oxen-server
+
+COPY --from=builder /usr/src/oxen-server/target/debug/oxen-server /usr/local/bin
+
+# 50MB stack size (should be more than enough...)
+ENV RUST_MIN_STACK=50000000
+# Set the log level to info for the server
+ENV RUST_LOG=info
+ENV SYNC_DIR=/var/oxen/data
+ENV REDIS_URL=redis://localhost:6379
+ENV OXEN_PERF_LOGGING=1
+
+EXPOSE 3000
+CMD ["oxen-server", "start", "-p", "3000"]

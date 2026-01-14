@@ -503,7 +503,7 @@ async fn r_download_entries(
     if let EMerkleTreeNode::VNode(_) = &node.node {
         // Figure out which entries need to be downloaded
         let mut missing_entries: Vec<Entry> = vec![];
-        let missing_hashes = repositories::tree::list_missing_file_hashes(repo, &node.hash)?;
+        let missing_hashes = repositories::tree::list_missing_file_hashes(repo, &node.hash).await?;
 
         for child in &node.children {
             if let EMerkleTreeNode::File(file_node) = &child.node {
@@ -548,7 +548,7 @@ pub async fn pull_entries_to_versions_dir(
     }
 
     let version_store = repo.version_store()?;
-    let missing_entries = get_missing_entries_for_pull(&version_store, entries)?;
+    let missing_entries = get_missing_entries_for_pull(&version_store, entries).await?;
     log::debug!("Pulling {} missing entries", missing_entries.len());
 
     if missing_entries.is_empty() {
@@ -1018,14 +1018,14 @@ fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry>
     missing_entries
 }
 
-fn get_missing_entries_for_pull(
+async fn get_missing_entries_for_pull(
     version_store: &Arc<dyn VersionStore>,
     entries: &[Entry],
 ) -> Result<Vec<Entry>, OxenError> {
     let mut missing_entries: Vec<Entry> = vec![];
+    // TODO: parallelize for S3
     for entry in entries {
-        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
-        if !version_path.exists() {
+        if !version_store.version_exists(&entry.hash()).await? {
             missing_entries.push(entry.to_owned())
         }
     }

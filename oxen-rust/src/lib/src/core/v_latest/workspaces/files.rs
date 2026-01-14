@@ -60,7 +60,7 @@ pub async fn rm(
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    let err_files = p_rm(base_repo, workspace_repo, filepath).await?;
+    let err_files = p_rm(base_repo, workspace_repo, &workspace.commit, filepath).await?;
 
     // Return the Err files
     Ok(err_files)
@@ -665,14 +665,15 @@ async fn p_add_file(
 async fn p_rm(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
+    commit: &Commit,
     path: &Path,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let head_commit = repositories::commits::head_commit(base_repo)?;
+    log::debug!("p_rm: deleting file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
 
     let parent_path = path.parent().unwrap_or(Path::new(""));
     let maybe_dir_node =
-        repositories::tree::get_dir_with_children(base_repo, &head_commit, parent_path, None)?;
+        repositories::tree::get_dir_with_children(base_repo, commit, parent_path, None)?;
 
     let file_name = util::fs::path_relative_to_dir(path, parent_path)?;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
@@ -688,7 +689,7 @@ async fn p_rm(
     } else if has_dir_node(&maybe_dir_node, file_name)? {
         if let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(
             base_repo,
-            &head_commit,
+            commit,
             &relative_path,
             None,
         )? {

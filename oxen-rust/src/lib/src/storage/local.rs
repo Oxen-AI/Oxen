@@ -1,17 +1,17 @@
 use std;
 use std::collections::HashMap;
-use std::fs::Metadata;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
 use crate::constants::{VERSION_CHUNKS_DIR, VERSION_CHUNK_FILE_NAME, VERSION_FILE_NAME};
 use crate::error::OxenError;
-use crate::storage::version_store::{ReadSeek, VersionStore};
-use crate::util::{concurrency, hasher};
+use crate::storage::version_store::VersionStore;
+use crate::util::{self, concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use image::{self, DynamicImage};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -121,19 +121,33 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
-    fn open_version(
+    async fn store_version_derived(
         &self,
-        hash: &str,
-    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, OxenError> {
-        let path = self.version_path(hash);
-        let file = std::fs::File::open(&path)?;
-        Ok(Box::new(file))
+        derived_image: DynamicImage,
+        _image_buf: Vec<u8>,
+        derived_path: &Path,
+    ) -> Result<(), OxenError> {
+        let path = PathBuf::from(derived_path);
+        // Todo: optimize for high concurrency writes
+        tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+            let derived_parent = path.parent().unwrap_or(Path::new(""));
+
+            if !derived_parent.exists() {
+                util::fs::create_dir_all(derived_parent)?;
+            }
+
+            derived_image.save(&path)?;
+
+            log::debug!("Saved derived version file {path:?}");
+            Ok(())
+        })
+        .await?
     }
 
-    async fn get_version_metadata(&self, hash: &str) -> Result<Metadata, OxenError> {
+    async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
         let path = self.version_path(hash);
         let metadata = fs::metadata(&path).await?;
-        Ok(metadata)
+        Ok(metadata.len())
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
@@ -155,6 +169,18 @@ impl VersionStore for LocalVersionStore {
         Ok(Box::new(stream))
     }
 
+    async fn get_version_derived_stream(
+        &self,
+        derived_path: &Path,
+    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
+    {
+        let file = File::open(derived_path).await?;
+        let reader = BufReader::new(file);
+        let stream = ReaderStream::new(reader);
+
+        Ok(Box::new(stream))
+    }
+
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
         Ok(self.version_path(hash))
     }
@@ -165,7 +191,7 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
-    fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
+    async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
         Ok(self.version_path(hash).exists())
     }
 
@@ -629,37 +655,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_open_version() {
-        let (_temp_dir, store) = setup().await;
-        let hash = "abcdef1234567892";
-        let data = b"test data for open";
-
-        // Store the version
-        store.store_version(hash, data).await.unwrap();
-
-        // Open the version as a reader
-        let mut reader = store.open_version(hash).unwrap();
-
-        // Read the data
-        let mut retrieved = Vec::new();
-        reader.read_to_end(&mut retrieved).unwrap();
-
-        // Verify the data
-        assert_eq!(retrieved, data);
-    }
-
-    #[tokio::test]
     async fn test_version_exists() {
         let (_temp_dir, store) = setup().await;
         let hash = "abcdef1234567890";
         let data = b"test data";
 
         // Check non-existent version
-        assert!(!store.version_exists(hash).unwrap());
+        assert!(!store.version_exists(hash).await.unwrap());
 
         // Store and check again
         store.store_version(hash, data).await.unwrap();
-        assert!(store.version_exists(hash).unwrap());
+        assert!(store.version_exists(hash).await.unwrap());
     }
 
     #[tokio::test]
@@ -670,11 +676,11 @@ mod tests {
 
         // Store and verify
         store.store_version(hash, data).await.unwrap();
-        assert!(store.version_exists(hash).unwrap());
+        assert!(store.version_exists(hash).await.unwrap());
 
         // Delete and verify
         store.delete_version(hash).await.unwrap();
-        assert!(!store.version_exists(hash).unwrap());
+        assert!(!store.version_exists(hash).await.unwrap());
         assert!(!store.version_dir(hash).exists());
     }
 

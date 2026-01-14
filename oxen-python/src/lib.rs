@@ -11,7 +11,6 @@ pub mod py_dataset;
 pub mod py_diff;
 pub mod py_entry;
 pub mod py_merge;
-pub mod py_notebooks;
 pub mod py_paginated_dir_entries;
 pub mod py_pagination;
 pub mod py_remote_data_frame;
@@ -122,18 +121,6 @@ fn oxen(m: Bound<'_, PyModule>) -> PyResult<()> {
     df_module.add_function(wrap_pyfunction!(df_utils::save, &df_module)?)?;
     df_module.add_function(wrap_pyfunction!(df_utils::load, &df_module)?)?;
     m.add_submodule(&df_module)?;
-
-    // Notebooks Module
-    let notebooks_module = PyModule::new(m.py(), "py_notebooks")?;
-    notebooks_module.add_function(wrap_pyfunction!(
-        py_notebooks::py_start_notebook,
-        &notebooks_module
-    )?)?;
-    notebooks_module.add_function(wrap_pyfunction!(
-        py_notebooks::py_stop_notebook,
-        &notebooks_module
-    )?)?;
-    m.add_submodule(&notebooks_module)?;
 
     m.add("__version__", liboxen::constants::OXEN_VERSION)?;
 

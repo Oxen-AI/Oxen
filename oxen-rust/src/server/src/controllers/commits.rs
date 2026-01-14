@@ -9,6 +9,7 @@ use liboxen::core::commit_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
+use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::branch::BranchName;
@@ -109,7 +110,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
         PageNumQuery
     ),
     responses(
-        (status = 200, description = "Paginated list of commits", body = PaginatedCommits),
+        (status = 200, description = "Paginated list of commits with total count and cache status", body = PaginatedCommits),
         (status = 404, description = "Repository or resource not found")
     )
 )]
@@ -117,6 +118,9 @@ pub async fn history(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    let _perf = perf_guard!("commits::history_endpoint");
+
+    let _perf_parse = perf_guard!("commits::history_parse_params");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -134,9 +138,11 @@ pub async fn history(
             Pagination::empty(pagination),
         )));
     }
+    drop(_perf_parse);
 
     log::debug!("commit_history resource_param: {resource_param:?}");
 
+    let _perf_resource = perf_guard!("commits::history_parse_resource");
     // This checks if the parameter received from the client is two commits split by "..", in this case we don't parse the resource
     let (resource, revision, commit) = if resource_param.contains("..") {
         (None, Some(resource_param), None)
@@ -145,17 +151,21 @@ pub async fn history(
         let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
         (Some(resource), None, Some(commit))
     };
+    drop(_perf_resource);
 
     match &resource {
         Some(resource) if resource.path != Path::new("") => {
             log::debug!("commit_history resource_param: {resource:?}");
+            let _perf_list = perf_guard!("commits::history_list_by_path");
             let commits = repositories::commits::list_by_path_from_paginated(
                 &repo,
                 commit.as_ref().unwrap(), // Safe unwrap: `commit` is Some if `resource` is Some
                 &resource.path,
                 pagination,
             )?;
+
             log::debug!("commit_history got {} commits", commits.commits.len());
+
             Ok(HttpResponse::Ok().json(commits))
         }
         _ => {
@@ -163,8 +173,10 @@ pub async fn history(
             log::debug!("commit_history revision: {revision:?}");
             let revision_id = revision.as_ref().or_else(|| commit.as_ref().map(|c| &c.id));
             if let Some(revision_id) = revision_id {
+                let _perf_list = perf_guard!("commits::history_list_from_revision");
                 let commits =
                     repositories::commits::list_from_paginated(&repo, revision_id, pagination)?;
+
                 log::debug!("commit_history got {} commits", commits.commits.len());
                 // log::debug!("commit_history commits: {:?}", commits.commits);
                 Ok(HttpResponse::Ok().json(commits))
@@ -305,7 +317,8 @@ pub async fn list_missing_files(
         &repo,
         &base_commit,
         &head_commit,
-    )?;
+    )
+    .await?;
 
     let response = ListCommitEntryResponse {
         status: StatusMessage::resource_found(),
@@ -733,8 +746,8 @@ pub async fn create(
         ChunkedDataUploadQuery
     ),
     request_body(
-        content_type = "application/octet-stream", 
-        description = "Chunk of data (binary bytes)", 
+        content_type = "application/octet-stream",
+        description = "Chunk of data (binary bytes)",
         content = Vec<u8>
     ),
     responses(
@@ -1010,8 +1023,8 @@ async fn unpack_compressed_data(
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     request_body(
-        content_type = "application/octet-stream", 
-        description = "Compressed commit database (tar.gz)", 
+        content_type = "application/octet-stream",
+        description = "Compressed commit database (tar.gz)",
         content = Vec<u8>
     ),
     responses(
@@ -1127,8 +1140,8 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
         ("commit_id" = String, Path, description = "Client head commit ID", example = "84c76a5b2e9a2637f9091991475c404d"),
     ),
     request_body(
-        content_type = "application/octet-stream", 
-        description = "Compressed tree data (tar.gz)", 
+        content_type = "application/octet-stream",
+        description = "Compressed tree data (tar.gz)",
         content = Vec<u8>
     ),
     responses(

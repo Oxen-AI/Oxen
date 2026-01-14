@@ -27,6 +27,10 @@ pub const REFS_DIR: &str = "refs";
 pub const HISTORY_DIR: &str = "history";
 /// commits/ is a key-value database of commit ids to commit objects
 pub const COMMITS_DIR: &str = "commits";
+/// prefix for the cached stats dirs
+pub const CACHE_DIR: &str = "cache";
+/// prefix for the commit count dirs
+pub const COMMIT_COUNT_DIR: &str = "cache/commit_count";
 /// name of the schema db
 pub const SCHEMAS_DIR: &str = "schemas";
 /// schemas node in merkle tree
@@ -51,8 +55,6 @@ pub const DIR_HASHES_DIR: &str = "dir_hashes";
 pub const TREE_DIR: &str = "tree";
 /// prefix for the commit merkle tree node dbs
 pub const NODES_DIR: &str = "nodes";
-/// prefix for the cached stats dirs
-pub const CACHE_DIR: &str = "cache";
 /// prefix for cached compare dfs
 pub const COMPARES_DIR: &str = "compares";
 /// prefix for the left commit pointer in cached compares
@@ -176,18 +178,18 @@ pub const EVAL_DURATION_COL: &str = "_oxen_eval_duration";
 // Average chunk size of ~10mb
 /// Average chunk size of ~10mb when chunking and sending data
 pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 10;
-// Retry and back off of upload tasks N times
-/// Retry and back off of upload tasks N times
-pub const MAX_RETRIES: usize = 5;
 // Allow up to N concurrent upload tasks
 /// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
-// Retry and back off of requests N times
-/// Retry and back off of requests N times
+// Limit zip file downloads to batches of size N
+/// Limit zip file downloads to batches of size N
+pub const MAX_ZIP_DOWNLOAD_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB
+                                                           // Retry and back off of upload tasks N times
+/// Retry and back off of upload tasks N times
 #[cfg(test)]
 pub const NUM_HTTP_RETRIES: u64 = 1;
 #[cfg(not(test))]
-pub const NUM_HTTP_RETRIES: u64 = 10;
+pub const NUM_HTTP_RETRIES: u64 = 5;
 /// Number of workers
 pub const DEFAULT_NUM_WORKERS: usize = 8;
 /// Default timeout for HTTP requests
@@ -218,25 +220,22 @@ pub const LAST_MIGRATION_FILE: &str = "last_migration.txt";
 /// Constraints for diff and compare size
 pub const MAX_DISPLAY_DIRS: usize = 10;
 
-/// Default notebook base image
-pub const DEFAULT_NOTEBOOK_BASE_IMAGE: &str = "debian:bookworm-slim";
-
 // Oxen stack size
 pub const OXEN_STACK_SIZE: usize = 16_777_216;
 
 // Parse the maximum number of retries allowed on upload from environment variable
 pub fn max_retries() -> usize {
-    if let Ok(max_retries) = std::env::var("OXEN_MAX_RETRIES") {
+    if let Ok(max_retries) = std::env::var("OXEN_NUM_RETRIES") {
         // If the environment variable is set, use that
         if let Ok(max_retries) = max_retries.parse::<usize>() {
             max_retries
         } else {
             // If parsing failed, fall back to default
-            MAX_RETRIES
+            NUM_HTTP_RETRIES.try_into().unwrap()
         }
     } else {
         // Environment variable not set, use default
-        MAX_RETRIES
+        NUM_HTTP_RETRIES.try_into().unwrap()
     }
 }
 
@@ -271,3 +270,6 @@ pub fn chunk_size() -> u64 {
         AVG_CHUNK_SIZE
     }
 }
+
+// Oxen request Id
+pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
