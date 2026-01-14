@@ -203,14 +203,14 @@ pub async fn get(
 /// Add files to workspace
 #[utoipa::path(
     post,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
-    description = "Uploads and stages files to a workspace. Accepts a multipart with gzip-compressed or uncompressed file parts. Uses the filename from the file part and computes the file hash from the content",
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{directory}",
+    description = "Uploads and stages files to a workspace. Accepts a multipart with either gzipped or uncompressed file parts. Uses the filename from the file part and computes the file hash from the content.\nUse this endpoint to add files to a workspace in one step.",
     tag = "Workspace",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
-        ("path" = String, Path, description = "The directory to upload the file to", example = "data/train")
+        ("directory" = String, Path, description = "The directory to upload the file to", example = "data/train")
     ),
     request_body(
         content_type = "multipart/form-data", 
