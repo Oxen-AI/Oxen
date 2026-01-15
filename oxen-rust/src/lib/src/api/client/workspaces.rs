@@ -244,6 +244,8 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    use std::path::PathBuf;
+
     #[tokio::test]
     async fn test_create_workspace() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -262,7 +264,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_workspace_on_empty_repo() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
-            let branch_name = "main";
+            let branch_name = "custom";
             let workspace_id = "test_workspace_id";
             let _path = "path"; // 'resource path' param isn't used by the server, only the hub
             let workspace =
@@ -270,6 +272,54 @@ mod tests {
                     .await?;
 
             assert_eq!(workspace.id, workspace_id);
+
+            let directory_name = "images";
+            let path = test::test_img_file();
+            let result = api::client::workspaces::files::add(
+                &remote_repo,
+                &workspace_id,
+                directory_name,
+                vec![path],
+                &None,
+            )
+            .await;
+            assert!(result.is_ok());
+
+            let page_num = constants::DEFAULT_PAGE_NUM;
+            let page_size = constants::DEFAULT_PAGE_SIZE;
+            let path = Path::new(directory_name);
+            let entries = api::client::workspaces::changes::list(
+                &remote_repo,
+                &workspace_id,
+                path,
+                page_num,
+                page_size,
+            )
+            .await?;
+            assert_eq!(entries.added_files.entries.len(), 1);
+            assert_eq!(entries.added_files.total_entries, 1);
+            let assert_path = PathBuf::from("images").join(PathBuf::from("dwight_vince.jpeg"));
+
+            assert_eq!(
+                entries.added_files.entries[0].filename(),
+                assert_path.to_str().unwrap(),
+            );
+
+            let body = NewCommitBody {
+                message: "Adding images".to_string(),
+                author: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+            };
+            let commit =
+                api::client::workspaces::commit(&remote_repo, branch_name, workspace_id, &body)
+                    .await?;
+
+            let remote_commit = api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
+            assert!(remote_commit.is_some());
+            assert_eq!(commit.id, remote_commit.unwrap().id);
+
+            let branch = api::client::branches::get_by_name(&remote_repo, &branch_name).await?;
+            assert!(branch.is_some());
 
             Ok(remote_repo)
         })

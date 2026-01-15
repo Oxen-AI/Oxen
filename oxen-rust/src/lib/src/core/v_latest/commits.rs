@@ -6,7 +6,9 @@ use time::OffsetDateTime;
 
 use crate::constants::DEFAULT_BRANCH_NAME;
 use crate::core;
+use crate::core::db;
 use crate::core::refs::with_ref_manager;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
 use crate::model::merkle_tree::node::{CommitNode, EMerkleTreeNode, MerkleTreeNode};
@@ -21,7 +23,7 @@ use std::str;
 use crate::constants::COMMIT_COUNT_DIR;
 use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 
 /// Configuration for commit traversal operations
 struct CommitTraversalConfig<'a> {
@@ -332,8 +334,17 @@ pub fn create_empty_commit(
         let dir_node = MerkleTreeNode::default_dir().dir()?;
         commit_db.add_child(&dir_node)?;
 
-        // Update the ref
+        // Create the dir_hashes db
         let commit_id = commit_node.hash().to_string();
+        let commit_id_string = commit_id.to_string().to_string();
+
+        let opts = db::key_val::opts::default();
+        let dir_hash_db_path =
+            CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
+        let _dir_hash_db: DBWithThreadMode<SingleThreaded> =
+            DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+
+        // Update the ref
         with_ref_manager(repo, |manager| {
             log::debug!("HEAD file does not exist, creating new branch");
             manager.set_head(&branch_name);
