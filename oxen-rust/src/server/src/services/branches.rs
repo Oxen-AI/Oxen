@@ -15,6 +15,11 @@ pub fn branches() -> Scope {
             "/{branch_name:.*}/unlock",
             web::post().to(controllers::branches::unlock),
         )
+        // TODO: Deprecate
+        .route(
+            "/{branch_name:.*}/latest_synced_commit",
+            web::get().to(controllers::branches::latest_synced_commit),
+        )
         .route(
             "/{branch_name:.*}/latest_commit",
             web::get().to(controllers::branches::latest_synced_commit),

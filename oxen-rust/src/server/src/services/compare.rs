@@ -9,6 +9,11 @@ pub fn compare() -> Scope {
             "/dir_tree/{base_head:.*}",
             web::get().to(controllers::diff::dir_tree),
         )
+        // TODO: Deprecate
+        .route(
+            "/commits/{base_head:.*}",
+            web::get().to(controllers::commits::list_commits),
+        )
         .route(
             "/entries/{base_head:.*}/dir/{dir:.*}",
             web::get().to(controllers::diff::dir_entries),

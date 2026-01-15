@@ -43,30 +43,6 @@ pub async fn list(
     }
 }
 
-// TODO: Consolidate this with api::client::workspaces::files to have only one workspace rm API
-pub async fn rm(
-    remote_repo: &RemoteRepository,
-    workspace_id: &str,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    let file_name = path.as_ref().to_string_lossy();
-    let uri = format!("/workspaces/{workspace_id}/changes/{file_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("rm_file {url}");
-    let client = client::new_for_url(&url)?;
-    match client.delete(&url).send().await {
-        Ok(res) => {
-            let body = client::parse_json_body(&url, res).await?;
-            log::debug!("rm_file got body: {body}");
-            Ok(())
-        }
-        Err(err) => {
-            let err = format!("rm_file Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(err))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
 

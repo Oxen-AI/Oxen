@@ -29,10 +29,6 @@ pub fn workspace() -> Scope {
                     web::get().to(controllers::workspaces::changes::list),
                 )
                 .route(
-                    "/changes/{path:.*}",
-                    web::delete().to(controllers::workspaces::files::delete),
-                )
-                .route(
                     "/versions/{directory:.*}",
                     web::post().to(controllers::workspaces::files::add_version_files),
                 )
@@ -51,6 +47,11 @@ pub fn workspace() -> Scope {
                 .route(
                     "/files/{path:.*}",
                     web::post().to(controllers::workspaces::files::add),
+                )
+                // TODO: Deprecate. Use /staged
+                .route(
+                    "/files/{path:.*}",
+                    web::delete().to(controllers::workspaces::files::delete),
                 )
                 .route(
                     "/validate",
