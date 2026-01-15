@@ -2,7 +2,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
 
-use liboxen::core::staged::staged_db_manager::with_staged_db_manager;
+use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew};
@@ -231,16 +231,15 @@ pub async fn put(
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    // Try to parse the resource (branch/commit/path). If the repo has no commits yet this will
-    // fail, so fall back to an initial-upload helper.
+    // If there's no head commit, handle initial upload
+    if repositories::commits::head_commit_maybe(&repo)?.is_none() {
+        return handle_initial_put_empty_repo(req, payload, &repo).await;
+    }
+
     let resource = match parse_resource(&req, &repo) {
         Ok(res) => res,
         Err(parse_err) => {
-            if repositories::commits::head_commit_maybe(&repo)?.is_none() {
-                return handle_initial_put_empty_repo(req, payload, &repo).await;
-            } else {
-                return Err(parse_err);
-            }
+            return Err(parse_err);
         }
     };
 
@@ -378,20 +377,21 @@ pub async fn delete(
     }))
 }
 
-// Helper: when the repository has no commits yet, accept the upload as the first commit on the
-// default branch ("main").
+// Helper: when the repository has no commits yet, accept the upload as the first commit
 async fn handle_initial_put_empty_repo(
     req: HttpRequest,
     payload: Multipart,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
-    let path_string = resource
-        .components()
-        .skip(1)
-        .collect::<PathBuf>()
-        .to_string_lossy()
-        .to_string();
+
+    let mut resource = resource.components();
+    let branch_name = resource
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .unwrap_or("main".to_string());
+    let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
+    let path = PathBuf::from(path_string);
 
     let (name, email, _message, temp_files) = parse_multipart_fields_for_repo(payload).await?;
 
@@ -410,12 +410,12 @@ async fn handle_initial_put_empty_repo(
     // If the user supplied files, add and commit them
     let mut commit: Option<Commit> = None;
 
-    process_and_add_files(repo, None, PathBuf::from(&path_string), files.clone()).await?;
+    process_and_add_files(repo, None, path, files.clone()).await?;
 
     if !files.is_empty() {
         let user_ref = &files[0].user; // Use the user from the first file, since it's the same for all
         commit = Some(commits::commit_with_user(repo, "Initial commit", user_ref)?);
-        branches::create(repo, "main", &commit.as_ref().unwrap().id)?;
+        branches::create(repo, &branch_name, &commit.as_ref().unwrap().id)?;
     }
 
     Ok(HttpResponse::Ok().json(CommitResponse {

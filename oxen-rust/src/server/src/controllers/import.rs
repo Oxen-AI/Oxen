@@ -3,13 +3,14 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use utoipa::ToSchema;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
 
+use liboxen::core::v_latest::workspaces::files::decompress_zip;
 use liboxen::error::OxenError;
 use liboxen::model::file::TempFilePathNew;
 use liboxen::model::NewCommitBody;
@@ -225,7 +226,18 @@ pub async fn upload_zip(
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    let resource = parse_resource(&req, &repo)?;
+    // If there's no head commit, handle initial upload
+    if repositories::commits::head_commit_maybe(&repo)?.is_none() {
+        return handle_initial_upload_zip_empty_repo(req, payload, &repo).await;
+    }
+
+    let resource = match parse_resource(&req, &repo) {
+        Ok(res) => res,
+        Err(parse_err) => {
+            return Err(parse_err);
+        }
+    };
+
     let branch = resource
         .branch
         .clone()
@@ -236,8 +248,9 @@ pub async fn upload_zip(
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace_path = workspace.dir();
     let (commit_message, name, email, temp_files) =
-        parse_multipart_fields_for_upload_zip(payload, &workspace, directory).await?;
+        parse_multipart_fields_for_upload_zip(payload, &workspace_path, &directory).await?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -269,10 +282,55 @@ pub async fn upload_zip(
     }))
 }
 
+async fn handle_initial_upload_zip_empty_repo(
+    req: HttpRequest,
+    payload: Multipart,
+    repo: &liboxen::model::LocalRepository,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+
+    // Parse the resource for the path and branch name
+    let mut resource = resource.components();
+    let branch_name = resource
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .unwrap_or("main".to_string());
+    let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
+    let path = PathBuf::from(path_string);
+
+    // Unzip the files into the root dir
+    let root_dir = repo.path.clone();
+
+    // Parse the payload for the files and commit info
+    let (message, name, email, temp_files) =
+        parse_multipart_fields_for_upload_zip(payload, &root_dir, &path).await?;
+
+    let user = create_user_from_options(name.clone(), email.clone())?;
+    let commit_message = message.unwrap_or("Upload zip file".to_string());
+
+    // Unzip the files and add
+
+    for temp_file in temp_files {
+        let files = decompress_zip(&temp_file.temp_file_path)?;
+        repositories::add::add_all(repo, &files).await?;
+    }
+
+    // Commit the files
+    let commit = repositories::commits::commit_with_user(repo, &commit_message, &user)?;
+
+    // Create the branch
+    repositories::branches::create(repo, &branch_name, &commit.id)?;
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
 async fn parse_multipart_fields_for_upload_zip(
     mut payload: Multipart,
-    workspace: &liboxen::repositories::workspaces::TemporaryWorkspace,
-    directory: PathBuf,
+    data_path: &Path,
+    directory: &Path,
 ) -> actix_web::Result<
     (
         Option<String>,
@@ -337,10 +395,10 @@ async fn parse_multipart_fields_for_upload_zip(
                     sanitize_filename::sanitize,
                 );
 
-                let workspace_path = workspace.dir().join(directory.clone()).join(&filename);
+                let full_path = data_path.join(directory).join(&filename);
 
                 // Create parent directories if they don't exist
-                if let Some(parent) = workspace_path.parent() {
+                if let Some(parent) = full_path.parent() {
                     tokio::fs::create_dir_all(parent).await.map_err(|e| {
                         OxenHttpError::BadRequest(
                             format!("Failed to create directories: {e}").into(),
@@ -349,11 +407,9 @@ async fn parse_multipart_fields_for_upload_zip(
                 }
 
                 // Create the file in the workspace directory
-                let mut file = tokio::fs::File::create(&workspace_path)
-                    .await
-                    .map_err(|e| {
-                        OxenHttpError::BadRequest(format!("Failed to create file: {e}").into())
-                    })?;
+                let mut file = tokio::fs::File::create(&full_path).await.map_err(|e| {
+                    OxenHttpError::BadRequest(format!("Failed to create file: {e}").into())
+                })?;
 
                 while let Some(chunk) = field
                     .try_next()
@@ -376,7 +432,7 @@ async fn parse_multipart_fields_for_upload_zip(
                         OxenHttpError::BadRequest(format!("Failed to flush file: {e}").into())
                     })?;
 
-                fields_data.push((filename, workspace_path));
+                fields_data.push((filename, full_path));
             }
             _ => {}
         }
@@ -384,7 +440,7 @@ async fn parse_multipart_fields_for_upload_zip(
 
     for (_filename, temp_path) in fields_data {
         temp_files.push(TempFilePathNew {
-            path: directory.clone(),
+            path: directory.to_path_buf(),
             temp_file_path: temp_path,
         });
     }
