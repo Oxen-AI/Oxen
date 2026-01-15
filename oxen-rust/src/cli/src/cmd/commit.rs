@@ -53,7 +53,8 @@ impl RunCmd for CommitCmd {
         println!("Committing with message: {message}");
 
         if allow_empty {
-            repositories::commits::commit_allow_empty(&repo, message)?;
+            let branch_name = repositories::branches::current_branch(&repo)?.map(|b| b.name);
+            repositories::commits::commit_allow_empty(&repo, message, branch_name.as_deref())?;
         } else {
             repositories::commit(&repo, message)?;
         }

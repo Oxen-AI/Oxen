@@ -258,6 +258,24 @@ mod tests {
         .await
     }
 
+    // Creates an empty commit to base the workspace off of
+    #[tokio::test]
+    async fn test_create_workspace_on_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let workspace_id = "test_workspace_id";
+            let _path = "path"; // 'resource path' param isn't used by the server, only the hub
+            let workspace =
+                create_with_new_branch(&remote_repo, branch_name, workspace_id, _path, None)
+                    .await?;
+
+            assert_eq!(workspace.id, workspace_id);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_create_workspace_with_name() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
