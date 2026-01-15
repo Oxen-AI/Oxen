@@ -266,6 +266,8 @@ mod tests {
         test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "custom";
             let workspace_id = "test_workspace_id";
+
+            println!("Creating workspace");
             let workspace = create_with_new_branch(
                 &remote_repo,
                 branch_name,
@@ -279,6 +281,8 @@ mod tests {
 
             let directory_name = "images";
             let path = test::test_img_file();
+            
+            println!("Adding file");
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
@@ -292,6 +296,8 @@ mod tests {
             let page_num = constants::DEFAULT_PAGE_NUM;
             let page_size = constants::DEFAULT_PAGE_SIZE;
             let path = Path::new(directory_name);
+
+            println!("Listing changes");
             let entries = api::client::workspaces::changes::list(
                 &remote_repo,
                 &workspace_id,
@@ -314,6 +320,8 @@ mod tests {
                 author: "Test User".to_string(),
                 email: "test@oxen.ai".to_string(),
             };
+
+            println!("Commit");
             let commit =
                 api::client::workspaces::commit(&remote_repo, branch_name, workspace_id, &body)
                     .await?;
@@ -322,6 +330,7 @@ mod tests {
             assert!(remote_commit.is_some());
             assert_eq!(commit.id, remote_commit.unwrap().id);
 
+            println!("Get branch");
             let branch = api::client::branches::get_by_name(&remote_repo, &branch_name).await?;
             assert!(branch.is_some());
 
