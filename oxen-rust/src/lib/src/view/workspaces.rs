@@ -73,7 +73,8 @@ pub struct ValidateUploadFeasibilityRequest {
     pub size: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct RenameRequest {
+    #[schema(example = "path/to/new_file.txt")]
     pub new_path: String,
 }
