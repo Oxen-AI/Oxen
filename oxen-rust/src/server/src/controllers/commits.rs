@@ -717,7 +717,11 @@ pub async fn create(
         };
 
     // Create Commit from uri params
-    match repositories::commits::create_empty_commit(&repository, bn.branch_name, &new_commit) {
+    match repositories::commits::create_empty_commit(
+        &repository,
+        &new_commit,
+        Some(bn.branch_name.as_str()),
+    ) {
         Ok(commit) => Ok(HttpResponse::Ok().json(CommitResponse {
             status: StatusMessage::resource_created(),
             commit: commit.to_owned(),

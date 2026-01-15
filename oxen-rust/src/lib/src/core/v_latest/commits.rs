@@ -4,11 +4,14 @@ use std::path::Path;
 use glob::Pattern;
 use time::OffsetDateTime;
 
+use crate::constants::DEFAULT_BRANCH_NAME;
 use crate::core;
+use crate::core::db;
 use crate::core::refs::with_ref_manager;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
-use crate::model::merkle_tree::node::{CommitNode, EMerkleTreeNode};
+use crate::model::merkle_tree::node::{CommitNode, EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, User};
 use crate::opts::PaginateOpts;
 use crate::view::{PaginatedCommits, StatusMessage};
@@ -20,7 +23,7 @@ use std::str;
 use crate::constants::COMMIT_COUNT_DIR;
 use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 
 /// Configuration for commit traversal operations
 struct CommitTraversalConfig<'a> {
@@ -57,6 +60,7 @@ pub fn commit_with_user(
 pub fn commit_allow_empty(
     repo: &LocalRepository,
     message: impl AsRef<str>,
+    branch_name: Option<&str>,
 ) -> Result<Commit, OxenError> {
     let message = message.as_ref();
 
@@ -70,15 +74,19 @@ pub fn commit_allow_empty(
     } else {
         // No changes, create an empty commit
         let cfg = crate::config::UserConfig::get()?;
-        let branch = repositories::branches::current_branch(repo)?
-            .ok_or_else(|| OxenError::basic_str("No current branch found"))?;
-
-        let head_commit = head_commit(repo)?;
+        let parent_ids = match repositories::commits::head_commit_maybe(repo)? {
+            Some(commit) => {
+                vec![commit.id]
+            }
+            None => {
+                vec![]
+            }
+        };
 
         // Create a new commit with the same tree as parent
         let timestamp = OffsetDateTime::now_utc();
         let new_commit_data = crate::model::NewCommit {
-            parent_ids: vec![head_commit.id.clone()],
+            parent_ids,
             message: message.to_string(),
             author: cfg.name.clone(),
             email: cfg.email.clone(),
@@ -98,7 +106,7 @@ pub fn commit_allow_empty(
         let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
 
         // Use the existing create_empty_commit function
-        let result = create_empty_commit(repo, &branch.name, &new_commit)?;
+        let result = create_empty_commit(repo, &new_commit, branch_name)?;
 
         println!("🐂 commit {result} (empty)");
 
@@ -256,49 +264,96 @@ pub fn get_by_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Option<C
 
 pub fn create_empty_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
     new_commit: &Commit,
+    branch_name: Option<&str>,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
-    let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
-        return Err(OxenError::revision_not_found(branch_name.into()));
-    };
-    let existing_commit_id = existing_commit.id.parse()?;
-    let existing_node =
-        repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
-            OxenError::basic_str(format!(
-                "Merkle tree node not found for commit: '{}'",
-                existing_commit.id
-            )),
-        )?;
-    let timestamp = OffsetDateTime::now_utc();
-    let commit_node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: new_commit.id.parse()?,
-            parent_ids: vec![existing_commit_id],
-            email: new_commit.email.clone(),
-            author: new_commit.author.clone(),
-            message: new_commit.message.clone(),
-            timestamp,
+    // Get branch name from current branch, or fallback to branch name
+    let branch_name = match repositories::branches::current_branch(repo)? {
+        Some(branch) => branch.name,
+        None => match branch_name {
+            Some(branch_name) => branch_name.to_string(),
+            None => DEFAULT_BRANCH_NAME.to_string(),
         },
-    )?;
+    };
 
-    let parent_id = Some(existing_node.hash);
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, parent_id)?;
-    // There should always be one child, the root directory
-    let dir_node = existing_node.children.first().unwrap().dir()?;
-    commit_db.add_child(&dir_node)?;
+    // If the branch exists, use it
+    if let Some(existing_commit) = repositories::revisions::get(repo, &branch_name)? {
+        let existing_commit_id = existing_commit.id.parse()?;
+        let existing_node =
+            repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
+                OxenError::basic_str(format!(
+                    "Merkle tree node not found for commit: '{}'",
+                    existing_commit.id
+                )),
+            )?;
+        let timestamp = OffsetDateTime::now_utc();
+        let commit_node = CommitNode::new(
+            repo,
+            CommitNodeOpts {
+                hash: new_commit.id.parse()?,
+                parent_ids: vec![existing_commit_id],
+                email: new_commit.email.clone(),
+                author: new_commit.author.clone(),
+                message: new_commit.message.clone(),
+                timestamp,
+            },
+        )?;
 
-    // Copy the dir hashes db to the new commit
-    repositories::tree::cp_dir_hashes_to(repo, &existing_commit_id, commit_node.hash())?;
+        let parent_id = Some(existing_node.hash);
+        let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, parent_id)?;
+        // There should always be one child, the root directory
+        let dir_node = existing_node.children.first().unwrap().dir()?;
+        commit_db.add_child(&dir_node)?;
 
-    // Update the ref
-    with_ref_manager(repo, |manager| {
-        manager.set_branch_commit_id(branch_name, commit_node.hash().to_string())
-    })?;
+        repositories::tree::cp_dir_hashes_to(repo, &existing_commit_id, commit_node.hash())?;
 
-    Ok(commit_node.to_commit())
+        with_ref_manager(repo, |manager| {
+            manager.set_branch_commit_id(&branch_name, commit_node.hash().to_string())
+        })?;
+
+        Ok(commit_node.to_commit())
+    } else {
+        // If there's no branch, create a new branch
+        let timestamp = OffsetDateTime::now_utc();
+        let commit_node = CommitNode::new(
+            repo,
+            CommitNodeOpts {
+                hash: new_commit.id.parse()?,
+                parent_ids: vec![],
+                email: new_commit.email.clone(),
+                author: new_commit.author.clone(),
+                message: new_commit.message.clone(),
+                timestamp,
+            },
+        )?;
+
+        let parent_id = None;
+        let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, parent_id)?;
+
+        // Create a default DirNode as the root node
+        let dir_node = MerkleTreeNode::default_dir().dir()?;
+        commit_db.add_child(&dir_node)?;
+
+        // Create the dir_hashes db
+        let commit_id = commit_node.hash().to_string();
+        let commit_id_string = commit_id.to_string().to_string();
+
+        let opts = db::key_val::opts::default();
+        let dir_hash_db_path =
+            CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
+        let _dir_hash_db: DBWithThreadMode<SingleThreaded> =
+            DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+
+        // Update the ref
+        with_ref_manager(repo, |manager| {
+            log::debug!("HEAD file does not exist, creating new branch");
+            manager.set_head(&branch_name);
+            manager.set_branch_commit_id(&branch_name, &commit_id)?;
+            manager.set_head_commit_id(&commit_id)
+        })?;
+
+        Ok(commit_node.to_commit())
+    }
 }
 
 /// List commits on the current branch from HEAD

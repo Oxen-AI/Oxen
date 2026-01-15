@@ -63,12 +63,10 @@ pub async fn get_or_create(
     };
 
     let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
-        return Ok(
-            HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Branch not found: {}",
-                data.branch_name
-            ))),
-        );
+        return Ok(HttpResponse::NotFound().json(StatusMessage::error(format!(
+            "Branch not found: {}",
+            data.branch_name
+        ))));
     };
 
     // Return workspace if it already exists
@@ -272,12 +270,25 @@ pub async fn create_with_new_branch(
     };
 
     // If the branch doesn't exist, create it
-    let branch =
-        if let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? {
-            branch
-        } else {
-            repositories::branches::create_from_head(&repo, &data.branch_name)?
-        };
+    let branch = if let Some(branch) =
+        repositories::branches::get_by_name(&repo, &data.branch_name)?
+    {
+        branch
+    } else {
+        match repositories::commits::head_commit_maybe(&repo)? {
+            Some(commit) => repositories::branches::create(&repo, &data.branch_name, &commit.id)?,
+            // If there's no head commit, create an empty commit
+            None => {
+                repositories::commits::commit_allow_empty(
+                    &repo,
+                    "create new branch",
+                    Some(&data.branch_name),
+                )?;
+                repositories::branches::current_branch(&repo)?
+                    .ok_or_else(|| OxenError::basic_str("failed to get branch for empty commit"))?
+            }
+        }
+    };
 
     let workspace_id = &data.workspace_id;
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();

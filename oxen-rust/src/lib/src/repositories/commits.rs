@@ -68,10 +68,14 @@ pub fn commit_with_user(
 ///
 /// Allows creating a commit even when there are no staged changes.
 /// This reuses the existing create_empty_commit infrastructure.
-pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
+pub fn commit_allow_empty(
+    repo: &LocalRepository,
+    message: &str,
+    branch_name: Option<&str>,
+) -> Result<Commit, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::commits::commit_allow_empty(repo, message),
+        _ => core::v_latest::commits::commit_allow_empty(repo, message, branch_name),
     }
 }
 
@@ -139,13 +143,12 @@ pub fn commit_id_exists(
 /// Create an empty commit off of the head commit of a branch
 pub fn create_empty_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
     commit: &Commit,
+    branch_name: Option<&str>,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("create_empty_commit not supported in v0.10.0"),
-        _ => core::v_latest::commits::create_empty_commit(repo, branch_name, commit),
+        _ => core::v_latest::commits::create_empty_commit(repo, commit, branch_name),
     }
 }
 
@@ -931,7 +934,7 @@ mod tests {
             assert!(result.is_err());
 
             // Create an empty commit with --allow-empty (should succeed)
-            let empty_commit = commit_allow_empty(&repo, "Empty commit")?;
+            let empty_commit = commit_allow_empty(&repo, "Empty commit", None)?;
             assert_eq!(empty_commit.message, "Empty commit");
             assert_eq!(empty_commit.parent_ids, vec![first_commit.id.clone()]);
 
@@ -974,7 +977,7 @@ mod tests {
             repositories::add(&repo, &goodbye_file).await?;
 
             // commit_allow_empty should commit the staged changes normally
-            let commit = commit_allow_empty(&repo, "Add goodbye")?;
+            let commit = commit_allow_empty(&repo, "Add goodbye", None)?;
             assert_eq!(commit.message, "Add goodbye");
 
             // Verify both files are in the tree
