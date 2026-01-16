@@ -138,7 +138,7 @@ pub async fn list_commits(
 ) -> Result<Vec<Commit>, OxenError> {
     let base_commit_id = base_commit_id.to_string();
     let head_commit_id = head_commit_id.to_string();
-    let uri = format!("/commits/list/{base_commit_id}..{head_commit_id}");
+    let uri = format!("/commits/between/{base_commit_id}..{head_commit_id}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -165,7 +165,7 @@ pub async fn list_missing_hashes(
         .map(|c| c.hash().unwrap())
         .collect::<HashSet<MerkleHash>>();
     let res = client
-        .get(&url)
+        .post(&url)
         .json(&MerkleHashes {
             hashes: commit_hashes,
         })
@@ -312,7 +312,7 @@ async fn list_all_commits_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     let page_num = page_opts.page_num;
     let page_size = page_opts.page_size;
-    let uri = format!("/commits/list_all?page={page_num}&page_size={page_size}");
+    let uri = format!("/commits/all?page={page_num}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;

@@ -9,13 +9,13 @@ pub fn commits() -> Scope {
         // .route("", web::get().to(controllers::commits::index))
         .route("", web::post().to(controllers::commits::create))
         .route(
-            "/list/{base_head:.*}",
+            "/between/{base_head:.*}",
             web::get().to(controllers::commits::list_commits),
         )
         .route("/all", web::get().to(controllers::commits::list_all))
         .route(
             "/missing",
-            web::get().to(controllers::commits::list_missing),
+            web::post().to(controllers::commits::list_missing),
         )
         .route(
             "/missing_files",
