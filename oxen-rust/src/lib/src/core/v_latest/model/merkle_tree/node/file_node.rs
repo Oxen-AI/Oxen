@@ -119,6 +119,10 @@ impl TFileNode for FileNodeData {
         &self.data_type
     }
 
+    fn set_data_type(&mut self, data_type: EntryDataType) {
+        self.data_type = data_type;
+    }
+
     fn mime_type(&self) -> &str {
         &self.mime_type
     }

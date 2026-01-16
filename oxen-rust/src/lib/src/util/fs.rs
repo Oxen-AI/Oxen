@@ -1995,6 +1995,53 @@ pub fn is_modified_from_node_with_metadata(
     }
 }
 
+pub fn is_modified_between_node(
+    new_node: &FileNode,
+    existing_node: &FileNode,
+) -> Result<bool, OxenError> {
+    // First, check the length of the file
+    let new_node_size = new_node.num_bytes();
+    let existing_node_size = existing_node.num_bytes();
+
+    if new_node_size != existing_node_size {
+        return Ok(true);
+    }
+
+    // Second, check the last modified times
+    let new_last_modified = util::fs::last_modified_time(
+        new_node.last_modified_seconds(),
+        new_node.last_modified_nanoseconds(),
+    );
+    let existing_last_modified = util::fs::last_modified_time(
+        existing_node.last_modified_seconds(),
+        existing_node.last_modified_nanoseconds(),
+    );
+    if new_last_modified == existing_last_modified {
+        return Ok(false);
+    }
+
+    // Third, check the metadata hashes
+    let new_node_metadata_hash = new_node.metadata_hash();
+    let existing_node_metadata_hash = existing_node.metadata_hash();
+
+    if new_node_metadata_hash.is_some()
+        && existing_node_metadata_hash.is_some()
+        && *new_node_metadata_hash.unwrap() != *existing_node_metadata_hash.unwrap()
+    {
+        return Ok(true);
+    }
+
+    // Finally, check the hashes
+    let new_node_hash = new_node.hash().to_u128();
+    let existing_node_hash = existing_node.hash().to_u128();
+
+    if new_node_hash == existing_node_hash {
+        Ok(false)
+    } else {
+        Ok(true)
+    }
+}
+
 pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
     is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
 }

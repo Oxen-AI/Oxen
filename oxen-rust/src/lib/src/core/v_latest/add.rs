@@ -971,8 +971,7 @@ pub fn get_status_and_add_file(
 
     let file_name = dst_path.file_name().unwrap().to_string_lossy();
     let maybe_dir_node = None;
-    let file_status =
-        core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, data_path)?;
+    let file_status = determine_file_status(&maybe_dir_node, &file_name, data_path)?;
     let status = file_status.status.clone();
     // Don't have to add the file to the staged db if it hasn't changed
     if status == StagedEntryStatus::Unmodified {
@@ -1066,6 +1065,10 @@ pub fn add_file_node_and_parent_dir(
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
+    log::debug!(
+        "add_file_node_and_parent_dir adding file {:?} to staged db",
+        relative_path.as_ref()
+    );
     // Stage the file node
     staged_db_manager.upsert_file_node(&relative_path, status, file_node)?;
 

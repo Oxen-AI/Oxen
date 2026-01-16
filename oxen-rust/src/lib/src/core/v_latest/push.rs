@@ -617,6 +617,7 @@ async fn chunk_and_send_large_entries(
                     break;
                 };
 
+                // Version path used on the client side. Used for getting file metadata in parallel_large_file_upload
                 let version_path = match version_store.get_version_path(&entry.hash()) {
                     Ok(path) => path,
                     Err(e) => {

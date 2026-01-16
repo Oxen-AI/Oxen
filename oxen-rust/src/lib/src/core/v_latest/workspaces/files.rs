@@ -15,21 +15,23 @@ use zip::ZipArchive;
 use crate::constants::STAGED_DIR;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
+    add_file_node_and_parent_dir, add_file_node_to_staged_db, get_file_node,
     process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::core::{self, db};
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::merkle_tree::node::{
+    file_node::FileNodeOpts, EMerkleTreeNode, FileNode, MerkleTreeNode,
+};
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
-use crate::view::{ErrorFileInfo, FileWithHash};
+use crate::view::{workspaces::WorkspaceAddMetadata, ErrorFileInfo};
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
 const MAX_CONTENT_LENGTH: u64 = 1024 * 1024 * 1024; // 1GB limit
@@ -67,26 +69,44 @@ pub async fn rm(
 }
 
 pub fn add_version_file(
+    base_repo: &LocalRepository,
     workspace: &Workspace,
-    version_path: impl AsRef<Path>,
+    file_node_opts: FileNodeOpts,
     dst_path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
-    // version_path is where the file is stored, dst_path is the relative path to the repo path
-    let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
 
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        get_status_and_add_file(
-            workspace_repo,
-            version_path,
-            dst_path,
-            staged_db_manager,
-            &seen_dirs,
-        )
-    })?;
+    let file_node_to_stage = FileNode::new(workspace_repo, file_node_opts)?;
+    let workspace_commit = workspace.commit.clone();
+    let maybe_file_node =
+        repositories::tree::get_file_by_path(base_repo, &workspace_commit, dst_path)?;
+
+    let status = if let Some(existing_file_node) = &maybe_file_node {
+        log::debug!("got existing file_node: {existing_file_node} data_path {dst_path:?}");
+        if util::fs::is_modified_between_node(&file_node_to_stage, existing_file_node)? {
+            StagedEntryStatus::Modified
+        } else {
+            StagedEntryStatus::Unmodified
+        }
+    } else {
+        StagedEntryStatus::Added
+    };
+    if status == StagedEntryStatus::Unmodified {
+        log::debug!("file has not changed - skipping add");
+        return Ok(dst_path.to_path_buf());
+    }
+
+    let relative_path = util::fs::path_relative_to_dir(dst_path, &workspace_repo.path)?;
+    add_file_node_to_staged_db(
+        workspace_repo,
+        relative_path,
+        status,
+        &file_node_to_stage,
+        &seen_dirs,
+    )?;
 
     Ok(dst_path.to_path_buf())
 }
@@ -121,37 +141,68 @@ pub fn add_version_file_with_hash(
 pub fn add_version_files(
     repo: &LocalRepository,
     workspace: &Workspace,
-    files_with_hash: &[FileWithHash],
-    directory: impl AsRef<str>,
+    file_metadata_to_stage: &[WorkspaceAddMetadata],
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let version_store = repo.version_store()?;
-
-    let directory = directory.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
+    let workspace_commit = workspace.commit.clone();
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        for item in files_with_hash.iter() {
-            let version_path = version_store.get_version_path(&item.hash)?;
-            let target_path = PathBuf::from(directory).join(&item.path);
+        for file_metadata in file_metadata_to_stage.iter() {
+            // Constructed on the client side
+            // for regular workspace add - directory_name + file_name , Remote mode - relative_path
+            let target_path = file_metadata.target_path.clone();
+            let relative_path = util::fs::path_relative_to_dir(&target_path, &repo.path)?;
 
-            match get_status_and_add_file(
-                workspace_repo,
-                &version_path,
-                &target_path,
+            let file_node_opts = file_metadata.file_node_opts.clone();
+            let file_node_to_stage = FileNode::new(workspace_repo, file_node_opts)?;
+
+            let maybe_file_node =
+                repositories::tree::get_file_by_path(repo, &workspace_commit, &relative_path)?;
+            let status = if let Some(existing_file_node) = &maybe_file_node {
+                log::debug!(
+                    "got existing file_node: {existing_file_node} data_path {relative_path:?}"
+                );
+                if util::fs::is_modified_between_node(&file_node_to_stage, existing_file_node)? {
+                    StagedEntryStatus::Modified
+                } else {
+                    StagedEntryStatus::Unmodified
+                }
+            } else {
+                StagedEntryStatus::Added
+            };
+            let file_node_to_stage = if let Some(existing_file_node) = &maybe_file_node {
+                let metadata = &file_node_to_stage.metadata();
+                maybe_construct_file_node_for_tabular(
+                    file_node_to_stage,
+                    metadata,
+                    &existing_file_node.metadata(),
+                )?
+            } else {
+                file_node_to_stage
+            };
+
+            if status == StagedEntryStatus::Unmodified {
+                log::debug!("file has not changed - skipping add");
+                continue;
+            }
+
+            match add_file_node_and_parent_dir(
+                &file_node_to_stage,
+                status,
+                &relative_path,
                 staged_db_manager,
                 &seen_dirs,
             ) {
                 Ok(_) => {
-                    // Add parents to staged db
-                    // let parent_dirs = item.parents;
+                    // Node staged
                 }
                 Err(e) => {
                     log::error!("error with adding file: {e:?}");
                     err_files.push(ErrorFileInfo {
-                        hash: item.hash.clone(),
-                        path: Some(item.path.clone()),
+                        hash: format!("{:x}", file_node_to_stage.hash().to_u128()),
+                        path: Some(target_path),
                         error: format!("Failed to add file to staged db: {e}"),
                     });
                     continue;
@@ -760,4 +811,50 @@ fn has_dir_node(
     } else {
         Ok(false)
     }
+}
+
+fn maybe_construct_file_node_for_tabular(
+    mut file_node_to_stage: FileNode,
+    df_metadata: &Option<GenericMetadata>,
+    previous_oxen_metadata: &Option<GenericMetadata>,
+) -> Result<FileNode, OxenError> {
+    log::debug!("maybe_construct_generic_metadata_for_tabular {df_metadata:?}");
+    log::debug!("previous_oxen_metadata {previous_oxen_metadata:?}");
+
+    if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {
+        if let Some(GenericMetadata::MetadataTabular(previous_oxen_metadata)) =
+            previous_oxen_metadata.as_ref()
+        {
+            // Combine the two by using previous_oxen_metadata as the source of truth for metadata,
+            // but keeping df_metadata's fields
+            for field in &mut df_metadata.tabular.schema.fields {
+                if let Some(oxen_field) = previous_oxen_metadata
+                    .tabular
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|oxen_field| oxen_field.name == field.name)
+                {
+                    field.metadata = oxen_field.metadata.clone();
+                }
+            }
+            let updated_metadata = GenericMetadata::MetadataTabular(df_metadata);
+
+            let hash = file_node_to_stage.hash();
+            let (metadata_hash, combined_hash) = {
+                let metadata_hash =
+                    util::hasher::get_metadata_hash(&Some(updated_metadata.clone()))?;
+                let metadata_hash = MerkleHash::new(metadata_hash);
+                let combined_hash =
+                    util::hasher::get_combined_hash(Some(metadata_hash.to_u128()), hash.to_u128())?;
+                let combined_hash = MerkleHash::new(combined_hash);
+                (Some(metadata_hash), combined_hash)
+            };
+            file_node_to_stage.set_metadata(Some(updated_metadata));
+            file_node_to_stage.set_metadata_hash(metadata_hash);
+            file_node_to_stage.set_combined_hash(&combined_hash);
+        }
+    };
+
+    Ok(file_node_to_stage)
 }

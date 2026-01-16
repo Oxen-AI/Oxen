@@ -428,7 +428,9 @@ pub async fn pull_large_entry(
         .await;
 
     // Once all downloaded, recombine file and delete temp dir
-    version_store.combine_version_chunks(&hash, true).await?;
+    version_store
+        .combine_version_chunks(&hash, None, &None, true)
+        .await?;
 
     Ok(())
 }
@@ -521,7 +523,7 @@ async fn pull_entry_chunk(
         reqwest::StatusCode::OK => {
             let bytes = response.bytes().await?;
             version_store
-                .store_version_chunk(hash, chunk_start, &bytes)
+                .store_version_chunk(hash, None, chunk_start, None, &bytes)
                 .await?;
             Ok(status)
         }
