@@ -1994,6 +1994,7 @@ pub fn is_modified_from_node_with_metadata(
         Ok(true)
     }
 }
+
 pub fn is_modified_between_node(
     new_node: &FileNode,
     existing_node: &FileNode,

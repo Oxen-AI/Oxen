@@ -487,16 +487,25 @@ async fn complete_multipart_large_file_upload(
     log::debug!("complete_multipart_large_file_upload {url}");
     let client = client::new_for_url(&url)?;
 
+    let file_name = upload
+        .local_path
+        .clone()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    let target_path = if let Some(dst_dir) = upload.dst_dir.clone() {
+        // If dst_dir is provided, construct the target_path for workspace add
+        dst_dir.join(file_name)
+    } else {
+        upload.local_path.clone()
+    };
+
     let body = CompleteVersionUploadRequest {
         files: vec![CompletedFileUpload {
             hash: file_hash.to_string(),
-            file_name: upload
-                .local_path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-            dst_dir: upload.dst_dir.clone(),
+            target_path,
             upload_results: results,
             upload_id: upload_id.clone(),
         }],

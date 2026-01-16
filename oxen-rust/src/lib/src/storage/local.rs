@@ -80,6 +80,12 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
+    /// Set concurrency for server side parallel operation (download/upload)
+    fn concurrency(&self) -> u8 {
+        // Safe concurrency considering client is making CPU_num concurrent requests
+        1
+    }
+
     async fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
         let version_dir = self.version_dir(hash);
         fs::create_dir_all(&version_dir).await?;

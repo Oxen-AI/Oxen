@@ -7,6 +7,7 @@ use crate::model::{EntryDataType, LocalRepository, MerkleHash, RemoteRepository}
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::versions::MultipartLargeFileUploadStatus::*;
+use crate::view::workspaces::WorkspaceAddMetadata;
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
 
@@ -306,7 +307,7 @@ async fn parallel_batched_small_file_upload(
     type ProcessedBatch = (
         Vec<reqwest::multipart::Part>,
         Vec<FileWithHash>,
-        Vec<FileNodeOpts>,
+        Vec<WorkspaceAddMetadata>,
         u64,
     );
 
@@ -382,7 +383,7 @@ async fn parallel_batched_small_file_upload(
                         let mut batch_size = 0;
                         let mut batch_parts = Vec::new();
                         let mut files_to_upload = Vec::new();
-                        let mut file_nodes_to_stage = Vec::new();
+                        let mut file_metadata_to_stage = Vec::new();
 
                         // Build the multiparts for each file
                         log::debug!("Starting file processing loop with {:?} files", batch.len());
@@ -395,6 +396,7 @@ async fn parallel_batched_small_file_upload(
                             let file_data_maybe: Option<(
                                 reqwest::multipart::Part,
                                 FileNodeOpts,
+                                PathBuf,
                                 u64,
                             )> = tokio::task::spawn_blocking(move || {
                                 // Relative path for remote mode
@@ -416,6 +418,7 @@ async fn parallel_batched_small_file_upload(
                                 }
 
                                 // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name
+                                // Generate the staging path here as the target path to add in the workspace
                                 let staging_path = if head_commit_maybe_clone.is_some() {
                                     &relative_path
                                 } else {
@@ -469,22 +472,33 @@ async fn parallel_batched_small_file_upload(
                                         .headers(headers)
                                 };
 
-                                Ok(Some((file_part, file_node_opts, size)))
+                                Ok(Some((
+                                    file_part,
+                                    file_node_opts,
+                                    staging_path.clone(),
+                                    size,
+                                )))
                             })
                             .await??;
 
-                            let (file_part, file_node_opts, file_size) = match file_data_maybe {
-                                Some(data) => data,
-                                None => continue,
-                            };
+                            let (file_part, file_node_opts, staging_path, file_size) =
+                                match file_data_maybe {
+                                    Some(data) => data,
+                                    None => continue,
+                                };
 
                             batch_parts.push(file_part);
-                            let hash = format!("{:x}", &file_node_opts.hash.to_u128());
+                            let hash = file_node_opts.hash.clone().to_string();
+                            // For version file upload
                             files_to_upload.push(FileWithHash {
                                 hash,
-                                path: PathBuf::from(&file_node_opts.name),
+                                path: staging_path.clone(),
                             });
-                            file_nodes_to_stage.push(file_node_opts);
+                            // For staging
+                            file_metadata_to_stage.push(WorkspaceAddMetadata {
+                                file_node_opts,
+                                target_path: staging_path,
+                            });
 
                             batch_size += file_size;
                         }
@@ -494,7 +508,7 @@ async fn parallel_batched_small_file_upload(
                         let processed_batch: ProcessedBatch = (
                             batch_parts,
                             files_to_upload,
-                            file_nodes_to_stage,
+                            file_metadata_to_stage,
                             batch_size,
                         );
                         match tx_clone.send(processed_batch).await {
@@ -545,7 +559,7 @@ async fn parallel_batched_small_file_upload(
 
                     async move {
                         let result: Result<(), OxenError> = async move {
-                            let (current_batch_parts, files_to_upload, file_nodes_to_stage, current_batch_size) = processed_batch;
+                            let (current_batch_parts, files_to_upload, file_metadata_to_stage, current_batch_size) = processed_batch;
                             let num_entries = current_batch_parts.len();
 
                             // Build the multipart form
@@ -554,6 +568,7 @@ async fn parallel_batched_small_file_upload(
                                 form = form.part("file[]", part);
                             }
                             // Keep track of the file paths that get uploaded 
+                            // files_to_upload can be fewer than the file paths passed in, as unmodified file is skipped earlier
                             {
                                 let added: Vec<PathBuf> = files_to_upload
                                     .iter()
@@ -590,13 +605,13 @@ async fn parallel_batched_small_file_upload(
                                     log::debug!(
                                         "Version file upload successful with {:?} err files. Beginning staging for {:?} files",
                                         upload_err_files.len(),
-                                        file_nodes_to_stage.len()
+                                        file_metadata_to_stage.len()
                                     );
                                     match stage_files_to_workspace_with_retry(
                                         &remote_repo_clone,
                                         client_clone,
                                         &workspace_id_clone,
-                                        Arc::new(file_nodes_to_stage),
+                                        Arc::new(file_metadata_to_stage),
                                         &directory_str,
                                         upload_err_files,
                                     )
@@ -733,7 +748,7 @@ pub fn generate_file_node_opts(
     }
 
     let file_extension = file_path.extension().unwrap_or_default().to_string_lossy();
-    let staging_path_str = staging_path.to_str().unwrap_or_default();
+    let staging_path_str = staging_path.to_str().unwrap_or_default().to_string();
     let metadata = util::fs::metadata(file_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
     let num_bytes = metadata.len();
@@ -745,7 +760,7 @@ pub fn generate_file_node_opts(
     let combined_hash = MerkleHash::new(combined_hash);
 
     let file_node_opts = FileNodeOpts {
-        name: staging_path_str.to_string(),
+        name: staging_path_str,
         hash: content_hash,
         combined_hash,
         metadata_hash: Some(metadata_hash),
@@ -766,7 +781,7 @@ pub async fn stage_files_to_workspace_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     workspace_id: impl AsRef<str>,
-    file_nodes_to_stage: Arc<Vec<FileNodeOpts>>,
+    file_metadata_to_stage: Arc<Vec<WorkspaceAddMetadata>>,
     directory_str: impl AsRef<str>,
     err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
@@ -782,7 +797,7 @@ pub async fn stage_files_to_workspace_with_retry(
             remote_repo,
             client.clone(),
             &workspace_id,
-            file_nodes_to_stage.clone(),
+            file_metadata_to_stage.clone(),
             directory_str,
             err_files.clone(),
         )
@@ -808,7 +823,7 @@ pub async fn stage_files_to_workspace_with_retry(
 
     log::error!(
         "Error: Failed to stage {:?} files",
-        file_nodes_to_stage.len()
+        file_metadata_to_stage.len()
     );
     Err(OxenError::basic_str(
         "failed to stage files to workspace after retries",
@@ -820,7 +835,7 @@ pub async fn stage_files_to_workspace(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     workspace_id: impl AsRef<str>,
-    file_nodes_to_stage: Arc<Vec<FileNodeOpts>>,
+    file_metadata_to_stage: Arc<Vec<WorkspaceAddMetadata>>,
     directory_str: impl AsRef<str>,
     err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
@@ -834,13 +849,13 @@ pub async fn stage_files_to_workspace(
             .iter()
             .map(|f| f.hash.parse::<MerkleHash>())
             .collect::<Result<_, _>>()?;
-        file_nodes_to_stage
+        file_metadata_to_stage
             .iter()
-            .filter(|f| !err_hashes.contains(&f.hash))
+            .filter(|f| !err_hashes.contains(&f.file_node_opts.hash))
             .cloned()
             .collect()
     } else {
-        file_nodes_to_stage.to_vec()
+        file_metadata_to_stage.to_vec()
     };
 
     log::debug!("Files to send: {:?}", files_to_send.len());

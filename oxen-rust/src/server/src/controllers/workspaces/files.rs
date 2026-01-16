@@ -5,7 +5,7 @@ use crate::params::{app_data, path_param};
 use liboxen::core;
 use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
-use liboxen::model::merkle_tree::node::{file_node::FileNodeOpts, EMerkleTreeNode};
+use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::LocalRepository;
@@ -13,6 +13,7 @@ use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::util::hasher;
+use liboxen::view::workspaces::WorkspaceAddMetadata;
 use liboxen::view::{
     ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
     StatusMessageDescription,
@@ -300,30 +301,28 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 )]
 pub async fn add_version_files(
     req: HttpRequest,
-    payload: web::Json<Vec<FileNodeOpts>>,
+    payload: web::Json<Vec<WorkspaceAddMetadata>>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    // Add file to staging
+    // Add files to staging
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let directory = path_param(&req, "directory")?;
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    let file_nodes_to_stage: Vec<FileNodeOpts> = payload.into_inner();
+    let file_metadata_to_stage: Vec<WorkspaceAddMetadata> = payload.into_inner();
     log::debug!(
         "Calling add version files from the core workspace logic with {} files",
-        file_nodes_to_stage.len(),
+        file_metadata_to_stage.len(),
     );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,
-        &file_nodes_to_stage,
-        &directory,
+        &file_metadata_to_stage,
     )?;
 
     log::debug!("Staging complete with {:?} err files", err_files.len());

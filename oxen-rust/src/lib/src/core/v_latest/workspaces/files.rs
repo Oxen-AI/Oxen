@@ -31,7 +31,7 @@ use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
-use crate::view::ErrorFileInfo;
+use crate::view::{workspaces::WorkspaceAddMetadata, ErrorFileInfo};
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
 const MAX_CONTENT_LENGTH: u64 = 1024 * 1024 * 1024; // 1GB limit
@@ -141,26 +141,28 @@ pub fn add_version_file_with_hash(
 pub fn add_version_files(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_nodes_to_stage: &[FileNodeOpts],
-    directory: impl AsRef<str>,
+    file_metadata_to_stage: &[WorkspaceAddMetadata],
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let directory = directory.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     let workspace_commit = workspace.commit.clone();
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        for file_node_opts in file_nodes_to_stage.iter() {
-            let target_path = PathBuf::from(directory).join(&file_node_opts.name);
+        for file_metadata in file_metadata_to_stage.iter() {
+            // Constructed on the client side
+            // for regular workspace add - directory_name + file_name , Remote mode - relative_path
+            let target_path = file_metadata.target_path.clone();
+            let relative_path = util::fs::path_relative_to_dir(&target_path, &repo.path)?;
 
-            let file_node_to_stage = FileNode::new(workspace_repo, file_node_opts.clone())?;
+            let file_node_opts = file_metadata.file_node_opts.clone();
+            let file_node_to_stage = FileNode::new(workspace_repo, file_node_opts)?;
 
             let maybe_file_node =
-                repositories::tree::get_file_by_path(repo, &workspace_commit, &target_path)?;
+                repositories::tree::get_file_by_path(repo, &workspace_commit, &relative_path)?;
             let status = if let Some(existing_file_node) = &maybe_file_node {
                 log::debug!(
-                    "got existing file_node: {existing_file_node} data_path {target_path:?}"
+                    "got existing file_node: {existing_file_node} data_path {relative_path:?}"
                 );
                 if util::fs::is_modified_between_node(&file_node_to_stage, existing_file_node)? {
                     StagedEntryStatus::Modified
@@ -189,13 +191,12 @@ pub fn add_version_files(
             match add_file_node_and_parent_dir(
                 &file_node_to_stage,
                 status,
-                &target_path,
+                &relative_path,
                 staged_db_manager,
                 &seen_dirs,
             ) {
                 Ok(_) => {
-                    // Add parents to staged db
-                    // let parent_dirs = item.parents;
+                    // Node staged
                 }
                 Err(e) => {
                     log::error!("error with adding file: {e:?}");

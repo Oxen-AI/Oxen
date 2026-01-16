@@ -155,6 +155,14 @@ impl VersionStore for S3VersionStore {
         }
     }
 
+    /// Set concurrency for server side parallel operation (download/upload)
+    fn concurrency(&self) -> u8 {
+        // Total S3 requests = client concurrency * num_client * server concurrency
+        // Use a safe number for now
+        // TODO: Consider a dynamic global concurrency implementation
+        10
+    }
+
     async fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
         // get the client
         let client = self.init_client().await?;

@@ -58,6 +58,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// Initialize the storage backend
     async fn init(&self) -> Result<(), OxenError>;
 
+    /// Get recommended concurrency
+    fn concurrency(&self) -> u8;
+
     /// Store a version file from a file path
     ///
     /// # Arguments

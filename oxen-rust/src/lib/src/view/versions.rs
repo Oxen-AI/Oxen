@@ -40,8 +40,7 @@ pub struct MultipartLargeFileUpload {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CompletedFileUpload {
     pub hash: String,
-    pub file_name: String,        // The name of the file
-    pub dst_dir: Option<PathBuf>, // The destination directory for the file
+    pub target_path: PathBuf, // The destination path for the file
     // `upload_results` is all the headers from the chunk uploads
     // so that we can verify the upload results and re-upload
     // the file if there were any failures

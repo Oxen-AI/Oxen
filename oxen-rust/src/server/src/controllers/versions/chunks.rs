@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
@@ -136,12 +134,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
             };
             // TODO: Can we just replace workspaces::files::add with this?
             // repositories::workspaces::files::add(&workspace, &version_path)?;
-            let dst_path = if let Some(dst_dir) = &file.dst_dir {
-                dst_dir.join(file.file_name.clone())
-            } else {
-                PathBuf::from(file.file_name.clone())
-            };
-
+            let target_path = &file.target_path;
             let Some(file_node_opts) = request.file_node_opts else {
                 return Ok(HttpResponse::BadRequest().json(StatusMessage::error(
                     "Missing FileNode value for workspace add",
@@ -152,7 +145,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                 &repo,
                 &workspace,
                 file_node_opts,
-                &dst_path,
+                target_path,
             )?;
         }
 
