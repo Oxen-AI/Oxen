@@ -128,6 +128,49 @@ pub async fn get_file_thumbnail(
     .await
 }
 
+/// Move/rename a file in place (mv in a temp workspace and commit)
+pub async fn mv_file(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    source_path: impl AsRef<Path>,
+    new_path: impl AsRef<Path>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let source_path = source_path.as_ref();
+    let new_path = new_path.as_ref();
+
+    let source_path_str = source_path.to_string_lossy().to_string();
+    let new_path_str = new_path.to_string_lossy().to_string();
+
+    let uri = format!("/file/{branch}/{source_path_str}");
+    log::debug!("mv_file {uri:?}, new_path {new_path_str:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+
+    // Build JSON body
+    let mut body = serde_json::json!({
+        "new_path": new_path_str
+    });
+
+    if let Some(commit) = commit_body {
+        body["name"] = serde_json::Value::String(commit.author);
+        body["email"] = serde_json::Value::String(commit.email);
+        body["message"] = serde_json::Value::String(commit.message);
+    }
+
+    let req = client
+        .patch(&url)
+        .header("Content-Type", "application/json")
+        .body(body.to_string());
+
+    let res = req.send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: CommitResponse = serde_json::from_str(&body)?;
+    Ok(response)
+}
+
 /// Delete a file in place (rm from a temp workspace and commit)
 pub async fn delete_file(
     remote_repo: &RemoteRepository,
@@ -342,6 +385,62 @@ mod tests {
 
             // Verify the file is deleted
             assert!(!file_path.exists(), "File should be deleted after deletion");
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_mv_file() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+            let branch_name = "main";
+
+            // File to move
+            let source_path = "train/dog_1.jpg";
+            let new_path = "renamed/images/dog_moved.jpg";
+
+            // Verify the file exists before moving
+            let file_path = local_repo.path.join(source_path);
+            assert!(file_path.exists(), "Source file should exist before move");
+
+            // Move the file
+            let mv_commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Move file to new location".to_string(),
+            };
+
+            let mv_response = api::client::file::mv_file(
+                &remote_repo,
+                branch_name,
+                source_path,
+                new_path,
+                Some(mv_commit_body),
+            )
+            .await?;
+
+            assert_eq!(mv_response.status.status_message, "resource_updated");
+            assert!(mv_response
+                .commit
+                .message
+                .contains("Move file to new location"));
+
+            // Pull the changes
+            repositories::pull(&local_repo).await?;
+
+            // Verify the file is at the new location
+            let new_file_path = local_repo.path.join(new_path);
+            assert!(
+                new_file_path.exists(),
+                "File should exist at new location after move"
+            );
+
+            // Verify the file is no longer at the original location
+            assert!(
+                !file_path.exists(),
+                "File should not exist at original location after move"
+            );
 
             Ok(remote_repo)
         })

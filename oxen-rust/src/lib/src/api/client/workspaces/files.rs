@@ -6,7 +6,7 @@ use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
-use crate::{api, repositories, view::workspaces::ValidateUploadFeasibilityRequest};
+use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use bytesize::ByteSize;
 use futures_util::StreamExt;
@@ -1009,6 +1009,39 @@ pub async fn rm_files_from_staged(
     Ok(())
 }
 
+/// Move or rename a file within a workspace.
+/// Sends a PATCH request to update the file's path.
+pub async fn mv(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    path: impl AsRef<Path>,
+    new_path: impl AsRef<Path>,
+) -> Result<view::StatusMessage, OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let path = path.as_ref();
+    let file_path_str = path.to_string_lossy();
+
+    let uri = format!("/workspaces/{workspace_id}/files/{file_path_str}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let params = serde_json::to_string(&serde_json::json!({
+        "new_path": new_path.as_ref().to_string_lossy()
+    }))?;
+
+    let client = client::new_for_url(&url)?;
+    let res = client.patch(&url).body(params).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<view::StatusMessage, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            let err = format!(
+                "api::workspaces::files::mv error parsing from {url}\n\nErr {err:?} \n\n{body}"
+            );
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
 pub async fn download(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -1945,6 +1978,67 @@ mod tests {
             assert!(output_path.exists());
 
             // TempDir will automatically clean up when it goes out of scope
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_mv_file() -> Result<(), OxenError> {
+        // Skip workspace ops on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_remote_repo_test_all_data_pushed(|remote_repo| async move {
+            let branch_name = "mv-file-test";
+            let branch = api::client::branches::create_from_branch(
+                &remote_repo,
+                branch_name,
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?;
+            assert_eq!(branch.name, branch_name);
+
+            let workspace_id = uuid::Uuid::new_v4().to_string();
+            let workspace =
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+            assert_eq!(workspace.id, workspace_id);
+
+            // Use an image file that already exists in the repo (non-tabular to test files::mv)
+            let original_path = "train/dog_1.jpg";
+            let new_path = "renamed/images/dog_1_moved.jpg";
+
+            // Move/rename the file
+            let mv_response = api::client::workspaces::files::mv(
+                &remote_repo,
+                &workspace_id,
+                original_path,
+                new_path,
+            )
+            .await?;
+            assert_eq!(mv_response.status, "success");
+
+            // Commit the changes
+            let body = NewCommitBody {
+                message: "Moved file to new location".to_string(),
+                author: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+            };
+            let commit =
+                api::client::workspaces::commit(&remote_repo, branch_name, &workspace_id, &body)
+                    .await?;
+
+            // Verify the file exists at the new path after commit
+            let new_file =
+                api::client::entries::get_entry(&remote_repo, new_path, &commit.id).await?;
+            assert!(new_file.is_some(), "File should exist at new path");
+
+            // Verify the original path no longer exists
+            let old_file =
+                api::client::entries::get_entry(&remote_repo, original_path, &commit.id).await?;
+            assert!(old_file.is_none(), "File should not exist at original path");
+
             Ok(remote_repo)
         })
         .await

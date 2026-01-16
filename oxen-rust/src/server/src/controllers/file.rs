@@ -31,7 +31,7 @@ use utoipa::ToSchema;
     title = "FileUploadBody",
     description = "Body for uploading a file via multipart/form-data",
     example = json!({
-        "file": "<binary data>", 
+        "file": "<binary data>",
         "message": "Adding a picture of a cow",
         "name": "bessie",
         "email": "bessie@oxen.ai"
@@ -373,6 +373,122 @@ pub async fn delete(
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_deleted(),
+        commit,
+    }))
+}
+
+#[derive(ToSchema, Deserialize)]
+#[schema(
+    title = "FileMoveBody",
+    description = "Body for moving/renaming a file",
+    example = json!({
+        "new_path": "new/path/to/file.txt",
+        "message": "Renamed file to new location",
+        "name": "bessie",
+        "email": "bessie@oxen.ai"
+    })
+)]
+pub struct FileMoveBody {
+    #[schema(example = "new/path/to/file.txt")]
+    pub new_path: String,
+    #[schema(example = "Moved file to new location")]
+    pub message: Option<String>,
+    #[schema(example = "bessie")]
+    pub name: Option<String>,
+    #[schema(example = "bessie@oxen.ai")]
+    pub email: Option<String>,
+}
+
+/// Move/Rename file
+#[utoipa::path(
+    patch,
+    path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    tag = "Files",
+    security( ("api_key" = []) ),
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("resource" = String, Path, description = "Path to the source file (including branch)", example = "main/train/images/old_name.jpg"),
+    ),
+    request_body(
+        content_type = "application/json",
+        content = FileMoveBody
+    ),
+    responses(
+        (status = 200, description = "File moved/renamed successfully", body = CommitResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Branch or file not found")
+    )
+)]
+pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::mv path {:?}", req.path());
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    // Parse the resource (branch/commit/path)
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
+    let source_path = resource.path;
+
+    // Parse the request body
+    let body: FileMoveBody = serde_json::from_str(&body)?;
+
+    // Validate new_path is not empty
+    if body.new_path.is_empty() {
+        return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
+    }
+
+    // Validate and normalize new_path
+    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
+
+    // Verify source file exists
+    if repositories::entries::get_file(&repo, &commit, &source_path)?.is_none() {
+        return Err(OxenHttpError::NotFound);
+    }
+
+    // Check if new_path already exists (file OR directory)
+    if repositories::tree::get_node_by_path(&repo, &commit, &new_path)?.is_some() {
+        return Err(OxenHttpError::BadRequest(
+            "new_path already exists in the repository".into(),
+        ));
+    }
+
+    log::debug!("file::mv creating workspace for commit: {commit}");
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    // Stage the move
+    log::debug!("file::mv moving {source_path:?} to {new_path:?}");
+    repositories::workspaces::files::mv(&workspace, &source_path, &new_path)?;
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: body.name.clone().unwrap_or_default(),
+        email: body.email.clone().unwrap_or_default(),
+        message: body.message.clone().unwrap_or_else(|| {
+            format!(
+                "Move {} to {}",
+                source_path.to_string_lossy(),
+                new_path.to_string_lossy()
+            )
+        }),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+
+    log::debug!("file::mv workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_updated(),
         commit,
     }))
 }
