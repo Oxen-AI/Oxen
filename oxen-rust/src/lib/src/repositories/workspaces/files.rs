@@ -118,9 +118,7 @@ mod tests {
             let original_path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
-            let new_path = Path::new("renamed")
-                .join("data")
-                .join("bbox_renamed.csv");
+            let new_path = Path::new("renamed").join("data").join("bbox_renamed.csv");
 
             // Move the file
             let result = workspaces::files::mv(&workspace, &original_path, &new_path).await?;

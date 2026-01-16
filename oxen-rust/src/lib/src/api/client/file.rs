@@ -421,7 +421,10 @@ mod tests {
             .await?;
 
             assert_eq!(mv_response.status.status_message, "resource_updated");
-            assert!(mv_response.commit.message.contains("Move file to new location"));
+            assert!(mv_response
+                .commit
+                .message
+                .contains("Move file to new location"));
 
             // Pull the changes
             repositories::pull(&local_repo).await?;

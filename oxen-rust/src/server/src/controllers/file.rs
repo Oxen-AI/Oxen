@@ -443,20 +443,21 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     // Parse the request body
     let body: FileMoveBody = serde_json::from_str(&body)?;
 
-    // Validate new_path
+    // Validate new_path is not empty
     if body.new_path.is_empty() {
         return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
     }
 
-    let new_path = PathBuf::from(&body.new_path);
+    // Validate and normalize new_path
+    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
     // Verify source file exists
     if repositories::entries::get_file(&repo, &commit, &source_path)?.is_none() {
         return Err(OxenHttpError::NotFound);
     }
 
-    // Check if new_path already exists
-    if repositories::entries::get_file(&repo, &commit, &new_path)?.is_some() {
+    // Check if new_path already exists (file OR directory)
+    if repositories::tree::get_node_by_path(&repo, &commit, &new_path)?.is_some() {
         return Err(OxenHttpError::BadRequest(
             "new_path already exists in the repository".into(),
         ));

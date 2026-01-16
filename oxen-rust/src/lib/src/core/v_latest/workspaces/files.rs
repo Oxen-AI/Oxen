@@ -784,23 +784,15 @@ pub async fn mv(
     } else {
         // File not staged, get it from the base repo
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .ok_or_else(|| {
-                OxenError::basic_str(format!("File not found in workspace or base repo: {path:?}"))
-            })?
+            .ok_or_else(|| OxenError::path_does_not_exist(path))?
     };
+
+    // Check if this is a no-op move (source and destination are the same)
+    let is_same_path = path == new_path;
 
     // Create the new file node with updated name (full path for the new location)
     let mut new_file_node = file_node.clone();
     new_file_node.set_name(new_path.to_str().unwrap());
-
-    // Create a file node for the removed entry with the full original path as name
-    let mut removed_file_node = file_node.clone();
-    removed_file_node.set_name(path.to_str().unwrap());
-
-    // Check if the source file exists in the base repo (needs to be staged for removal)
-    let source_exists_in_base =
-        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .is_some();
 
     // Check if a file exists at the new path in the base repo (determines if it's modified or added)
     let dest_exists_in_base =
@@ -824,27 +816,41 @@ pub async fn mv(
         // Add the file node at the new path
         staged_db_manager.upsert_file_node(new_path, new_status, &new_file_node)?;
 
-        // If the source file exists in the base repo, stage it for removal
-        // If it was only staged (not in base repo), just delete the staged entry
-        if source_exists_in_base {
-            // Stage the original path as removed (using removed_file_node with full path as name)
-            staged_db_manager.upsert_file_node(
+        // Only handle removal if source and destination are different
+        if !is_same_path {
+            // Check if the source file exists in the base repo (needs to be staged for removal)
+            let source_exists_in_base = repositories::tree::get_file_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
                 path,
-                StagedEntryStatus::Removed,
-                &removed_file_node,
-            )?;
-            // Add parent directories for the removed path
-            if let Some(parents) = path.parent() {
-                for dir in parents.ancestors() {
-                    staged_db_manager.add_directory(dir, &seen_dirs)?;
-                    if dir == Path::new("") {
-                        break;
+            )?
+            .is_some();
+
+            if source_exists_in_base {
+                // Create a file node for the removed entry with the full original path as name
+                let mut removed_file_node = file_node.clone();
+                removed_file_node.set_name(path.to_str().unwrap());
+
+                // Stage the original path as removed
+                staged_db_manager.upsert_file_node(
+                    path,
+                    StagedEntryStatus::Removed,
+                    &removed_file_node,
+                )?;
+
+                // Add parent directories for the removed path
+                if let Some(parents) = path.parent() {
+                    for dir in parents.ancestors() {
+                        staged_db_manager.add_directory(dir, &seen_dirs)?;
+                        if dir == Path::new("") {
+                            break;
+                        }
                     }
                 }
+            } else {
+                // Just delete the staged entry if file wasn't in base repo
+                staged_db_manager.delete_entry(path)?;
             }
-        } else {
-            // Just delete the staged entry if file wasn't in base repo
-            staged_db_manager.delete_entry(path)?;
         }
 
         // Add parent directories for the new path

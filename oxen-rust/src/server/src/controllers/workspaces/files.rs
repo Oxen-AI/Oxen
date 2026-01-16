@@ -562,12 +562,13 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     // Parse request body
     let body: RenameRequest = serde_json::from_str(&body)?;
 
-    // Validate new_path
+    // Validate new_path is not empty
     if body.new_path.is_empty() {
         return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
     }
 
-    let new_path = PathBuf::from(&body.new_path);
+    // Validate and normalize new_path
+    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
