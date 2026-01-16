@@ -6,12 +6,13 @@ use crate::controllers;
 pub fn compare() -> Scope {
     web::scope("/compare")
         .route(
-            "/commits/{base_head:.*}",
-            web::get().to(controllers::diff::commits),
-        )
-        .route(
             "/dir_tree/{base_head:.*}",
             web::get().to(controllers::diff::dir_tree),
+        )
+        // TODO: Deprecate
+        .route(
+            "/commits/{base_head:.*}",
+            web::get().to(controllers::commits::list_commits),
         )
         .route(
             "/entries/{base_head:.*}/dir/{dir:.*}",
