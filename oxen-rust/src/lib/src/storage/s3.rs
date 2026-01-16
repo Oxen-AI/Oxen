@@ -223,6 +223,7 @@ impl VersionStore for S3VersionStore {
         let sdk_body = SdkBody::from_body_1_x(http_body_util::StreamBody::new(stream));
         let byte_stream = ByteStream::from_body_1_x(sdk_body);
 
+        // default retry attempt is 3
         client
             .put_object()
             .bucket(&self.bucket)
@@ -494,6 +495,10 @@ impl VersionStore for S3VersionStore {
 
         let byte_stream = ByteStream::from_body_1_x(sdk_body);
 
+        let client_clone = Arc::clone(&client);
+        let bucket_clone = bucket.clone();
+        let key_clone = key.clone();
+        let upload_id_clone = upload_id.clone();
         let upload_handle = tokio::spawn(async move {
             client
                 .upload_part()
@@ -513,7 +518,12 @@ impl VersionStore for S3VersionStore {
 
         Ok(Box::new(S3VersionWriter {
             writer: tx,
-            upload_handle,
+            upload_handle: Some(upload_handle),
+            client: client_clone,
+            bucket: bucket_clone,
+            key: key_clone,
+            upload_id: upload_id_clone,
+            finished: false,
         }))
     }
 
@@ -673,12 +683,12 @@ impl VersionStore for S3VersionStore {
             .map(|chunk| {
                 let part_number = chunk.chunk_number.unwrap();
                 let etag = chunk.etag.unwrap();
-                Ok(CompletedPart::builder()
+                CompletedPart::builder()
                     .part_number(part_number)
                     .e_tag(etag)
-                    .build())
+                    .build()
             })
-            .collect::<Result<Vec<_>, OxenError>>()?;
+            .collect();
 
         let completed_upload = CompletedMultipartUpload::builder()
             .set_parts(Some(completed_parts))
@@ -994,17 +1004,38 @@ impl Stream for ByteStreamAdapter {
 
 pub struct S3VersionWriter {
     writer: tokio::io::DuplexStream,
-    upload_handle: JoinHandle<Result<(), OxenError>>, // Background upload task
+    upload_handle: Option<tokio::task::JoinHandle<Result<(), OxenError>>>,
+    // For Drop abort
+    client: Arc<Client>,
+    bucket: String,
+    key: String,
+    upload_id: String,
+
+    // if finshed
+    finished: bool,
+}
+
+struct S3AbortHandle {
+    client: Arc<Client>,
+    bucket: String,
+    key: String,
+    upload_id: String,
 }
 
 #[async_trait]
 impl VersionWriter for S3VersionWriter {
     // Must be called specifically before the writer dropped
     async fn finish(mut self: Box<Self>) -> Result<(), OxenError> {
-        // flush duplex
+        self.finished = true;
+        // Take ownership（Option可以take）
+        let handle = self
+            .upload_handle
+            .take()
+            .ok_or_else(|| OxenError::basic_str("Already finished"))?;
+
         self.writer.shutdown().await?;
-        // await the upload response from S3
-        self.upload_handle.await??;
+        handle.await??;
+
         Ok(())
     }
 }
@@ -1030,5 +1061,35 @@ impl AsyncWrite for S3VersionWriter {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), io::Error>> {
         Pin::new(&mut self.writer).poll_shutdown(cx)
+    }
+}
+
+impl Drop for S3VersionWriter {
+    fn drop(&mut self) {
+        // Finished successfully
+        if self.finished {
+            return;
+        }
+
+        // Abort tokio task
+        if let Some(handle) = self.upload_handle.take() {
+            handle.abort();
+        }
+        // If error occurs
+        let client = self.client.clone();
+        let bucket = self.bucket.clone();
+        let key = self.key.clone();
+        let upload_id = self.upload_id.clone();
+
+        // Abort the upload
+        tokio::spawn(async move {
+            let _ = client
+                .abort_multipart_upload()
+                .bucket(bucket)
+                .key(key)
+                .upload_id(upload_id)
+                .send()
+                .await;
+        });
     }
 }

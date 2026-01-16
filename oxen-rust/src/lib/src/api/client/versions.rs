@@ -142,7 +142,9 @@ pub async fn parallel_large_file_upload(
         let staging_path = if let Some(directory) = dst_dir {
             PathBuf::from(directory.as_ref()).join(file_path.file_name().unwrap())
         } else {
-            file_path.to_path_buf()
+            return Err(OxenError::basic_str(
+                "Destination directory name missing for workspace add",
+            ));
         };
         let file_node_opts =
             client::workspaces::files::generate_file_node_opts(hash, file_path, &staging_path)?;

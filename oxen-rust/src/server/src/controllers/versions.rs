@@ -250,7 +250,7 @@ pub async fn stream_versions_tar_gz(
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let writer_task = async move {
-        // Use a buffer to provide a stable stream, avoid inconsistent chunk size returned in S3 stream causing Windows panic
+        // Use a buffer to provide a stable stream, avoid inconsistent chunk size returned in S3 stream that'd cause panic in Windows
         let buffered_writer = tokio::io::BufWriter::with_capacity(STREAM_BUFFER_SIZE, writer);
         let enc = GzipEncoder::new(buffered_writer);
         let mut tar = Builder::new(enc);
@@ -378,7 +378,7 @@ async fn append_to_tar_with_hash(
     header.set_gid(0);
     header.set_cksum();
 
-    // Add a buffer to avoid inconsistent chunk size returned in S3 stream causing panic in Windows
+    // Add a buffer to avoid inconsistent chunk size returned in S3 stream that'd cause panic in Windows
     let buffered_reader =
         tokio::io::BufReader::with_capacity(STREAM_BUFFER_SIZE, StreamReader::new(stream));
 
@@ -738,113 +738,6 @@ pub async fn save_multiparts(
 
     Ok(err_files)
 }
-
-// // Read the payload files into memory and save to version store
-// pub async fn save_multiparts(
-//     mut payload: Multipart,
-//     repo: &LocalRepository,
-// ) -> Result<Vec<ErrorFileInfo>, Error> {
-//     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-//         log::error!("Failed to get version store: {oxen_err:?}");
-//         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
-//     })?;
-//     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
-
-//     let mut err_files: Vec<ErrorFileInfo> = vec![];
-
-//     while let Some(mut field) = payload.try_next().await? {
-//         let Some(content_disposition) = field.content_disposition().cloned() else {
-//             continue;
-//         };
-//         if let Some(name) = content_disposition.get_name() {
-//             if name == "file[]" || name == "file" {
-//                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-//                 let upload_filehash = content_disposition.get_filename();
-//                 let Some(upload_filehash) = upload_filehash else {
-//                     log::error!("Missing hash in multipart request");
-//                     record_error_file(
-//                         &mut err_files,
-//                         "".to_string(),
-//                         None,
-//                         "Missing hash in multipart request".to_string(),
-//                     );
-//                     continue;
-//                 };
-
-//                 // Get file size from header
-//                 let raw_headers = field.headers();
-//                 let file_size = raw_headers
-//                     .get("X-Oxen-File-Size")
-//                     .and_then(|val| val.to_str().ok())
-//                     .and_then(|s| s.parse::<u64>().ok());
-
-//                 let size = match file_size {
-//                     Some(size) => {
-//                         log::debug!("versions::save_multiparts got file_size from header: {size}");
-//                         size
-//                     }
-//                     None => {
-//                         log::error!("Failed to get file size for hash {upload_filehash}");
-//                         record_error_file(
-//                             &mut err_files,
-//                             upload_filehash.to_string(),
-//                             None,
-//                             "Failed to get file size".to_string(),
-//                         );
-//                         continue;
-//                     }
-//                 };
-
-//                 log::debug!("upload file_hash: {upload_filehash:?}");
-
-//                 let is_gzipped = field
-//                     .content_type()
-//                     .map(|mime| {
-//                         mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
-//                     })
-//                     .unwrap_or(false);
-
-//                 // Read the bytes from the stream
-//                 // TODO: Implement streaming here
-//                 let mut field_bytes = Vec::new();
-//                 while let Some(chunk) = field.try_next().await? {
-//                     field_bytes.extend_from_slice(&chunk);
-//                 }
-
-//                 let reader: Box<dyn AsyncRead + Send + Sync + Unpin> = if is_gzipped {
-//                     // async decompression
-//                     let cursor = std::io::Cursor::new(field_bytes);
-//                     let buf_reader = BufReader::new(cursor);
-//                     Box::new(GzipDecoder::new(buf_reader))
-//                 } else {
-//                     let cursor = std::io::Cursor::new(field_bytes);
-//                     Box::new(cursor)
-//                 };
-
-//                 match version_store
-//                     .store_version_from_reader_with_size(upload_filehash, reader, size)
-//                     .await
-//                 {
-//                     Ok(_) => {
-//                         log::info!("Successfully stored version for hash: {upload_filehash}");
-//                     }
-//                     Err(e) => {
-//                         log::error!("Failed to store version: {e}");
-//                         record_error_file(
-//                             &mut err_files,
-//                             upload_filehash.to_string(),
-//                             None,
-//                             format!("Failed to store version: {e}"),
-//                         );
-//                         continue;
-//                     }
-//                 }
-//             }
-//         }
-//     }
-
-//     Ok(err_files)
-// }
 
 // Record the error file info for retry
 fn record_error_file(

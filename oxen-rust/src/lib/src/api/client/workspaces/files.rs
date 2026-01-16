@@ -392,6 +392,7 @@ async fn parallel_batched_small_file_upload(
                             let directory_clone = directory_clone.clone();
                             let repo_path_clone = repo_path_clone.clone();
                             let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+                            let path_clone = path.clone();
 
                             let file_data_maybe: Option<(
                                 reqwest::multipart::Part,
@@ -492,7 +493,7 @@ async fn parallel_batched_small_file_upload(
                             // For version file upload
                             files_to_upload.push(FileWithHash {
                                 hash,
-                                path: staging_path.clone(),
+                                path: path_clone,
                             });
                             // For staging
                             file_metadata_to_stage.push(WorkspaceAddMetadata {
