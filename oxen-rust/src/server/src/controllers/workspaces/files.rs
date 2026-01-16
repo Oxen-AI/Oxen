@@ -212,7 +212,7 @@ pub async fn get(
         ("path" = String, Path, description = "The directory to upload the file to", example = "data/train")
     ),
     request_body(
-        content_type = "multipart/form-data", 
+        content_type = "multipart/form-data",
         description = "Multipart upload of file. Form field 'file' should be the file content.",
         content = FileUpload,
     ),
@@ -576,7 +576,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     };
 
     // Check if new_path already exists in the workspace or base repo
-    if repositories::entries::get_file(&repo, &workspace.commit, &new_path)?.is_some() {
+    if repositories::tree::get_node_by_path(&repo, &workspace.commit, &new_path)?.is_some() {
         return Err(OxenHttpError::BadRequest(
             "new_path already exists in the repository".into(),
         ));
@@ -586,7 +586,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     if util::fs::is_tabular(&path) {
         repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
     } else {
-        repositories::workspaces::files::mv(&workspace, &path, &new_path).await?;
+        repositories::workspaces::files::mv(&workspace, &path, &new_path)?;
     }
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))

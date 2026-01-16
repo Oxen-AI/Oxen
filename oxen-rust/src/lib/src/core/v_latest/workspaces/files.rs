@@ -764,7 +764,7 @@ fn has_dir_node(
 
 /// Move or rename a file within a workspace.
 /// This stages the old path as "Removed" and the new path as "Added".
-pub async fn mv(
+pub fn mv(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
