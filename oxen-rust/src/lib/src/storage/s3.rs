@@ -17,7 +17,6 @@ use std::task::{Context, Poll};
 use tokio::fs::File;
 use tokio::io::{duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::OnceCell;
-use tokio::task::JoinHandle;
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
@@ -1013,13 +1012,6 @@ pub struct S3VersionWriter {
 
     // if finshed
     finished: bool,
-}
-
-struct S3AbortHandle {
-    client: Arc<Client>,
-    bucket: String,
-    key: String,
-    upload_id: String,
 }
 
 #[async_trait]
