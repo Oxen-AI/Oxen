@@ -388,7 +388,7 @@ pub async fn from_directory(
     repositories::workspaces::files::add(workspace, &output_path).await?;
 
     let files_vec: Vec<FileNodeWithDir> = files.iter().cloned().collect();
-    set_image_metadata_if_applicable(repo, workspace, &files_vec, &output_path).await?;
+    set_media_render_metadata_if_applicable(repo, workspace, &files_vec, &output_path).await?;
 
     let commit =
         repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await?;
@@ -401,26 +401,56 @@ pub async fn from_directory(
     Ok(commit)
 }
 
-pub async fn set_image_metadata_if_applicable(
+/// Determines the render function name for a given media type.
+/// Returns None if the type doesn't support rendering.
+fn render_function_for_media_type(data_type: &EntryDataType) -> Option<&'static str> {
+    match data_type {
+        EntryDataType::Image => Some("image"),
+        EntryDataType::Video => Some("video"),
+        _ => None,
+    }
+}
+
+/// Checks if all files in the collection are of the same supported media type.
+/// Returns the render function name if all files match, None otherwise.
+fn get_uniform_media_type(files: &[FileNodeWithDir]) -> Option<&'static str> {
+    if files.is_empty() {
+        return None;
+    }
+
+    // Get the data type of the first file
+    let first_data_type = files[0].file_node.data_type();
+    let render_func = render_function_for_media_type(first_data_type)?;
+
+    // Check if all files have the same media type
+    let all_match = files
+        .iter()
+        .all(|file_with_dir| file_with_dir.file_node.data_type() == first_data_type);
+
+    if all_match {
+        Some(render_func)
+    } else {
+        None
+    }
+}
+
+/// Sets render metadata for the file_path column if all files are of the same
+/// supported media type (currently Image or Video).
+///
+/// This function automatically detects when all files in a dataset are images
+/// or videos and sets appropriate render metadata so they can be displayed
+/// correctly in the UI.
+pub async fn set_media_render_metadata_if_applicable(
     repo: &LocalRepository,
     workspace: &Workspace,
     files: &[FileNodeWithDir],
     output_path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    let is_image_column: Vec<bool> = files
-        .iter()
-        .map(|file_with_dir| {
-            let data_type = file_with_dir.file_node.data_type();
-            *data_type == EntryDataType::Image
-        })
-        .collect();
-
-    // Only set metadata if all files are images
-    if !is_image_column.is_empty() && is_image_column.iter().all(|&x| x) {
+    if let Some(render_func) = get_uniform_media_type(files) {
         let render_metadata = serde_json::json!({
             "_oxen": {
                 "render": {
-                    "func": "image"
+                    "func": render_func
                 }
             }
         });
