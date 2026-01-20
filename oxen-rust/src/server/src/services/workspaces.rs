@@ -7,6 +7,7 @@ pub mod data_frames;
 
 pub fn workspace() -> Scope {
     web::scope("/workspaces")
+        // TODO: Deprecate one of these
         .route("", web::put().to(controllers::workspaces::get_or_create))
         .route("", web::post().to(controllers::workspaces::create))
         .route("", web::get().to(controllers::workspaces::list))
@@ -28,10 +29,6 @@ pub fn workspace() -> Scope {
                     web::get().to(controllers::workspaces::changes::list),
                 )
                 .route(
-                    "/changes/{path:.*}",
-                    web::delete().to(controllers::workspaces::files::delete),
-                )
-                .route(
                     "/versions/{directory:.*}",
                     web::post().to(controllers::workspaces::files::add_version_files),
                 )
@@ -51,6 +48,7 @@ pub fn workspace() -> Scope {
                     "/files/{path:.*}",
                     web::post().to(controllers::workspaces::files::add),
                 )
+                // TODO: Deprecate. Use /staged
                 .route(
                     "/files/{path:.*}",
                     web::delete().to(controllers::workspaces::files::delete),
@@ -59,13 +57,13 @@ pub fn workspace() -> Scope {
                     "/validate",
                     web::post().to(controllers::workspaces::files::validate),
                 )
-                // TODO: Depreciate /commit as we are calling it /merge instead to be consistent with the /merge branch endpoint
-                .route(
-                    "/commit/{branch:.*}",
-                    web::post().to(controllers::workspaces::commit),
-                )
                 .route(
                     "/merge/{branch:.*}",
+                    web::post().to(controllers::workspaces::commit),
+                )
+                // TODO: Deprecate. Use /merge/{branch} instead
+                .route(
+                    "/commit/{branch:.*}",
                     web::post().to(controllers::workspaces::commit),
                 )
                 .route(

@@ -30,7 +30,7 @@ pub async fn commit(
     workspace_id: &str,
     commit: &NewCommitBody,
 ) -> Result<Commit, OxenError> {
-    let uri = format!("/workspaces/{workspace_id}/commit/{branch_name}");
+    let uri = format!("/workspaces/{workspace_id}/merge/{branch_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("commit_staged {url}\n{commit:?}");
 
