@@ -1,15 +1,14 @@
-use std::path::PathBuf;
-
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
+use actix_http::header::CONTENT_LENGTH;
 use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::stream::StreamExt as _;
 use liboxen::constants::AVG_CHUNK_SIZE;
 use liboxen::core;
 use liboxen::repositories;
-use liboxen::view::versions::CompleteVersionUploadRequest;
+use liboxen::view::versions::{CompleteVersionUploadRequest, CreateVersionUploadResponse};
 use liboxen::view::StatusMessage;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
@@ -29,7 +28,21 @@ pub async fn upload(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let version_id = path_param(&req, "version_id")?;
+    // Optional chunk number for backwards compatibility
+    let chunk_number = req
+        .match_info()
+        .get("chunk_number")
+        .and_then(|s| s.parse::<i32>().ok());
 
+    let headers = req.headers();
+    let upload_id = headers
+        .get("X-Oxen-Upload-Id")
+        .and_then(|v| v.to_str().ok());
+
+    let chunk_size = headers
+        .get(CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
     let offset = query.offset.unwrap_or(0);
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
@@ -44,7 +57,7 @@ pub async fn upload(
     let version_store = repo.version_store()?;
 
     let mut writer = version_store
-        .get_version_chunk_writer(&version_id, offset)
+        .get_version_chunk_writer(&version_id, upload_id, offset, chunk_number, chunk_size)
         .await?;
 
     // Write chunks in stream
@@ -60,6 +73,7 @@ pub async fn upload(
         .flush()
         .await
         .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
+    writer.finish().await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }
@@ -86,9 +100,12 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         let file = &request.files[0];
         log::debug!("Received {} chunks", file.upload_results.len());
+        let upload_id = &file.upload_id;
         let version_store = repo.version_store()?;
 
-        let chunks = version_store.list_version_chunks(&version_id).await?;
+        let chunks = version_store
+            .list_version_chunks(&version_id, upload_id)
+            .await?;
         log::debug!("Found {} chunks", chunks.len());
 
         if chunks.len() != file.upload_results.len() {
@@ -103,8 +120,9 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         // Combine all the chunks for a version file into a single file
         let cleanup = true;
-        let version_path = version_store
-            .combine_version_chunks(&version_id, cleanup)
+        // TODO: capture etag info from chunk upload to avoid extra list_parts() api call
+        version_store
+            .combine_version_chunks(&version_id, Some(chunks), upload_id, cleanup)
             .await?;
 
         // If the workspace id is provided, stage the file
@@ -116,16 +134,18 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
             };
             // TODO: Can we just replace workspaces::files::add with this?
             // repositories::workspaces::files::add(&workspace, &version_path)?;
-            let dst_path = if let Some(dst_dir) = &file.dst_dir {
-                dst_dir.join(file.file_name.clone())
-            } else {
-                PathBuf::from(file.file_name.clone())
+            let target_path = &file.target_path;
+            let Some(file_node_opts) = request.file_node_opts else {
+                return Ok(HttpResponse::BadRequest().json(StatusMessage::error(
+                    "Missing FileNode value for workspace add",
+                )));
             };
 
             core::v_latest::workspaces::files::add_version_file(
+                &repo,
                 &workspace,
-                &version_path,
-                &dst_path,
+                file_node_opts,
+                target_path,
             )?;
         }
 
@@ -171,6 +191,20 @@ pub async fn download(
         .body(chunk_data))
 }
 
-pub async fn create(_req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
-    Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
+pub async fn create(req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let version_id = path_param(&req, "version_id")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+
+    let version_store = repo.version_store()?;
+    let upload_id = version_store
+        .init_version_chunk_session(&version_id)
+        .await?;
+
+    Ok(HttpResponse::Ok().json(CreateVersionUploadResponse {
+        status: StatusMessage::resource_found(),
+        upload_id,
+    }))
 }

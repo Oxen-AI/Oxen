@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
+use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::Commit;
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
@@ -37,6 +39,12 @@ impl From<WorkspaceCommit> for Commit {
             parent_ids: vec![],
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WorkspaceAddMetadata {
+    pub file_node_opts: FileNodeOpts,
+    pub target_path: PathBuf,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
