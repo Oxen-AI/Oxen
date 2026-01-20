@@ -16,7 +16,7 @@ use crate::error::OxenError;
 use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::util;
-use crate::view::versions::CleanCorruptedVersionsResult;
+use crate::view::versions::{CleanCorruptedVersionsResult, CompleteFileChunk};
 
 /// Configuration for version storage backend
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -47,6 +47,11 @@ pub trait ReadSeek: Read + Seek + Send + Sync {}
 /// Implement ReadSeek for any type that implements both Read and Seek
 impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
 
+#[async_trait]
+pub trait VersionWriter: AsyncWrite + Send + Unpin {
+    async fn finish(self: Box<Self>) -> Result<(), OxenError>;
+}
+
 /// Trait defining operations for version file storage backends
 #[async_trait]
 pub trait VersionStore: Debug + Send + Sync + 'static {
@@ -71,6 +76,13 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         reader: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<(), OxenError>;
 
+    async fn store_version_from_reader_with_size(
+        &self,
+        hash: &str,
+        mut reader: Box<dyn AsyncRead + Send + Sync + Unpin>,
+        size: u64,
+    ) -> Result<(), OxenError>;
+
     /// Store a version file from bytes
     ///
     /// # Arguments
@@ -78,18 +90,45 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `data` - The raw bytes to store
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
 
+    /// Start a version chunk store session
+    ////
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    async fn init_version_chunk_session(&self, hash: &str) -> Result<Option<String>, OxenError>;
+
     /// Store a chunk of a version file
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
+    /// * `upload_id` - The upload session ID for S3, if applicable
     /// * `offset` - The starting byte position of the chunk
-    /// * `data` - The raw bytes to store
+    /// * `chunk_number` - The chunk number for this upload, if applicable
+    /// * `body` - Stream of byte chunks to store
     async fn store_version_chunk(
         &self,
         hash: &str,
+        upload_id: Option<&str>,
         offset: u64,
+        chunk_number: Option<i32>,
         data: &[u8],
     ) -> Result<(), OxenError>;
+
+    /// Store a chunk of a version file in stream
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `upload_id` - The upload session ID for S3, if applicable
+    /// * `offset` - The starting byte position of the chunk
+    /// * `chunk_number` - The chunk number for this upload, if applicable
+    /// * `body` - Stream of byte chunks to store
+    async fn get_version_chunk_writer(
+        &self,
+        hash: &str,
+        upload_id: Option<&str>,
+        offset: u64,
+        chunk_number: Option<i32>,
+        chunk_size: Option<u64>,
+    ) -> Result<Box<dyn VersionWriter>, OxenError>;
 
     /// Store a derived version file (resized, video thumbnail etc.)
     ///
@@ -103,17 +142,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         image_buf: Vec<u8>,
         derived_path: &Path,
     ) -> Result<(), OxenError>;
-
-    /// Get a writer for a chunk of a version file
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash that identifies this version
-    /// * `offset` - The starting byte position of the chunk
-    async fn get_version_chunk_writer(
-        &self,
-        hash: &str,
-        offset: u64,
-    ) -> Result<Box<dyn AsyncWrite + Send + Unpin>, OxenError>;
 
     /// Retrieve a chunk of a version file
     ///
@@ -145,16 +173,27 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
+    async fn list_version_chunks(
+        &self,
+        hash: &str,
+        upload_id: &Option<String>,
+    ) -> Result<Vec<CompleteFileChunk>, OxenError>;
 
     /// Combine all the chunks for a version file into a single file
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
+    /// * `chunks` - Optional list of chunks to combine. If None, will list chunks from storage.
+    /// * `upload_id` - The upload session ID for S3, if applicable
     /// * `cleanup` - Whether to delete the chunks after combining. If false, the chunks will be left in place.
     ///   May be helpful for debugging or chunk-level deduplication.
-    async fn combine_version_chunks(&self, hash: &str, cleanup: bool)
-        -> Result<PathBuf, OxenError>;
+    async fn combine_version_chunks(
+        &self,
+        hash: &str,
+        chunks: Option<Vec<CompleteFileChunk>>,
+        upload_id: &Option<String>,
+        cleanup: bool,
+    ) -> Result<(), OxenError>;
 
     /// Get metadata of a version file
     ///
@@ -210,6 +249,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version to delete
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
+
+    /// Delete all version files
+    async fn delete_all_versions(&self) -> Result<(), OxenError>;
 
     /// List all versions
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;

@@ -5,18 +5,19 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::{VERSION_CHUNKS_DIR, VERSION_CHUNK_FILE_NAME, VERSION_FILE_NAME};
 use crate::error::OxenError;
-use crate::storage::version_store::VersionStore;
+use crate::storage::version_store::{VersionStore, VersionWriter};
 use crate::util::{self, concurrency, hasher};
-use crate::view::versions::CleanCorruptedVersionsResult;
+use crate::view::versions::{CleanCorruptedVersionsResult, CompleteFileChunk};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use image::{self, DynamicImage};
+use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::fs::{self, File};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::io::{BufReader, BufWriter};
 use tokio::sync::Semaphore;
 use tokio_stream::Stream;
@@ -103,6 +104,25 @@ impl VersionStore for LocalVersionStore {
         if !version_path.exists() {
             let mut file = File::create(&version_path).await?;
             tokio::io::copy(reader, &mut file).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn store_version_from_reader_with_size(
+        &self,
+        hash: &str,
+        mut reader: Box<dyn AsyncRead + Send + Sync + Unpin>,
+        _size: u64,
+    ) -> Result<(), OxenError> {
+        let version_dir = self.version_dir(hash);
+        fs::create_dir_all(&version_dir).await?;
+
+        let version_path = self.version_path(hash);
+
+        if !version_path.exists() {
+            let mut file = File::create(&version_path).await?;
+            tokio::io::copy(&mut *reader, &mut file).await?;
         }
 
         Ok(())
@@ -203,6 +223,11 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
+    async fn delete_all_versions(&self) -> Result<(), OxenError> {
+        util::fs::remove_dir_all(&self.root_path)?;
+        Ok(())
+    }
+
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
         let mut versions = Vec::new();
 
@@ -235,10 +260,17 @@ impl VersionStore for LocalVersionStore {
         Ok(versions)
     }
 
+    async fn init_version_chunk_session(&self, _hash: &str) -> Result<Option<String>, OxenError> {
+        // Local storage does not need to initialize anything
+        Ok(None)
+    }
+
     async fn store_version_chunk(
         &self,
         hash: &str,
+        _upload_id: Option<&str>,
         offset: u64,
+        _chunk_number: Option<i32>,
         data: &[u8],
     ) -> Result<(), OxenError> {
         let chunk_dir = self.version_chunk_dir(hash, offset);
@@ -256,8 +288,11 @@ impl VersionStore for LocalVersionStore {
     async fn get_version_chunk_writer(
         &self,
         hash: &str,
+        _upload_id: Option<&str>,
         offset: u64,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
+        _chunk_number: Option<i32>,
+        _chunk_size: Option<u64>,
+    ) -> Result<Box<dyn VersionWriter>, OxenError> {
         let chunk_dir = self.version_chunk_dir(hash, offset);
         fs::create_dir_all(&chunk_dir).await?;
 
@@ -265,7 +300,7 @@ impl VersionStore for LocalVersionStore {
         let file = File::create(&chunk_path).await?;
         let writer = BufWriter::new(file);
 
-        Ok(Box::new(writer))
+        Ok(Box::new(LocalVersionWriter { writer }))
     }
 
     async fn get_version_chunk(
@@ -337,7 +372,11 @@ impl VersionStore for LocalVersionStore {
         Ok(Box::new(stream))
     }
 
-    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
+    async fn list_version_chunks(
+        &self,
+        hash: &str,
+        _upload_id: &Option<String>,
+    ) -> Result<Vec<CompleteFileChunk>, OxenError> {
         let chunk_dir = self.version_chunks_dir(hash);
         let mut chunks = Vec::new();
 
@@ -346,7 +385,11 @@ impl VersionStore for LocalVersionStore {
             let file_type = entry.file_type().await?;
             if file_type.is_dir() {
                 if let Ok(chunk_offset) = entry.file_name().to_string_lossy().parse::<u64>() {
-                    chunks.push(chunk_offset);
+                    chunks.push(CompleteFileChunk {
+                        offset: Some(chunk_offset),
+                        chunk_number: None,
+                        etag: None,
+                    });
                 }
             }
         }
@@ -356,19 +399,28 @@ impl VersionStore for LocalVersionStore {
     async fn combine_version_chunks(
         &self,
         hash: &str,
+        chunks: Option<Vec<CompleteFileChunk>>,
+        _upload_id: &Option<String>,
         cleanup: bool,
-    ) -> Result<PathBuf, OxenError> {
+    ) -> Result<(), OxenError> {
         let version_path = self.version_path(hash);
         let mut output_file = File::create(&version_path).await?;
 
         // Get list of chunks and sort them to ensure correct order
-        let mut chunks = self.list_version_chunks(hash).await?;
+        let mut chunks = if let Some(c) = chunks {
+            c
+        } else {
+            self.list_version_chunks(hash, &None).await?
+        };
         log::debug!("combine_version_chunks found {:?} chunks", chunks.len());
-        chunks.sort();
+        chunks.sort_by_key(|c| c.offset.unwrap_or(u64::MAX));
 
         // Process each chunk
-        for chunk_offset in chunks {
-            let chunk_path = self.version_chunk_file(hash, chunk_offset);
+        for chunk in chunks {
+            let offset = chunk
+                .offset
+                .ok_or_else(|| OxenError::basic_str("Chunk missing offset information"))?;
+            let chunk_path = self.version_chunk_file(hash, offset);
             let mut chunk_file = File::open(&chunk_path).await?;
             tokio::io::copy(&mut chunk_file, &mut output_file).await?;
         }
@@ -381,7 +433,7 @@ impl VersionStore for LocalVersionStore {
             }
         }
 
-        Ok(version_path)
+        Ok(())
     }
 
     // It's left here for a quick fix. TODO: Move the business logic to versions controller.
@@ -588,6 +640,47 @@ impl VersionStore for LocalVersionStore {
         settings.insert("path".to_string(), root_path_str);
 
         settings
+    }
+}
+
+use tokio::io::AsyncWriteExt;
+
+pub struct LocalVersionWriter {
+    writer: BufWriter<File>,
+}
+
+#[async_trait]
+impl VersionWriter for LocalVersionWriter {
+    async fn finish(mut self: Box<Self>) -> Result<(), OxenError> {
+        self.writer
+            .flush()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Local writer flush failed: {e:?}")))?;
+        Ok(())
+    }
+}
+
+impl AsyncWrite for LocalVersionWriter {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.writer).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_shutdown(cx)
     }
 }
 
