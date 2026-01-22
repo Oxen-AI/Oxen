@@ -1249,4 +1249,91 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_create_initial_commit_on_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+            // Verify repo is empty (no commits)
+            assert!(head_commit_maybe(&repo)?.is_none());
+            assert!(repositories::branches::list(&repo)?.is_empty());
+
+            // Create initial commit
+            let user = crate::model::User {
+                name: "Test User".to_string(),
+                email: "test@example.com".to_string(),
+            };
+            let commit = create_initial_commit(&repo, "main", &user, "Initial commit")?;
+
+            // Verify commit was created correctly
+            assert_eq!(commit.message, "Initial commit");
+            assert_eq!(commit.author, "Test User");
+            assert_eq!(commit.email, "test@example.com");
+            assert!(commit.parent_ids.is_empty()); // No parents for initial commit
+
+            // Verify HEAD now points to the commit
+            let head = head_commit_maybe(&repo)?;
+            assert!(head.is_some());
+            assert_eq!(head.unwrap().id, commit.id);
+
+            // Verify branch was created
+            let branches = repositories::branches::list(&repo)?;
+            assert_eq!(branches.len(), 1);
+            assert_eq!(branches[0].name, "main");
+            assert_eq!(branches[0].commit_id, commit.id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_initial_commit_fails_on_non_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // First create a file and commit it to make the repo non-empty
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "First commit")?;
+
+            // Now create_initial_commit should fail
+            let user = crate::model::User {
+                name: "Test User".to_string(),
+                email: "test@example.com".to_string(),
+            };
+            let result = create_initial_commit(&repo, "another-branch", &user, "Should fail");
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(err.to_string().contains("already has commits"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_initial_commit_with_custom_branch_name() -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+            // Create initial commit on a custom branch name
+            let user = crate::model::User {
+                name: "Test User".to_string(),
+                email: "test@example.com".to_string(),
+            };
+            let commit = create_initial_commit(&repo, "develop", &user, "Initial commit")?;
+
+            // Verify branch was created with custom name
+            let branches = repositories::branches::list(&repo)?;
+            assert_eq!(branches.len(), 1);
+            assert_eq!(branches[0].name, "develop");
+            assert_eq!(branches[0].commit_id, commit.id);
+
+            // Verify HEAD points to the custom branch
+            let current_branch = repositories::branches::current_branch(&repo)?;
+            assert!(current_branch.is_some());
+            assert_eq!(current_branch.unwrap().name, "develop");
+
+            Ok(())
+        })
+        .await
+    }
 }
