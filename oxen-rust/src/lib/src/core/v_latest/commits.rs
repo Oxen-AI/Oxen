@@ -87,14 +87,8 @@ pub fn commit_allow_empty(
         };
 
         // Compute the commit hash
-        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
-        hasher.update(b"commit");
-        hasher.update(format!("{:?}", new_commit_data.parent_ids).as_bytes());
-        hasher.update(new_commit_data.message.as_bytes());
-        hasher.update(new_commit_data.author.as_bytes());
-        hasher.update(new_commit_data.email.as_bytes());
-        hasher.update(&new_commit_data.timestamp.unix_timestamp().to_le_bytes());
-        let commit_hash = MerkleHash::new(hasher.digest128());
+        let commit_hash =
+            repositories::commits::commit_writer::compute_commit_id(&new_commit_data)?;
 
         let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
 
