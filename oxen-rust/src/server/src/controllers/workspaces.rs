@@ -2,8 +2,9 @@ use crate::errors::{OxenHttpError, WorkspaceBranch};
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param, NameParam};
 
+use liboxen::constants::INITIAL_COMMIT_MSG;
 use liboxen::error::OxenError;
-use liboxen::model::NewCommitBody;
+use liboxen::model::{NewCommitBody, User};
 use liboxen::repositories;
 use liboxen::view::merge::MergeableResponse;
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
@@ -62,13 +63,43 @@ pub async fn get_or_create(
         }
     };
 
-    let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
-        return Ok(
-            HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Branch not found: {}",
+    // Try to get the branch, or create it if the repo is empty
+    let branch = match repositories::branches::get_by_name(&repo, &data.branch_name)? {
+        Some(branch) => branch,
+        None => {
+            // Branch doesn't exist - check if repo is empty
+            if repositories::commits::head_commit_maybe(&repo)?.is_some() {
+                // Repo has commits but branch doesn't exist - this is an error
+                return Ok(
+                    HttpResponse::BadRequest().json(StatusMessage::error(format!(
+                        "Branch not found: {}. For non-empty repositories, create the branch first.",
+                        data.branch_name
+                    ))),
+                );
+            }
+
+            // Repo is empty - create initial commit with the requested branch
+            log::debug!(
+                "get_or_create: empty repo, creating initial commit on branch {}",
                 data.branch_name
-            ))),
-        );
+            );
+            let user = User {
+                name: "Oxen".to_string(),
+                email: "oxen@oxen.ai".to_string(),
+            };
+            repositories::commits::create_initial_commit(
+                &repo,
+                &data.branch_name,
+                &user,
+                INITIAL_COMMIT_MSG,
+            )?;
+
+            // Now get the newly created branch
+            repositories::branches::get_by_name(&repo, &data.branch_name)?
+                .ok_or_else(|| {
+                    OxenError::basic_str("Failed to create initial branch")
+                })?
+        }
     };
 
     // Return workspace if it already exists
@@ -153,6 +184,10 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
 }
 
 /// Create a new workspace
+///
+/// **DEPRECATED**: Use PUT (get_or_create) instead. This endpoint now delegates to get_or_create
+/// for consistent idempotent behavior. The POST method is retained for backward compatibility.
+#[deprecated(note = "Use PUT /workspaces (get_or_create) instead")]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces",
@@ -165,7 +200,7 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     ),
     request_body(
         content = NewWorkspace,
-        description = "Workspace creation details.",
+        description = "Workspace creation details. DEPRECATED: Use PUT method instead for idempotent get-or-create behavior.",
         example = json!({
             "branch_name": "main",
             "name": "bessie_workspace",
@@ -173,58 +208,18 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
         })
     ),
     responses(
-        (status = 200, description = "Workspace created", body = WorkspaceResponseView),
+        (status = 200, description = "Workspace created or found", body = WorkspaceResponseView),
         (status = 400, description = "Invalid payload or branch not found"),
         (status = 404, description = "Repository not found")
     )
 )]
+#[allow(deprecated)]
 pub async fn create(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
-    let data = match data {
-        Ok(data) => data,
-        Err(err) => {
-            log::error!("Unable to parse body. Err: {err}\n{body}");
-            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
-        }
-    };
-
-    let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? else {
-        return Ok(
-            HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Branch not found: {}",
-                data.branch_name
-            ))),
-        );
-    };
-
-    let workspace_id = &data.workspace_id;
-    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
-
-    // Create the workspace
-    repositories::workspaces::create_with_name(
-        &repo,
-        &commit,
-        workspace_id,
-        data.name.clone(),
-        true,
-    )?;
-
-    Ok(HttpResponse::Ok().json(WorkspaceResponseView {
-        status: StatusMessage::resource_created(),
-        workspace: WorkspaceResponse {
-            id: workspace_id.clone(),
-            name: data.name.clone(),
-            commit: commit.into(),
-        },
-    }))
+    // Delegate to get_or_create for consistent behavior
+    get_or_create(req, body).await
 }
 
 /// Create workspace from new branch

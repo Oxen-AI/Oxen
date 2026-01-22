@@ -149,6 +149,23 @@ pub fn create_empty_commit(
     }
 }
 
+/// Create an initial empty commit for an empty repository.
+/// This creates the first commit with an empty tree and sets up the branch.
+/// Returns an error if the repository already has commits.
+pub fn create_initial_commit(
+    repo: &LocalRepository,
+    branch_name: impl AsRef<str>,
+    user: &User,
+    message: impl AsRef<str>,
+) -> Result<Commit, OxenError> {
+    let branch_name = branch_name.as_ref();
+    let message = message.as_ref();
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("create_initial_commit not supported in v0.10.0"),
+        _ => core::v_latest::commits::create_initial_commit(repo, branch_name, user, message),
+    }
+}
+
 /// List commits on the current branch from HEAD
 pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
     match repo.min_version() {
