@@ -219,7 +219,7 @@ mod tests {
             let file1 = repo.path.join("file1.txt");
             util::fs::write_to_path(&file1, "content1")?;
             repositories::add(&repo, &file1).await?;
-            let commit1 = repositories::commit(&repo, "add file1")?;
+            let _commit1 = repositories::commit(&repo, "add file1")?;
 
             let file2 = repo.path.join("file2.txt");
             util::fs::write_to_path(&file2, "content2")?;
