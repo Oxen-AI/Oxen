@@ -172,7 +172,6 @@ pub fn execute_squash(repo: &LocalRepository, n: usize) -> Result<Vec<Commit>, O
     }
 
     let all_commits = repositories::commits::list(repo)?;
-    let commits_to_process = &all_commits[n..];
 
     // Build map: commit_id -> group_index
     let mut commit_to_group: HashMap<String, usize> = HashMap::new();
@@ -199,8 +198,8 @@ pub fn execute_squash(repo: &LocalRepository, n: usize) -> Result<Vec<Commit>, O
         .ok_or_else(|| OxenError::basic_str("No current branch"))?
         .name;
 
-    // Process commits from oldest to newest
-    for commit in commits_to_process.iter().rev() {
+    // Process all commits from oldest to newest (including preserved ones for parent remapping)
+    for commit in all_commits.iter().rev() {
         if commit.parent_ids.is_empty() {
             continue;
         }
@@ -565,6 +564,80 @@ mod tests {
                     );
                 }
             }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_squash_with_preserved_commits_stays_connected() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create: C1 (root) -> C2 -> C3 -> C4 -> C5
+            // With n=2, preserve C5 and C4, squash [C3, C2]
+            // Result should be: C5' -> C4' -> S1 -> C1 (all connected)
+
+            let file1 = repo.path.join("file1.txt");
+            util::fs::write_to_path(&file1, "content1")?;
+            repositories::add(&repo, &file1).await?;
+            let _commit1 = repositories::commit(&repo, "add file1")?; // root
+
+            let file2 = repo.path.join("file2.txt");
+            util::fs::write_to_path(&file2, "content2")?;
+            repositories::add(&repo, &file2).await?;
+            let _commit2 = repositories::commit(&repo, "add file2")?;
+
+            let file3 = repo.path.join("file3.txt");
+            util::fs::write_to_path(&file3, "content3")?;
+            repositories::add(&repo, &file3).await?;
+            let _commit3 = repositories::commit(&repo, "add file3")?;
+
+            let file4 = repo.path.join("file4.txt");
+            util::fs::write_to_path(&file4, "content4")?;
+            repositories::add(&repo, &file4).await?;
+            let commit4 = repositories::commit(&repo, "add file4")?;
+
+            let file5 = repo.path.join("file5.txt");
+            util::fs::write_to_path(&file5, "content5")?;
+            repositories::add(&repo, &file5).await?;
+            let commit5 = repositories::commit(&repo, "add file5")?;
+
+            // Verify we have a squashable group (C3, C2) when preserving 2 commits
+            let groups = analyze_squashable_commits(&repo, 2)?;
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].len(), 2);
+
+            // Execute squash with n=2 (preserve C5 and C4)
+            let squashed = execute_squash(&repo, 2)?;
+            assert_eq!(squashed.len(), 1);
+
+            // Verify commit history is properly connected
+            let commits_after = repositories::commits::list(&repo)?;
+
+            // Should have: C5' -> C4' -> S1 -> C1 (4 commits)
+            assert_eq!(commits_after.len(), 4);
+
+            // Walk the history and verify parent linkage
+            for i in 0..commits_after.len() - 1 {
+                let commit = &commits_after[i];
+                let expected_parent = &commits_after[i + 1];
+                assert!(
+                    commit.parent_ids.contains(&expected_parent.id),
+                    "Commit {} should have parent {}",
+                    commit.id,
+                    expected_parent.id
+                );
+            }
+
+            // Preserved commits should still have their original messages
+            assert!(
+                commits_after.iter().any(|c| c.message == commit5.message),
+                "Preserved commit5 message should exist"
+            );
+            assert!(
+                commits_after.iter().any(|c| c.message == commit4.message),
+                "Preserved commit4 message should exist"
+            );
 
             Ok(())
         })
