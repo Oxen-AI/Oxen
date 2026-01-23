@@ -263,7 +263,7 @@ pub fn create_empty_commit(
     let (tree_source_commit, tree_source_id) = match tree_source_commit_id {
         Some(source_id) => {
             let commit = repositories::commits::get_by_id(repo, source_id)?
-                .ok_or_else(|| OxenError::basic_str(format!("Commit not found: {}", source_id)))?;
+                .ok_or_else(|| OxenError::basic_str(format!("Commit not found: {source_id}")))?;
             (commit, source_id.parse()?)
         }
         None => {
