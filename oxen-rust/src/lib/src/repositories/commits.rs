@@ -18,35 +18,6 @@ use std::path::{Path, PathBuf};
 pub mod commit_writer;
 pub mod squash;
 
-/// # Commit the staged files in the repo
-///
-/// ```
-/// use liboxen::command;
-/// use liboxen::util;
-/// # use liboxen::test;
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
-///
-/// // Initialize the repository
-/// let base_dir = Path::new("repo_dir_commit");
-/// let repo = repositories::init(base_dir)?;
-///
-/// // Write file to disk
-/// let hello_file = base_dir.join("hello.txt");
-/// util::fs::write_to_path(&hello_file, "Hello World");
-///
-/// // Stage the file
-/// repositories::add(&repo, &hello_file)?;
-///
-/// // Commit staged
-/// repositories::commit(&repo, "My commit message")?;
-///
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
-/// ```
 pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -137,16 +108,22 @@ pub fn commit_id_exists(
     get_by_id(repo, commit_id.as_ref()).map(|commit| commit.is_some())
 }
 
-/// Create an empty commit off of the head commit of a branch
+/// Create a commit preserving tree from `tree_source_commit_id` (or branch HEAD if None)
 pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     commit: &Commit,
+    tree_source_commit_id: Option<&str>,
 ) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("create_empty_commit not supported in v0.10.0"),
-        _ => core::v_latest::commits::create_empty_commit(repo, branch_name, commit),
+        _ => core::v_latest::commits::create_empty_commit(
+            repo,
+            branch_name,
+            commit,
+            tree_source_commit_id,
+        ),
     }
 }
 

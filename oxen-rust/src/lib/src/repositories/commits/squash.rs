@@ -4,20 +4,9 @@ use crate::repositories;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Squash sequential non-delete commits before HEAD - N commits
-///
-/// This function analyzes the commit history and squashes consecutive commits
-/// that don't delete files (additions and modifications are allowed) into single commits.
-///
-/// # Arguments
-/// * `repo` - The local repository
-/// * `n` - Number of commits from HEAD to preserve (don't squash these)
-///
-/// # Returns
-/// A vector of commit groups that should be squashed together
 pub fn analyze_squashable_commits(
     repo: &LocalRepository,
-    n: usize,
+    n: usize, // Number of commits from HEAD to preserve
 ) -> Result<Vec<Vec<Commit>>, OxenError> {
     let commits = repositories::commits::list(repo)?;
 
@@ -57,12 +46,7 @@ pub fn analyze_squashable_commits(
     Ok(squash_groups)
 }
 
-/// Check if a commit is squashable (no deletions, modifications are allowed)
-///
-/// Returns false for commits without parents (initial commits) or commits that delete files.
-/// Commits that add or modify files are considered squashable.
 fn is_squashable_commit(repo: &LocalRepository, commit: &Commit) -> Result<bool, OxenError> {
-    // Initial commits should not be considered squashable for squashing purposes
     if commit.parent_ids.is_empty() {
         return Ok(false);
     }
@@ -73,19 +57,15 @@ fn is_squashable_commit(repo: &LocalRepository, commit: &Commit) -> Result<bool,
     let current_files = get_commit_files(repo, commit)?;
     let parent_files = get_commit_files(repo, &parent_commit)?;
 
-    // Only check if any files were deleted (in parent but not in current)
-    // Modifications and additions are allowed
     for path in parent_files.keys() {
         if !current_files.contains_key(path) {
             return Ok(false);
         }
     }
 
-    // If we get here, no files were deleted - this commit is squashable
     Ok(true)
 }
 
-/// Get all files in a commit as a map of path -> hash
 fn get_commit_files(
     repo: &LocalRepository,
     commit: &Commit,
@@ -107,12 +87,7 @@ fn get_commit_files(
     Ok(files)
 }
 
-/// Squash a group of commits into a single commit
-///
-/// This creates a new commit that combines all the changes from the group
-/// and updates the branch pointer to point to the new squashed commit.
-///
-/// The commits should be ordered from newest to oldest (reverse chronological order).
+// The commits should be ordered from newest to oldest (reverse chronological order).
 pub fn squash_commits(
     repo: &LocalRepository,
     commits: &[Commit],
@@ -151,14 +126,12 @@ pub fn squash_commits(
             email: newest_commit.email.clone(),
             timestamp: newest_commit.timestamp,
         },
+        Some(&newest_commit.id), // preserve tree from newest commit, not branch HEAD
     )?;
 
     Ok(new_commit)
 }
 
-/// Execute squashing for all identified squashable commit groups
-///
-/// This will squash all groups of sequential add-only commits before HEAD - N
 pub fn execute_squash(repo: &LocalRepository, n: usize) -> Result<Vec<Commit>, OxenError> {
     let squash_groups = analyze_squashable_commits(repo, n)?;
 
@@ -206,7 +179,7 @@ mod tests {
             let squashable = analyze_squashable_commits(&repo, 0)?;
 
             assert_eq!(squashable.len(), 1);
-            assert_eq!(squashable[0].len(), 3);
+            assert_eq!(squashable[0].len(), 2); // root commit excluded (no parent)
 
             Ok(())
         })
