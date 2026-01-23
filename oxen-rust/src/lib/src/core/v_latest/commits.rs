@@ -327,8 +327,7 @@ pub fn create_initial_commit(
     };
 
     // Compute the commit hash
-    let commit_id =
-        repositories::commits::commit_writer::compute_commit_id(&new_commit)?;
+    let commit_id = repositories::commits::commit_writer::compute_commit_id(&new_commit)?;
 
     // Create the commit node
     let commit_node = CommitNode::new(
@@ -366,7 +365,7 @@ pub fn create_initial_commit(
 
     // Create the branch pointing to this commit
     with_ref_manager(repo, |manager| {
-        manager.create_branch(branch_name, &commit_id.to_string())
+        manager.create_branch(branch_name, commit_id.to_string())
     })?;
 
     // Set HEAD to the new branch

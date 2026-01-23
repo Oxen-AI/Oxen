@@ -96,9 +96,7 @@ pub async fn get_or_create(
 
             // Now get the newly created branch
             repositories::branches::get_by_name(&repo, &data.branch_name)?
-                .ok_or_else(|| {
-                    OxenError::basic_str("Failed to create initial branch")
-                })?
+                .ok_or_else(|| OxenError::basic_str("Failed to create initial branch"))?
         }
     };
 
@@ -220,80 +218,6 @@ pub async fn create(
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     // Delegate to get_or_create for consistent behavior
     get_or_create(req, body).await
-}
-
-/// Create workspace from new branch
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/new_branch",
-    operation_id = "create_workspace_new_branch",
-    tag = "Workspaces",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    request_body(
-        content = NewWorkspace,
-        description = "Workspace creation details. Creates the branch if it doesn't exist.",
-        example = json!({
-            "branch_name": "daisy-dev",
-            "name": "daisy_workspace",
-            "workspace_id": "4a7f05c3-1d0e-4f0e-8f9f-095a43b27b3f"
-        })
-    ),
-    responses(
-        (status = 200, description = "Workspace created with new branch", body = WorkspaceResponseView),
-        (status = 400, description = "Invalid payload"),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn create_with_new_branch(
-    req: HttpRequest,
-    body: String,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
-    let data = match data {
-        Ok(data) => data,
-        Err(err) => {
-            log::error!("Unable to parse body. Err: {err}\n{body}");
-            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
-        }
-    };
-
-    // If the branch doesn't exist, create it
-    let branch =
-        if let Some(branch) = repositories::branches::get_by_name(&repo, &data.branch_name)? {
-            branch
-        } else {
-            repositories::branches::create_from_head(&repo, &data.branch_name)?
-        };
-
-    let workspace_id = &data.workspace_id;
-    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
-
-    // Create the workspace
-    repositories::workspaces::create_with_name(
-        &repo,
-        &commit,
-        workspace_id,
-        data.name.clone(),
-        true,
-    )?;
-
-    Ok(HttpResponse::Ok().json(WorkspaceResponseView {
-        status: StatusMessage::resource_created(),
-        workspace: WorkspaceResponse {
-            id: workspace_id.clone(),
-            name: data.name.clone(),
-            commit: commit.into(),
-        },
-    }))
 }
 
 /// List all workspaces
