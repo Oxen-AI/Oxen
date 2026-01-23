@@ -366,7 +366,8 @@ pub fn create_initial_commit(
 
     // Initialize the dir_hash_db with the root directory hash
     let commit_id_string = commit_id.to_string();
-    let dir_hash_db_path = CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts::default(), dunce::simplified(&dir_hash_db_path))?;
     str_val_db::put(&dir_hash_db, "", &dir_node.hash().to_string())?;
