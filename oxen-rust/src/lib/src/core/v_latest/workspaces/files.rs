@@ -60,7 +60,7 @@ pub async fn rm(
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    let err_files = p_rm(base_repo, workspace_repo, filepath).await?;
+    let err_files = p_rm(base_repo, workspace_repo, &workspace.commit, filepath).await?;
 
     // Return the Err files
     Ok(err_files)
@@ -264,8 +264,9 @@ pub async fn upload_zip(
     workspace: &Workspace,
     branch: &Branch,
 ) -> Result<Commit, OxenError> {
+    // Unzip the files and add
     for temp_file in temp_files {
-        let files = decompress_zip(&temp_file.temp_file_path).await?;
+        let files = decompress_zip(&temp_file.temp_file_path)?;
 
         for file in files.iter() {
             // Skip files in __MACOSX directories
@@ -280,11 +281,13 @@ pub async fn upload_zip(
             repositories::workspaces::files::add(workspace, file).await?;
         }
     }
+
     let data = NewCommitBody {
         message: commit_message.to_string(),
         author: user.name.clone(),
         email: user.email.clone(),
     };
+
     let res = repositories::workspaces::commit(workspace, &data, &branch.name).await;
     match res {
         Ok(commit) => {
@@ -400,7 +403,7 @@ async fn fetch_file(
 
     // decompress and stage file
     if is_zip {
-        let files = decompress_zip(&save_path).await?;
+        let files = decompress_zip(&save_path)?;
         log::debug!("workspace::files::import_file unzipped file");
 
         for file in files.iter() {
@@ -479,7 +482,7 @@ pub async fn save_stream(
     Ok(full_dir)
 }
 
-async fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
+pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
     // File unzipped into the same directory
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
@@ -665,14 +668,15 @@ async fn p_add_file(
 async fn p_rm(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
+    commit: &Commit,
     path: &Path,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let head_commit = repositories::commits::head_commit(base_repo)?;
+    log::debug!("p_rm: deleting file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
 
     let parent_path = path.parent().unwrap_or(Path::new(""));
     let maybe_dir_node =
-        repositories::tree::get_dir_with_children(base_repo, &head_commit, parent_path, None)?;
+        repositories::tree::get_dir_with_children(base_repo, commit, parent_path, None)?;
 
     let file_name = util::fs::path_relative_to_dir(path, parent_path)?;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
@@ -688,7 +692,7 @@ async fn p_rm(
     } else if has_dir_node(&maybe_dir_node, file_name)? {
         if let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(
             base_repo,
-            &head_commit,
+            commit,
             &relative_path,
             None,
         )? {

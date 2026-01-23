@@ -267,7 +267,9 @@ pub fn commit_dir_entries_with_parents(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
@@ -368,7 +370,9 @@ pub fn commit_dir_entries_new(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
@@ -490,7 +494,9 @@ pub fn commit_dir_entries(
     )?;
 
     let opts = db::key_val::opts::default();
-    let dir_hash_db_path = repositories::tree::dir_hash_db_path_from_commit_id(repo, &commit_id);
+    let commit_id_string = format!("{commit_id}").to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
     let dir_hash_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
 
@@ -1061,37 +1067,37 @@ fn compute_dir_node(
             let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
             return Err(OxenError::basic_str(err_msg));
         };
-        log::debug!(
-            "Aggregating dir {:?} child {:?} with {} vnodes",
-            path,
-            child,
-            vnodes.len()
-        );
+        // log::debug!(
+        //     "Aggregating dir {:?} child {:?} with {} vnodes",
+        //     path,
+        //     child,
+        //     vnodes.len()
+        // );
         for vnode in vnodes.iter() {
-            log::debug!("Aggregating vnode entries {:?}", vnode.entries.len());
+            // log::debug!("Aggregating vnode entries {:?}", vnode.entries.len());
             for entry in vnode.entries.iter() {
-                log::debug!("Aggregating entry {}", entry.node);
+                // log::debug!("Aggregating entry {}", entry.node);
                 match &entry.node.node {
                     EMerkleTreeNode::Directory(dir_node) => {
                         if path == *child {
                             num_entries += 1;
                         }
-                        log::debug!(
-                            "Updating hash for dir {} -> hash {} status {:?}",
-                            dir_node.name(),
-                            dir_node.hash(),
-                            entry.status
-                        );
+                        // log::debug!(
+                        //     "Updating hash for dir {} -> hash {} status {:?}",
+                        //     dir_node.name(),
+                        //     dir_node.hash(),
+                        //     entry.status
+                        // );
                         hasher.update(dir_node.name().as_bytes());
                         hasher.update(&dir_node.hash().to_le_bytes());
                     }
                     EMerkleTreeNode::File(file_node) => {
-                        log::debug!(
-                            "Updating hash for file {} -> hash {} status {:?}",
-                            file_node.name(),
-                            file_node.hash(),
-                            entry.status
-                        );
+                        // log::debug!(
+                        //     "Updating hash for file {} -> hash {} status {:?}",
+                        //     file_node.name(),
+                        //     file_node.hash(),
+                        //     entry.status
+                        // );
                         hasher.update(file_node.name().as_bytes());
                         hasher.update(&file_node.combined_hash().to_le_bytes());
 
@@ -1128,13 +1134,13 @@ fn compute_dir_node(
                 EMerkleTreeNode::Directory(_) => {
                     // Do nothing
                 }
-                EMerkleTreeNode::File(file_node) => {
-                    log::debug!(
-                        "Updating hash for file {} -> hash {} status {:?}",
-                        file_node.name(),
-                        file_node.hash(),
-                        entry.status
-                    );
+                EMerkleTreeNode::File(_) => {
+                    // log::debug!(
+                    //     "Updating hash for file {} -> hash {} status {:?}",
+                    //     file_node.name(),
+                    //     file_node.hash(),
+                    //     entry.status
+                    // );
 
                     match entry.status {
                         StagedEntryStatus::Removed => {

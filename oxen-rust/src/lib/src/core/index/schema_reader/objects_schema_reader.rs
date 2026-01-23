@@ -42,27 +42,19 @@ impl ObjectsSchemaReader {
         repository: &LocalRepository,
         commit_id: &str,
     ) -> Result<ObjectsSchemaReader, OxenError> {
-        let dir_hashes_db_path = CommitEntryWriter::commit_dir_hash_db(&repository.path, commit_id);
 
-        let opts = db::key_val::opts::default();
+        let object_schema_reader = with_dir_hash_db_manager(repository, commit_id, |dir_hashes_db| {
+            let object_reader = ObjectDBReader::new(repository, commit_id)?;
 
-        if !dir_hashes_db_path.exists() {
-            log::debug!("creating dir hashes db at path {:?}", dir_hashes_db_path);
-            util::fs::create_dir_all(&dir_hashes_db_path)?;
-            let _db: DBWithThreadMode<MultiThreaded> =
-                DBWithThreadMode::open(&opts, dunce::simplified(&dir_hashes_db_path))?;
-        } else {
-            log::debug!("dir hashes db exists at path {:?}", dir_hashes_db_path)
-        }
+            Ok(ObjectsSchemaReader {
+                dir_hashes_db,
+                object_reader,
+                repository: repository.clone(),
+                commit_id: commit_id.to_owned(),
+            })
+        })?;
 
-        let object_reader = ObjectDBReader::new(repository, commit_id)?;
-
-        Ok(ObjectsSchemaReader {
-            dir_hashes_db: DBWithThreadMode::open_for_read_only(&opts, &dir_hashes_db_path, false)?,
-            object_reader,
-            repository: repository.clone(),
-            commit_id: commit_id.to_owned(),
-        })
+        Ok(object_schema_reader)
     }
 
     pub fn new_from_head(repository: &LocalRepository) -> Result<ObjectsSchemaReader, OxenError> {

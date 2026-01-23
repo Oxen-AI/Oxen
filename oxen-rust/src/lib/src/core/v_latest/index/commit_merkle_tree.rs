@@ -1,11 +1,11 @@
+use rocksdb::IteratorMode;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
 
-use rocksdb::{DBWithThreadMode, IteratorMode, MultiThreaded};
-
-use crate::constants::{DIR_HASHES_DIR, HISTORY_DIR};
-use crate::core::db;
+use crate::core::db::dir_hashes::dir_hashes_db::{
+    dir_hash_db_path, dir_hash_db_path_from_commit_id, with_dir_hash_db_manager,
+};
 use crate::core::db::merkle_node::MerkleNodeDB;
 
 use crate::model::merkle_tree::node::EMerkleTreeNode;
@@ -16,7 +16,7 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode};
 
-use crate::util::{self, hasher};
+use crate::util::hasher;
 
 pub struct CommitMerkleTree {
     pub root: MerkleTreeNode,
@@ -24,58 +24,42 @@ pub struct CommitMerkleTree {
 }
 
 impl CommitMerkleTree {
-    // Commit db is the directories per commit
-    // This helps us skip to a directory in the tree
-    // .oxen/history/{COMMIT_ID}/dir_hashes
-    fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
-        util::fs::oxen_hidden_dir(&repo.path)
-            .join(Path::new(HISTORY_DIR))
-            .join(&commit.id)
-            .join(DIR_HASHES_DIR)
-    }
-
-    pub fn dir_hash_db_path_from_commit_id(
-        repo: &LocalRepository,
-        commit_id: MerkleHash,
-    ) -> PathBuf {
-        util::fs::oxen_hidden_dir(&repo.path)
-            .join(Path::new(HISTORY_DIR))
-            .join(commit_id.to_string())
-            .join(DIR_HASHES_DIR)
-    }
-
     /// The dir hashes allow you to skip to a directory in the tree
     pub fn dir_hashes(
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
-        let node_db_dir = CommitMerkleTree::dir_hash_db_path(repo, commit);
-        let opts = db::key_val::opts::default();
-        let node_db: DBWithThreadMode<MultiThreaded> =
-            DBWithThreadMode::open_for_read_only(&opts, node_db_dir, false)?;
-        let mut dir_hashes = HashMap::new();
-        let iterator = node_db.iterator(IteratorMode::Start);
-        for item in iterator {
-            match item {
-                Ok((key, value)) => {
-                    let key = str::from_utf8(&key)?;
-                    let value = str::from_utf8(&value)?;
-                    let hash = value.parse()?;
-                    dir_hashes.insert(PathBuf::from(key), hash);
-                }
-                _ => {
-                    return Err(OxenError::basic_str(
-                        "Could not read iterate over db values",
-                    ));
+        let dir_hashes = with_dir_hash_db_manager(repo, &commit.id, |dir_hashes_db| {
+            let mut dir_hashes = HashMap::new();
+            let iterator = dir_hashes_db.iterator(IteratorMode::Start);
+            for item in iterator {
+                match item {
+                    Ok((key, value)) => {
+                        let key = str::from_utf8(&key)?;
+                        let value = str::from_utf8(&value)?;
+                        let hash = value.parse()?;
+                        dir_hashes.insert(PathBuf::from(key), hash);
+                    }
+                    _ => {
+                        return Err(OxenError::basic_str(
+                            "Could not read iterate over db values",
+                        ));
+                    }
                 }
             }
-        }
-        // log::debug!(
-        //     "read {} dir_hashes from commit: {}",
-        //     dir_hashes.len(),
-        //     commit
-        // );
+
+            Ok(dir_hashes)
+        })?;
+
         Ok(dir_hashes)
+    }
+
+    pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &String) -> PathBuf {
+        dir_hash_db_path_from_commit_id(repo, commit_id)
+    }
+
+    pub fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
+        dir_hash_db_path(repo, commit)
     }
 
     pub fn from_commit(repo: &LocalRepository, commit: &Commit) -> Result<Self, OxenError> {

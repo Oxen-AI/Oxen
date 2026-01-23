@@ -8,6 +8,8 @@ use actix_multipart::Multipart;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
+use async_zip::base::write::ZipFileWriter;
+use async_zip::Compression;
 use flate2::read::GzDecoder;
 use futures_util::{StreamExt, TryStreamExt as _};
 use liboxen::error::OxenError;
@@ -16,15 +18,16 @@ use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
-use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, StatusMessage};
+use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
 use mime;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 use tokio_tar::Builder;
+use tokio_util::compat::FuturesAsyncWriteCompatExt;
+use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 use utoipa::ToSchema;
 
@@ -53,20 +56,17 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
-    let exists = repo.version_store()?.version_exists(&version_id)?;
+    let exists = repo.version_store()?.version_exists(&version_id).await?;
     if !exists {
         return Err(OxenHttpError::NotFound);
     }
 
-    let metadata = repo
-        .version_store()?
-        .get_version_metadata(&version_id)
-        .await?;
+    let file_size = repo.version_store()?.get_version_size(&version_id).await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
             hash: version_id,
-            size: metadata.len() as u64,
+            size: file_size,
         },
     }))
 }
@@ -142,23 +142,19 @@ pub async fn download(
     {
         log::debug!("img_resize {img_resize:?}");
 
-        let resized_path = util::fs::handle_image_resize(
+        let file_stream = util::fs::handle_image_resize(
             Arc::clone(&version_store),
             hash_str,
             &path,
             &version_path,
             img_resize,
-        )?;
-
-        // Generate stream for the resized image
-        let file = File::open(&resized_path).await?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
+        )
+        .await?;
 
         return Ok(HttpResponse::Ok()
             .content_type(mime_type)
             .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-            .streaming(stream));
+            .streaming(file_stream));
     } else {
         log::debug!("did not hit the resize cache");
     }
@@ -197,7 +193,6 @@ pub async fn batch_download(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let version_store = repo.version_store()?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -227,14 +222,21 @@ pub async fn batch_download(
 
     log::debug!("Got {} file hashes", file_hashes.len());
 
-    // create duplex stream for streaming
+    stream_versions_tar_gz(&repo, file_hashes).await
+}
+
+pub async fn stream_versions_tar_gz(
+    repo: &LocalRepository,
+    file_hashes: Vec<String>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let version_store = repo.version_store()?;
     let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
 
     let version_store_clone = version_store.clone();
     let file_hashes_clone = file_hashes.clone();
 
-    // create an error channel to surface errors
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+
     let writer_task = async move {
         let enc = GzipEncoder::new(writer);
         let mut tar = Builder::new(enc);
@@ -243,16 +245,15 @@ pub async fn batch_download(
         for file_hash in file_hashes_clone.iter() {
             match version_store_clone.get_version_stream(file_hash).await {
                 Ok(data) => {
-                    let metadata = match version_store_clone.get_version_metadata(file_hash).await {
-                        Ok(metadata) => metadata,
+                    let file_size = match version_store_clone.get_version_size(file_hash).await {
+                        Ok(size) => size,
                         Err(e) => {
-                            log::error!("Failed to get metadata for {file_hash}: {e}");
+                            log::error!("Failed to get version file size for {file_hash}: {e}");
                             error_tx.send(e).ok();
                             had_error = true;
                             break;
                         }
                     };
-                    let file_size = metadata.len();
 
                     let mut header = tokio_tar::Header::new_gnu();
                     header.set_size(file_size as u64);
@@ -298,7 +299,6 @@ pub async fn batch_download(
             had_error = true;
         }
 
-        // get encoder
         match tar.into_inner().await {
             Ok(mut enc) => {
                 if let Err(e) = enc.shutdown().await {
@@ -316,17 +316,15 @@ pub async fn batch_download(
         };
 
         if had_error {
-            log::warn!("Tar/Gzip stream closed due to earlier error");
+            log::warn!("Stream closed due to earlier error");
         } else {
-            log::info!("Tar streaming completed successfully");
+            log::info!("Streaming completed successfully");
         }
     };
 
-    // stream to the client while reading
     tokio::spawn(writer_task);
 
-    // convert reader to stream
-    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
+    let stream = ReaderStream::new(reader).map(move |chunk| {
         if let Ok(err) = error_rx.try_recv() {
             log::error!("Stream error: {err}");
             return Err(OxenHttpError::from(err));
@@ -336,6 +334,139 @@ pub async fn batch_download(
 
     Ok(HttpResponse::Ok()
         .content_type("application/gzip")
+        .streaming(stream))
+}
+
+pub async fn stream_versions_zip(
+    repo: &LocalRepository,
+    files: Vec<FileWithHash>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let version_store = repo.version_store()?;
+    let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
+
+    let version_store_clone = version_store.clone();
+    let files_clone = files.clone();
+
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let writer_task = async move {
+        let compat_writer = writer.compat_write();
+        let mut zip_writer = ZipFileWriter::new(compat_writer);
+        let mut had_error = false;
+
+        for file in files_clone.iter() {
+            let path = file.path.to_str();
+            let path = match path.map(|s| s.to_string()) {
+                Some(path) => path,
+                None => {
+                    let err = "Invalid UTF-8 in path".to_string();
+                    error_tx.send(OxenError::basic_str(err)).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let hash = &file.hash;
+
+            let version_path = match version_store_clone.get_version_path(hash) {
+                Ok(path) => path,
+                Err(e) => {
+                    log::error!("Failed to get path for {hash}: {e}");
+                    error_tx.send(e).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let metadata = match util::fs::metadata(&version_path) {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    log::error!("Failed to get metadata for {version_path:?}: {e}");
+                    error_tx.send(e).ok();
+                    had_error = true;
+                    break;
+                }
+            };
+
+            let file_size = metadata.len();
+
+            match version_store_clone.get_version_stream(hash).await {
+                Ok(data) => {
+                    let mut reader = StreamReader::new(data);
+
+                    let compression = Compression::Deflate;
+                    let zip_entry_builder =
+                        async_zip::ZipEntryBuilder::new(path.into(), compression)
+                            .uncompressed_size(file_size as u64)
+                            .unix_permissions(0o644);
+
+                    let zip_entry = zip_entry_builder.build();
+
+                    let entry_writer = match zip_writer.write_entry_stream(zip_entry).await {
+                        Ok(writer) => writer,
+                        Err(e) => {
+                            log::error!("Failed to append {hash} to zip: {e}");
+                            error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                            had_error = true;
+                            break;
+                        }
+                    };
+
+                    let mut compat_writer = entry_writer.compat_write();
+                    if let Err(e) = tokio::io::copy(&mut reader, &mut compat_writer).await {
+                        log::error!("Failed to stream data for {hash} into zip: {e}");
+                        error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                        had_error = true;
+                        break;
+                    }
+
+                    let entry_writer = compat_writer.into_inner();
+                    if let Err(e) = entry_writer.close().await {
+                        log::error!("Failed to close zip entry for {hash}: {e}");
+                        error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                        had_error = true;
+                        break;
+                    }
+
+                    log::info!("Successfully appended data to zip for hash: {}", &hash);
+                }
+                Err(e) => {
+                    log::error!("Failed to get version {hash}: {e}");
+                    error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                    had_error = true;
+                    break;
+                }
+            }
+        }
+
+        if let Err(e) = zip_writer.close().await {
+            log::error!("Failed to finish zip file: {e}");
+            error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+            had_error = true;
+        } else {
+            log::info!("Successfully finished zip file");
+        }
+
+        // zip.close() typically handles the shutdown, but we check inner writer if needed
+        if !had_error {
+            log::info!("Streaming completed successfully");
+        } else {
+            log::warn!("Stream closed due to earlier error");
+        }
+    };
+
+    tokio::spawn(writer_task);
+
+    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
+        if let Ok(err) = error_rx.try_recv() {
+            log::error!("Stream error: {err}");
+            return Err(OxenHttpError::from(err));
+        }
+        chunk.map_err(OxenHttpError::from)
+    });
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/zip")
         .streaming(stream))
 }
 
