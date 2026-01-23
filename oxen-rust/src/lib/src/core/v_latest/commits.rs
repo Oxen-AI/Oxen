@@ -97,6 +97,7 @@ pub fn commit_allow_empty(
 
         let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
 
+        // Tree source defaults to first parent, which is head_commit.id set above
         let result = create_empty_commit(repo, &branch.name, &new_commit, None)?;
 
         println!("🐂 commit {result} (empty)");
@@ -257,22 +258,22 @@ pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     new_commit: &Commit,
-    tree_source_commit_id: Option<&str>, // If present. preserve tree from this commit else branch head
+    tree_source_commit_id: Option<&str>, // If present, preserve tree from this commit; else use first parent
 ) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
-    let (tree_source_commit, tree_source_id) = match tree_source_commit_id {
-        Some(source_id) => {
-            let commit = repositories::commits::get_by_id(repo, source_id)?
-                .ok_or_else(|| OxenError::basic_str(format!("Commit not found: {source_id}")))?;
-            (commit, source_id.parse()?)
-        }
-        None => {
-            let commit = repositories::revisions::get(repo, branch_name)?
-                .ok_or_else(|| OxenError::revision_not_found(branch_name.into()))?;
-            let id = commit.id.parse()?;
-            (commit, id)
-        }
+
+    let tree_source_id_str = match tree_source_commit_id {
+        Some(id) => id.to_string(),
+        None => new_commit.parent_ids.first().cloned().ok_or_else(|| {
+            OxenError::basic_str(
+                "Cannot create empty commit: no tree source provided and no parent commits",
+            )
+        })?,
     };
+
+    let tree_source_commit = repositories::commits::get_by_id(repo, &tree_source_id_str)?
+        .ok_or_else(|| OxenError::basic_str(format!("Commit not found: {tree_source_id_str}")))?;
+    let tree_source_id: MerkleHash = tree_source_id_str.parse()?;
 
     let existing_node = repositories::tree::get_node_by_id_with_children(repo, &tree_source_id)?
         .ok_or(OxenError::basic_str(format!(

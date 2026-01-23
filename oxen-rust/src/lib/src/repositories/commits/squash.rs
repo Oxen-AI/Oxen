@@ -70,6 +70,11 @@ fn is_squashable_commit(repo: &LocalRepository, commit: &Commit) -> Result<bool,
         return Ok(false);
     }
 
+    // Merge commits (multiple parents) should not be squashed to preserve branch topology
+    if commit.parent_ids.len() > 1 {
+        return Ok(false);
+    }
+
     let parent_commit = repositories::commits::get_by_id(repo, &commit.parent_ids[0])?
         .ok_or_else(|| OxenError::basic_str("Parent commit not found"))?;
 
@@ -132,13 +137,22 @@ pub fn squash_commits(
     let _parent_commit = repositories::commits::get_by_id(repo, &parent_commit_id)?
         .ok_or_else(|| OxenError::basic_str("Parent commit not found"))?;
 
+    // Compute a fresh commit ID based on the new commit's actual fields
+    let new_id = compute_commit_hash(
+        &[parent_commit_id.clone()],
+        new_message,
+        &newest_commit.author,
+        &newest_commit.email,
+        newest_commit.timestamp,
+    );
+
     let new_commit = repositories::commits::create_empty_commit(
         repo,
         repositories::branches::current_branch(repo)?
             .ok_or_else(|| OxenError::basic_str("No current branch"))?
             .name,
         &Commit {
-            id: newest_commit.id.clone(),
+            id: new_id,
             parent_ids: vec![parent_commit_id],
             message: new_message.to_string(),
             author: newest_commit.author.clone(),
@@ -402,6 +416,155 @@ mod tests {
                 commits_after.iter().any(|c| c.message == commit4.message),
                 "Boundary commit message should still exist in history"
             );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_merge_commits_are_not_squashable() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Create a three-way merge scenario:
+            // A - C - D - M (merge commit with two parents)
+            //    \       /
+            //     B - E
+
+            // Get main branch (repo already has initial commit from test helper)
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Initial commit A
+            let file_a = repo.path.join("a.txt");
+            util::fs::write_to_path(&file_a, "a")?;
+            repositories::add(&repo, &file_a).await?;
+            repositories::commit(&repo, "Commit A")?;
+
+            // Create feature branch and add commits
+            let feature_branch = "feature";
+            repositories::branches::create_checkout(&repo, feature_branch)?;
+
+            let file_b = repo.path.join("b.txt");
+            util::fs::write_to_path(&file_b, "b")?;
+            repositories::add(&repo, &file_b).await?;
+            repositories::commit(&repo, "Commit B")?;
+
+            let file_e = repo.path.join("e.txt");
+            util::fs::write_to_path(&file_e, "e")?;
+            repositories::add(&repo, &file_e).await?;
+            repositories::commit(&repo, "Commit E")?;
+
+            // Go back to main and add more commits
+            repositories::checkout(&repo, &main_branch.name).await?;
+
+            let file_c = repo.path.join("c.txt");
+            util::fs::write_to_path(&file_c, "c")?;
+            repositories::add(&repo, &file_c).await?;
+            repositories::commit(&repo, "Commit C")?;
+
+            let file_d = repo.path.join("d.txt");
+            util::fs::write_to_path(&file_d, "d")?;
+            repositories::add(&repo, &file_d).await?;
+            repositories::commit(&repo, "Commit D")?;
+
+            // Merge feature branch into main - creates merge commit M
+            let merge_commit = repositories::merge::merge(&repo, feature_branch).await?;
+            assert!(merge_commit.is_some(), "Merge should succeed");
+            let merge_commit = merge_commit.unwrap();
+
+            // Verify merge commit has two parents
+            assert_eq!(
+                merge_commit.parent_ids.len(),
+                2,
+                "Merge commit should have exactly 2 parents"
+            );
+
+            // Verify merge commit is NOT squashable
+            assert!(
+                !is_squashable_commit(&repo, &merge_commit)?,
+                "Merge commits should not be squashable"
+            );
+
+            // Add a regular commit after the merge
+            let file_f = repo.path.join("f.txt");
+            util::fs::write_to_path(&file_f, "f")?;
+            repositories::add(&repo, &file_f).await?;
+            let regular_commit = repositories::commit(&repo, "Commit F")?;
+
+            // Verify regular commit IS squashable
+            assert!(
+                is_squashable_commit(&repo, &regular_commit)?,
+                "Regular single-parent commits should be squashable"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_squash_groups_split_at_merge_commits() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Create: A -> B -> C -> M (merge) -> D -> E
+            // Expected groups: [B, C] and [D, E] split by merge M
+
+            // Get main branch (repo already has initial commit from test helper)
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Commit A
+            let file_a = repo.path.join("a.txt");
+            util::fs::write_to_path(&file_a, "a")?;
+            repositories::add(&repo, &file_a).await?;
+            repositories::commit(&repo, "Commit A")?;
+
+            // Commit B
+            let file_b = repo.path.join("b.txt");
+            util::fs::write_to_path(&file_b, "b")?;
+            repositories::add(&repo, &file_b).await?;
+            repositories::commit(&repo, "Commit B")?;
+
+            // Create feature branch for merge
+            let feature_branch = "feature";
+            repositories::branches::create_checkout(&repo, feature_branch)?;
+            let file_feature = repo.path.join("feature.txt");
+            util::fs::write_to_path(&file_feature, "feature")?;
+            repositories::add(&repo, &file_feature).await?;
+            repositories::commit(&repo, "Feature commit")?;
+
+            // Back to main, add commit C
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let file_c = repo.path.join("c.txt");
+            util::fs::write_to_path(&file_c, "c")?;
+            repositories::add(&repo, &file_c).await?;
+            repositories::commit(&repo, "Commit C")?;
+
+            // Merge - creates merge commit M
+            let merge_result = repositories::merge::merge(&repo, feature_branch).await?;
+            assert!(merge_result.is_some(), "Merge should succeed");
+
+            // Commits D and E after merge
+            let file_d = repo.path.join("d.txt");
+            util::fs::write_to_path(&file_d, "d")?;
+            repositories::add(&repo, &file_d).await?;
+            repositories::commit(&repo, "Commit D")?;
+
+            let file_e = repo.path.join("e.txt");
+            util::fs::write_to_path(&file_e, "e")?;
+            repositories::add(&repo, &file_e).await?;
+            repositories::commit(&repo, "Commit E")?;
+
+            // Analyze squashable commits (preserve 0 from HEAD)
+            let groups = analyze_squashable_commits(&repo, 0)?;
+
+            // The merge commit should act as a boundary, splitting groups
+            // We should have at least one group, and the merge commit should not be in any group
+            for group in &groups {
+                for commit in group {
+                    assert!(
+                        commit.parent_ids.len() <= 1,
+                        "No merge commits should be in squash groups"
+                    );
+                }
+            }
 
             Ok(())
         })

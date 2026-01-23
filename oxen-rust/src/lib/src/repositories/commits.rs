@@ -18,6 +18,35 @@ use std::path::{Path, PathBuf};
 pub mod commit_writer;
 pub mod squash;
 
+/// # Commit the staged files in the repo
+///
+/// ```
+/// use liboxen::command;
+/// use liboxen::util;
+/// # use liboxen::test;
+/// # use liboxen::error::OxenError;
+/// # use std::path::Path;
+/// # fn main() -> Result<(), OxenError> {
+/// # test::init_test_env();
+///
+/// // Initialize the repository
+/// let base_dir = Path::new("repo_dir_commit");
+/// let repo = repositories::init(base_dir)?;
+///
+/// // Write file to disk
+/// let hello_file = base_dir.join("hello.txt");
+/// util::fs::write_to_path(&hello_file, "Hello World");
+///
+/// // Stage the file
+/// repositories::add(&repo, &hello_file)?;
+///
+/// // Commit staged
+/// repositories::commit(&repo, "My commit message")?;
+///
+/// # util::fs::remove_dir_all(base_dir)?;
+/// # Ok(())
+/// # }
+/// ```
 pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
