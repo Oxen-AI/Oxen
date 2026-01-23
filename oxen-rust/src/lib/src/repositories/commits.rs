@@ -1336,4 +1336,33 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_create_initial_commit_then_second_commit() -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+            // Create initial commit on empty repo
+            let user = crate::model::User {
+                name: "Test User".to_string(),
+                email: "test@example.com".to_string(),
+            };
+            let initial_commit = create_initial_commit(&repo, "main", &user, "Initial commit")?;
+            assert_eq!(initial_commit.message, "Initial commit");
+
+            // Now add a file and try to commit again
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+
+            // This second commit should succeed
+            let second_commit = repositories::commit(&repo, "Add hello.txt")?;
+            assert_eq!(second_commit.message, "Add hello.txt");
+
+            // Verify the file is in the commit
+            let status = repositories::status(&repo)?;
+            assert!(status.is_clean());
+
+            Ok(())
+        })
+        .await
+    }
 }
