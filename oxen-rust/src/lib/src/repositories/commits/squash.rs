@@ -1,8 +1,27 @@
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository};
 use crate::repositories;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use time::OffsetDateTime;
+
+fn compute_commit_hash(
+    parent_ids: &[String],
+    message: &str,
+    author: &str,
+    email: &str,
+    timestamp: OffsetDateTime,
+) -> String {
+    use xxhash_rust::xxh3::Xxh3;
+    let mut hasher = Xxh3::new();
+    hasher.update(b"commit");
+    hasher.update(format!("{:?}", parent_ids).as_bytes());
+    hasher.update(message.as_bytes());
+    hasher.update(author.as_bytes());
+    hasher.update(email.as_bytes());
+    hasher.update(&timestamp.unix_timestamp().to_le_bytes());
+    format!("{:032x}", hasher.digest128())
+}
 
 pub fn analyze_squashable_commits(
     repo: &LocalRepository,
@@ -134,19 +153,114 @@ pub fn squash_commits(
 
 pub fn execute_squash(repo: &LocalRepository, n: usize) -> Result<Vec<Commit>, OxenError> {
     let squash_groups = analyze_squashable_commits(repo, n)?;
-
     if squash_groups.is_empty() {
         return Ok(vec![]);
     }
 
+    let all_commits = repositories::commits::list(repo)?;
+    let commits_to_process = &all_commits[n..];
+
+    // Build map: commit_id -> group_index
+    let mut commit_to_group: HashMap<String, usize> = HashMap::new();
+    for (group_idx, group) in squash_groups.iter().enumerate() {
+        for commit in group {
+            commit_to_group.insert(commit.id.clone(), group_idx);
+        }
+    }
+
+    // Identify oldest and newest commit in each group
+    let mut group_oldest_id: HashMap<usize, String> = HashMap::new();
+    let mut group_newest: HashMap<usize, &Commit> = HashMap::new();
+    for (group_idx, group) in squash_groups.iter().enumerate() {
+        group_oldest_id.insert(group_idx, group.last().unwrap().id.clone());
+        group_newest.insert(group_idx, group.first().unwrap());
+    }
+
+    // Track parent remapping: old_id -> new_id
+    let mut parent_map: HashMap<String, String> = HashMap::new();
     let mut squashed_commits = vec![];
+    let mut processed_groups: HashSet<usize> = HashSet::new();
 
-    for group in squash_groups {
-        let messages: Vec<String> = group.iter().map(|c| c.message.clone()).collect();
-        let combined_message = messages.join(", ");
+    let branch_name = repositories::branches::current_branch(repo)?
+        .ok_or_else(|| OxenError::basic_str("No current branch"))?
+        .name;
 
-        let squashed = squash_commits(repo, &group, &combined_message)?;
-        squashed_commits.push(squashed);
+    // Process commits from oldest to newest
+    for commit in commits_to_process.iter().rev() {
+        if commit.parent_ids.is_empty() {
+            continue;
+        }
+
+        let original_parent = &commit.parent_ids[0];
+        let mapped_parent = parent_map
+            .get(original_parent)
+            .unwrap_or(original_parent)
+            .clone();
+
+        if let Some(&group_idx) = commit_to_group.get(&commit.id) {
+            // This commit is part of a squash group
+            if group_oldest_id.get(&group_idx) == Some(&commit.id)
+                && !processed_groups.contains(&group_idx)
+            {
+                // This is the oldest commit in the group - create squashed commit
+                let newest = group_newest.get(&group_idx).unwrap();
+                let group = &squash_groups[group_idx];
+                let messages: Vec<String> = group.iter().map(|c| c.message.clone()).collect();
+                let combined_message = messages.join(", ");
+
+                let new_id = compute_commit_hash(
+                    &[mapped_parent.clone()],
+                    &combined_message,
+                    &newest.author,
+                    &newest.email,
+                    newest.timestamp,
+                );
+
+                let new_commit = repositories::commits::create_empty_commit(
+                    repo,
+                    &branch_name,
+                    &Commit {
+                        id: new_id.clone(),
+                        parent_ids: vec![mapped_parent],
+                        message: combined_message,
+                        author: newest.author.clone(),
+                        email: newest.email.clone(),
+                        timestamp: newest.timestamp,
+                    },
+                    Some(&newest.id), // preserve tree from newest commit
+                )?;
+
+                parent_map.insert(newest.id.clone(), new_commit.id.clone());
+                squashed_commits.push(new_commit);
+                processed_groups.insert(group_idx);
+            }
+            // Skip other commits in the group
+        } else {
+            // Boundary commit - rewrite with updated parent
+            let new_id = compute_commit_hash(
+                &[mapped_parent.clone()],
+                &commit.message,
+                &commit.author,
+                &commit.email,
+                commit.timestamp,
+            );
+
+            let new_commit = repositories::commits::create_empty_commit(
+                repo,
+                &branch_name,
+                &Commit {
+                    id: new_id.clone(),
+                    parent_ids: vec![mapped_parent],
+                    message: commit.message.clone(),
+                    author: commit.author.clone(),
+                    email: commit.email.clone(),
+                    timestamp: commit.timestamp,
+                },
+                Some(&commit.id), // preserve tree from original
+            )?;
+
+            parent_map.insert(commit.id.clone(), new_commit.id.clone());
+        }
     }
 
     Ok(squashed_commits)
@@ -214,6 +328,80 @@ mod tests {
             let commit4 = repositories::commit(&repo, "delete file2")?;
 
             assert!(!is_squashable_commit(&repo, &commit4)?);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_multi_group_squash_preserves_history() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create two squashable groups separated by a delete (non-squashable boundary)
+            // commit1 (root) -> commit2 -> commit3 -> commit4 (delete) -> commit5 -> commit6
+            //                   [--- group 2 ---]                        [--- group 1 ---]
+
+            let file1 = repo.path.join("file1.txt");
+            util::fs::write_to_path(&file1, "content1")?;
+            repositories::add(&repo, &file1).await?;
+            let _commit1 = repositories::commit(&repo, "add file1")?; // root
+
+            let file2 = repo.path.join("file2.txt");
+            util::fs::write_to_path(&file2, "content2")?;
+            repositories::add(&repo, &file2).await?;
+            let _commit2 = repositories::commit(&repo, "add file2")?;
+
+            let file3 = repo.path.join("file3.txt");
+            util::fs::write_to_path(&file3, "content3")?;
+            repositories::add(&repo, &file3).await?;
+            let _commit3 = repositories::commit(&repo, "add file3")?;
+
+            // Delete creates a boundary (non-squashable)
+            std::fs::remove_file(&file2)?;
+            repositories::add(&repo, &file2).await?;
+            let commit4 = repositories::commit(&repo, "delete file2")?;
+
+            let file4 = repo.path.join("file4.txt");
+            util::fs::write_to_path(&file4, "content4")?;
+            repositories::add(&repo, &file4).await?;
+            let _commit5 = repositories::commit(&repo, "add file4")?;
+
+            let file5 = repo.path.join("file5.txt");
+            util::fs::write_to_path(&file5, "content5")?;
+            repositories::add(&repo, &file5).await?;
+            let _commit6 = repositories::commit(&repo, "add file5")?;
+
+            // Verify we have two squashable groups
+            let groups = analyze_squashable_commits(&repo, 0)?;
+            assert_eq!(groups.len(), 2);
+
+            // Execute squash
+            let squashed = execute_squash(&repo, 0)?;
+            assert_eq!(squashed.len(), 2);
+
+            // Verify commit history is properly connected
+            let commits_after = repositories::commits::list(&repo)?;
+
+            // Should have: squashed1 -> boundary' -> squashed2 -> root (4 commits)
+            assert_eq!(commits_after.len(), 4);
+
+            // Walk the history and verify parent linkage
+            for i in 0..commits_after.len() - 1 {
+                let commit = &commits_after[i];
+                let expected_parent = &commits_after[i + 1];
+                assert!(
+                    commit.parent_ids.contains(&expected_parent.id),
+                    "Commit {} should have parent {}",
+                    commit.id,
+                    expected_parent.id
+                );
+            }
+
+            // The boundary commit (rewritten) should exist with same message
+            assert!(
+                commits_after.iter().any(|c| c.message == commit4.message),
+                "Boundary commit message should still exist in history"
+            );
 
             Ok(())
         })
