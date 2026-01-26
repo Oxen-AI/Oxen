@@ -42,6 +42,10 @@ pub fn workspace() -> Scope {
                 )
                 .route(
                     "/files/{path:.*}",
+                    web::patch().to(controllers::workspaces::files::mv),
+                )
+                .route(
+                    "/files/{path:.*}",
                     web::get().to(controllers::workspaces::files::get),
                 )
                 .route(

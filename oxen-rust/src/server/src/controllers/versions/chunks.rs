@@ -61,7 +61,7 @@ pub async fn upload(
         .await
         .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
 
-    Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
+    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
 pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
