@@ -111,7 +111,6 @@ const SUPPORT: &str = "
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
         crate::controllers::workspaces::create,
-        crate::controllers::workspaces::create_with_new_branch,
         crate::controllers::workspaces::list,
         crate::controllers::workspaces::clear,
         crate::controllers::workspaces::delete,

@@ -783,7 +783,7 @@ fn split_into_vnodes(
     Ok(results)
 }
 
-fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError> {
+pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError> {
     let mut hasher = xxhash_rust::xxh3::Xxh3::new();
     hasher.update(b"commit");
     hasher.update(format!("{:?}", new_commit.parent_ids).as_bytes());
