@@ -5,6 +5,7 @@ use crate::controllers;
 
 pub fn tree() -> Scope {
     web::scope("/tree")
+        .route("/{resource:.*}", web::get().to(controllers::dir_tree::get))
         .service(
             web::scope("/nodes")
                 .route("", web::post().to(controllers::tree::create_nodes))

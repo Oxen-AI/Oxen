@@ -236,3 +236,57 @@ pub struct PaginatedEntryVersionsResponse {
     #[schema(value_type = String)]
     pub path: PathBuf,
 }
+
+// Tree structures for nested directory listing
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+pub struct TreeEntry {
+    #[serde(flatten)]
+    pub entry: EMetadataEntry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entries: Option<Vec<TreeEntry>>,
+}
+
+impl TreeEntry {
+    pub fn from_metadata_entry(entry: EMetadataEntry) -> Self {
+        TreeEntry {
+            entry,
+            entries: None,
+        }
+    }
+
+    pub fn with_entries(entry: EMetadataEntry, entries: Vec<TreeEntry>) -> Self {
+        TreeEntry {
+            entry,
+            entries: if entries.is_empty() {
+                None
+            } else {
+                Some(entries)
+            },
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+pub struct TreeEntries {
+    pub dir: Option<EMetadataEntry>,
+    pub entries: Vec<TreeEntry>,
+    pub resource: Option<ResourceVersion>,
+    pub metadata: Option<MetadataDir>,
+    pub depth: i32,
+}
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
+pub struct TreeEntriesResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub tree: TreeEntries,
+}
+
+impl TreeEntriesResponse {
+    pub fn ok_from(tree: TreeEntries) -> Self {
+        Self {
+            status: StatusMessage::resource_found(),
+            tree,
+        }
+    }
+}
