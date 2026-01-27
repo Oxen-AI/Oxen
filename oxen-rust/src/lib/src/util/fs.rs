@@ -2040,6 +2040,53 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
 
     FileTime::from_system_time(node_modified_nanoseconds)
 }
+
+/// Validates and normalizes a user-provided path to ensure it is safe.
+/// Returns the normalized path if valid, or an OxenError describing the issue.
+///
+/// Validation rules:
+/// - Must be a relative path (no absolute paths or root components)
+/// - Cannot contain parent directory references (..)
+/// - Cannot contain empty segments
+/// - Current directory references (.) are skipped
+pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+    let path = path.as_ref();
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(segment) => {
+                let segment_str = segment.to_string_lossy();
+                // Reject empty segments (e.g., from "foo//bar")
+                if segment_str.is_empty() {
+                    return Err(OxenError::basic_str("path contains empty segments"));
+                }
+                normalized.push(segment);
+            }
+            Component::ParentDir => {
+                return Err(OxenError::basic_str(
+                    "path cannot contain parent directory references (..)",
+                ));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(OxenError::basic_str("path must be relative, not absolute"));
+            }
+            Component::CurDir => {
+                // Skip "." components (current directory)
+            }
+        }
+    }
+
+    // Ensure we have a valid path after normalization
+    if normalized.as_os_str().is_empty() {
+        return Err(OxenError::basic_str(
+            "path resolves to empty after normalization",
+        ));
+    }
+
+    Ok(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::constants::{self, VERSION_FILE_NAME};

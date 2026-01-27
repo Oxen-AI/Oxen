@@ -103,7 +103,7 @@ pub async fn clone_repo_remote_mode(
         local_repo.set_vfs(None);
     }
 
-    let workspace = api::client::workspaces::create_with_new_branch(
+    let workspace = api::client::workspaces::create_with_path(
         &remote_repo,
         &branch_name,
         &workspace_id,

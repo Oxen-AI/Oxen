@@ -8,17 +8,14 @@ pub mod data_frames;
 pub fn workspace() -> Scope {
     web::scope("/workspaces")
         .route("", web::put().to(controllers::workspaces::get_or_create))
-        .route("", web::post().to(controllers::workspaces::create))
+        // POST is deprecated - use PUT for idempotent get-or-create behavior
+        .route("", web::post().to(controllers::workspaces::get_or_create))
         .route("", web::get().to(controllers::workspaces::list))
         .route("", web::delete().to(controllers::workspaces::clear))
         .service(
             web::scope("/{workspace_id}")
                 .route("", web::get().to(controllers::workspaces::get))
                 .route("", web::delete().to(controllers::workspaces::delete))
-                .route(
-                    "/new",
-                    web::put().to(controllers::workspaces::create_with_new_branch),
-                )
                 .route(
                     "/changes",
                     web::get().to(controllers::workspaces::changes::list_root),
@@ -42,6 +39,10 @@ pub fn workspace() -> Scope {
                 .route(
                     "/staged",
                     web::delete().to(controllers::workspaces::files::rm_files_from_staged),
+                )
+                .route(
+                    "/files/{path:.*}",
+                    web::patch().to(controllers::workspaces::files::mv),
                 )
                 .route(
                     "/files/{path:.*}",

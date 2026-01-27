@@ -45,6 +45,12 @@ impl RunCmd for WorkspaceCommitCmd {
                     .required(true)
                     .action(clap::ArgAction::Set),
             )
+            .arg(
+                Arg::new("branch")
+                    .long("branch")
+                    .short('b')
+                    .help("The branch to commit to"),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -79,13 +85,22 @@ impl RunCmd for WorkspaceCommitCmd {
 
         check_repo_migration_needed(&repo)?;
 
+        let branch_name = match args.get_one::<String>("branch") {
+            Some(name) => name.clone(),
+            None => {
+                // No --branch flag, so we need the current branch as a default
+                match repositories::branches::current_branch(&repo)? {
+                    Some(branch) => branch.name,
+                    None => {
+                        return Err(OxenError::basic_str(
+                            "No current branch. Use --branch to specify a target branch to commit the workspace to.",
+                        ));
+                    }
+                }
+            }
+        };
+
         println!("Committing to remote with message: {message}");
-        let branch = repositories::branches::current_branch(&repo)?;
-        if branch.is_none() {
-            log::error!("Workspace commit No current branch found");
-            return Err(OxenError::must_be_on_valid_branch());
-        }
-        let branch = branch.unwrap();
 
         let remote_repo = api::client::repositories::get_default_remote(&repo).await?;
         let cfg = UserConfig::get()?;
@@ -94,7 +109,7 @@ impl RunCmd for WorkspaceCommitCmd {
             author: cfg.name,
             email: cfg.email,
         };
-        api::client::workspaces::commit(&remote_repo, &branch.name, workspace_identifier, &body)
+        api::client::workspaces::commit(&remote_repo, &branch_name, workspace_identifier, &body)
             .await?;
 
         Ok(())

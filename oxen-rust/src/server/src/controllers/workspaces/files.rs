@@ -13,6 +13,7 @@ use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::util::hasher;
+use liboxen::view::workspaces::RenameRequest;
 use liboxen::view::{
     ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
     StatusMessageDescription,
@@ -211,7 +212,7 @@ pub async fn get(
         ("path" = String, Path, description = "The directory to upload the file to", example = "data/train")
     ),
     request_body(
-        content_type = "multipart/form-data", 
+        content_type = "multipart/form-data",
         description = "Multipart upload of file. Form field 'file' should be the file content.",
         content = FileUpload,
     ),
@@ -526,6 +527,69 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
     };
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
+}
+
+/// Move or rename a file within the workspace
+#[utoipa::path(
+    patch,
+    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The current path to the file to move/rename", example = "images/train/dog_1.jpg")
+    ),
+    request_body(
+        content = RenameRequest,
+        description = "The new path for the file",
+        example = json!({"new_path": "images/train/renamed_dog_1.jpg"})
+    ),
+    responses(
+        (status = 200, description = "File successfully moved/renamed", body = StatusMessage),
+        (status = 400, description = "Invalid request (empty new_path or new_path already exists)"),
+        (status = 404, description = "Workspace or file not found")
+    )
+)]
+pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let workspace_id = path_param(&req, "workspace_id")?;
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let path = PathBuf::from(path_param(&req, "path")?);
+
+    // Parse request body
+    let body: RenameRequest = serde_json::from_str(&body)?;
+
+    // Validate new_path is not empty
+    if body.new_path.is_empty() {
+        return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
+    }
+
+    // Validate and normalize new_path
+    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
+
+    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+
+    // Check if new_path already exists in the workspace or base repo
+    if repositories::tree::get_node_by_path(&repo, &workspace.commit, &new_path)?.is_some() {
+        return Err(OxenHttpError::BadRequest(
+            "new_path already exists in the repository".into(),
+        ));
+    }
+
+    // For tabular files, use the data_frames rename instead
+    if util::fs::is_tabular(&path) {
+        repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
+    } else {
+        repositories::workspaces::files::mv(&workspace, &path, &new_path)?;
+    }
+
+    Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
 // Read the payload files into memory, compute the hash, and save to version store

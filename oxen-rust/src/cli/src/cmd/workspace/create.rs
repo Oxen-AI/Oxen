@@ -38,15 +38,20 @@ impl RunCmd for WorkspaceCreateCmd {
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
         let repo = LocalRepository::from_current_dir()?;
-        let Ok(Some(branch)) = repositories::branches::current_branch(&repo) else {
-            return Err(OxenError::basic_str(
-                "Cannot create workspace without a branch",
-            ));
-        };
 
         let branch_name = match args.get_one::<String>("branch") {
-            Some(branch_name) => branch_name,
-            None => &branch.name,
+            Some(name) => name.clone(),
+            None => {
+                // No --branch flag, so we need the current branch as a default
+                match repositories::branches::current_branch(&repo)? {
+                    Some(branch) => branch.name,
+                    None => {
+                        return Err(OxenError::basic_str(
+                            "No current branch. Use --branch to specify a branch name.",
+                        ));
+                    }
+                }
+            }
         };
 
         let name = args.get_one::<String>("name").map(|s| s.to_string());

@@ -8,7 +8,8 @@ use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
-use crate::model::merkle_tree::node::{CommitNode, EMerkleTreeNode};
+use crate::model::merkle_tree::node::dir_node::DirNodeOpts;
+use crate::model::merkle_tree::node::{CommitNode, DirNode, EMerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, User};
 use crate::opts::PaginateOpts;
 use crate::view::{PaginatedCommits, StatusMessage};
@@ -18,9 +19,10 @@ use std::path::PathBuf;
 use std::str;
 
 use crate::constants::COMMIT_COUNT_DIR;
-use crate::core::db::key_val::str_val_db;
+use crate::core::db::key_val::{opts, str_val_db};
 use crate::core::db::merkle_node::MerkleNodeDB;
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use crate::core::v_latest::index::CommitMerkleTree;
+use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 
 /// Configuration for commit traversal operations
 struct CommitTraversalConfig<'a> {
@@ -86,14 +88,8 @@ pub fn commit_allow_empty(
         };
 
         // Compute the commit hash
-        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
-        hasher.update(b"commit");
-        hasher.update(format!("{:?}", new_commit_data.parent_ids).as_bytes());
-        hasher.update(new_commit_data.message.as_bytes());
-        hasher.update(new_commit_data.author.as_bytes());
-        hasher.update(new_commit_data.email.as_bytes());
-        hasher.update(&new_commit_data.timestamp.unix_timestamp().to_le_bytes());
-        let commit_hash = MerkleHash::new(hasher.digest128());
+        let commit_hash =
+            repositories::commits::commit_writer::compute_commit_id(&new_commit_data)?;
 
         let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
 
@@ -296,6 +292,95 @@ pub fn create_empty_commit(
     // Update the ref
     with_ref_manager(repo, |manager| {
         manager.set_branch_commit_id(branch_name, commit_node.hash().to_string())
+    })?;
+
+    Ok(commit_node.to_commit())
+}
+
+/// Create an initial empty commit for an empty repository.
+/// This creates the first commit with an empty tree and sets up the branch.
+/// Returns an error if the repository already has commits.
+pub fn create_initial_commit(
+    repo: &LocalRepository,
+    branch_name: impl AsRef<str>,
+    user: &User,
+    message: impl AsRef<str>,
+) -> Result<Commit, OxenError> {
+    let branch_name = branch_name.as_ref();
+    let message = message.as_ref();
+
+    // Ensure the repository is actually empty
+    if head_commit_maybe(repo)?.is_some() {
+        return Err(OxenError::basic_str(
+            "Cannot create initial commit: repository already has commits",
+        ));
+    }
+
+    let timestamp = OffsetDateTime::now_utc();
+
+    // Create commit data with no parents
+    let new_commit = crate::model::NewCommit {
+        parent_ids: vec![],
+        message: message.to_string(),
+        author: user.name.clone(),
+        email: user.email.clone(),
+        timestamp,
+    };
+
+    // Compute the commit hash
+    let commit_id = repositories::commits::commit_writer::compute_commit_id(&new_commit)?;
+
+    // Create the commit node
+    let commit_node = CommitNode::new(
+        repo,
+        CommitNodeOpts {
+            hash: commit_id,
+            parent_ids: vec![],
+            email: user.email.clone(),
+            author: user.name.clone(),
+            message: message.to_string(),
+            timestamp,
+        },
+    )?;
+
+    // Create an empty root directory node
+    let empty_dir_hash = MerkleHash::new(0); // Empty hash for empty directory
+    let dir_node = DirNode::new(
+        repo,
+        DirNodeOpts {
+            name: String::new(), // Root directory has empty name
+            hash: empty_dir_hash,
+            num_entries: 0,
+            num_bytes: 0,
+            last_commit_id: commit_id,
+            last_modified_seconds: timestamp.unix_timestamp(),
+            last_modified_nanoseconds: timestamp.nanosecond(),
+            data_type_counts: HashMap::new(),
+            data_type_sizes: HashMap::new(),
+        },
+    )?;
+
+    // Open the commit database and add the root directory
+    let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, None)?;
+    commit_db.add_child(&dir_node)?;
+
+    // Initialize the dir_hash_db with the root directory hash
+    let commit_id_string = commit_id.to_string();
+    let dir_hash_db_path =
+        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
+    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
+        DBWithThreadMode::open(&opts::default(), dunce::simplified(&dir_hash_db_path))?;
+    str_val_db::put(&dir_hash_db, "", &dir_node.hash().to_string())?;
+
+    // Create the branch pointing to this commit
+    with_ref_manager(repo, |manager| {
+        manager.create_branch(branch_name, commit_id.to_string())
+    })?;
+
+    // Set HEAD to the new branch
+    with_ref_manager(repo, |manager| {
+        manager.set_head(branch_name);
+        Ok(())
     })?;
 
     Ok(commit_node.to_commit())
