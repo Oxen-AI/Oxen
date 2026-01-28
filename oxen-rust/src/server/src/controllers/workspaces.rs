@@ -23,9 +23,8 @@ pub mod files;
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/get_or_create",
-    operation_id = "get_or_create_workspace",
+    description = "Create a workspace. If the workspace exists, return it",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -146,9 +145,8 @@ pub async fn get_or_create(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
-    operation_id = "get_workspace",
+    description = "Get an existing workspace by ID",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -186,32 +184,6 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
 /// **DEPRECATED**: Use PUT (get_or_create) instead. This endpoint now delegates to get_or_create
 /// for consistent idempotent behavior. The POST method is retained for backward compatibility.
 #[deprecated(note = "Use PUT /workspaces (get_or_create) instead")]
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces",
-    operation_id = "create_workspace",
-    tag = "Workspaces",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    request_body(
-        content = NewWorkspace,
-        description = "Workspace creation details. DEPRECATED: Use PUT method instead for idempotent get-or-create behavior.",
-        example = json!({
-            "branch_name": "main",
-            "name": "bessie_workspace",
-            "workspace_id": "b3f27f05-0955-4076-805f-39575853b27b"
-        })
-    ),
-    responses(
-        (status = 200, description = "Workspace created or found", body = WorkspaceResponseView),
-        (status = 400, description = "Invalid payload or branch not found"),
-        (status = 404, description = "Repository not found")
-    )
-)]
-#[allow(deprecated)]
 pub async fn create(
     req: HttpRequest,
     body: String,
@@ -220,13 +192,12 @@ pub async fn create(
     get_or_create(req, body).await
 }
 
-/// List all workspaces
+/// List workspaces
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces",
-    operation_id = "list_workspaces",
+    description = "List workspaces in the repository",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -276,16 +247,15 @@ pub async fn list(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/clear",
-    operation_id = "clear_workspaces",
+    description = "Deletes all workspaces for the repo",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace for the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
         (status = 200, description = "Workspaces cleared", body = StatusMessage),
-        (status = 404, description = "Workspace not found")
+        (status = 404, description = "Repository not found")
     )
 )]
 pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -301,9 +271,8 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
-    operation_id = "delete_workspace",
+    description = "Delete a workspace by ID",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -342,9 +311,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
-    operation_id = "check_workspace_mergeability",
+    description = "Checks if a workspace can be committed and merged onto a branch",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -377,13 +345,12 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     Ok(HttpResponse::Ok().json(response))
 }
 
-/// Commit workspace
+/// Merge workspace into branch
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/commit/{branch}",
-    operation_id = "commit_workspace",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
+    description = "Commit and merge workspace into the specified branch",
     tag = "Workspaces",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -401,6 +368,7 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     ),
     responses(
         (status = 200, description = "Workspace committed successfully", body = CommitResponse),
+        (status = 400, description = "Invalid request body"),
         (status = 404, description = "Workspace or branch not found"),
         (status = 422, description = "Unprocessable Entity, e.g., workspace is behind main branch")
     )

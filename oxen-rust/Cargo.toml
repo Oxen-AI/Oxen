@@ -153,7 +153,7 @@ xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
 pathdiff = "0.2.3"
 async-recursion = "1.1.1"
-async_zip = { version = "0.0.18", features = ["full"] } 
+async_zip = { version = "0.0.18", features = ["full"] }
 
 
 [workspace]

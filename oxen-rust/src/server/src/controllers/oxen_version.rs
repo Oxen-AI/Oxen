@@ -6,6 +6,16 @@ use liboxen::view::oxen_version::OxenVersionResponse;
 use liboxen::view::StatusMessage;
 use serde::Serialize;
 
+/// Check Oxen server status
+#[utoipa::path(
+    get,
+    path = "/api/version",
+    tag = "Health",
+    description = "Check if the Oxen server is running and responsive.",
+    responses(
+        (status = 200, description = "Server is running", body = StatusMessage)
+    )
+)]
 pub async fn index(_req: HttpRequest) -> HttpResponse {
     let response = StatusMessage::resource_found();
     HttpResponse::Ok().json(response)

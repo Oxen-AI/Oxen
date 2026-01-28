@@ -12,7 +12,7 @@ use liboxen::view::StatusMessage;
     post,
     path = "/api/repos/{namespace}/{repo_name}/fork",
     tag = "Fork",
-    security( ("api_key" = []) ),
+    description = "Fork a repository to a new namespace, optionally with a new name.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository to fork", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository to fork", example = "yolov7-repo"),
@@ -69,7 +69,7 @@ pub async fn fork(
     get,
     path = "/api/repos/{namespace}/{repo_name}/fork/status",
     tag = "Fork",
-    security( ("api_key" = []) ),
+    description = "Check the status of an in-progress or completed fork operation.",
     params(
         ("namespace" = String, Path, description = "Namespace of the forked repository", example = "new-user"),
         ("repo_name" = String, Path, description = "Name of the forked repository", example = "yolov7-repo"),
