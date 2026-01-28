@@ -39,4 +39,5 @@ pub fn tree() -> Scope {
             web::get().to(controllers::tree::download_tree_nodes),
         )
         .route("/download", web::get().to(controllers::tree::download_tree))
+        .route("/{resource:.*}", web::get().to(controllers::dir_tree::get))
 }

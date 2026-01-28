@@ -4,6 +4,7 @@ pub mod commits;
 pub mod data_frames;
 pub mod diff;
 pub mod dir;
+pub mod dir_tree;
 pub mod entries;
 pub mod export;
 pub mod file;

@@ -15,6 +15,7 @@ use crate::constants::ROOT_PATH;
 use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
+use crate::view::entries::TreeEntries;
 use crate::view::PaginatedDirEntries;
 use futures::{stream, StreamExt, TryStreamExt};
 use std::collections::HashMap;
@@ -137,6 +138,30 @@ pub fn list_directory_w_workspace(
             )
         }
     }
+}
+
+pub async fn list_directory_tree(
+    repo: &LocalRepository,
+    revision: impl AsRef<str>,
+    directory: impl AsRef<Path>,
+    depth: i32,
+) -> Result<TreeEntries, OxenError> {
+    let _perf = crate::perf_guard!("entries::list_directory_tree");
+
+    let revision_str = revision.as_ref().to_string();
+
+    let branch = repositories::branches::get_by_name(repo, &revision_str)?;
+    let commit = repositories::revisions::get(repo, &revision_str)?;
+    let parsed_resource = ParsedResource {
+        path: directory.as_ref().to_path_buf(),
+        commit,
+        workspace: None,
+        branch,
+        version: PathBuf::from(&revision_str),
+        resource: PathBuf::from(&revision_str).join(directory.as_ref()),
+    };
+
+    core::v_latest::entries::list_directory_tree(repo, directory, &parsed_resource, depth).await
 }
 
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {

@@ -11,7 +11,7 @@ use crate::model::{
 use crate::opts::PaginateOpts;
 use crate::repositories;
 use crate::util;
-use crate::view::entries::{EMetadataEntry, ResourceVersion};
+use crate::view::entries::{EMetadataEntry, ResourceVersion, TreeEntries, TreeEntry};
 use crate::view::PaginatedDirEntries;
 use std::collections::HashMap;
 use std::path::Path;
@@ -596,4 +596,120 @@ fn add_children_to_db(
         }
     }
     Ok(())
+}
+
+pub async fn list_directory_tree(
+    repo: &LocalRepository,
+    directory: impl AsRef<Path>,
+    parsed_resource: &ParsedResource,
+    depth: i32,
+) -> Result<TreeEntries, OxenError> {
+    let _perf = crate::perf_guard!("core::entries::list_directory_tree");
+
+    let directory = directory.as_ref();
+    let revision = parsed_resource.version.to_str().unwrap_or("").to_string();
+
+    let resource = Some(ResourceVersion {
+        path: directory.to_str().unwrap().to_string(),
+        version: revision.clone(),
+    });
+
+    let commit = parsed_resource
+        .commit
+        .clone()
+        .ok_or(OxenError::revision_not_found(revision.into()))?;
+
+    let dir = repositories::tree::get_subtree_by_depth(repo, &commit, directory, depth)?
+        .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
+
+    let EMerkleTreeNode::Directory(dir_node) = &dir.node else {
+        return Err(OxenError::resource_not_found(directory.to_str().unwrap()));
+    };
+
+    // Found commits is used to cache the commits so that we don't have
+    // to read them from disk again while looping over entries
+    let mut found_commits: HashMap<MerkleHash, Commit> = HashMap::new();
+
+    let dir_entry =
+        dir_node_to_metadata_entry(repo, &dir, parsed_resource, &mut found_commits, false)?;
+    let dir_entry = dir_entry.map(EMetadataEntry::MetadataEntry);
+
+    let tree_entries =
+        build_tree_entries(repo, &dir, parsed_resource, &mut found_commits, 0, depth)?;
+
+    let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
+
+    Ok(TreeEntries {
+        dir: dir_entry,
+        entries: tree_entries,
+        resource,
+        metadata,
+        depth,
+    })
+}
+
+fn build_tree_entries(
+    repo: &LocalRepository,
+    root_node: &MerkleTreeNode,
+    parsed_resource: &ParsedResource,
+    found_commits: &mut HashMap<MerkleHash, Commit>,
+    current_depth: i32,
+    max_depth: i32,
+) -> Result<Vec<TreeEntry>, OxenError> {
+    let mut entries: Vec<TreeEntry> = Vec::new();
+
+    for child in &root_node.children {
+        match &child.node {
+            EMerkleTreeNode::VNode(_) => {
+                let child_entries = build_tree_entries(
+                    repo,
+                    child,
+                    parsed_resource,
+                    found_commits,
+                    current_depth,
+                    max_depth,
+                )?;
+                entries.extend(child_entries);
+            }
+            EMerkleTreeNode::Directory(dir_node) => {
+                if dir_node.name().is_empty() {
+                    continue;
+                }
+
+                let metadata =
+                    dir_node_to_metadata_entry(repo, child, parsed_resource, found_commits, true)?;
+
+                if let Some(metadata) = metadata {
+                    let entry = EMetadataEntry::MetadataEntry(metadata);
+                    let should_recurse = max_depth < 0 || (current_depth + 1) < max_depth;
+
+                    if should_recurse {
+                        let child_entries = build_tree_entries(
+                            repo,
+                            child,
+                            parsed_resource,
+                            found_commits,
+                            current_depth + 1,
+                            max_depth,
+                        )?;
+                        entries.push(TreeEntry::with_entries(entry, child_entries));
+                    } else {
+                        entries.push(TreeEntry::from_metadata_entry(entry));
+                    }
+                }
+            }
+            EMerkleTreeNode::File(file_node) => {
+                let metadata =
+                    file_node_to_metadata_entry(repo, file_node, parsed_resource, found_commits)?;
+
+                if let Some(metadata) = metadata {
+                    let entry = EMetadataEntry::MetadataEntry(metadata);
+                    entries.push(TreeEntry::from_metadata_entry(entry));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(entries)
 }
