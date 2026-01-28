@@ -39,30 +39,15 @@ pub async fn get(
     // Get the repository
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    // Parse the resource to get revision, path, and workspace info
+    // Parse the resource to get revision and path
     let resource = parse_resource(&req, &repo)?;
 
     let depth = query.depth.unwrap_or(1);
-
-    // Get the revision string
-    let revision = if let Some(workspace) = resource.workspace.clone() {
-        workspace.commit.id
-    } else {
-        resource.version.to_str().unwrap_or_default().to_string()
-    };
-
-    // Get workspace_id if workspace exists
-    let workspace_id = resource.workspace.as_ref().map(|w| w.id.clone());
+    let revision = resource.version.to_str().unwrap_or_default().to_string();
 
     // Call the repository tree listing function
-    let entries = repositories::entries::list_directory_tree_w_workspace(
-        &repo,
-        &revision,
-        &resource.path,
-        workspace_id,
-        depth,
-    )
-    .await?;
+    let entries =
+        repositories::entries::list_directory_tree(&repo, &revision, &resource.path, depth).await?;
 
     let response = TreeEntriesResponse::ok_from(entries);
     Ok(HttpResponse::Ok()

@@ -632,29 +632,12 @@ pub async fn list_directory_tree(
 
     let dir_entry =
         dir_node_to_metadata_entry(repo, &dir, parsed_resource, &mut found_commits, false)?;
-    let dir_entry = dir_entry.map(|dir_entry| {
-        EMetadataEntry::WorkspaceMetadataEntry(WorkspaceMetadataEntry::from_metadata_entry(
-            dir_entry,
-        ))
-    });
+    let dir_entry = dir_entry.map(EMetadataEntry::MetadataEntry);
 
-    // Build tree entries using loop-based traversal
     let tree_entries =
-        build_tree_entries_iterative(repo, &dir, parsed_resource, &mut found_commits, depth)?;
+        build_tree_entries(repo, &dir, parsed_resource, &mut found_commits, 0, depth)?;
 
     let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
-
-    // Apply workspace data if needed
-    let tree_entries = if parsed_resource.workspace.is_some() {
-        apply_workspace_to_tree_entries(
-            repo,
-            directory,
-            parsed_resource.workspace.as_ref().unwrap(),
-            tree_entries,
-        )?
-    } else {
-        tree_entries
-    };
 
     Ok(TreeEntries {
         dir: dir_entry,
@@ -665,82 +648,9 @@ pub async fn list_directory_tree(
     })
 }
 
-fn build_tree_entries_iterative(
+fn build_tree_entries(
     repo: &LocalRepository,
     root_node: &MerkleTreeNode,
-    parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
-    max_depth: i32,
-) -> Result<Vec<TreeEntry>, OxenError> {
-    let _perf = crate::perf_guard!("core::entries::build_tree_entries_iterative");
-
-    let mut root_entries: Vec<TreeEntry> = Vec::new();
-
-    // Stack holds (node, depth)
-    let mut stack: Vec<(&MerkleTreeNode, i32)> = Vec::new();
-
-    for child in &root_node.children {
-        stack.push((child, 0));
-    }
-
-    while let Some((node, current_depth)) = stack.pop() {
-        match &node.node {
-            EMerkleTreeNode::VNode(_) => {
-                for child in &node.children {
-                    stack.push((child, current_depth));
-                }
-            }
-            EMerkleTreeNode::Directory(dir_node) => {
-                // Skip root directory node (empty name)
-                if dir_node.name().is_empty() {
-                    continue;
-                }
-
-                let metadata =
-                    dir_node_to_metadata_entry(repo, node, parsed_resource, found_commits, true)?;
-
-                if let Some(metadata) = metadata {
-                    let entry = EMetadataEntry::MetadataEntry(metadata);
-
-                    match max_depth < 0 || (current_depth + 1) < max_depth {
-                        true => {
-                            let child_entries = build_tree_entries_for_dir(
-                                repo,
-                                node,
-                                parsed_resource,
-                                found_commits,
-                                current_depth + 1,
-                                max_depth,
-                            )?;
-
-                            root_entries.push(TreeEntry::with_entries(entry, child_entries));
-                        }
-                        false => {
-                            root_entries.push(TreeEntry::from_metadata_entry(entry));
-                        }
-                    }
-                }
-            }
-            EMerkleTreeNode::File(file_node) => {
-                let metadata =
-                    file_node_to_metadata_entry(repo, file_node, parsed_resource, found_commits)?;
-
-                if let Some(metadata) = metadata {
-                    let entry = EMetadataEntry::MetadataEntry(metadata);
-                    root_entries.push(TreeEntry::from_metadata_entry(entry));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(root_entries)
-}
-
-/// Build tree entries for a specific directory node
-fn build_tree_entries_for_dir(
-    repo: &LocalRepository,
-    dir_node: &MerkleTreeNode,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     current_depth: i32,
@@ -748,11 +658,10 @@ fn build_tree_entries_for_dir(
 ) -> Result<Vec<TreeEntry>, OxenError> {
     let mut entries: Vec<TreeEntry> = Vec::new();
 
-    for child in &dir_node.children {
+    for child in &root_node.children {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
-                // VNodes are virtual nodes, recurse into their children
-                let child_entries = build_tree_entries_for_dir(
+                let child_entries = build_tree_entries(
                     repo,
                     child,
                     parsed_resource,
@@ -762,38 +671,30 @@ fn build_tree_entries_for_dir(
                 )?;
                 entries.extend(child_entries);
             }
-            EMerkleTreeNode::Directory(child_dir) => {
-                if !child_dir.name().is_empty() {
-                    let metadata = dir_node_to_metadata_entry(
-                        repo,
-                        child,
-                        parsed_resource,
-                        found_commits,
-                        true,
-                    )?;
+            EMerkleTreeNode::Directory(dir_node) => {
+                if dir_node.name().is_empty() {
+                    continue;
+                }
 
-                    if let Some(metadata) = metadata {
-                        let entry = EMetadataEntry::MetadataEntry(metadata);
+                let metadata =
+                    dir_node_to_metadata_entry(repo, child, parsed_resource, found_commits, true)?;
 
-                        // Check if we should recurse deeper
-                        // We're at current_depth, check if we can go to current_depth + 1
-                        let should_recurse = max_depth < 0 || (current_depth + 1) < max_depth;
+                if let Some(metadata) = metadata {
+                    let entry = EMetadataEntry::MetadataEntry(metadata);
+                    let should_recurse = max_depth < 0 || (current_depth + 1) < max_depth;
 
-                        if should_recurse {
-                            // Recursively build child entries
-                            let child_entries = build_tree_entries_for_dir(
-                                repo,
-                                child,
-                                parsed_resource,
-                                found_commits,
-                                current_depth + 1,
-                                max_depth,
-                            )?;
-
-                            entries.push(TreeEntry::with_entries(entry, child_entries));
-                        } else {
-                            entries.push(TreeEntry::from_metadata_entry(entry));
-                        }
+                    if should_recurse {
+                        let child_entries = build_tree_entries(
+                            repo,
+                            child,
+                            parsed_resource,
+                            found_commits,
+                            current_depth + 1,
+                            max_depth,
+                        )?;
+                        entries.push(TreeEntry::with_entries(entry, child_entries));
+                    } else {
+                        entries.push(TreeEntry::from_metadata_entry(entry));
                     }
                 }
             }
@@ -810,61 +711,5 @@ fn build_tree_entries_for_dir(
         }
     }
 
-    // Sort entries by is_dir first, then by filename
-    entries.sort_by(|a, b| {
-        b.entry
-            .is_dir()
-            .cmp(&a.entry.is_dir())
-            .then_with(|| a.entry.filename().cmp(b.entry.filename()))
-    });
-
     Ok(entries)
-}
-
-/// Apply workspace data to tree entries recursively
-fn apply_workspace_to_tree_entries(
-    repo: &LocalRepository,
-    base_path: impl AsRef<Path>,
-    workspace: &crate::model::Workspace,
-    entries: Vec<TreeEntry>,
-) -> Result<Vec<TreeEntry>, OxenError> {
-    let mut result = Vec::new();
-
-    for entry in entries {
-        let path = if let Some(resource) = entry.entry.resource() {
-            resource.path.clone()
-        } else {
-            base_path.as_ref().join(entry.entry.filename())
-        };
-
-        // Apply workspace data to this entry
-        let updated_entry = if let EMetadataEntry::MetadataEntry(metadata) = entry.entry {
-            let workspace_entries = repositories::workspaces::populate_entries_with_workspace_data(
-                repo,
-                path.parent().unwrap_or(std::path::Path::new("")),
-                workspace,
-                &[metadata],
-            )?;
-            workspace_entries.into_iter().next().unwrap()
-        } else {
-            entry.entry
-        };
-
-        // Recursively apply to children if present
-        let updated_children = if let Some(children) = entry.entries {
-            Some(apply_workspace_to_tree_entries(
-                repo, &path, workspace, children,
-            )?)
-        } else {
-            None
-        };
-
-        if let Some(children) = updated_children {
-            result.push(TreeEntry::with_entries(updated_entry, children));
-        } else {
-            result.push(TreeEntry::from_metadata_entry(updated_entry));
-        }
-    }
-
-    Ok(result)
 }

@@ -140,42 +140,25 @@ pub fn list_directory_w_workspace(
     }
 }
 
-pub async fn list_directory_tree_w_workspace(
+pub async fn list_directory_tree(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
     directory: impl AsRef<Path>,
-    workspace_id: Option<String>,
     depth: i32,
 ) -> Result<TreeEntries, OxenError> {
-    let _perf = crate::perf_guard!("entries::list_directory_tree_w_workspace");
+    let _perf = crate::perf_guard!("entries::list_directory_tree");
 
     let revision_str = revision.as_ref().to_string();
-
-    // Get workspace if workspace_id is provided
-    let workspace = if let Some(id) = workspace_id {
-        match repositories::workspaces::get(repo, &id)? {
-            Some(ws) => Some(ws),
-            None => return Err(OxenError::workspace_not_found(id.into())),
-        }
-    } else {
-        None
-    };
-
-    let version_str = if let Some(ref workspace) = workspace {
-        workspace.id.clone()
-    } else {
-        revision_str.clone()
-    };
 
     let branch = repositories::branches::get_by_name(repo, &revision_str)?;
     let commit = repositories::revisions::get(repo, &revision_str)?;
     let parsed_resource = ParsedResource {
         path: directory.as_ref().to_path_buf(),
         commit,
-        workspace,
+        workspace: None,
         branch,
-        version: PathBuf::from(&version_str),
-        resource: PathBuf::from(&version_str).join(directory.as_ref()),
+        version: PathBuf::from(&revision_str),
+        resource: PathBuf::from(&revision_str).join(directory.as_ref()),
     };
 
     core::v_latest::entries::list_directory_tree(repo, directory, &parsed_resource, depth).await
