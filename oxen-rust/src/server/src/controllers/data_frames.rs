@@ -25,9 +25,7 @@ use uuid::Uuid;
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}",
-    operation_id = "get_data_frame_slice",
-    tag = "DataFrames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -127,9 +125,7 @@ pub async fn get(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}/index",
-    operation_id = "start_data_frame_indexing",
-    tag = "DataFrames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
@@ -181,9 +177,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/from_directory/{resource}",
-    operation_id = "create_data_frame_from_directory",
-    tag = "DataFrames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),

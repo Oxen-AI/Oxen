@@ -50,10 +50,11 @@ pub struct WorkspaceFileQueryParams {
     pub thumbnail: Option<bool>,
 }
 
-/// Get workspace file
+/// Get file from workspace
 #[utoipa::path(
     get,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    description = "Get a file from a workspace.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -200,20 +201,21 @@ pub async fn get(
         .streaming(stream))
 }
 
-/// Add file to workspace
+/// Add files to workspace
 #[utoipa::path(
     post,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    description = "Upload and stage files to a workspace. Accept a multipart with either gzipped or uncompressed file parts. Use the filename from the file part and compute the file hash from the content.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
-        ("path" = String, Path, description = "The directory to upload the file to", example = "data/train")
+        ("path" = String, Path, description = "The target path to upload the file to", example = "data/train")
     ),
     request_body(
         content_type = "multipart/form-data",
-        description = "Multipart upload of file. Form field 'file' should be the file content.",
+        description = "Multipart upload of file. Each file should be sent as a separate file part",
         content = FileUpload,
     ),
     responses(
@@ -276,7 +278,8 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 /// Stage files to workspace
 #[utoipa::path(
     post,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
+    description = "Stage file nodes to a workspace. Do not upload file contents to the repository.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -339,7 +342,8 @@ pub async fn add_version_files(
 /// Delete file from workspace staging
 #[utoipa::path(
     delete,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    description = "Delete a file from workspace staging.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -371,9 +375,9 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 /// Stage files for removal
 #[utoipa::path(
     delete,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/versions",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/versions",
+    description = "Stage files for removal from the repository. Accept both files and directories.",
     tag = "Workspace Files",
-    summary = "Batch delete files (Stage removal)",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
@@ -381,7 +385,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     ),
     request_body(
         content = Vec<String>,
-        description = "List of paths to remove from the workspace staging area",
+        description = "List of paths to stage for removal",
         example = json!(["images/train/dog_1.jpg", "annotations/incorrect.xml"])
     ),
     responses(
@@ -440,9 +444,9 @@ pub async fn rm_files(
 /// Unstage files
 #[utoipa::path(
     post,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/restore",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/restore",
+    description = "Unstage files from a workspace. Accept both files and directories.",
     tag = "Workspace Files",
-    summary = "Unstage files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
@@ -532,7 +536,8 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
 /// Move or rename a file within the workspace
 #[utoipa::path(
     patch,
-    path = "/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    description = "Move or rename a file within the workspace.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),

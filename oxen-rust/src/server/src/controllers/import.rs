@@ -24,7 +24,7 @@ const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen
     title = "ZipUploadBody",
     description = "Body for uploading a zip archive via multipart/form-data",
     example = json!({
-        "file": "<binary zip data>", 
+        "file": "<binary zip data>",
         "commit_message": "Importing full archive of grazing data",
         "name": "ox",
         "email": "ox@oxen.ai"
@@ -64,7 +64,6 @@ pub struct ImportFileBody {
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/{resource}",
     tag = "Import",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Common-Crawl"),
@@ -199,8 +198,7 @@ pub async fn import(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/upload/{resource}",
-    tag = "Files",
-    security( ("api_key" = []) ),
+    tag = "Import",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Wiki-Text"),

@@ -39,8 +39,8 @@ use crate::params::{
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
-    tag = "list_between",
-    security( ("api_key" = []) ),
+    description = "List commits between two revisions.",
+    tags = ["Compare", "Commits"], // confusing that this endpoint isn't in the 'commits' namespace. People will look there, so listing it there as well.
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -98,7 +98,6 @@ pub async fn commits(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/entries",
     tag = "Compare",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -182,8 +181,7 @@ pub async fn entries(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/tree",
-    tag = "get_diff_tree",
-    security( ("api_key" = []) ),
+    tag = "Compare",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -224,12 +222,12 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     Ok(HttpResponse::Ok().json(response))
 }
 
-/// List file and directory entries changed within a directory between revisions
+/// List changed files
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/dir/{dir}/entries",
+    description = "List the files and sub-directories within a directory that have changed within a provided commit range.",
     tag = "Compare",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -314,7 +312,6 @@ pub async fn dir_entries(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/file/{resource}",
     tag = "Compare",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -383,8 +380,7 @@ pub async fn file(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames",
-    tag = "Compare Data Frames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -490,8 +486,7 @@ pub async fn create_df_diff(
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
-    tag = "Compare Data Frames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -599,8 +594,7 @@ pub async fn update_df_diff(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
-    tag = "Compare Data Frames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -688,8 +682,7 @@ pub async fn get_df_diff(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
-    tag = "Compare Data Frames",
-    security( ("api_key" = []) ),
+    tag = "Data Frames",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -712,12 +705,11 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
-/// Get Data Frame from Tabular Diff
+/// Get Derived Data Frame
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}/diff",
-    tag = "get_data_frame_from_tabular_diff",
-    security( ("api_key" = []) ),
+    tag = "Compare",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),

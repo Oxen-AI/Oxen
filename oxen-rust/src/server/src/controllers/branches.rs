@@ -21,9 +21,7 @@ use liboxen::{constants, repositories};
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
-    operation_id = "list_branches",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -31,7 +29,7 @@ use liboxen::{constants, repositories};
     responses(
         (
             status = 200,
-            description = "List of branches", 
+            description = "List of branches",
             body = ListBranchesResponse,
             example = json!({
                 "branches": [
@@ -81,13 +79,11 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
-/// Get a specific branch
+/// Get an existing branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
-    operation_id = "get_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -122,9 +118,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches",
-    operation_id = "create_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -210,9 +204,7 @@ fn create_from_commit(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
-    operation_id = "delete_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -244,9 +236,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
-    operation_id = "update_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -286,17 +276,15 @@ pub async fn update(
     }))
 }
 
-/// Merge an incoming commit into a branch
+/// Merge a commit into a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
-    operation_id = "merge_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch to merge into (the destination)", example = "main"),
+        ("branch_name" = String, Path, description = "Name of the branch to merge into (the target branch)", example = "main"),
     ),
     request_body(
         content = BranchRemoteMerge,
@@ -367,9 +355,7 @@ pub async fn maybe_create_merge(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
-    operation_id = "get_latest_synced_commit",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -397,13 +383,11 @@ pub async fn latest_synced_commit(
     }))
 }
 
-/// Lock a branch (prevents writes)
+/// Lock a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
-    operation_id = "lock_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -440,13 +424,11 @@ pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }
 }
 
-/// Unlock a branch (allows writes)
+/// Unlock a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/unlock",
-    operation_id = "unlock_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -476,9 +458,7 @@ pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
-    operation_id = "is_branch_locked",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -504,18 +484,16 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     }))
 }
 
-/// List file history/versions for a path on a branch
+/// Get all versions of a file on a branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
-    operation_id = "list_entry_versions",
     tag = "Branches",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
         ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
-        ("path" = String, Path, description = "Path to the file/entry", example = "images/train.jpg"),
+        ("path" = String, Path, description = "Path to the file or dir", example = "images/train.jpg"),
         PageNumQuery
     ),
     responses(

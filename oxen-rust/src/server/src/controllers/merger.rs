@@ -16,7 +16,6 @@ use liboxen::view::StatusMessage;
     get,
     path = "/api/repos/{namespace}/{repo_name}/merge/{base_head}",
     tag = "Merge",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -74,7 +73,6 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     post,
     path = "/api/repos/{namespace}/{repo_name}/merge/{base_head}",
     tag = "Merge",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),

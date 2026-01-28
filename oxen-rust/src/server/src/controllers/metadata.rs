@@ -12,13 +12,11 @@ use liboxen::{current_function, repositories};
 use actix_web::{HttpRequest, HttpResponse};
 use utoipa;
 
-/// Get entry metadata
+/// Get file metadata
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
-    operation_id = "get_entry_metadata",
-    tag = "Entries",
-    security( ("api_key" = []) ),
+    tag = "Metadata",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -100,13 +98,11 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     Ok(HttpResponse::Ok().json(meta))
 }
 
-/// Update metadata
+/// Update file metadata
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
-    operation_id = "update_entry_metadata",
-    tag = "Entries",
-    security( ("api_key" = []) ),
+    tag = "Metadata",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
