@@ -11,9 +11,9 @@ use liboxen::model::LocalRepository;
 use liboxen::util::{self, paginate};
 use liboxen::view::entries::ResourceVersion;
 use liboxen::view::{
-    BranchLockResponse, BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge,
-    BranchResponse, BranchUpdate, CommitEntryVersion, CommitResponse, ListBranchesResponse,
-    PaginatedEntryVersions, PaginatedEntryVersionsResponse, StatusMessage,
+    BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge, BranchResponse,
+    BranchUpdate, CommitEntryVersion, CommitResponse, ListBranchesResponse, PaginatedEntryVersions,
+    PaginatedEntryVersionsResponse, StatusMessage,
 };
 use liboxen::{constants, repositories};
 
@@ -21,9 +21,8 @@ use liboxen::{constants, repositories};
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
-    operation_id = "list_branches",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "List all branches in the repository with their current commit information.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -31,7 +30,7 @@ use liboxen::{constants, repositories};
     responses(
         (
             status = 200,
-            description = "List of branches", 
+            description = "List of branches",
             body = ListBranchesResponse,
             example = json!({
                 "branches": [
@@ -81,13 +80,12 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(view))
 }
 
-/// Get a specific branch
+/// Get an existing branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
-    operation_id = "get_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "Get a branch by name, returning its details and current commit.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -122,9 +120,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches",
-    operation_id = "create_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "Create a new branch from another branch name or commit ID. Returns existing branch if name already exists.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -210,9 +207,8 @@ fn create_from_commit(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
-    operation_id = "delete_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "Force delete a branch by name.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -244,9 +240,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
-    operation_id = "update_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "Update a branch to point to a different commit ID.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -286,17 +281,16 @@ pub async fn update(
     }))
 }
 
-/// Merge an incoming commit into a branch
+/// Merge a commit into a branch
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
-    operation_id = "merge_branch",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "Merge a client commit into a branch during push. Returns merge commit on success, or original server commit if conflicts occur.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch to merge into (the destination)", example = "main"),
+        ("branch_name" = String, Path, description = "Name of the branch to merge into (the target branch)", example = "main"),
     ),
     request_body(
         content = BranchRemoteMerge,
@@ -363,159 +357,17 @@ pub async fn maybe_create_merge(
     }
 }
 
-/// Get Latest Commit for Branch
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
-    operation_id = "get_latest_synced_commit",
-    tag = "Branches",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
-    ),
-    responses(
-        (status = 200, description = "Latest synced commit found", body = CommitResponse),
-        (status = 404, description = "Branch not found")
-    )
-)]
-pub async fn latest_synced_commit(
-    req: HttpRequest,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let commit = repositories::branches::latest_synced_commit(&repository, &branch_name)?;
-
-    Ok(HttpResponse::Ok().json(CommitResponse {
-        status: StatusMessage::resource_found(),
-        commit,
-    }))
-}
-
-/// Lock a branch (prevents writes)
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
-    operation_id = "lock_branch",
-    tag = "Branches",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch to lock", example = "main"),
-    ),
-    responses(
-        (status = 200, description = "Branch locked successfully", body = BranchLockResponse),
-        (status = 409, description = "Failed to lock branch (already locked or unavailable)", body = BranchLockResponse),
-    )
-)]
-pub async fn lock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
-
-    match repositories::branches::lock(&repository, &branch_name) {
-        Ok(_) => Ok(HttpResponse::Ok().json(BranchLockResponse {
-            status: StatusMessage::resource_updated(),
-            branch_name: branch_name.clone(),
-            is_locked: true,
-        })),
-        Err(e) => {
-            // Log the error for debugging
-            log::error!("Failed to lock branch: {e}");
-
-            Ok(HttpResponse::Conflict().json(BranchLockResponse {
-                status: StatusMessage::error(e.to_string()),
-                branch_name: branch_name.clone(),
-                is_locked: false,
-            }))
-        }
-    }
-}
-
-/// Unlock a branch (allows writes)
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/unlock",
-    operation_id = "unlock_branch",
-    tag = "Branches",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch to unlock", example = "main"),
-    ),
-    responses(
-        (status = 200, description = "Branch unlocked", body = BranchLockResponse),
-    )
-)]
-pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
-
-    repositories::branches::unlock(&repository, &branch_name)?;
-
-    Ok(HttpResponse::Ok().json(BranchLockResponse {
-        status: StatusMessage::resource_updated(),
-        branch_name,
-        is_locked: false,
-    }))
-}
-
-/// Check if a branch is locked
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
-    operation_id = "is_branch_locked",
-    tag = "Branches",
-    security( ("api_key" = []) ),
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch to check", example = "main"),
-    ),
-    responses(
-        (status = 200, description = "Branch lock status returned", body = BranchLockResponse),
-    )
-)]
-pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
-
-    let is_locked = repositories::branches::is_locked(&repository, &branch_name)?;
-
-    Ok(HttpResponse::Ok().json(BranchLockResponse {
-        status: StatusMessage::resource_found(),
-        branch_name,
-        is_locked,
-    }))
-}
-
-/// List file history/versions for a path on a branch
+/// Get all versions of a file on a branch
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
-    operation_id = "list_entry_versions",
     tag = "Branches",
-    security( ("api_key" = []) ),
+    description = "List paginated historical versions of a file across commits on a branch, including schema hash for tabular files.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
         ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
-        ("path" = String, Path, description = "Path to the file/entry", example = "images/train.jpg"),
+        ("path" = String, Path, description = "Path to the file or dir", example = "images/train.jpg"),
         PageNumQuery
     ),
     responses(

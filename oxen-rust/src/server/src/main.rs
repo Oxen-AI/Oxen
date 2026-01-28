@@ -92,9 +92,21 @@ const SUPPORT: &str = "
 
 // Exports for the utoipa docs
 // To add new endpoints to the docs, register their respective controller modules and schemas below
+// TODO: we should be able to automatically discover these,
+// see: https://github.com/juhaku/utoipa/blob/master/utoipa-actix-web/README.md
+// If that doesn't work, we should break these out into separate schemas in the
+// corresponding 'services' module and use the 'nest' attribute to include them
+// in the top-level schema
+// see: https://docs.rs/utoipa/latest/utoipa/derive.OpenApi.html#nest-attribute-syntax
 #[derive(OpenApi)]
 #[openapi(
+    tags(
+        (name = "Namespaces", description = "Namespace management endpoints"),
+        (name = "Repositories", description = "Repository management endpoints.")
+    ),
     paths(
+        // Health
+        crate::controllers::oxen_version::index,
         // Namespaces
         crate::controllers::namespaces::index,
         crate::controllers::namespaces::show,
@@ -110,7 +122,6 @@ const SUPPORT: &str = "
         // Workspaces
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
-        crate::controllers::workspaces::create,
         crate::controllers::workspaces::list,
         crate::controllers::workspaces::clear,
         crate::controllers::workspaces::delete,
@@ -130,10 +141,6 @@ const SUPPORT: &str = "
         crate::controllers::branches::delete,
         crate::controllers::branches::update,
         crate::controllers::branches::maybe_create_merge,
-        crate::controllers::branches::latest_synced_commit,
-        crate::controllers::branches::lock,
-        crate::controllers::branches::unlock,
-        crate::controllers::branches::is_locked,
         crate::controllers::branches::list_entry_versions,
         // Commits
         crate::controllers::commits::index,
@@ -173,6 +180,8 @@ const SUPPORT: &str = "
         // Files (Repository)
         crate::controllers::file::get,
         crate::controllers::file::put,
+        crate::controllers::file::delete,
+        crate::controllers::file::mv,
         // Import
         crate::controllers::import::upload_zip,
         crate::controllers::import::import,
@@ -225,7 +234,8 @@ const SUPPORT: &str = "
             // Fork Schemas
             ForkRequest, ForkStartResponse, ForkStatus,
             // File/Entry Schemas
-            CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,            FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
+            CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
+            FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
             // Upload & Request Bodies
             crate::controllers::workspaces::files::FileUpload,
             crate::controllers::file::FileUploadBody,

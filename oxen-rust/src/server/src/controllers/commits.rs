@@ -74,9 +74,8 @@ pub struct ListMissingFilesQuery {
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits",
-    operation_id = "list_commits",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "List all commits in the repository's history.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -100,9 +99,8 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/history/{resource}",
-    operation_id = "list_commit_history",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "List paginated commit history for a revision or file path. Supports revision ranges (base..head) and path-specific history.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -191,9 +189,8 @@ pub async fn history(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/all",
-    operation_id = "list_all_commits",
+    description = "List all commits in a repository",
     tag = "Commits",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -226,9 +223,8 @@ pub async fn list_all(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/missing",
-    operation_id = "list_missing_commits",
+    description = "From a list of commit hashes, list the ones not present on the server",
     tag = "Commits",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -279,13 +275,12 @@ pub async fn list_missing(
     Ok(HttpResponse::Ok().json(response))
 }
 
-/// List files missing on the server within a commit range
+/// List missing files from commits
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/missing_files",
-    operation_id = "list_missing_files",
+    description = "List files that are referenced in a commit but not present on the server. Accept a commit range.",
     tag = "Commits",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -331,9 +326,8 @@ pub async fn list_missing_files(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/synced",
-    operation_id = "mark_commits_synced",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Mark a list of commit hashes as successfully synchronized to the server.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -386,9 +380,8 @@ pub async fn mark_commits_as_synced(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}",
-    operation_id = "get_commit",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Get details of a specific commit by its ID.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -414,13 +407,12 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }))
 }
 
-/// List commit parents
+/// Get a commit's parents
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/parents",
-    operation_id = "get_commit_parents",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Get the parent commits of a specific commit or the tip of a branch.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -450,9 +442,8 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits_db",
-    operation_id = "download_commits_db",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Download the commits database as a compressed tarball for cloning.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -500,9 +491,8 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{base_head}/dir_hashes_db",
-    operation_id = "download_dir_hashes_db",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Download directory hashes database for a commit range as a tarball.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -551,9 +541,8 @@ pub async fn download_dir_hashes_db(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/commit_entries_db",
-    operation_id = "download_commit_entries_db",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Download the commit entries database for a specific commit as a tarball.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -660,13 +649,12 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
     Ok(buffer)
 }
 
-/// Create commit
+/// Upload commit
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits",
-    operation_id = "create_commit",
+    description = "Upload a commit to a branch on the server. This creates an empty commit. To create a commit with children, use the upload_tree endpoint.",
     tag = "Commits",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -737,9 +725,8 @@ pub async fn create(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload_chunk",
-    operation_id = "upload_chunk",
+    description = "Upload a chunk of file data for use in large file uploads.",
     tag = "Commits",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -1015,9 +1002,8 @@ async fn unpack_compressed_data(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload",
-    operation_id = "upload_commits_db",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Upload the commits database tarball to the server during push.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -1075,9 +1061,8 @@ pub async fn upload(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/complete",
-    operation_id = "commit_upload_complete",
+    description = "Notify the server that the commit has finished uploading.",
     tag = "Commits",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -1131,9 +1116,8 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/upload_tree",
-    operation_id = "upload_tree",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Upload a commit's merkle tree data as a compressed tarball.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -1191,9 +1175,8 @@ pub async fn upload_tree(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/root",
-    operation_id = "get_root_commit",
     tag = "Commits",
-    security( ("api_key" = []) ),
+    description = "Get the root (initial) commit of the repository, or None if empty.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),

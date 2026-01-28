@@ -60,13 +60,13 @@ pub fn workspace() -> Scope {
                     "/validate",
                     web::post().to(controllers::workspaces::files::validate),
                 )
-                // TODO: Depreciate /commit as we are calling it /merge instead to be consistent with the /merge branch endpoint
-                .route(
-                    "/commit/{branch:.*}",
-                    web::post().to(controllers::workspaces::commit),
-                )
                 .route(
                     "/merge/{branch:.*}",
+                    web::post().to(controllers::workspaces::commit),
+                )
+                // /commit is deprecated - use /merge instead to be consistent with the /merge branch endpoint
+                .route(
+                    "/commit/{branch:.*}",
                     web::post().to(controllers::workspaces::commit),
                 )
                 .route(

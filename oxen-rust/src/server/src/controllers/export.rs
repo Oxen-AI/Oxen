@@ -9,11 +9,12 @@ use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::view::FileWithHash;
 use liboxen::{constants, repositories};
 
+/// Export resource as a zip
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/export/download/{resource}",
-    tag = "Files",
-    security( ("api_key" = []) ),
+    tag = "Export",
+    description = "Download a directory as a zip archive. Subject to size limits.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Wiki-Text"),
