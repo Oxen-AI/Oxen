@@ -18,14 +18,6 @@ pub struct BranchWithCacherStatusResponse {
     pub is_cacher_pending: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
-pub struct BranchLockResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub branch_name: String,
-    pub is_locked: bool,
-}
-
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct BranchNew {
     pub name: String,

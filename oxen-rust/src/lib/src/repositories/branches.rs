@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::constants::{BRANCH_LOCKS_DIR, OXEN_HIDDEN_DIR};
 use crate::core::refs::with_ref_manager;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -176,120 +175,6 @@ pub fn is_checked_out(repo: &LocalRepository, name: &str) -> bool {
     false
 }
 
-/// Lock a branch for pushing
-pub fn lock(repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-    // Errors if lock exists - to avoid double-request ("is_locked" -> if false "lock")
-    let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
-    let locks_dir = oxen_dir.join(BRANCH_LOCKS_DIR);
-
-    let clean_name = branch_name_no_slashes(name);
-    let branch_lock_file = locks_dir.join(clean_name);
-    log::debug!(
-        "Locking branch: {} to path {}",
-        name,
-        branch_lock_file.display()
-    );
-
-    if branch_lock_file.exists() || repositories::is_locked(repo) {
-        return Err(OxenError::remote_branch_locked());
-    }
-
-    // If the branch exists, get the current head commit and lock it as the current "latest commit"
-    // during the lifetime of the push operation.
-    let maybe_branch = repositories::branches::get_by_name(repo, name)?;
-
-    let maybe_latest_commit;
-    if let Some(branch) = maybe_branch {
-        maybe_latest_commit = branch.commit_id;
-    } else {
-        maybe_latest_commit = "branch being created".to_string();
-    }
-
-    // Create locks dir if needed
-    if !locks_dir.exists() {
-        util::fs::create_dir_all(&locks_dir)?;
-    }
-
-    util::fs::write_to_path(&branch_lock_file, maybe_latest_commit)?;
-    Ok(())
-}
-
-/// Check if a branch is locked
-pub fn is_locked(repo: &LocalRepository, name: &str) -> Result<bool, OxenError> {
-    // Get the oxen hidden dir
-    let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
-    let locks_dir = oxen_dir.join(BRANCH_LOCKS_DIR);
-
-    // Create locks dir if not exists
-    if !locks_dir.exists() {
-        util::fs::create_dir_all(&locks_dir)?;
-    }
-
-    // Add a file with the branch name to the locks dir
-    let clean_name = branch_name_no_slashes(name);
-    let branch_lock_file = locks_dir.join(clean_name);
-    log::debug!(
-        "Checking if branch is locked: {} at path {} exists: {}",
-        name,
-        branch_lock_file.display(),
-        branch_lock_file.exists()
-    );
-    // Branch is locked if file exists
-    Ok(branch_lock_file.exists())
-}
-
-/// Read the lock file for a branch
-pub fn read_lock_file(repo: &LocalRepository, name: &str) -> Result<String, OxenError> {
-    // Get the oxen hidden dir
-    let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
-    let locks_dir = oxen_dir.join(BRANCH_LOCKS_DIR);
-
-    // Add a file with the branch name to the locks dir
-    let clean_name = branch_name_no_slashes(name);
-    let branch_lock_file = locks_dir.join(clean_name);
-    log::debug!(
-        "Reading lock file for branch: {} at path {} exists: {}",
-        name,
-        branch_lock_file.display(),
-        branch_lock_file.exists()
-    );
-
-    // Check if lock exists
-    if !branch_lock_file.exists() {
-        let err = format!("Err: Branch '{name}' is not locked.");
-        return Err(OxenError::basic_str(err));
-    }
-
-    let contents = std::fs::read_to_string(branch_lock_file)?;
-    Ok(contents)
-}
-
-/// Unlock a branch for pushing
-pub fn unlock(repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
-    // Get the oxen hidden dir
-    let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
-    let locks_dir = oxen_dir.join(BRANCH_LOCKS_DIR);
-
-    // Add a file with the branch name to the locks dir
-    let clean_name = branch_name_no_slashes(name);
-    let branch_lock_file = locks_dir.join(clean_name);
-    log::debug!(
-        "Unlocking branch: {} at path {}",
-        name,
-        branch_lock_file.display()
-    );
-
-    // Check if lock exists
-    if !branch_lock_file.exists() {
-        log::debug!("Branch is not locked, nothing to do");
-        return Ok(());
-    }
-
-    util::fs::remove_file(&branch_lock_file)?;
-
-    Ok(())
-}
-
 /// Checkout a branch
 pub async fn checkout_branch_from_commit(
     repo: &LocalRepository,
@@ -411,11 +296,6 @@ pub async fn set_working_repo_to_commit(
         }
         _ => core::v_latest::branches::set_working_repo_to_commit(repo, commit, from_commit).await,
     }
-}
-
-fn branch_name_no_slashes(name: &str) -> String {
-    // Replace all slashes with dashes
-    name.replace('/', "-")
 }
 
 #[cfg(test)]

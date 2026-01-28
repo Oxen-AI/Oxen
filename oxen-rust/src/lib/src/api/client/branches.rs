@@ -4,9 +4,9 @@ use crate::error::OxenError;
 use crate::model::{Branch, Commit, LocalRepository, RemoteRepository};
 use crate::opts::PaginateOpts;
 use crate::view::{
-    BranchLockResponse, BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge,
-    BranchResponse, CommitResponse, ListBranchesResponse, PaginatedEntryVersions,
-    PaginatedEntryVersionsResponse, StatusMessage,
+    BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge, BranchResponse,
+    CommitResponse, ListBranchesResponse, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
+    StatusMessage,
 };
 use serde_json::json;
 use std::path::Path;
@@ -220,20 +220,6 @@ pub async fn unlock(
     let body = client::parse_json_body(&url, res).await?;
     let response: StatusMessage = serde_json::from_str(&body)?;
     Ok(response)
-}
-
-pub async fn is_locked(
-    repository: &RemoteRepository,
-    branch_name: &str,
-) -> Result<bool, OxenError> {
-    let uri = format!("/branches/{branch_name}/lock");
-    let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Checking if branch is locked: {url}");
-    let client = client::new_for_url(&url)?;
-    let res = client.get(&url).send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: BranchLockResponse = serde_json::from_str(&body)?;
-    Ok(response.is_locked)
 }
 
 pub async fn list_entry_versions(

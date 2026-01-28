@@ -8,20 +8,8 @@ pub fn branches() -> Scope {
         .route("", web::get().to(controllers::branches::index))
         .route("", web::post().to(controllers::branches::create))
         .route(
-            "/{branch_name:.*}/lock",
-            web::post().to(controllers::branches::lock),
-        )
-        .route(
             "/{branch_name:.*}/versions/{path:.*}",
             web::get().to(controllers::branches::list_entry_versions),
-        )
-        .route(
-            "/{branch_name:.*}/lock",
-            web::get().to(controllers::branches::is_locked),
-        )
-        .route(
-            "/{branch_name:.*}/unlock",
-            web::post().to(controllers::branches::unlock),
         )
         .route(
             "/{branch_name:.*}/merge",
