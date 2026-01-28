@@ -639,14 +639,8 @@ pub async fn list_directory_tree(
     });
 
     // Build tree entries using loop-based traversal
-    let tree_entries = build_tree_entries_iterative(
-        repo,
-        &dir,
-        directory,
-        parsed_resource,
-        &mut found_commits,
-        depth,
-    )?;
+    let tree_entries =
+        build_tree_entries_iterative(repo, &dir, parsed_resource, &mut found_commits, depth)?;
 
     let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
 
@@ -671,58 +665,45 @@ pub async fn list_directory_tree(
     })
 }
 
-/// Build tree entries using iterative traversal with a queue
 fn build_tree_entries_iterative(
     repo: &LocalRepository,
     root_node: &MerkleTreeNode,
-    search_directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     max_depth: i32,
 ) -> Result<Vec<TreeEntry>, OxenError> {
     let _perf = crate::perf_guard!("core::entries::build_tree_entries_iterative");
 
-    let search_directory = search_directory.as_ref();
     let mut root_entries: Vec<TreeEntry> = Vec::new();
 
-    // Use a stack for depth-first traversal to maintain order
-    let mut stack: Vec<(&MerkleTreeNode, std::path::PathBuf, i32)> = Vec::new();
+    // Stack holds (node, depth)
+    let mut stack: Vec<(&MerkleTreeNode, i32)> = Vec::new();
 
-    // First pass: collect all entries at the root level
     for child in &root_node.children {
-        stack.push((child, search_directory.to_path_buf(), 0));
+        stack.push((child, 0));
     }
 
-    // Process entries using a loop
-    while let Some((node, current_directory, current_depth)) = stack.pop() {
+    while let Some((node, current_depth)) = stack.pop() {
         match &node.node {
             EMerkleTreeNode::VNode(_) => {
-                // VNodes are virtual nodes, recurse into their children
                 for child in &node.children {
-                    stack.push((child, current_directory.clone(), current_depth));
+                    stack.push((child, current_depth));
                 }
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                if current_directory == search_directory && !dir_node.name().is_empty() {
-                    // This is a directory at the root level
+                // Skip root directory node (empty name)
+                if dir_node.name().is_empty() {
+                    continue;
+                }
 
-                    let metadata = dir_node_to_metadata_entry(
-                        repo,
-                        node,
-                        parsed_resource,
-                        found_commits,
-                        true,
-                    )?;
+                let metadata =
+                    dir_node_to_metadata_entry(repo, node, parsed_resource, found_commits, true)?;
 
-                    if let Some(metadata) = metadata {
-                        let entry = EMetadataEntry::MetadataEntry(metadata);
+                if let Some(metadata) = metadata {
+                    let entry = EMetadataEntry::MetadataEntry(metadata);
 
-                        // Check if we should recurse deeper
-                        // current_depth=0 for root level items, so we recurse if 1 < max_depth
-                        let should_recurse = max_depth < 0 || (current_depth + 1) < max_depth;
-
-                        if should_recurse {
-                            // Recursively build child entries
+                    match max_depth < 0 || (current_depth + 1) < max_depth {
+                        true => {
                             let child_entries = build_tree_entries_for_dir(
                                 repo,
                                 node,
@@ -733,45 +714,25 @@ fn build_tree_entries_iterative(
                             )?;
 
                             root_entries.push(TreeEntry::with_entries(entry, child_entries));
-                        } else {
+                        }
+                        false => {
                             root_entries.push(TreeEntry::from_metadata_entry(entry));
                         }
-                    }
-                } else {
-                    // Continue traversing to find the search directory
-                    let next_directory = current_directory.join(dir_node.name());
-                    for child in &node.children {
-                        stack.push((child, next_directory.clone(), current_depth));
                     }
                 }
             }
             EMerkleTreeNode::File(file_node) => {
-                if current_directory == search_directory {
-                    // This is a file at the root level
-                    let metadata = file_node_to_metadata_entry(
-                        repo,
-                        file_node,
-                        parsed_resource,
-                        found_commits,
-                    )?;
+                let metadata =
+                    file_node_to_metadata_entry(repo, file_node, parsed_resource, found_commits)?;
 
-                    if let Some(metadata) = metadata {
-                        let entry = EMetadataEntry::MetadataEntry(metadata);
-                        root_entries.push(TreeEntry::from_metadata_entry(entry));
-                    }
+                if let Some(metadata) = metadata {
+                    let entry = EMetadataEntry::MetadataEntry(metadata);
+                    root_entries.push(TreeEntry::from_metadata_entry(entry));
                 }
             }
             _ => {}
         }
     }
-
-    // Sort entries by is_dir first, then by filename
-    root_entries.sort_by(|a, b| {
-        b.entry
-            .is_dir()
-            .cmp(&a.entry.is_dir())
-            .then_with(|| a.entry.filename().cmp(b.entry.filename()))
-    });
 
     Ok(root_entries)
 }
