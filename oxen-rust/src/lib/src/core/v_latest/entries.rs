@@ -619,9 +619,7 @@ pub async fn list_directory_tree(
         .clone()
         .ok_or(OxenError::revision_not_found(revision.into()))?;
 
-    // For tree API, we need to load the full tree structure recursively
-    // to properly traverse and build nested entries
-    let dir = repositories::tree::get_dir_with_children_recursive(repo, &commit, directory, None)?
+    let dir = repositories::tree::get_subtree_by_depth(repo, &commit, directory, depth)?
         .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
 
     let EMerkleTreeNode::Directory(dir_node) = &dir.node else {

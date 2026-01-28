@@ -153,7 +153,10 @@ pub async fn list_directory_tree_w_workspace(
 
     // Get workspace if workspace_id is provided
     let workspace = if let Some(id) = workspace_id {
-        repositories::workspaces::get(repo, &id)?
+        match repositories::workspaces::get(repo, &id)? {
+            Some(ws) => Some(ws),
+            None => return Err(OxenError::workspace_not_found(id.into())),
+        }
     } else {
         None
     };
