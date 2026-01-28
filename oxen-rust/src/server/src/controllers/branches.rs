@@ -357,39 +357,6 @@ pub async fn maybe_create_merge(
     }
 }
 
-/// Get Latest Commit for Branch
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
-    tag = "Branches",
-    description = "Get the latest commit that has been fully synced to the server for a branch.",
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("branch_name" = String, Path, description = "Name of the branch", example = "main"),
-    ),
-    responses(
-        (status = 200, description = "Latest synced commit found", body = CommitResponse),
-        (status = 404, description = "Branch not found")
-    )
-)]
-pub async fn latest_synced_commit(
-    req: HttpRequest,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
-
-    let commit = repositories::branches::latest_synced_commit(&repository, &branch_name)?;
-
-    Ok(HttpResponse::Ok().json(CommitResponse {
-        status: StatusMessage::resource_found(),
-        commit,
-    }))
-}
-
 /// Lock a branch
 #[utoipa::path(
     post,

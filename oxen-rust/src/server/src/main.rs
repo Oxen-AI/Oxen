@@ -141,7 +141,6 @@ const SUPPORT: &str = "
         crate::controllers::branches::delete,
         crate::controllers::branches::update,
         crate::controllers::branches::maybe_create_merge,
-        crate::controllers::branches::latest_synced_commit,
         crate::controllers::branches::lock,
         crate::controllers::branches::unlock,
         crate::controllers::branches::is_locked,

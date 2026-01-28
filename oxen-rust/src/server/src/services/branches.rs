@@ -16,10 +16,6 @@ pub fn branches() -> Scope {
             web::get().to(controllers::branches::list_entry_versions),
         )
         .route(
-            "/{branch_name}/latest_synced_commit",
-            web::get().to(controllers::branches::latest_synced_commit),
-        )
-        .route(
             "/{branch_name:.*}/lock",
             web::get().to(controllers::branches::is_locked),
         )
