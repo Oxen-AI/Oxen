@@ -22,6 +22,7 @@ use liboxen::{constants, repositories};
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
     tag = "Branches",
+    description = "List all branches in the repository with their current commit information.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -84,6 +85,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
     tag = "Branches",
+    description = "Get a branch by name, returning its details and current commit.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -119,6 +121,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches",
     tag = "Branches",
+    description = "Create a new branch from another branch name or commit ID. Returns existing branch if name already exists.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -205,6 +208,7 @@ fn create_from_commit(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
     tag = "Branches",
+    description = "Force delete a branch by name.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -237,6 +241,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     put,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
     tag = "Branches",
+    description = "Update a branch to point to a different commit ID.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -281,6 +286,7 @@ pub async fn update(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
     tag = "Branches",
+    description = "Merge a client commit into a branch during push. Returns merge commit on success, or original server commit if conflicts occur.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -356,6 +362,7 @@ pub async fn maybe_create_merge(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/latest_synced_commit",
     tag = "Branches",
+    description = "Get the latest commit that has been fully synced to the server for a branch.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -459,6 +466,7 @@ pub async fn unlock(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/lock",
     tag = "Branches",
+    description = "Check whether a branch currently has an exclusive lock.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -489,6 +497,7 @@ pub async fn is_locked(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
     tag = "Branches",
+    description = "List paginated historical versions of a file across commits on a branch, including schema hash for tabular files.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),

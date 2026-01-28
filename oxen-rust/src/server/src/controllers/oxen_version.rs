@@ -11,6 +11,7 @@ use serde::Serialize;
     get,
     path = "/api/version",
     tag = "Health",
+    description = "Check if the Oxen server is running and responsive.",
     responses(
         (status = 200, description = "Server is running", body = StatusMessage)
     )

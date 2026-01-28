@@ -12,6 +12,7 @@ use utoipa;
     get,
     path = "/api/namespaces",
     tag = "Namespaces",
+    description = "List all namespaces on the server.",
     responses(
         (status = 200, description = "List of namespaces", body = ListNamespacesResponse),
     )
@@ -37,6 +38,7 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     get,
     path = "/api/namespaces/{namespace}",
     tag = "Namespaces",
+    description = "Get details of a specific namespace by name.",
     params(
         ("namespace" = String, Path, description = "Name of the namespace"),
     ),

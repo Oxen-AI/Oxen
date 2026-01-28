@@ -38,6 +38,7 @@ const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
     get,
     path = "/api/repos/{namespace}/{repo_name}/versions/{version_id}/metadata",
     tag = "Version Files",
+    description = "Get metadata for a specific file version by its hash.",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
@@ -92,6 +93,7 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     get,
     path = "/api/repos/{namespace}/{repo_name}/versions/{resource}",
     tag = "Version Files",
+    description = "Download a file by its resource path, with optional image resizing.",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
@@ -171,6 +173,7 @@ pub async fn download(
     post,
     path = "/api/repos/{namespace}/{repo_name}/versions/batch-download",
     tag = "Version Files",
+    description = "Download multiple files as a gzipped tarball by providing their hashes.",
     summary = "Batch download files (Tarball)",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -481,6 +484,7 @@ pub struct UploadVersionFile {
     post,
     path = "/api/repos/{namespace}/{repo_name}/versions",
     tag = "Version Files",
+    description = "Upload multiple files via multipart form, identified by their content hashes.",
     summary = "Batch upload files (Multipart)",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),

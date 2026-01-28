@@ -35,11 +35,11 @@ use crate::params::{
     PageNumQuery,
 };
 
-/// List commits between base and head
+/// List commits between two revisions
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
-    description = "List commits between two revisions.",
+    description = "List commits between a 'base' and 'head' commit.",
     tags = ["Compare", "Commits"], // confusing that this endpoint isn't in the 'commits' namespace. People will look there, so listing it there as well.
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -98,6 +98,7 @@ pub async fn commits(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/entries",
     tag = "Compare",
+    description = "List paginated entries (files and directories) that changed between two revisions with change counts.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -182,6 +183,7 @@ pub async fn entries(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/tree",
     tag = "Compare",
+    description = "Get a tree structure of directories that have changed between two revisions.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
@@ -312,6 +314,7 @@ pub async fn dir_entries(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/file/{resource}",
     tag = "Compare",
+    description = "Get the detailed diff for a specific file between two revisions.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -381,6 +384,7 @@ pub async fn file(
     post,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames",
     tag = "Data Frames",
+    description = "Create and cache a tabular diff comparing two data frames with configurable keys and target columns.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -487,6 +491,7 @@ pub async fn create_df_diff(
     put,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
     tag = "Data Frames",
+    description = "Update an existing cached tabular diff comparison with new configuration.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -595,6 +600,7 @@ pub async fn update_df_diff(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
     tag = "Data Frames",
+    description = "Retrieve a previously cached tabular diff by its comparison ID.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -683,6 +689,7 @@ pub async fn get_df_diff(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
     tag = "Data Frames",
+    description = "Delete a cached tabular diff comparison by its ID.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
@@ -710,6 +717,7 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}/diff",
     tag = "Compare",
+    description = "Get the derived diff data frame rows with pagination and optional filtering.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),

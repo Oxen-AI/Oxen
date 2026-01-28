@@ -65,6 +65,7 @@ pub struct FileQueryParams {
     get,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
     tag = "Files",
+    description = "Download a file from the repository. Supports image resizing and video thumbnail generation via query parameters.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Voice-Data"),
@@ -204,6 +205,7 @@ pub async fn get(
     put,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
     tag = "Files",
+    description = "Upload files to a directory on a branch via multipart form and commit them.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -402,6 +404,7 @@ pub struct FileMoveBody {
     patch,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
     tag = "Files",
+    description = "Move or rename a file within the repository and commit the change.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),

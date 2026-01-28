@@ -75,6 +75,7 @@ pub struct ListMissingFilesQuery {
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits",
     tag = "Commits",
+    description = "List all commits in the repository's history.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -94,11 +95,12 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(ListCommitResponse::success(commits)))
 }
 
-/// Get commit history
+/// List commit history
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/history/{resource}",
     tag = "Commits",
+    description = "List paginated commit history for a revision or file path. Supports revision ranges (base..head) and path-specific history.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -325,6 +327,7 @@ pub async fn list_missing_files(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/synced",
     tag = "Commits",
+    description = "Mark a list of commit hashes as successfully synchronized to the server.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -378,6 +381,7 @@ pub async fn mark_commits_as_synced(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}",
     tag = "Commits",
+    description = "Get details of a specific commit by its ID.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -408,6 +412,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/parents",
     tag = "Commits",
+    description = "Get the parent commits of a specific commit or the tip of a branch.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -438,6 +443,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits_db",
     tag = "Commits",
+    description = "Download the commits database as a compressed tarball for cloning.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -486,6 +492,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{base_head}/dir_hashes_db",
     tag = "Commits",
+    description = "Download directory hashes database for a commit range as a tarball.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -535,6 +542,7 @@ pub async fn download_dir_hashes_db(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/commit_entries_db",
     tag = "Commits",
+    description = "Download the commit entries database for a specific commit as a tarball.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -995,6 +1003,7 @@ async fn unpack_compressed_data(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload",
     tag = "Commits",
+    description = "Upload the commits database tarball to the server during push.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -1108,6 +1117,7 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/upload_tree",
     tag = "Commits",
+    description = "Upload a commit's merkle tree data as a compressed tarball.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -1166,6 +1176,7 @@ pub async fn upload_tree(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/root",
     tag = "Commits",
+    description = "Get the root (initial) commit of the repository, or None if empty.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),

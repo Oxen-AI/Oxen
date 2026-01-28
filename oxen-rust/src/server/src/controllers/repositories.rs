@@ -32,6 +32,7 @@ use utoipa;
     get,
     path = "/api/repos/{namespace}",
     tag = "Repositories",
+    description = "List all repositories in a namespace.",
     params(
         ("namespace" = String, Path, description = "Namespace to list repositories from", example = "ox"),
     ),
@@ -66,6 +67,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     get,
     path = "/api/repos/{namespace}/{repo_name}",
     tag = "Repositories",
+    description = "Get repository details including size and data types from the main branch.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -181,6 +183,7 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     put,
     path = "/api/repos/{namespace}/{repo_name}/size",
     tag = "Repositories",
+    description = "Recalculate and update the cached repository size.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -206,6 +209,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     get,
     path = "/api/repos/{namespace}/{repo_name}/size",
     tag = "Repositories",
+    description = "Get the cached size of the repository in bytes.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -230,6 +234,7 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     post,
     path = "/api/repos",
     tag = "Repositories",
+    description = "Create a new repository, optionally with initial files via JSON or multipart form.",
     request_body(
         content = RepoNew,
         description = "Repository creation payload (JSON or Multipart)",
@@ -478,6 +483,7 @@ async fn handle_multipart_creation(
     delete,
     path = "/api/repos/{namespace}/{repo_name}",
     tag = "Repositories",
+    description = "Delete a repository. Deletion runs in the background.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
@@ -510,6 +516,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     patch,
     path = "/api/repos/{namespace}/{repo_name}/transfer",
     tag = "Repositories",
+    description = "Transfer a repository to a different namespace.",
     params(
         ("namespace" = String, Path, description = "Current namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),

@@ -64,6 +64,7 @@ pub struct ImportFileBody {
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/{resource}",
     tag = "Import",
+    description = "Import a file from a remote URL (huggingface.co, kaggle.com, oxen.ai) and commit it to the repository.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Common-Crawl"),
@@ -199,6 +200,7 @@ pub async fn import(
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/upload/{resource}",
     tag = "Import",
+    description = "Upload and decompress a zip archive into the repository and commit the contents.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Wiki-Text"),

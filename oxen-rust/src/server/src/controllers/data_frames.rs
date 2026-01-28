@@ -26,6 +26,7 @@ use uuid::Uuid;
     get,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}",
     tag = "Data Frames",
+    description = "Get a paginated slice of a tabular data frame with optional filtering and transformations.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -126,6 +127,7 @@ pub async fn get(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}/index",
     tag = "Data Frames",
+    description = "Start indexing a tabular file for queryable access. Creates a workspace if the file is not already indexed.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
@@ -178,6 +180,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/from_directory/{resource}",
     tag = "Data Frames",
+    description = "Create a data frame by scanning directory contents and commit it to a branch.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),

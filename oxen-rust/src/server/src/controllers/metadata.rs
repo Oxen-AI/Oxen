@@ -17,6 +17,7 @@ use utoipa;
     get,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
     tag = "Metadata",
+    description = "Get metadata for a file or directory entry, with optional workspace support.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -103,6 +104,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     put,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
     tag = "Metadata",
+    description = "Update metadata for a file version in the version store.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
