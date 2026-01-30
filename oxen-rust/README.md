@@ -168,22 +168,16 @@ Run the server
 ./target/debug/oxen-server start
 ```
 
-To run the server with live reload, first install cargo-watch
+To run the server with live reload, first install bacon
 
 ```
-cargo install cargo-watch
-```
-
-On Windows, you may need to use `cargo-watch --locked`
-
-```
-cargo install cargo-watch --locked
+cargo install --locked bacon
 ```
 
 Then run the server like this
 
 ```
-cargo watch -- cargo run --bin oxen-server start
+bacon server
 ```
 
 
@@ -248,6 +242,12 @@ You an also increase the number of open files your system allows ulimit before r
 ulimit -n 10240
 ```
 
+Run tests with nextest (preferred):
+```
+cargo nextest run
+```
+
+Run with vanilla cargo:
 ```
 cargo test -- --test-threads=$(nproc)
 ```
@@ -255,25 +255,27 @@ cargo test -- --test-threads=$(nproc)
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```
-cargo test --lib test_get_metadata_text_readme
+cargo nextest --lib test_get_metadata_text_readme
 ```
 
-To run a specific integration test
+To run the catchall (integration) tests
 
 ```
-cargo test --test test_rm test_rm_directory_restore_directory
+cargo nextest run --test test
 ```
 
 To run with all debug output and run a specific test
 
 ```
-env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo test -- --nocapture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo nextest run --no-capture
+test_command_push_clone_pull_push
+
 ```
 
 To set a different test host you can set the `OXEN_TEST_HOST` environment variable
 
 ```
-env OXEN_TEST_HOST=0.0.0.0:4000 cargo test
+env OXEN_TEST_HOST=0.0.0.0:4000 cargo nextest run
 ```
 
 ## Pre-Commit Hook
