@@ -9,15 +9,16 @@ use liboxen::view::{ParseResourceResponse, StatusMessage};
 use log;
 use utoipa;
 
-/// Get directory
+/// Get the latest revision of a resource
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/dir/{resource}",
-    tag = "Entries",
+    path = "/api/repos/{namespace}/{repo_name}/revisions/{resource}",
+    tag = "Revisions",
+    description = "Get the latest commit information for the given resource (<branch>/<path>)",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository"),
         ("repo_name" = String, Path, description = "Name of the repository"),
-        ("resource" = String, Path, description = "Path to the directory (including branch/commit info)"),
+        ("resource" = String, Path, description = "Path of the resource (in <branch>/<path> format)"),
     ),
     responses(
         (status = 200, description = "Directory structure resolved", body = ParseResourceResponse),
