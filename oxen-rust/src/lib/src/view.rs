@@ -64,8 +64,8 @@ pub use crate::view::commit::{
 };
 
 pub use crate::view::branch::{
-    BranchLockResponse, BranchNew, BranchNewFromBranchName, BranchNewFromCommitId,
-    BranchRemoteMerge, BranchResponse, BranchUpdate, ListBranchesResponse,
+    BranchNew, BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge, BranchResponse,
+    BranchUpdate, ListBranchesResponse,
 };
 
 pub use crate::view::revision::ParseResourceResponse;
