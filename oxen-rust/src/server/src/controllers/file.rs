@@ -65,7 +65,7 @@ pub struct FileQueryParams {
     get,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
     tag = "Files",
-    security( ("api_key" = []) ),
+    description = "Download a file from the repository. Supports image resizing and video thumbnail generation via query parameters.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Voice-Data"),
@@ -200,23 +200,23 @@ pub async fn get(
         .streaming(stream))
 }
 
-/// Put file
+/// Upload files
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
     tag = "Files",
-    security( ("api_key" = []) ),
+    description = "Upload files to a directory on a branch via multipart form and commit them.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("resource" = String, Path, description = "Path to the file (including branch)", example = "main/train/n01440764/images/n01440764_10026.JPEG"),
+        ("resource" = String, Path, description = "Path of the directory to add files in (including branch)", example = "main/train/images"),
     ),
     request_body(
         content_type = "multipart/form-data",
         content = FileUploadBody
     ),
     responses(
-        (status = 200, description = "File committed successfully", body = CommitResponse),
+        (status = 200, description = "Files committed successfully", body = CommitResponse),
         (status = 400, description = "Bad Request"),
         (status = 404, description = "Branch or path not found")
     )
@@ -309,8 +309,8 @@ pub async fn put(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
+    description = "Remove a file from the repository. Stage the file as removed to a workspace and commit the removal. Can remove files or directories.",
     tag = "Files",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -404,7 +404,7 @@ pub struct FileMoveBody {
     patch,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
     tag = "Files",
-    security( ("api_key" = []) ),
+    description = "Move or rename a file within the repository and commit the change.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),

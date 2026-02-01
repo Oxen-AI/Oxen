@@ -15,9 +15,8 @@ use utoipa;
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/dir/{resource}",
-    operation_id = "list_directory_contents",
     tag = "Directories",
-    security( ("api_key" = []) ),
+    description = "List paginated contents of a directory at a specific revision, with optional workspace support.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),

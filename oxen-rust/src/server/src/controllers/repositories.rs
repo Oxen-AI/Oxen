@@ -31,9 +31,8 @@ use utoipa;
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}",
-    operation_id = "list_repositories",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "List all repositories in a namespace.",
     params(
         ("namespace" = String, Path, description = "Namespace to list repositories from", example = "ox"),
     ),
@@ -67,9 +66,8 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}",
-    operation_id = "get_repository",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "Get repository details including size and data types from the main branch.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -125,9 +123,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/stats",
-    operation_id = "get_repository_stats",
+    description = "Get the total number of files, the total size of the files, and the number of different file types.",
     tag = "Repositories",
-    security( ("api_key" = []) ),
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -185,9 +182,8 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/size",
-    operation_id = "update_repository_size",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "Recalculate and update the cached repository size.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -212,9 +208,8 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/size",
-    operation_id = "get_repository_size",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "Get the cached size of the repository in bytes.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -238,9 +233,8 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 #[utoipa::path(
     post,
     path = "/api/repos",
-    operation_id = "create_repository",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "Create a new repository, optionally with initial files via JSON or multipart form.",
     request_body(
         content = RepoNew,
         description = "Repository creation payload (JSON or Multipart)",
@@ -488,9 +482,8 @@ async fn handle_multipart_creation(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}",
-    operation_id = "delete_repository",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "Delete a repository. Deletion runs in the background.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
@@ -522,9 +515,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 #[utoipa::path(
     patch,
     path = "/api/repos/{namespace}/{repo_name}/transfer",
-    operation_id = "transfer_namespace",
     tag = "Repositories",
-    security( ("api_key" = []) ),
+    description = "Transfer a repository to a different namespace.",
     params(
         ("namespace" = String, Path, description = "Current namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),

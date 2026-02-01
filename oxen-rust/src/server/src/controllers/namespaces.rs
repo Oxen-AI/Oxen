@@ -11,9 +11,8 @@ use utoipa;
 #[utoipa::path(
     get,
     path = "/api/namespaces",
-    operation_id = "list_namespaces",
     tag = "Namespaces",
-    security( ("api_key" = []) ),
+    description = "List all namespaces on the server.",
     responses(
         (status = 200, description = "List of namespaces", body = ListNamespacesResponse),
     )
@@ -38,9 +37,8 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 #[utoipa::path(
     get,
     path = "/api/namespaces/{namespace}",
-    operation_id = "get_namespace",
     tag = "Namespaces",
-    security( ("api_key" = []) ),
+    description = "Get details of a specific namespace by name.",
     params(
         ("namespace" = String, Path, description = "Name of the namespace"),
     ),
