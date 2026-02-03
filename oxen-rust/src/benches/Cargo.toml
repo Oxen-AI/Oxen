@@ -1,0 +1,18 @@
+[package]
+name = "oxen-bench"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+criterion = { workspace = true }
+liboxen = { path = "../lib" }
+oxen-test = { path = "../oxen-test" }
+rand = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[[bench]]
+name = "benchmark"
+path = "src/benchmark.rs"
+harness = false

@@ -990,16 +990,14 @@ fn group_dir_diffs_by_dir(dir_diffs: Vec<(PathBuf, DiffEntryStatus)>) -> Vec<Dir
 mod tests {
     use liboxen::{error::OxenError, repositories};
 
-    use crate::test;
-
     #[actix_web::test]
     async fn test_controllers_compare_create() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
+        let sync_dir = crate::test::get_sync_dir()?;
 
         let namepsace = "testing-namespace";
         let repo_name = "testing-repo";
 
-        let repo = test::create_local_repo(&sync_dir, namepsace, repo_name)?;
+        let repo = crate::test::create_local_repo(&sync_dir, namepsace, repo_name)?;
 
         let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n9,0,1,2";
         let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8\n0,1,9,2";
@@ -1007,8 +1005,8 @@ mod tests {
         let path1 = repo.path.join("file1.csv");
         let path2 = repo.path.join("file2.csv");
 
-        liboxen::test::write_txt_file_to_path(path1, csv1)?;
-        liboxen::test::write_txt_file_to_path(path2, csv2)?;
+        oxen_test::write_txt_file_to_path(path1, csv1)?;
+        oxen_test::write_txt_file_to_path(path2, csv2)?;
 
         repositories::add(&repo, &repo.path).await?;
 

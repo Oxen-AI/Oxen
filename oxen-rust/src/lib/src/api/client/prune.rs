@@ -85,27 +85,26 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::repositories;
-    use crate::test;
     use crate::util;
 
     #[tokio::test]
     async fn test_remote_prune_dry_run() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let train_dir = repo_dir.join("train");
             util::fs::create_dir_all(&train_dir)?;
             let file1 = train_dir.join("file1.txt");
-            test::write_txt_file_to_path(&file1, "file1")?;
+            oxen_test::write_txt_file_to_path(&file1, "file1")?;
 
             repositories::add(&local_repo, &file1).await?;
             repositories::commit(&local_repo, "add file1.txt")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -124,23 +123,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_prune_removes_dangling_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let train_dir = repo_dir.join("train");
             util::fs::create_dir_all(&train_dir)?;
 
             // Create initial commit on main
             let file1 = train_dir.join("file1.txt");
-            test::write_txt_file_to_path(&file1, "file1")?;
+            oxen_test::write_txt_file_to_path(&file1, "file1")?;
             repositories::add(&local_repo, &file1).await?;
             let initial_commit = repositories::commit(&local_repo, "add file1.txt")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -152,7 +151,7 @@ mod tests {
 
             // Add a commit to the feature branch
             let file2 = train_dir.join("file2.txt");
-            test::write_txt_file_to_path(&file2, "file2")?;
+            oxen_test::write_txt_file_to_path(&file2, "file2")?;
             repositories::add(&local_repo, &file2).await?;
             repositories::commit(&local_repo, "add file2.txt")?;
 

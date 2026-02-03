@@ -254,11 +254,11 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 #[serial_test::serial]
 mod tests {
     use super::*;
-    use crate::{repositories, test};
+    use crate::repositories;
 
     #[test]
     fn test_cache_disable_with_closure() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+        oxen_test::run_empty_dir_test(|dir| {
             // Enable cache for this test
             enable();
 
@@ -304,7 +304,7 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        test::run_empty_dir_test(|dir| {
+        oxen_test::run_empty_dir_test(|dir| {
             // Enable cache for this test
             enable();
 
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_cache_disabled_by_default() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
+        oxen_test::run_empty_dir_test(|dir| {
             let repo = repositories::init(dir)?;
             let hash = MerkleHash::new(44444);
             let node = MerkleTreeNode::default();

@@ -23,10 +23,10 @@ use crate::model::{LocalRepository, StagedData};
 /// use liboxen::command;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # oxen_test::init_test_env();
 ///
 /// let base_dir = Path::new("repo_dir_status_1");
 /// // Initialize empty repo
@@ -46,10 +46,10 @@ use crate::model::{LocalRepository, StagedData};
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # oxen_test::init_test_env();
 ///
 /// let base_dir = Path::new("repo_dir_status_2");
 /// // Initialize empty repo
@@ -102,7 +102,7 @@ mod tests {
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use std::collections::HashSet;
@@ -111,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_status_empty() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+        oxen_test::run_empty_local_repo_test(|repo| {
             let repo_status = repositories::status(&repo)?;
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
@@ -125,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_status_nothing_staged_full_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+        oxen_test::run_training_data_repo_test_no_commits(|repo| {
             let repo_status = repositories::status(&repo)?;
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
@@ -148,7 +148,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_add_one_file_top_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_no_commits_async(|repo| async move {
             repositories::add(&repo, repo.path.join(Path::new("labels.txt"))).await?;
 
             let repo_status = repositories::status(&repo)?;
@@ -178,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_status_shows_intermediate_directory_if_file_added(
     ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Add a deep file
             repositories::add(
                 &repo,
@@ -217,15 +217,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_modified_files_status_with_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Modify a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            oxen_test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
 
             // Modify a shallow file
             let labels_path = repo.path.join(Path::new("labels.txt"));
-            test::modify_txt_file(&labels_path, "new labels coming in hot")?;
+            oxen_test::modify_txt_file(&labels_path, "new labels coming in hot")?;
 
             let opts =
                 StagedDataOpts::from_paths(&[repo.path.join(Path::new("annotations/train"))]);
@@ -252,15 +252,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_modified_files_status_with_file_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Modify a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            oxen_test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
 
             // Modify a shallow file
             let labels_path = repo.path.join(Path::new("labels.txt"));
-            test::modify_txt_file(&labels_path, "new labels coming in hot")?;
+            oxen_test::modify_txt_file(&labels_path, "new labels coming in hot")?;
 
             let opts = StagedDataOpts::from_paths(&[repo
                 .path
@@ -288,16 +288,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_ignore_directory_with_modified_files() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Modify a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            oxen_test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
 
             // Modify a shallow file
             let labels_relative_path = Path::new("labels.txt");
             let labels_path = repo.path.join(labels_relative_path);
-            test::modify_txt_file(&labels_path, "new labels coming in hot")?;
+            oxen_test::modify_txt_file(&labels_path, "new labels coming in hot")?;
 
             let opts = StagedDataOpts {
                 ignore: Some(HashSet::from([repo.path.join(Path::new("annotations"))])),
@@ -326,23 +326,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_added_files_status_with_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Add a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            oxen_test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
 
             repositories::add(&repo, &one_shot_path).await?;
 
             // Modify a deep file
             let two_shot_relative_path = Path::new("annotations/train/two_shot.csv");
             let two_shot_path = repo.path.join(two_shot_relative_path);
-            test::modify_txt_file(&two_shot_path, "new two shot coming in hot")?;
+            oxen_test::modify_txt_file(&two_shot_path, "new two shot coming in hot")?;
 
             // Write an untracked file
             let untracked_relative_path = Path::new("untracked.txt");
             let untracked_path = repo.path.join(untracked_relative_path);
-            test::modify_txt_file(&untracked_path, "I'm sneaking in there untracked")?;
+            oxen_test::modify_txt_file(&untracked_path, "I'm sneaking in there untracked")?;
 
             let opts =
                 StagedDataOpts::from_paths(&[repo.path.join(Path::new("annotations/train"))]);
@@ -375,7 +375,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_nothing_staged() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+        oxen_test::run_empty_local_repo_test(|repo| {
             let commits = repositories::commits::list(&repo)?;
             let initial_len = commits.len();
             let result = repositories::commit(&repo, "Should not work");
@@ -389,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_nothing_staged_but_file_modified() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let initial_len = commits.len();
 
@@ -408,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_status_has_txt_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+        oxen_test::run_empty_local_repo_test(|repo| {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(hello_file, "Hello World")?;
@@ -426,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_conflict_shows_in_status() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+        oxen_test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
@@ -437,14 +437,14 @@ mod tests {
             let branch_name = "change-labels";
             repositories::branches::create_checkout(&repo, branch_name)?;
 
-            test::modify_txt_file(&labels_path, "cat\ndog\nnone")?;
+            oxen_test::modify_txt_file(&labels_path, "cat\ndog\nnone")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
             repositories::checkout(&repo, og_branch.name).await?;
 
-            test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
+            oxen_test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding person category")?;
 
@@ -465,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_rm_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Move the file to a new name
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
@@ -494,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_rm_directory_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Move the file to a new name
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
@@ -523,7 +523,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_move_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Move `README.md` to `README2.md`
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
@@ -567,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_move_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Move train/ to to new_train/train2
             let og_basename = PathBuf::from("train");
             let og_dir = repo.path.join(og_basename);
@@ -610,15 +610,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_list_added_directories() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Write two files to a sub directory
             let repo_path = &repo.path;
             let training_data_dir = PathBuf::from("training_data");
             let sub_dir = repo_path.join(&training_data_dir);
             util::fs::create_dir_all(&sub_dir)?;
 
-            let _ = test::add_txt_file_to_dir(&sub_dir, "Hello 1")?;
-            let _ = test::add_txt_file_to_dir(&sub_dir, "Hello 2")?;
+            let _ = oxen_test::add_txt_file_to_dir(&sub_dir, "Hello 1")?;
+            let _ = oxen_test::add_txt_file_to_dir(&sub_dir, "Hello 2")?;
 
             repositories::add(&repo, &sub_dir).await?;
 
@@ -641,7 +641,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_remove_file_top_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Get head commit
             // List all entries in that commit
             let repo_path = &repo.path;
@@ -677,7 +677,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_remove_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let repo_path = &repo.path;
             let one_shot_file = repo_path
                 .join("annotations")
@@ -706,7 +706,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_modify_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let repo_path = &repo.path;
             let one_shot_file = repo_path
                 .join("annotations")
@@ -714,7 +714,8 @@ mod tests {
                 .join("one_shot.csv");
 
             // Modify the committed file
-            let one_shot_file = test::modify_txt_file(one_shot_file, "new content coming in hot")?;
+            let one_shot_file =
+                oxen_test::modify_txt_file(one_shot_file, "new content coming in hot")?;
 
             // List modified
             let status = repositories::status(&repo)?;
@@ -735,28 +736,63 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_list_untracked_directories_after_add() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Create 2 sub directories, one with  Write two files to a sub directory
             let repo_path = &repo.path;
             let train_dir = repo_path.join("train");
             util::fs::create_dir_all(&train_dir)?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/cat_1.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/dog_1.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/cat_2.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/dog_2.jpg"))?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &train_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/cat_1.jpg")
+                    .as_path(),
+            )?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &train_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/dog_1.jpg")
+                    .as_path(),
+            )?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &train_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/cat_2.jpg")
+                    .as_path(),
+            )?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &train_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/dog_2.jpg")
+                    .as_path(),
+            )?;
 
             let test_dir = repo_path.join("test");
             util::fs::create_dir_all(&test_dir)?;
-            let _ = test::add_img_file_to_dir(&test_dir, Path::new("data/test/images/cat_3.jpg"))?;
-            let _ = test::add_img_file_to_dir(&test_dir, Path::new("data/test/images/dog_3.jpg"))?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &test_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/cat_3.jpg")
+                    .as_path(),
+            )?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &test_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/dog_3.jpg")
+                    .as_path(),
+            )?;
 
             let valid_dir = repo_path.join("valid");
             util::fs::create_dir_all(&valid_dir)?;
-            let _ = test::add_img_file_to_dir(&valid_dir, Path::new("data/test/images/dog_4.jpg"))?;
+            let _ = oxen_test::add_img_file_to_dir(
+                &valid_dir,
+                oxen_test::REPO_ROOT
+                    .join("data/test/images/dog_4.jpg")
+                    .as_path(),
+            )?;
 
-            let base_file_1 = test::add_txt_file_to_dir(repo_path, "Hello 1")?;
-            let _base_file_2 = test::add_txt_file_to_dir(repo_path, "Hello 2")?;
-            let _base_file_3 = test::add_txt_file_to_dir(repo_path, "Hello 3")?;
+            let base_file_1 = oxen_test::add_txt_file_to_dir(repo_path, "Hello 1")?;
+            let _base_file_2 = oxen_test::add_txt_file_to_dir(repo_path, "Hello 2")?;
+            let _base_file_3 = oxen_test::add_txt_file_to_dir(repo_path, "Hello 3")?;
 
             // At first there should be 3 untracked
             let status = repositories::status(&repo)?;
@@ -794,10 +830,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_list_modified_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Create entry_reader with no commits
             let repo_path = &repo.path;
-            let hello_file = test::add_txt_file_to_dir(repo_path, "Hello 1")?;
+            let hello_file = oxen_test::add_txt_file_to_dir(repo_path, "Hello 1")?;
 
             // add the file
             repositories::add(&repo, &hello_file).await?;
@@ -810,7 +846,7 @@ mod tests {
             assert_eq!(mod_files.len(), 0);
 
             // modify the file
-            let hello_file = test::modify_txt_file(hello_file, "Hello 2")?;
+            let hello_file = oxen_test::modify_txt_file(hello_file, "Hello 2")?;
 
             // List files
             let status = repositories::status(&repo)?;
@@ -827,7 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_status_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        oxen_test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Track & commit all the data
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             repositories::add(&repo, &repo.path).await?;
@@ -837,7 +873,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
-            test::modify_txt_file(one_shot_path, file_contents)?;
+            oxen_test::modify_txt_file(one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);

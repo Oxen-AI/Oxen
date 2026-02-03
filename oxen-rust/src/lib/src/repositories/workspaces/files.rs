@@ -98,7 +98,6 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::repositories::{self, workspaces};
-    use crate::test;
 
     #[tokio::test]
     async fn test_mv_file_in_workspace() -> Result<(), OxenError> {
@@ -107,7 +106,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-mv";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -126,7 +125,7 @@ mod tests {
 
             // Check status - should show the original as removed and new as added
             let status = workspaces::status::status(&workspace)?;
-            println!("Status after mv: {:?}", status);
+            println!("Status after mv: {status:?}");
 
             // The original path should be staged as removed in staged_files
             let removed_entry = status.staged_files.get(&original_path);

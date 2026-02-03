@@ -109,7 +109,7 @@ mod tests {
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::opts::{DFOpts, PaginateOpts};
-    use crate::test;
+
     use crate::{api, repositories};
 
     use std::path::Path;
@@ -121,38 +121,42 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            // train/dog_1.jpg,dog,101.5,32.0,385,330
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
-            let result = api::client::workspaces::data_frames::embeddings::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-            )
-            .await;
+                // train/dog_1.jpg,dog,101.5,32.0,385,330
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
+                let result = api::client::workspaces::data_frames::embeddings::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                )
+                .await;
 
-            assert!(result.is_ok());
-            let response = result.unwrap();
-            assert_eq!(response.columns.len(), 0);
+                assert!(result.is_ok());
+                let response = result.unwrap();
+                assert_eq!(response.columns.len(), 0);
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -163,7 +167,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        oxen_test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
@@ -222,7 +226,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        oxen_test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
@@ -285,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_embeddings_by_embedding() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
 
             // Write a small embeddings.json file
@@ -361,7 +365,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        oxen_test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
@@ -405,7 +409,7 @@ mod tests {
             }
             assert_eq!(indexing_status, EmbeddingStatus::Complete);
 
-            test::run_empty_dir_test_async(|sync_dir| async move {
+            oxen_test::run_empty_dir_test_async(|sync_dir| async move {
                 let output_path = sync_dir.join("test_download.parquet");
 
                 // Download the data frame sorted by embeddings
@@ -445,7 +449,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        oxen_test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =

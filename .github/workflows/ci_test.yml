@@ -152,7 +152,7 @@ jobs:
       - name: Build oxen-rust
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          cargo build
+          cargo build --workspace
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
@@ -173,14 +173,14 @@ jobs:
         run: |
           cd ${{ github.workspace }}/oxen-rust
           ./target/debug/oxen-server start &
-          cargo nextest run --profile ci
+          cargo nextest run --workspace --profile ci
 
       - name: Run oxen-rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
           Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo nextest run --profile ci
+          cargo nextest run --workspace --profile ci
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)

@@ -16,7 +16,8 @@ pub mod middleware;
 pub mod params;
 pub mod routes;
 pub mod services;
-pub mod test;
+#[cfg(test)]
+pub(crate) mod test;
 
 extern crate log;
 extern crate lru;

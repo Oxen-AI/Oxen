@@ -32,11 +32,10 @@ mod tests {
     use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::model::metadata::MetadataImage;
     use crate::repositories;
-    use crate::test;
 
     #[test]
     fn test_get_metadata_img_rgb() {
-        let file = test::test_img_file_with_name("cat_1.jpg");
+        let file = oxen_test::test_img_file_with_name("cat_1.jpg");
 
         let data = repositories::metadata::get(file).unwrap();
 
@@ -55,7 +54,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_img_rgba() {
-        let file = test::test_img_file_with_name("cat_rgba.png");
+        let file = oxen_test::test_img_file_with_name("cat_rgba.png");
         let data = repositories::metadata::get(file).unwrap();
 
         assert_eq!(data.data_type, EntryDataType::Image);
@@ -73,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_img_grayscale() {
-        let file = test::test_img_file_with_name("cat_grayscale.jpg");
+        let file = oxen_test::test_img_file_with_name("cat_grayscale.jpg");
 
         let data = repositories::metadata::get(file).unwrap();
 
@@ -92,7 +91,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_img_mnist() {
-        let file = test::test_img_file_with_name("mnist_7.png");
+        let file = oxen_test::test_img_file_with_name("mnist_7.png");
         let data = repositories::metadata::get(file).unwrap();
 
         assert_eq!(data.data_type, EntryDataType::Image);

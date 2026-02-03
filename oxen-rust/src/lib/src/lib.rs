@@ -78,6 +78,5 @@ pub mod repositories;
 pub mod request_context;
 pub mod resource;
 pub mod storage;
-pub mod test;
 pub mod util;
 pub mod view;

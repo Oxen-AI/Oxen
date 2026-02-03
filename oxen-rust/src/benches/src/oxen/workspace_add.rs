@@ -5,8 +5,8 @@ use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
-use liboxen::test::create_or_clear_remote_repo;
 use liboxen::util;
+use oxen_test::create_or_clear_remote_repo;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
@@ -196,7 +196,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 let name = format!("{branch_name}: {workspace_id}");
 
                 let workspace = rt
-                    .block_on(api::client::workspaces::create_with_new_branch(
+                    .block_on(api::client::workspaces::create_with_path(
                         &remote_repo,
                         &branch_name,
                         &workspace_id,

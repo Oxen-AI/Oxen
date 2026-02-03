@@ -11,17 +11,18 @@ default_job = "check"
 env.CARGO_TERM_COLOR = "always"
 
 [jobs.check]
-command = ["cargo", "check"]
+command = ["cargo", "check", "--workspace"]
 need_stdout = false
 
 [jobs.check-all]
-command = ["cargo", "check", "--all-targets"]
+command = ["cargo", "check", "--workspace", "--all-targets"]
 need_stdout = false
 
 # Run clippy on the default target
 [jobs.clippy]
 command = [
     "cargo", "clippy",
+    "--workspace",
     "--no-deps",
    	"--",
     "-D", "warnings",
@@ -33,6 +34,7 @@ need_stdout = false
 #    [jobs.clippy-all]
 #    command = [
 #        "cargo", "clippy",
+#        "--workspace",
 #        "--all-targets",
 #    	 "--",
 #    	 "-A", "clippy::bool_to_int_with_if",
@@ -41,7 +43,7 @@ need_stdout = false
 #    ]
 # need_stdout = false
 [jobs.clippy-all]
-command = ["cargo", "clippy", "--all-targets"]
+command = ["cargo", "clippy", "--workspace", "--all-targets"]
 need_stdout = false
 
 # Run clippy in pedantic mode
@@ -49,6 +51,7 @@ need_stdout = false
 [jobs.pedantic]
 command = [
 	"cargo", "clippy",
+	"--workspace",
 	"--",
 	"-W", "clippy::pedantic",
 ]
@@ -57,27 +60,28 @@ need_stdout = false
 # This job lets you run
 # - all tests: bacon test
 # - a specific test: bacon test -- config::test_default_files
-# - the tests of a package: bacon test -- -- -p config
+# - the tests of a package: bacon test -- -p liboxen
 [jobs.test]
-command = ["cargo", "test"]
+command = ["cargo", "test", "--workspace"]
 need_stdout = true
 
 [jobs.nextest]
 command = [
     "cargo", "nextest", "run",
+    "--workspace",
     "--hide-progress-bar", "--failure-output", "final"
 ]
 need_stdout = true
 analyzer = "nextest"
 
 [jobs.doc]
-command = ["cargo", "doc", "--no-deps"]
+command = ["cargo", "doc", "--workspace", "--no-deps"]
 need_stdout = false
 
 # If the doc compiles, then it opens in your browser and bacon switches
 # to the previous job
 [jobs.doc-open]
-command = ["cargo", "doc", "--no-deps", "--open"]
+command = ["cargo", "doc", "--workspace", "--no-deps", "--open"]
 need_stdout = false
 on_success = "back" # so that we don't open the browser at each change
 
@@ -105,8 +109,8 @@ background = true
 # [jobs.run-long]
 [jobs.server]
 command = [
-    "cargo", "run", "--bin",
-    "oxen-server",
+    "cargo", "run",
+    "-p", "oxen-server",
     "--",
     "start", "-i", "localhost",
 ]

@@ -34,7 +34,7 @@ mod tests {
     use crate::constants;
     use crate::error::OxenError;
     use crate::opts::PaginateOpts;
-    use crate::test;
+
     use crate::util;
     use crate::view::DataTypeCount;
 
@@ -42,7 +42,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_ls_ten_items() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut repo| async move {
             // Create 8 directories
             for n in 0..8 {
                 let dirname = format!("dir_{}", n);
@@ -66,11 +66,11 @@ mod tests {
             repositories::commit(&repo, "Adding all the data")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -95,11 +95,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_ls_return_data_types() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut repo| async move {
             // Add one video, one markdown file, and one text file
-            let video_path = test::test_video_file_with_name("basketball.mp4");
-            let markdown_path = test::test_text_file_with_name("README.md");
-            let text_path = test::test_text_file_with_name("hello.txt");
+            let video_path = oxen_test::test_video_file_with_name("basketball.mp4");
+            let markdown_path = oxen_test::test_text_file_with_name("README.md");
+            let text_path = oxen_test::test_text_file_with_name("hello.txt");
             util::fs::copy(video_path, repo.path.join("basketball.mp4"))?;
             util::fs::copy(markdown_path, repo.path.join("README.md"))?;
             util::fs::copy(text_path, repo.path.join("hello.txt"))?;
@@ -109,11 +109,11 @@ mod tests {
             repositories::commit(&repo, "Adding all the data")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -172,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_ls_return_data_types_just_top_level_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -185,11 +185,11 @@ mod tests {
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;

@@ -189,7 +189,6 @@ mod tests {
     use crate::model::data_frame::schema::field::Changes;
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
-    use crate::test;
 
     use std::path::Path;
 
@@ -200,60 +199,64 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            // train/dog_1.jpg,dog,101.5,32.0,385,330
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let column_name = "test";
-            let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
+                // train/dog_1.jpg,dog,101.5,32.0,385,330
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                let column_name = "test";
+                let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
-            let result = api::client::workspaces::data_frames::columns::create(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                data.to_string(),
-            )
-            .await;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
+                let result = api::client::workspaces::data_frames::columns::create(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    data.to_string(),
+                )
+                .await;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            if !df
-                .data_frame
-                .unwrap()
-                .view
-                .schema
-                .fields
-                .iter()
-                .any(|field| field.name == column_name)
-            {
-                panic!("Column {column_name} does not exist in the data frame");
-            }
+                if !df
+                    .data_frame
+                    .unwrap()
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .any(|field| field.name == column_name)
+                {
+                    panic!("Column {column_name} does not exist in the data frame");
+                }
 
-            assert!(result.is_ok());
+                assert!(result.is_ok());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -264,74 +267,77 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
+                let workspace_id = UserConfig::identifier()?;
 
-            // Path to the CSV file
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
+                // Path to the CSV file
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
 
-            api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            let binding = df.data_frame.unwrap();
-            let column = binding.view.schema.fields.get(4).unwrap();
+                let binding = df.data_frame.unwrap();
+                let column = binding.view.schema.fields.get(4).unwrap();
 
-            api::client::workspaces::data_frames::columns::delete(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-            )
-            .await?;
+                api::client::workspaces::data_frames::columns::delete(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                )
+                .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            if let Some((_index, field)) = df
-                .data_frame
-                .unwrap()
-                .view
-                .schema
-                .fields
-                .iter()
-                .enumerate()
-                .find(|(_index, field)| field.name == column.name)
-            {
-                if <std::option::Option<Changes> as Clone>::clone(&field.changes)
+                if let Some((_index, field)) = df
+                    .data_frame
                     .unwrap()
-                    .status
-                    != "deleted"
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_index, field)| field.name == column.name)
                 {
-                    panic!("Column {} still exists in the data frame", column.name);
+                    if <std::option::Option<Changes> as Clone>::clone(&field.changes)
+                        .unwrap()
+                        .status
+                        != "deleted"
+                    {
+                        panic!("Column {} still exists in the data frame", column.name);
+                    }
                 }
-            }
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -342,73 +348,77 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            // Path to the CSV file
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
+                // Path to the CSV file
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            // Extract the first _oxen_row_id from the data frame
-            let binding = df.data_frame.unwrap();
-            let column = binding.view.schema.fields.get(4).unwrap();
+                // Extract the first _oxen_row_id from the data frame
+                let binding = df.data_frame.unwrap();
+                let column = binding.view.schema.fields.get(4).unwrap();
 
-            let data: &str = "{\"new_name\":\"files\"}";
+                let data: &str = "{\"new_name\":\"files\"}";
 
-            api::client::workspaces::data_frames::columns::update(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-                data.to_string(),
-            )
-            .await?;
+                api::client::workspaces::data_frames::columns::update(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                    data.to_string(),
+                )
+                .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            if !df
-                .data_frame
-                .unwrap()
-                .view
-                .schema
-                .fields
-                .iter()
-                .any(|field| field.name == "files")
-            {
-                panic!("Column {} doesn't exist in the data frame", "files");
-            }
+                if !df
+                    .data_frame
+                    .unwrap()
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .any(|field| field.name == "files")
+                {
+                    panic!("Column {} doesn't exist in the data frame", "files");
+                }
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -419,90 +429,94 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            let binding = df.data_frame.unwrap();
-            let column = binding.view.schema.fields.get(4).unwrap();
+                let binding = df.data_frame.unwrap();
+                let column = binding.view.schema.fields.get(4).unwrap();
 
-            let new_name = "renamed_column";
-            let data = format!(r#"{{"new_name":"{new_name}"}}"#);
-            let metadata = json!({
-                "column_name": new_name,
-                "metadata": {
-                    "_oxen": {
-                        "render": {
-                            "func": "image"
+                let new_name = "renamed_column";
+                let data = format!(r#"{{"new_name":"{new_name}"}}"#);
+                let metadata = json!({
+                    "column_name": new_name,
+                    "metadata": {
+                        "_oxen": {
+                            "render": {
+                                "func": "image"
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            api::client::workspaces::data_frames::columns::update(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-                data.to_string(),
-            )
-            .await?;
+                api::client::workspaces::data_frames::columns::update(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                    data.to_string(),
+                )
+                .await?;
 
-            api::client::workspaces::data_frames::columns::add_column_metadata(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                new_name,
-                metadata.clone(),
-            )
-            .await?;
+                api::client::workspaces::data_frames::columns::add_column_metadata(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    new_name,
+                    metadata.clone(),
+                )
+                .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            let data_frame = df.data_frame.unwrap();
-            let field = data_frame
-                .view
-                .schema
-                .fields
-                .iter()
-                .find(|field| field.name == new_name)
-                .expect("Renamed column not found");
+                let data_frame = df.data_frame.unwrap();
+                let field = data_frame
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.name == new_name)
+                    .expect("Renamed column not found");
 
-            assert_eq!(field.metadata, Some(metadata));
+                assert_eq!(field.metadata, Some(metadata));
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -513,77 +527,81 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
 
-            let column_name = "new_column";
-            let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
-            let metadata = json!({
-                "column_name": column_name,
-                "metadata": {
-                    "_oxen": {
-                        "render": {
-                            "func": "image"
+                let column_name = "new_column";
+                let data = format!(r#"{{"name":"{column_name}", "data_type": "str"}}"#);
+                let metadata = json!({
+                    "column_name": column_name,
+                    "metadata": {
+                        "_oxen": {
+                            "render": {
+                                "func": "image"
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
-            api::client::workspaces::data_frames::columns::create(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                data.to_string(),
-            )
-            .await?;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
+                api::client::workspaces::data_frames::columns::create(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    data.to_string(),
+                )
+                .await?;
 
-            api::client::workspaces::data_frames::columns::add_column_metadata(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                column_name,
-                metadata.clone(),
-            )
-            .await?;
+                api::client::workspaces::data_frames::columns::add_column_metadata(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    column_name,
+                    metadata.clone(),
+                )
+                .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            let data_frame = df.data_frame.unwrap();
-            let field = data_frame
-                .view
-                .schema
-                .fields
-                .iter()
-                .find(|field| field.name == column_name)
-                .expect("New column not found");
+                let data_frame = df.data_frame.unwrap();
+                let field = data_frame
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.name == column_name)
+                    .expect("New column not found");
 
-            assert_eq!(field.metadata, Some(metadata));
+                assert_eq!(field.metadata, Some(metadata));
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -594,90 +612,94 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            let binding = df.data_frame.unwrap();
-            let column = binding.view.schema.fields.get(4).unwrap();
+                let binding = df.data_frame.unwrap();
+                let column = binding.view.schema.fields.get(4).unwrap();
 
-            let metadata = json!({
-                "column_name": column.name,
-                "metadata": {
-                    "_oxen": {
-                        "render": {
-                            "func": "image"
+                let metadata = json!({
+                    "column_name": column.name,
+                    "metadata": {
+                        "_oxen": {
+                            "render": {
+                                "func": "image"
+                            }
                         }
                     }
-                }
-            });
-            api::client::workspaces::data_frames::columns::add_column_metadata(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-                metadata.clone(),
-            )
-            .await?;
+                });
+                api::client::workspaces::data_frames::columns::add_column_metadata(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                    metadata.clone(),
+                )
+                .await?;
 
-            let new_name = "renamed_column";
-            let data = format!(r#"{{"new_name":"{new_name}"}}"#);
+                let new_name = "renamed_column";
+                let data = format!(r#"{{"new_name":"{new_name}"}}"#);
 
-            api::client::workspaces::data_frames::columns::update(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-                data.to_string(),
-            )
-            .await?;
+                api::client::workspaces::data_frames::columns::update(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                    data.to_string(),
+                )
+                .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
 
-            let data_frame = df.data_frame.unwrap();
-            let field = data_frame
-                .view
-                .schema
-                .fields
-                .iter()
-                .find(|field| field.name == new_name)
-                .expect("Renamed column not found");
+                let data_frame = df.data_frame.unwrap();
+                let field = data_frame
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.name == new_name)
+                    .expect("Renamed column not found");
 
-            assert_eq!(field.metadata, Some(metadata));
+                assert_eq!(field.metadata, Some(metadata));
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
@@ -688,105 +710,116 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
-
-            let binding = df.data_frame.unwrap();
-            let column = binding.view.schema.fields.get(4).unwrap();
-
-            let metadata = json!({
-                "column_name": column.name,
-                "metadata": {
-                    "_oxen": {
-                        "render": {
-                            "func": "image"
-                        }
-                    }
-                }
-            });
-
-            api::client::workspaces::data_frames::columns::add_column_metadata(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-                metadata.clone(),
-            )
-            .await?;
-
-            let commit_body = NewCommitBody {
-                message: "Add metadata to column".to_string(),
-                author: "test@test.com".to_string(),
-                email: "test@test.com".to_string(),
-            };
-
-            api::client::workspaces::commit(&remote_repo, branch_name, &workspace_id, &commit_body)
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
                 .await?;
 
-            let _new_workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                let binding = df.data_frame.unwrap();
+                let column = binding.view.schema.fields.get(4).unwrap();
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+                let metadata = json!({
+                    "column_name": column.name,
+                    "metadata": {
+                        "_oxen": {
+                            "render": {
+                                "func": "image"
+                            }
+                        }
+                    }
+                });
 
-            let new_name = "renamed_column";
-            let data = format!(r#"{{"new_name":"{new_name}"}}"#);
+                api::client::workspaces::data_frames::columns::add_column_metadata(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                    metadata.clone(),
+                )
+                .await?;
 
-            api::client::workspaces::data_frames::columns::update(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &column.name,
-                data.to_string(),
-            )
-            .await?;
+                let commit_body = NewCommitBody {
+                    message: "Add metadata to column".to_string(),
+                    author: "test@test.com".to_string(),
+                    email: "test@test.com".to_string(),
+                };
 
-            let df = api::client::workspaces::data_frames::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                &DFOpts::empty(),
-            )
-            .await?;
+                api::client::workspaces::commit(
+                    &remote_repo,
+                    branch_name,
+                    &workspace_id,
+                    &commit_body,
+                )
+                .await?;
 
-            let data_frame = df.data_frame.unwrap();
-            let field = data_frame
-                .view
-                .schema
-                .fields
-                .iter()
-                .find(|field| field.name == new_name)
-                .expect("Renamed column not found");
+                let _new_workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
 
-            assert_eq!(field.metadata, Some(metadata));
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
 
-            Ok(remote_repo)
-        })
+                let new_name = "renamed_column";
+                let data = format!(r#"{{"new_name":"{new_name}"}}"#);
+
+                api::client::workspaces::data_frames::columns::update(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &column.name,
+                    data.to_string(),
+                )
+                .await?;
+
+                let df = api::client::workspaces::data_frames::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                    &DFOpts::empty(),
+                )
+                .await?;
+
+                let data_frame = df.data_frame.unwrap();
+                let field = data_frame
+                    .view
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|field| field.name == new_name)
+                    .expect("Renamed column not found");
+
+                assert_eq!(field.metadata, Some(metadata));
+
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 }

@@ -2,11 +2,11 @@
 
 Build the Oxen Server and Oxen CLI binaries
 
-`cargo build`
+`cargo build --workspace`
 
 Generate a config file that contains an access token to give it to the user to access to the server
 
-`./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml`
+`cargo run -p oxen-server -- add-user --email ox@oxen.ai --name Ox --output user_config.toml`
 
 The user who needs access should copy the config to the ~/.oxen directory, which is where the Oxen CLI looks for it. If the user has not done this step, they will not have access to the server.
 
@@ -16,13 +16,13 @@ The user who needs access should copy the config to the ~/.oxen directory, which
 
 Run the server
 
-`./target/debug/oxen-server start`
+`cargo run -p oxen-server -- start`
 
 The default sync directory is `./data/` to change it set the SYNC_DIR environment variable to a path.
 
 For example
 
-`env SYNC_DIR=/Users/gregschoeninger/Data/oxen_server ./target/debug/oxen-server start`
+`env SYNC_DIR=/Users/gregschoeninger/Data/oxen_server cargo run -p oxen-server -- start`
 
 ```
 Running 🐂 server on 0.0.0.0:3000
@@ -33,6 +33,6 @@ Syncing to directory: /Users/gregschoeninger/Data/oxen_server
 
 If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters.
 
-`./target/debug/oxen-server start -i 0.0.0.0 -p 4004`
+`cargo run -p oxen-server -- start -i 0.0.0.0 -p 4004`
 
 To learn how to create a local Oxen repository and push it to the server see the [next tutorial](1_InitAndCommit.md).

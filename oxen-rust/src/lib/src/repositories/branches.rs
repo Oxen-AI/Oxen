@@ -305,11 +305,11 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::refs::with_ref_manager;
     use crate::error::OxenError;
-    use crate::{repositories, test, util};
+    use crate::{repositories, util};
 
     #[tokio::test]
     async fn test_list_branch_versions_main() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
@@ -382,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_branch_versions_branch_off_main() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             let dir_path = Path::new("test_dir");
             util::fs::create_dir_all(repo.path.join(dir_path))?;
 
@@ -471,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_delete_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        oxen_test::run_one_commit_local_repo_test_async(|repo| async move {
             // Get the original branches
             let og_branches = repositories::branches::list(&repo)?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();

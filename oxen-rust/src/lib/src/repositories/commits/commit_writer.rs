@@ -1249,13 +1249,13 @@ mod tests {
     use crate::model::MerkleHash;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
-    use crate::test::add_n_files_m_dirs;
+
     use crate::util;
+    use oxen_test::add_n_files_m_dirs;
 
     #[tokio::test]
     async fn test_first_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1341,7 +1341,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_only_dirs_at_top_level() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(async |dir| {
+        oxen_test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1371,7 +1371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1401,7 +1401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_2nd_commit_keeps_num_bytes_and_data_type_counts() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1457,7 +1457,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_second_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1579,7 +1579,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_configurable_vnode_size() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let mut repo = repositories::init::init(dir)?;
             // Set the vnode size to 5
@@ -1658,7 +1658,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_20_files_6_vnode_size() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let mut repo = repositories::init::init(dir)?;
             // Set the vnode size to 6
@@ -1728,7 +1728,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_third_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
@@ -1814,7 +1814,7 @@ mod tests {
      */
     #[tokio::test]
     async fn test_rm_dir_doesnt_break_tree() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(async |repo| {
+        oxen_test::run_training_data_repo_test_no_commits_async(async |repo| {
             // create initial commit
             let readme = repo.path.join("README.md");
             repositories::add(&repo, &readme).await?;

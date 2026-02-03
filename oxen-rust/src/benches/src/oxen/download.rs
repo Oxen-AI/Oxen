@@ -1,11 +1,11 @@
 use criterion::{black_box, BenchmarkId, Criterion};
-use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
+use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, RepoNew};
+use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
-use liboxen::test::test_host;
 use liboxen::util;
 use liboxen::{api, command};
+use oxen_test::create_or_clear_remote_repo;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
@@ -19,13 +19,11 @@ fn generate_random_string(len: usize) -> String {
         .collect()
 }
 
-fn write_file_for_push_benchmark(
+fn write_file_for_download_benchmark(
     file_path: &Path,
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
     if rand::thread_rng().gen_range(0.05..1.0) < large_file_chance {
-        // to test large file chunk upload (File size > 10MB)
-        // let large_content_size = 1024 * 1024 * 200 + 500;
         let large_content_size = 1024 * 1024 + 1;
         let mut large_content = vec![0u8; large_content_size];
         rand::thread_rng().fill_bytes(&mut large_content);
@@ -39,22 +37,26 @@ fn write_file_for_push_benchmark(
     Ok(())
 }
 
-async fn setup_repo_for_push_benchmark(
+async fn setup_repo_for_download_benchmark(
     base_dir: &Path,
     repo_size: usize,
-    num_files_to_push_in_benchmark: usize,
+    num_files_to_download_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
-) -> Result<LocalRepository, OxenError> {
+) -> Result<(LocalRepository, RemoteRepository, PathBuf), OxenError> {
     println!(
-        "setup_repo_for_push_benchmark got repo_size {repo_size}, num_files_to_push {num_files_to_push_in_benchmark}, and dir_size {dir_size}",
+        "setup_repo_for_download_benchmark got repo_size {repo_size}, num_files_to_download {num_files_to_download_in_benchmark}, and dir_size {dir_size}",
     );
-    let repo_dir = base_dir.join(format!("repo_{num_files_to_push_in_benchmark}_{dir_size}"));
+    let repo_dir = base_dir.join(format!(
+        "repo_{num_files_to_download_in_benchmark}_{dir_size}"
+    ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
 
-    let repo = repositories::init(&repo_dir)?;
+    let mut repo = repositories::init(&repo_dir)?;
+    let remote_repo = create_or_clear_remote_repo(&repo).await?;
+    command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
 
     let mut rng = rand::thread_rng();
     let files_dir = if let Some(data_path) = data_path {
@@ -96,55 +98,37 @@ async fn setup_repo_for_push_benchmark(
                 - (max_large_file_ratio - min_large_file_ratio) * normalized_log_repo_size;
         }
 
-        // Note: If we want to have the push benchmark actually push to remotes with the proper repo_size,
-        //       We would need to do this every iteration, which would be slow
-
-        /*
-        for i in 0..repo_size {
-            let dir_idx = rng.gen_range(0..dirs.len());
-            let dir = &dirs[dir_idx];
-            util::fs::create_dir_all(dir)?;
-            let file_path = dir.join(format!("file_{}.txt", i));
-            write_file_for_push_benchmark(&file_path, large_file_percentage)?;
-        }
-
-        repositories::add(&repo, black_box(&files_dir)).await?;
-        repositories::commit(&repo, "Init")?;
-        repositories::push(&repo).await?;
-        */
-
-        for i in repo_size..(repo_size + num_files_to_push_in_benchmark) {
+        for i in repo_size..(repo_size + num_files_to_download_in_benchmark) {
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
             let file_path = dir.join(format!("file_{i}.txt"));
-            write_file_for_push_benchmark(&file_path, large_file_percentage)?;
+            write_file_for_download_benchmark(&file_path, large_file_percentage)?;
         }
 
         files_dir
     };
 
     repositories::add(&repo, black_box(&files_dir)).await?;
-    repositories::commit(&repo, "Prepare test files for push benchmark")?;
+    repositories::commit(&repo, "Prepare test files for download benchmark")?;
+    repositories::push(&repo).await?;
 
-    Ok(repo)
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    Ok((repo, remote_repo, repo_dir))
 }
 
-pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
-    let base_dir = PathBuf::from("data/test/benches/push");
+pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
+    let base_dir = PathBuf::from("data/test/benches/download");
     if base_dir.exists() {
         util::fs::remove_dir_all(&base_dir).unwrap();
     }
     util::fs::create_dir_all(&base_dir).unwrap();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut group = c.benchmark_group("push");
+    let mut group = c.benchmark_group("download");
     group.sample_size(iters.unwrap_or(10));
     let params = [
-        // large file upload
-        // (5, 1),
-        // (10, 1),
-        // (10, 10),
         (1000, 20),
         (10000, 20),
         (100000, 20),
@@ -153,12 +137,12 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
         (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_push = repo_size / 1000;
-        let mut repo = rt
-            .block_on(setup_repo_for_push_benchmark(
+        let num_files_to_download = repo_size / 10;
+        let (repo, remote_repo, repo_dir) = rt
+            .block_on(setup_repo_for_download_benchmark(
                 &base_dir,
                 repo_size,
-                num_files_to_push,
+                num_files_to_download,
                 dir_size,
                 data.clone(),
             ))
@@ -166,41 +150,34 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
 
         group.bench_with_input(
             BenchmarkId::new(
-                format!("{num_files_to_push}k_files_in_{dir_size}dirs"),
-                format!("{:?}", (num_files_to_push, dir_size)),
+                format!("{num_files_to_download}k_files_in_{dir_size}dirs"),
+                format!("{:?}", (num_files_to_download, dir_size)),
             ),
-            &(num_files_to_push, dir_size),
+            &(num_files_to_download, dir_size),
             |b, _| {
                 b.to_async(&rt).iter_batched(
                     || {
-                        // Create a new remote for each iteration
-                        let iter_dirname = format!("push-run-{}", rand::thread_rng().gen::<u64>());
+                        let iter_dir =
+                            repo_dir.join(format!("run-{}", rand::thread_rng().gen::<u64>()));
 
-                        let repo_new = RepoNew::from_namespace_name_host(
-                            DEFAULT_NAMESPACE,
-                            iter_dirname,
-                            test_host(),
-                            None,
-                        );
+                        // Create a clean local repo without the files
+                        let oxen_hidden_path = util::fs::oxen_hidden_dir(&iter_dir);
+                        util::fs::create_dir_all(&oxen_hidden_path).unwrap();
 
-                        let remote_repo = rt
-                            .block_on(api::client::repositories::create_from_local(
-                                &repo, repo_new,
-                            ))
-                            .unwrap();
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = command::config::set_remote(
-                            &mut repo,
-                            DEFAULT_REMOTE_NAME,
-                            &remote_repo.remote.url,
-                        );
+                        // create a clean local repo ready for the fetch
+                        let mut local_repo =
+                            LocalRepository::from_remote(remote_repo.clone(), &iter_dir).unwrap();
+                        iter_dir.clone_into(&mut local_repo.path);
+                        local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+                        local_repo.set_min_version(repo.min_version());
+                        local_repo.set_subtree_paths(repo.subtree_paths());
+                        local_repo.set_depth(repo.depth());
 
-                        (repo.clone(), remote_repo)
+                        local_repo.save().unwrap();
+                        (&remote_repo, iter_dir)
                     },
-                    |(repo, remote_repo)| async move {
-                        repositories::push(&repo).await.unwrap();
-                        // cleanup the remote repo for push
-                        api::client::repositories::delete(&remote_repo)
+                    |(remote_repo, iter_dir)| async move {
+                        repositories::download(remote_repo, Path::new("files"), &iter_dir, "main")
                             .await
                             .unwrap();
                     },
@@ -208,6 +185,13 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                 );
             },
         );
+
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        let _ = rt
+            .block_on(api::client::repositories::delete(&remote_repo))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
     group.finish();
 

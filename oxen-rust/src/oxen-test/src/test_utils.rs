@@ -1,26 +1,26 @@
 //! Helpers for our unit and integration tests
 //!
 
-use crate::api;
-use crate::command;
-use crate::constants;
+use liboxen::api;
+use liboxen::command;
+use liboxen::constants;
 
-use crate::constants::DEFAULT_REMOTE_NAME;
+use liboxen::constants::DEFAULT_REMOTE_NAME;
 
-use crate::core;
-use crate::core::versions::MinOxenVersion;
-use crate::error::OxenError;
-use crate::model::data_frame::schema::Field;
-use crate::model::file::FileContents;
-use crate::model::file::FileNew;
-use crate::model::merkle_tree::node::merkle_tree_node_cache;
-use crate::model::RepoNew;
-use crate::model::Schema;
-use crate::model::User;
-use crate::model::{LocalRepository, RemoteRepository};
-use crate::opts::RmOpts;
-use crate::repositories;
-use crate::util;
+use liboxen::core;
+use liboxen::core::versions::MinOxenVersion;
+use liboxen::error::OxenError;
+use liboxen::model::data_frame::schema::Field;
+use liboxen::model::file::FileContents;
+use liboxen::model::file::FileNew;
+use liboxen::model::merkle_tree::node::merkle_tree_node_cache;
+use liboxen::model::RepoNew;
+use liboxen::model::Schema;
+use liboxen::model::User;
+use liboxen::model::{LocalRepository, RemoteRepository};
+use liboxen::opts::RmOpts;
+use liboxen::repositories;
+use liboxen::util;
 
 use rand::distributions::Alphanumeric;
 use rand::Rng;
@@ -29,11 +29,24 @@ use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
+pub static REPO_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf()
+});
+
+pub static TEST_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| REPO_ROOT.join("data"));
+
 pub fn test_run_dir() -> PathBuf {
-    PathBuf::from("data").join("test").join("runs")
+    TEST_DATA_DIR.join("test").join("runs")
 }
 
 pub fn test_host() -> String {
@@ -60,12 +73,26 @@ pub fn repo_remote_url_from(name: &str) -> String {
     )
 }
 
+static ENV_LOCK: LazyLock<Arc<Mutex<bool>>> = LazyLock::new(|| Arc::new(Mutex::new(false)));
+
 pub fn init_test_env() {
     // check if logger is already initialized
     util::logging::init_logging();
 
-    unsafe {
-        std::env::set_var("TEST", "true");
+    match ENV_LOCK.lock() {
+        Ok(mut logging_setup) => {
+            if !*logging_setup {
+                util::logging::init_logging();
+                *logging_setup = true;
+            }
+
+            unsafe {
+                std::env::set_var("TEST", "true");
+            }
+        }
+        Err(e) => {
+            panic!("Failed to acquire environment lock to initialize test environment: {e}");
+        }
     }
 }
 
@@ -174,8 +201,8 @@ pub async fn add_n_files_m_dirs(
 /// and take care of cleaning it up afterwards
 ///
 /// ```
-/// # use liboxen::test;
-/// test::run_empty_dir_test(|repo_dir| {
+/// #
+/// oxen_test::run_empty_dir_test(|repo_dir| {
 ///   // do your fancy testing here
 ///   assert!(true);
 ///   Ok(())
@@ -1646,70 +1673,70 @@ pub async fn maybe_cleanup_repo_with_remote(
 
 // This function conditionally removes the repo dir given a CLEANUP_REPOS environment variable
 pub fn user_cfg_file() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("config")
         .join("user_config.toml")
 }
 
 pub fn auth_cfg_file() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("config")
         .join("auth_config.toml")
 }
 
 pub fn repo_cfg_file() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("config")
         .join("repo_config.toml")
 }
 
 pub fn test_img_file() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("images")
         .join("dwight_vince.jpeg")
 }
 
 pub fn test_invalid_parquet_file() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("data")
         .join("invalid.parquet")
 }
 
 pub fn test_binary_column_parquet_file() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("parquet")
         .join("binary_col.parquet")
 }
 
 pub fn test_csv_file_with_name(name: &str) -> PathBuf {
-    PathBuf::from("data").join("test").join("csvs").join(name)
+    TEST_DATA_DIR.join("test").join("csvs").join(name)
 }
 
 pub fn test_img_file_with_name(name: &str) -> PathBuf {
-    PathBuf::from("data").join("test").join("images").join(name)
+    TEST_DATA_DIR.join("test").join("images").join(name)
 }
 
 pub fn test_text_file_with_name(name: &str) -> PathBuf {
-    PathBuf::from("data").join("test").join("text").join(name)
+    TEST_DATA_DIR.join("test").join("text").join(name)
 }
 
 pub fn test_video_file_with_name(name: &str) -> PathBuf {
-    PathBuf::from("data").join("test").join("video").join(name)
+    TEST_DATA_DIR.join("test").join("video").join(name)
 }
 
 pub fn test_audio_file_with_name(name: &str) -> PathBuf {
-    PathBuf::from("data").join("test").join("audio").join(name)
+    TEST_DATA_DIR.join("test").join("audio").join(name)
 }
 
 /// Returns: data/test/text/celeb_a_200k.csv
 pub fn test_200k_csv() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("text")
         .join("celeb_a_200k.csv")
@@ -1717,7 +1744,7 @@ pub fn test_200k_csv() -> PathBuf {
 
 /// Returns: data/test/parquet/sft 100.parquet
 pub fn test_100_parquet() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("parquet")
         .join("sft 100.parquet")
@@ -1725,7 +1752,7 @@ pub fn test_100_parquet() -> PathBuf {
 
 /// Returns: data/test/parquet/wiki_1k.parquet
 pub fn test_1k_parquet() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("parquet")
         .join("wiki_1k.parquet")
@@ -1734,10 +1761,70 @@ pub fn test_1k_parquet() -> PathBuf {
 /// Returns: data/test/parquet/wiki_30k.parquet
 /// Used for larger file uploads > 10mb (it is ~85mb)
 pub fn test_30k_parquet() -> PathBuf {
-    Path::new("data")
+    TEST_DATA_DIR
         .join("test")
         .join("parquet")
         .join("wiki_30k.parquet")
+}
+
+/// Returns: data/test/csvs/emojis.csv
+/// Used for tabular tests.
+pub fn test_emojis() -> PathBuf {
+    TEST_DATA_DIR.join("test").join("csvs").join("emojis.csv")
+}
+
+/// Returns: data/test/csvs/tabs.csv
+/// Used for tabular tests.
+pub fn test_tabs_csv() -> PathBuf {
+    TEST_DATA_DIR.join("test").join("csvs").join("tabs.csv")
+}
+
+/// Returns: data/test/csvs/spam_ham_data_w_quote.tsv
+/// Used for tabular tests.
+pub fn test_spam_ham() -> PathBuf {
+    TEST_DATA_DIR
+        .join("test")
+        .join("csvs")
+        .join("spam_ham_data_w_quote.tsv")
+}
+
+/// Returns: data/test/text/test.json
+/// Used for tabular tests.
+pub fn test_text_json() -> PathBuf {
+    TEST_DATA_DIR.join("test").join("text").join("test.json")
+}
+
+/// Returns: data/test/text/test.jsonl
+/// Used for tabular tests.
+pub fn test_text_jsonl() -> PathBuf {
+    TEST_DATA_DIR.join("test").join("text").join("test.jsonl")
+}
+
+/// Returns: data/test/csvs/empty_rows_carriage_return.csv
+/// Used for tabular tests.
+pub fn test_csv_empty_rows_carriage_return() -> PathBuf {
+    TEST_DATA_DIR
+        .join("test")
+        .join("csvs")
+        .join("empty_rows_carriage_return.csv")
+}
+
+/// Returns: data/test/images/hotdog_1.jpg
+/// Used for repositories tests.
+pub fn test_hotdog_1() -> PathBuf {
+    TEST_DATA_DIR
+        .join("test")
+        .join("images")
+        .join("hotdog_1.jpg")
+}
+
+/// Returns: data/test/images/hotdog_2.jpg
+/// Used for repositories tests.
+pub fn test_hotdog_2() -> PathBuf {
+    TEST_DATA_DIR
+        .join("test")
+        .join("images")
+        .join("hotdog_2.jpg")
 }
 
 /// Returns: nlp/classification/annotations/test.tsv
@@ -1816,53 +1903,32 @@ pub fn populate_train_dir(repo_dir: &Path) -> Result<(), OxenError> {
     let train_dir = repo_dir.join("train");
     util::fs::create_dir_all(&train_dir)?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("dog_1.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("dog_1.jpg"),
         train_dir.join("dog_1.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("dog_2.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("dog_2.jpg"),
         train_dir.join("dog_2.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("dog_3.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("dog_3.jpg"),
         train_dir.join("dog_3.jpg"),
     )?;
     // Add file with same content and different names to test edge cases
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("dog_3.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("dog_3.jpg"),
         train_dir.join("dog_4.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("cat_1.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("cat_1.jpg"),
         train_dir.join("cat_1.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("cat_2.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("cat_2.jpg"),
         train_dir.join("cat_2.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("cat_2.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("cat_2.jpg"),
         train_dir.join("cat_3.jpg"),
     )?;
 
@@ -1873,31 +1939,19 @@ pub fn populate_test_dir(repo_dir: &Path) -> Result<(), OxenError> {
     let test_dir = repo_dir.join("test");
     util::fs::create_dir_all(&test_dir)?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("dog_4.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("dog_4.jpg"),
         test_dir.join("1.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("cat_3.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("cat_3.jpg"),
         test_dir.join("2.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("dog_4.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("dog_4.jpg"),
         test_dir.join("3.jpg"),
     )?;
     util::fs::copy(
-        Path::new("data")
-            .join("test")
-            .join("images")
-            .join("cat_3.jpg"),
+        TEST_DATA_DIR.join("test").join("images").join("cat_3.jpg"),
         test_dir.join("4.jpg"),
     )?;
 

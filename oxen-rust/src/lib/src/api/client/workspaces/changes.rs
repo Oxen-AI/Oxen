@@ -73,17 +73,17 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::test;
+
     use crate::{api, command, constants, repositories};
 
     use std::path::Path;
 
     #[tokio::test]
     async fn test_list_empty_changes_none_pushed() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|mut local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|mut local_repo, remote_repo| async move {
             let branch_name = "add-images";
             repositories::branches::create_checkout(&local_repo, branch_name)?;
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
             repositories::push(&local_repo).await?;
 
@@ -122,37 +122,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_empty_changes_all_data_pushed() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
 
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let page_num = constants::DEFAULT_PAGE_NUM;
-            let page_size = constants::DEFAULT_PAGE_SIZE;
-            let path = Path::new("images");
-            let entries = api::client::workspaces::changes::list(
-                &remote_repo,
-                &workspace_id,
-                path,
-                page_num,
-                page_size,
-            )
-            .await?;
-            assert_eq!(entries.added_files.entries.len(), 0);
-            assert_eq!(entries.added_files.total_entries, 0);
+                let page_num = constants::DEFAULT_PAGE_NUM;
+                let page_size = constants::DEFAULT_PAGE_SIZE;
+                let path = Path::new("images");
+                let entries = api::client::workspaces::changes::list(
+                    &remote_repo,
+                    &workspace_id,
+                    path,
+                    page_num,
+                    page_size,
+                )
+                .await?;
+                assert_eq!(entries.added_files.entries.len(), 0);
+                assert_eq!(entries.added_files.total_entries, 0);
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 }

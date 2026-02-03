@@ -576,7 +576,7 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
     use crate::repositories::workspaces;
-    use crate::test;
+
     use crate::{repositories, util};
 
     #[tokio::test]
@@ -586,7 +586,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -633,7 +633,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -712,7 +712,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -801,7 +801,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -891,7 +891,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -967,7 +967,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1032,7 +1032,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1118,7 +1118,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1205,7 +1205,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1276,7 +1276,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Try stage an append
             let path = Path::new("annotations")
                 .join("train")
@@ -1305,7 +1305,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move{
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move{
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");

@@ -112,7 +112,6 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
     use crate::util;
     use crate::view::data_frames::columns::NewColumn;
     use crate::view::data_frames::FromDirectoryRequest;
@@ -121,12 +120,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_schema_metadata() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
-            let from_file = test::test_200k_csv();
+            let from_file = oxen_test::test_200k_csv();
             util::fs::copy(from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
@@ -182,11 +181,11 @@ mod tests {
             repositories::commit(&local_repo, "add test.csv schema metadata")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -237,23 +236,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_paginate_df_page_one() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
-            let from_file = test::test_200k_csv();
+            let from_file = oxen_test::test_200k_csv();
             util::fs::copy(from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -285,23 +284,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_paginate_df_page_1_page_size_20() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
-            let from_file = test::test_200k_csv();
+            let from_file = oxen_test::test_200k_csv();
             util::fs::copy(from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -339,23 +338,23 @@ mod tests {
             return Ok(());
         }
 
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
-            let from_file = test::test_200k_csv();
+            let from_file = oxen_test::test_200k_csv();
             util::fs::copy(from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -430,12 +429,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_get_schema_df_on_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("csvs");
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
-            let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
+            let from_file = oxen_test::test_csv_file_with_name("mixed_data_types.csv");
             util::fs::copy(from_file, &csv_file)?;
 
             // Add the file
@@ -443,7 +442,7 @@ mod tests {
             repositories::commit(&local_repo, "add test.csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             let schema_ref = &PathBuf::from("csvs")
@@ -451,7 +450,7 @@ mod tests {
                 .to_string_lossy()
                 .to_string();
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Cannot get schema that does not exist
             let opts = DFOpts::empty();
@@ -541,23 +540,23 @@ mod tests {
     // Tests passing in no slice or page params for data/test/parquet/wiki_1k.parquet file
     #[tokio::test]
     async fn test_remote_parquet_no_params() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("data");
             util::fs::create_dir_all(&large_dir)?;
             let test_file = large_dir.join("test.parquet");
-            let from_file = test::test_1k_parquet();
+            let from_file = oxen_test::test_1k_parquet();
             util::fs::copy(from_file, &test_file)?;
 
             repositories::add(&local_repo, &test_file).await?;
             repositories::commit(&local_repo, "add test.parquet")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -607,23 +606,23 @@ mod tests {
     // Tests page=4 page_size=6 for data/test/parquet/wiki_1k.parquet file
     #[tokio::test]
     async fn test_paginate_remote_parquet() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("data");
             util::fs::create_dir_all(&large_dir)?;
             let test_file = large_dir.join("test.parquet");
-            let from_file = test::test_1k_parquet();
+            let from_file = oxen_test::test_1k_parquet();
             util::fs::copy(from_file, &test_file)?;
 
             repositories::add(&local_repo, &test_file).await?;
             repositories::commit(&local_repo, "add test.parquet")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -670,23 +669,23 @@ mod tests {
     // Test slice=330..333 for data/test/parquet/wiki_1k.parquet file
     #[tokio::test]
     async fn test_slice_remote_parquet() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("data");
             util::fs::create_dir_all(&large_dir)?;
             let test_file = large_dir.join("test.parquet");
-            let from_file = test::test_1k_parquet();
+            let from_file = oxen_test::test_1k_parquet();
             util::fs::copy(from_file, &test_file)?;
 
             repositories::add(&local_repo, &test_file).await?;
             repositories::commit(&local_repo, "add test.parquet")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -726,7 +725,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_from_directory() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
 
             // Create test directory structure
@@ -751,11 +750,11 @@ mod tests {
             repositories::commit(&local_repo, "add test files")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -834,7 +833,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_from_directory_with_images_sets_metadata() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
 
             // Create test directory structure with images
@@ -850,20 +849,20 @@ mod tests {
 
             // Create minimal valid JPEG files (or use test fixtures)
             // Here using a placeholder - in real test you'd use actual image data
-            util::fs::copy(test::test_img_file_with_name("cat_1.jpg"), &image1)?;
-            util::fs::copy(test::test_img_file_with_name("cat_rgba.png"), &image2)?;
-            util::fs::copy(test::test_img_file_with_name("dog_1.jpg"), &image3)?;
+            util::fs::copy(oxen_test::test_img_file_with_name("cat_1.jpg"), &image1)?;
+            util::fs::copy(oxen_test::test_img_file_with_name("cat_rgba.png"), &image2)?;
+            util::fs::copy(oxen_test::test_img_file_with_name("dog_1.jpg"), &image3)?;
 
             // Add and commit the files
             repositories::add(&local_repo, &test_dir).await?;
             repositories::commit(&local_repo, "add test images")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -934,7 +933,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_from_directory_mixed_files_no_image_metadata() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
 
             // Create test directory with mixed file types
@@ -945,7 +944,7 @@ mod tests {
             let image1 = test_dir.join("image1.jpg");
             let text1 = test_dir.join("file1.txt");
 
-            util::fs::copy(test::test_img_file_with_name("cat_1.jpg"), &image1)?;
+            util::fs::copy(oxen_test::test_img_file_with_name("cat_1.jpg"), &image1)?;
             std::fs::write(&text1, "content1")?;
 
             // Add and commit the files
@@ -953,11 +952,11 @@ mod tests {
             repositories::commit(&local_repo, "add mixed files")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = oxen_test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = oxen_test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;

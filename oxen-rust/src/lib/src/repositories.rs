@@ -363,14 +363,14 @@ mod tests {
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoNew};
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
     use std::path::{Path, PathBuf};
     use time::OffsetDateTime;
 
     #[tokio::test]
     async fn test_local_repository_api_create_empty_with_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
+        oxen_test::run_empty_dir_test_async(|sync_dir| async move {
             let namespace: &str = "test-namespace";
             let name: &str = "test-repo-name";
             let initial_commit_id = format!("{}", uuid::Uuid::new_v4());
@@ -401,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_api_create_empty_with_files() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
+        oxen_test::run_empty_dir_test_async(|sync_dir| async move {
             let namespace: &str = "test-namespace";
             let name: &str = "test-repo-name";
 
@@ -429,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_api_create_empty_no_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
+        oxen_test::run_empty_dir_test_async(|sync_dir| async move {
             let namespace: &str = "test-namespace";
             let name: &str = "test-repo-name";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
@@ -450,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_api_list_namespaces_one() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|sync_dir| {
+        oxen_test::run_empty_dir_test(|sync_dir| {
             let namespace: &str = "test-namespace";
             let name: &str = "cool-repo";
 
@@ -469,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_api_list_multiple_namespaces() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|sync_dir| {
+        oxen_test::run_empty_dir_test(|sync_dir| {
             let namespace_1 = "my-namespace-1";
             let namespace_1_dir = sync_dir.join(namespace_1);
 
@@ -493,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_api_list_multiple_within_namespace() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|sync_dir| {
+        oxen_test::run_empty_dir_test(|sync_dir| {
             let namespace = "my-namespace";
             let namespace_dir = sync_dir.join(namespace);
 
@@ -510,7 +510,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_api_get_by_name() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|sync_dir| {
+        oxen_test::run_empty_dir_test(|sync_dir| {
             let namespace = "my-namespace";
             let name = "my-repo";
             let repo_dir = sync_dir.join(namespace).join(name);
@@ -525,7 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_repository_transfer_namespace() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
+        oxen_test::run_empty_dir_test_async(|sync_dir| async move {
             let old_namespace: &str = "test-namespace-old";
             let new_namespace: &str = "test-namespace-new";
 

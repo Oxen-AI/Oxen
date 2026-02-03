@@ -58,12 +58,12 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::LocalRepository;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     #[tokio::test]
     async fn test_command_save_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Write one file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -87,8 +87,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_save_load_repo_with_working_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
+            oxen_test::run_empty_dir_test_async(|dir| async move {
                 // Write one file
                 let hello_file = repo.path.join("hello.txt");
                 util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -119,8 +119,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_save_load_repo_no_working_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
+            oxen_test::run_empty_dir_test_async(|dir| async move {
                 // Write one file
                 let hello_file = repo.path.join("hello.txt");
                 util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -157,8 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_save_load_moved_and_removed() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            test::run_empty_dir_test_async(|dir| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
+            oxen_test::run_empty_dir_test_async(|dir| async move {
                 // Write one file
                 let hello_file = repo.path.join("hello.txt");
                 let goodbye_file = repo.path.join("goodbye.txt");

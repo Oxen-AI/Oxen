@@ -213,11 +213,10 @@ mod tests {
     use super::*;
     use liboxen::api;
     use liboxen::error::OxenError;
-    use liboxen::test;
 
     #[tokio::test]
     async fn test_workspace_status_by_name() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let w_id = "test_workspace_id";
             let w_name = "my_test_workspace_name";
             let opts = StagedDataOpts {
@@ -239,7 +238,7 @@ mod tests {
                 &remote_repo,
                 w_name,
                 "",
-                test::test_img_file(),
+                oxen_test::test_img_file(),
             )
             .await?;
             let status = WorkspaceStatusCmd::status(&remote_repo, w_name, ".", &opts).await?;

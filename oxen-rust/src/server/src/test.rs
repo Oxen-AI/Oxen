@@ -20,7 +20,7 @@ pub fn init_test_env() {
 
 pub fn get_sync_dir() -> Result<PathBuf, OxenError> {
     init_test_env();
-    let sync_dir = PathBuf::from(format!("data/test/runs/{}", uuid::Uuid::new_v4()));
+    let sync_dir = oxen_test::REPO_ROOT.join(format!("data/test/runs/{}", uuid::Uuid::new_v4()));
     util::fs::create_dir_all(&sync_dir)?;
     Ok(sync_dir)
 }

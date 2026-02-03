@@ -198,11 +198,10 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_create_workspace() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             let workspace_id = "test_workspace_id";
             let workspace = create(&remote_repo, branch_name, workspace_id).await?;
@@ -216,7 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_workspace_with_name() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             let workspace_id = "test_workspace_id";
             let workspace_name = "test_workspace_name";
@@ -249,7 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_workspace_by_name() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             let workspace_id = "test_workspace_id";
             let workspace_name = "test_workspace_name";
@@ -283,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_workspace_by_name_does_not_exist() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let workspace_name = "name_does_not_exist";
 
             let workspace = get_by_name(&remote_repo, &workspace_name).await?;
@@ -296,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_workspace_by_id_does_not_exist() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let workspace_id = "id_does_not_exist";
 
             let workspace = get(&remote_repo, &workspace_id).await?;
@@ -309,7 +308,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_workspaces() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             // Create 10 workspaces
             for i in 0..10 {
                 create(
@@ -334,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_workspaces() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             create(&remote_repo, branch_name, "test_workspace_id").await?;
             create(&remote_repo, branch_name, "test_workspace_id2").await?;
@@ -349,7 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_empty_workspaces() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
             let workspaces = list(&remote_repo).await?;
             assert_eq!(workspaces.len(), 0);
 
@@ -360,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_workspace() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             let workspace_id = "test_workspace_id";
             let workspace = create(&remote_repo, branch_name, workspace_id).await?;
@@ -382,16 +381,16 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
+        oxen_test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|repo_dir| async move {
+            oxen_test::run_empty_dir_test_async(|repo_dir| async move {
                 let cloned_repo =
                     repositories::clone_url(&remote_repo.remote.url, &repo_dir.join("new_repo"))
                         .await?;
 
                 // Remote stage row
-                let path = test::test_nlp_classification_csv();
+                let path = oxen_test::test_nlp_classification_csv();
 
                 // Create workspace
                 let workspace_id = "my_workspace";
@@ -457,169 +456,184 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_commit_staging_behind_main() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            // Create branch behind-main off main
-            let new_branch = "behind-main";
-            let main_branch = "main";
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                // Create branch behind-main off main
+                let new_branch = "behind-main";
+                let main_branch = "main";
 
-            let main_path = "images/folder";
-            let workspace =
-                api::client::workspaces::create(&remote_repo, main_branch, "test_workspace")
+                let main_path = "images/folder";
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, main_branch, "test_workspace")
+                        .await?;
+                let identifier = workspace.id;
+
+                api::client::branches::create_from_branch(&remote_repo, new_branch, main_branch)
                     .await?;
-            let identifier = workspace.id;
 
-            api::client::branches::create_from_branch(&remote_repo, new_branch, main_branch)
+                // Advance head on main branch, leave behind-main behind
+                let path = oxen_test::test_img_file();
+                let result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &identifier,
+                    main_path,
+                    path,
+                )
+                .await;
+                assert!(result.is_ok());
+
+                let body = NewCommitBody {
+                    message: "Add to main".to_string(),
+                    author: "Test User".to_string(),
+                    email: "test@oxen.ai".to_string(),
+                };
+                api::client::workspaces::commit(&remote_repo, main_branch, &identifier, &body)
+                    .await?;
+
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, new_branch, "test_workspace")
+                        .await?;
+                let identifier = workspace.id;
+
+                // Add a file to behind-main
+                let image_path = oxen_test::test_1k_parquet();
+                let result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &identifier,
+                    main_path,
+                    image_path,
+                )
+                .await;
+                assert!(result.is_ok());
+
+                // Make a commit to behind-main
+                let body = NewCommitBody {
+                    message: "Add behind main".to_string(),
+                    author: "Test User".to_string(),
+                    email: "test@oxen.ai".to_string(),
+                };
+                api::client::workspaces::commit(&remote_repo, new_branch, &identifier, &body)
+                    .await?;
+
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, new_branch, "test_workspace")
+                        .await?;
+                let identifier = workspace.id;
+
+                // Add file at images/folder to behind-main, committed to main
+                let image_path = oxen_test::test_100_parquet();
+                let result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &identifier,
+                    main_path,
+                    image_path,
+                )
+                .await;
+                assert!(result.is_ok());
+
+                // Check status: if valid, there should be an entry here for the file at images/folder
+                let page_num = constants::DEFAULT_PAGE_NUM;
+                let page_size = constants::DEFAULT_PAGE_SIZE;
+                let path = Path::new("");
+
+                let remote_status = api::client::workspaces::changes::list(
+                    &remote_repo,
+                    &identifier,
+                    path,
+                    page_num,
+                    page_size,
+                )
                 .await?;
 
-            // Advance head on main branch, leave behind-main behind
-            let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &identifier,
-                main_path,
-                path,
-            )
-            .await;
-            assert!(result.is_ok());
+                assert_eq!(remote_status.added_files.entries.len(), 1);
+                assert_eq!(remote_status.added_files.total_entries, 1);
 
-            let body = NewCommitBody {
-                message: "Add to main".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(&remote_repo, main_branch, &identifier, &body).await?;
-
-            let workspace =
-                api::client::workspaces::create(&remote_repo, new_branch, "test_workspace").await?;
-            let identifier = workspace.id;
-
-            // Add a file to behind-main
-            let image_path = test::test_1k_parquet();
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &identifier,
-                main_path,
-                image_path,
-            )
-            .await;
-            assert!(result.is_ok());
-
-            // Make a commit to behind-main
-            let body = NewCommitBody {
-                message: "Add behind main".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(&remote_repo, new_branch, &identifier, &body).await?;
-
-            let workspace =
-                api::client::workspaces::create(&remote_repo, new_branch, "test_workspace").await?;
-            let identifier = workspace.id;
-
-            // Add file at images/folder to behind-main, committed to main
-            let image_path = test::test_100_parquet();
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &identifier,
-                main_path,
-                image_path,
-            )
-            .await;
-            assert!(result.is_ok());
-
-            // Check status: if valid, there should be an entry here for the file at images/folder
-            let page_num = constants::DEFAULT_PAGE_NUM;
-            let page_size = constants::DEFAULT_PAGE_SIZE;
-            let path = Path::new("");
-
-            let remote_status = api::client::workspaces::changes::list(
-                &remote_repo,
-                &identifier,
-                path,
-                page_num,
-                page_size,
-            )
-            .await?;
-
-            assert_eq!(remote_status.added_files.entries.len(), 1);
-            assert_eq!(remote_status.added_files.total_entries, 1);
-
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_not_named_workspaces_closing_after_commit() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let workspace_id = "test_workspace_id";
-            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let workspace_id = "test_workspace_id";
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await?;
+                let path = oxen_test::test_img_file();
+                let result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &&workspace_id,
+                    "",
+                    path,
+                )
+                .await;
+                assert!(result.is_ok());
+
+                let body = NewCommitBody {
+                    message: "Add to main".to_string(),
+                    author: "Test User".to_string(),
+                    email: "test@oxen.ai".to_string(),
+                };
+                api::client::workspaces::commit(
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    workspace_id,
+                    &body,
+                )
                 .await?;
-            let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &&workspace_id,
-                "",
-                path,
-            )
-            .await;
-            assert!(result.is_ok());
+                let get_result = api::client::workspaces::get(&remote_repo, &workspace_id).await?;
 
-            let body = NewCommitBody {
-                message: "Add to main".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id, &body)
-                .await?;
-            let get_result = api::client::workspaces::get(&remote_repo, &workspace_id).await?;
+                assert!(get_result.is_none());
 
-            assert!(get_result.is_none());
-
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_named_workspaces_not_closing_after_commit() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let workspace_name = "test_workspace_name";
-            let workspace_id = "test_workspace_id";
-            api::client::workspaces::create_with_name(
-                &remote_repo,
-                DEFAULT_BRANCH_NAME,
-                workspace_id,
-                workspace_name,
-            )
-            .await?;
-            let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_name,
-                "",
-                path,
-            )
-            .await;
-            assert!(result.is_ok());
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let workspace_name = "test_workspace_name";
+                let workspace_id = "test_workspace_id";
+                api::client::workspaces::create_with_name(
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    workspace_id,
+                    workspace_name,
+                )
+                .await?;
+                let path = oxen_test::test_img_file();
+                let result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &workspace_name,
+                    "",
+                    path,
+                )
+                .await;
+                assert!(result.is_ok());
 
-            let body = NewCommitBody {
-                message: "Add to main".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(
-                &remote_repo,
-                DEFAULT_BRANCH_NAME,
-                workspace_name,
-                &body,
-            )
-            .await?;
-            let workspace = api::client::workspaces::get(&remote_repo, &workspace_name).await?;
-            assert!(workspace.is_some());
-            assert_eq!(workspace.as_ref().unwrap().id, workspace_id);
-            Ok(remote_repo)
-        })
+                let body = NewCommitBody {
+                    message: "Add to main".to_string(),
+                    author: "Test User".to_string(),
+                    email: "test@oxen.ai".to_string(),
+                };
+                api::client::workspaces::commit(
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    workspace_name,
+                    &body,
+                )
+                .await?;
+                let workspace = api::client::workspaces::get(&remote_repo, &workspace_name).await?;
+                assert!(workspace.is_some());
+                assert_eq!(workspace.as_ref().unwrap().id, workspace_id);
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 }

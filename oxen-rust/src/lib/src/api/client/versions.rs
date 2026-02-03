@@ -851,37 +851,39 @@ mod tests {
 
     use crate::api;
     use crate::error::OxenError;
-    use crate::test;
 
     #[tokio::test]
     async fn test_upload_large_file_in_chunks() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let path = test::test_30k_parquet();
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |_local_repo, remote_repo| async move {
+                let path = oxen_test::test_30k_parquet();
 
-            // Get original file size
-            let metadata = path.metadata().unwrap();
-            let original_file_size = metadata.len();
+                // Get original file size
+                let metadata = path.metadata().unwrap();
+                let original_file_size = metadata.len();
 
-            // Just testing upload, not adding to workspace
-            let workspace_id = None;
-            let dst_dir: Option<PathBuf> = None;
-            let result = api::client::versions::parallel_large_file_upload(
-                &remote_repo,
-                path,
-                dst_dir,
-                workspace_id,
-                None,
-                None,
-            )
-            .await;
-            assert!(result.is_ok());
+                // Just testing upload, not adding to workspace
+                let workspace_id = None;
+                let dst_dir: Option<PathBuf> = None;
+                let result = api::client::versions::parallel_large_file_upload(
+                    &remote_repo,
+                    path,
+                    dst_dir,
+                    workspace_id,
+                    None,
+                    None,
+                )
+                .await;
+                assert!(result.is_ok());
 
-            let version = api::client::versions::get(&remote_repo, result.unwrap().hash).await?;
-            assert!(version.is_some());
-            assert_eq!(version.unwrap().size, original_file_size);
+                let version =
+                    api::client::versions::get(&remote_repo, result.unwrap().hash).await?;
+                assert!(version.is_some());
+                assert_eq!(version.unwrap().size, original_file_size);
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 }

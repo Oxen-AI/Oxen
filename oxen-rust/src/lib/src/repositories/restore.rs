@@ -14,12 +14,12 @@ use crate::opts::RestoreOpts;
 /// ```
 /// use liboxen::command;
 /// use liboxen::util;
-/// # use liboxen::test;
+/// #
 /// # use liboxen::error::OxenError;
 /// # use liboxen::opts::RestoreOpts;
 /// # use std::path::Path;
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # oxen_test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");
@@ -65,13 +65,13 @@ mod tests {
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
-    use crate::test::append_line_txt_file;
+
     use crate::util;
+    use oxen_test::append_line_txt_file;
 
     #[tokio::test]
     async fn test_command_restore_removed_file_from_head() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_filename = "hello.txt";
             let hello_file = repo.path.join(hello_filename);
@@ -99,7 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_restore_file_from_commit_id() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        oxen_test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_filename = "hello.txt";
             let hello_file = repo.path.join(hello_filename);
@@ -112,13 +112,13 @@ mod tests {
 
             // Modify the file once
             let first_modification = "Hola Mundo";
-            let hello_file = test::modify_txt_file(hello_file, first_modification)?;
+            let hello_file = oxen_test::modify_txt_file(hello_file, first_modification)?;
             repositories::add(&repo, &hello_file).await?;
             let first_mod_commit = repositories::commit(&repo, "Changing to spanish")?;
 
             // Modify again
             let second_modification = "Bonjour le monde";
-            let hello_file = test::modify_txt_file(hello_file, second_modification)?;
+            let hello_file = oxen_test::modify_txt_file(hello_file, second_modification)?;
             repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Changing to french")?;
 
@@ -140,7 +140,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_restore_removed_file_from_branch_with_commits_between(
     ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // (file already created in helper)
             let file_to_remove = repo.path.join("labels.txt");
 
@@ -183,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -202,7 +202,7 @@ mod tests {
             let readme_path = repo.path.join(readme_file);
             let og_readme_contents = util::fs::read_from_path(&readme_path)?;
 
-            let readme_path = test::append_line_txt_file(readme_path, "Adding s'more")?;
+            let readme_path = oxen_test::append_line_txt_file(readme_path, "Adding s'more")?;
 
             // Restore the directory
             repositories::restore::restore(
@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -255,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_modified_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -288,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_modified_text_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -320,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_staged_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let bbox_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -349,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn test_restore_data_frame_with_duplicates() -> Result<(), OxenError> {
         // THIS ONE FAILS BECAUSE OF THE REPOSITOROIES::COMMIT, IT DOESN'T GET TO RESTORE
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let ann_file = Path::new("nlp")
                 .join("classification")
                 .join("annotations")
@@ -386,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let ann_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -427,7 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_staged_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let relative_path = Path::new("annotations");
             let annotations_dir = repo.path.join(relative_path);
 
@@ -456,7 +456,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wildcard_restore_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -506,14 +506,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_wildcard_restore_deleted_and_present() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        oxen_test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = oxen_test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -523,7 +523,7 @@ mod tests {
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = oxen_test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -588,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_wildcard_prefix_staged() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Repo has 7 images in train/
             let rm_opts = RmOpts {
                 path: PathBuf::from("train/*"),
@@ -624,7 +624,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        oxen_test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Make a new dir in the repo - new_annotations
             let new_annotations_dir = repo.path.join("new_annotations");
             // Copy over bounding_box.csv and one_shot.csv to new_annotations

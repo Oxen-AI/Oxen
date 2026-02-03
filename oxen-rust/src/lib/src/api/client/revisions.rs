@@ -36,11 +36,10 @@ mod tests {
     use crate::error::OxenError;
 
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_get_revision_from_commit() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
+        oxen_test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
 
             let revision = api::client::revisions::get(&remote_repo, &commit.id).await?;
@@ -55,7 +54,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_revision_from_branch() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
+        oxen_test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let branch = repositories::branches::current_branch(&local_repo)?.unwrap();
 
             let revision = api::client::revisions::get(&remote_repo, &branch.name).await?;

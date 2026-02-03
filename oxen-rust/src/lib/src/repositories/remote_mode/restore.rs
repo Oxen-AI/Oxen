@@ -51,14 +51,14 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
 
-    use crate::{repositories, test};
+    use crate::repositories;
 
     #[tokio::test]
     async fn test_remote_mode_restore_file() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            oxen_test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
@@ -103,10 +103,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_file_with_full_path() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        oxen_test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            oxen_test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
@@ -151,11 +151,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_subdirectory_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
             |mut _local_repo, remote_repo| async move {
                 let remote_repo_copy = remote_repo.clone();
 
-                test::run_empty_dir_test_async(|dir| async move {
+                oxen_test::run_empty_dir_test_async(|dir| async move {
                     let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                     opts.is_remote = true;
                     let cloned_repo = repositories::clone(&opts).await?;
@@ -213,10 +213,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_dir() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
+        oxen_test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            oxen_test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;

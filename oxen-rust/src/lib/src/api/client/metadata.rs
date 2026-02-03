@@ -38,16 +38,16 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::{EntryDataType, StagedEntryStatus};
+    use crate::util;
     use crate::view::entries::EMetadataEntry;
     use crate::view::entry_metadata::EMetadataEntryResponseView;
     use crate::{api, repositories};
-    use crate::{test, util};
 
     use std::path::Path;
 
     #[tokio::test]
     async fn test_get_file_entry() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        oxen_test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let path = Path::new("annotations").join("README.md");
             let revision = DEFAULT_BRANCH_NAME;
 
@@ -87,7 +87,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_dir_entry() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        oxen_test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let path = "train";
             let revision = DEFAULT_BRANCH_NAME;
             let entry = api::client::metadata::get_file(&remote_repo, revision, path)
@@ -107,7 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_remote_metadata() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        oxen_test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let branch = DEFAULT_BRANCH_NAME;
             let directory = Path::new("train");
 
@@ -126,12 +126,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_latest_commit_by_branch() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        oxen_test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             // Now push a new commit
             let labels_path = local_repo.path.join("labels.txt");
             let path = Path::new("labels.txt");
 
-            test::write_txt_file_to_path(&labels_path, "I am the labels file")?;
+            oxen_test::write_txt_file_to_path(&labels_path, "I am the labels file")?;
 
             repositories::add(&local_repo, &labels_path).await?;
 
@@ -144,7 +144,7 @@ mod tests {
 
             repositories::branches::create_checkout(&local_repo, second_branch)?;
 
-            test::write_txt_file_to_path(&labels_path, "I am the labels file v2")?;
+            oxen_test::write_txt_file_to_path(&labels_path, "I am the labels file v2")?;
 
             repositories::add(&local_repo, &labels_path).await?;
 
@@ -175,72 +175,77 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_file_with_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let file_path = "annotations/train/file.txt";
-            let workspace_id = "test_workspace_id";
-            let directory_name = "annotations/train";
+        oxen_test::run_remote_repo_test_bounding_box_csv_pushed(
+            |local_repo, remote_repo| async move {
+                let file_path = "annotations/train/file.txt";
+                let workspace_id = "test_workspace_id";
+                let directory_name = "annotations/train";
 
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
-                    .await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace = api::client::workspaces::create(
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    &workspace_id,
+                )
+                .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let full_path = local_repo.path.join(file_path);
-            util::fs::file_create(&full_path)?;
-            util::fs::write(&full_path, b"test content")?;
+                let full_path = local_repo.path.join(file_path);
+                util::fs::file_create(&full_path)?;
+                util::fs::write(&full_path, b"test content")?;
 
-            let _result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_id,
-                directory_name,
-                &full_path,
-            )
-            .await;
+                let _result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &workspace_id,
+                    directory_name,
+                    &full_path,
+                )
+                .await;
 
-            let meta: EMetadataEntryResponseView =
-                api::client::metadata::get_file(&remote_repo, workspace_id, file_path)
-                    .await?
-                    .unwrap();
+                let meta: EMetadataEntryResponseView =
+                    api::client::metadata::get_file(&remote_repo, workspace_id, file_path)
+                        .await?
+                        .unwrap();
 
-            let workspace_entry = match meta.entry {
-                EMetadataEntry::WorkspaceMetadataEntry(entry) => entry,
-                _ => panic!("Expected workspace metadata entry"),
-            };
+                let workspace_entry = match meta.entry {
+                    EMetadataEntry::WorkspaceMetadataEntry(entry) => entry,
+                    _ => panic!("Expected workspace metadata entry"),
+                };
 
-            assert_eq!(
-                workspace_entry.changes.unwrap().status,
-                StagedEntryStatus::Added
-            );
+                assert_eq!(
+                    workspace_entry.changes.unwrap().status,
+                    StagedEntryStatus::Added
+                );
 
-            let file_path = test::test_bounding_box_csv();
-            let full_path = local_repo.path.join(file_path.clone());
-            util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n")?;
+                let file_path = oxen_test::test_bounding_box_csv();
+                let full_path = local_repo.path.join(file_path.clone());
+                util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n")?;
 
-            let _result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_id,
-                directory_name,
-                &full_path,
-            )
-            .await;
+                let _result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &workspace_id,
+                    directory_name,
+                    &full_path,
+                )
+                .await;
 
-            let meta: EMetadataEntryResponseView =
-                api::client::metadata::get_file(&remote_repo, workspace_id, file_path.clone())
-                    .await?
-                    .unwrap();
+                let meta: EMetadataEntryResponseView =
+                    api::client::metadata::get_file(&remote_repo, workspace_id, file_path.clone())
+                        .await?
+                        .unwrap();
 
-            let workspace_entry = match meta.entry {
-                EMetadataEntry::WorkspaceMetadataEntry(entry) => entry,
-                _ => panic!("Expected workspace metadata entry"),
-            };
+                let workspace_entry = match meta.entry {
+                    EMetadataEntry::WorkspaceMetadataEntry(entry) => entry,
+                    _ => panic!("Expected workspace metadata entry"),
+                };
 
-            assert_eq!(
-                workspace_entry.changes.unwrap().status,
-                StagedEntryStatus::Modified
-            );
+                assert_eq!(
+                    workspace_entry.changes.unwrap().status,
+                    StagedEntryStatus::Modified
+                );
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 }
