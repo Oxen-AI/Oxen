@@ -113,7 +113,7 @@ jobs:
       - name: Build oxen binaries
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          cargo build --release
+          cargo build --workspace --release
 
       - name: Build Python wheels
         run: |

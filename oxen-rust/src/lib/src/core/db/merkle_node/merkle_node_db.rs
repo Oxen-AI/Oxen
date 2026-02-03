@@ -536,11 +536,9 @@ impl MerkleNodeDB {
 mod tests {
     use super::*;
 
-    use crate::test;
-
     #[test]
     fn test_merkle_node_db() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|_dir| {
+        crate::test::run_empty_dir_test(|_dir| {
             /*
             let vnode = VNode {
                 id: 1234,

@@ -89,7 +89,7 @@ jobs:
         run: |
           refreshenv
           cd ${{ github.workspace }}\oxen-rust
-          cargo build --release
+          cargo build --workspace --release
 
       - name: Build Python wheels
         run: |

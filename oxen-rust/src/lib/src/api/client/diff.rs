@@ -72,19 +72,18 @@ mod tests {
     use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
     use crate::util;
 
     // Test diff add image
     #[tokio::test]
     async fn test_diff_entries_add_image() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the first cat
-            let test_file = test::test_img_file_with_name("cat_1.jpg");
+            let test_file = crate::test::test_img_file_with_name("cat_1.jpg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -95,11 +94,11 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -109,7 +108,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Add and commit the second cat
-            let test_file = test::test_img_file_with_name("cat_2.jpg");
+            let test_file = crate::test::test_img_file_with_name("cat_2.jpg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -117,7 +116,7 @@ mod tests {
             repositories::commit(&repo, "Adding a second cat")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -158,13 +157,13 @@ mod tests {
     // Test diff modify image
     #[tokio::test]
     async fn test_diff_entries_modify_image_resize() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the first cat
-            let test_file = test::test_img_file_with_name("cat_1.jpg");
+            let test_file = crate::test::test_img_file_with_name("cat_1.jpg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -175,11 +174,11 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -198,7 +197,7 @@ mod tests {
             repositories::commit(&repo, "Modifying the cat")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -250,9 +249,9 @@ mod tests {
     // Test diff add rows to a csv
     #[tokio::test]
     async fn test_diff_entries_modify_add_rows_csv() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // Add and commit the initial data
-            let test_file = test::test_csv_file_with_name("llm_fine_tune.csv");
+            let test_file = crate::test::test_csv_file_with_name("llm_fine_tune.csv");
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -263,11 +262,11 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -277,14 +276,14 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Modify and commit the dataframe
-            let repo_filepath = test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the sky?,blue,trivia")?;
-            let repo_filepath = test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the ocean?,blue-ish green sometimes,trivia")?;
+            let repo_filepath = crate::test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the sky?,blue,trivia")?;
+            let repo_filepath = crate::test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the ocean?,blue-ish green sometimes,trivia")?;
 
             repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -370,9 +369,9 @@ mod tests {
     // Test diff add rows to a csv
     #[tokio::test]
     async fn test_diff_entries_modify_add_and_remove_rows_csv() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // Add and commit the initial data
-            let test_file = test::test_csv_file_with_name("llm_fine_tune.csv");
+            let test_file = crate::test::test_csv_file_with_name("llm_fine_tune.csv");
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -383,11 +382,11 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -397,7 +396,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Modify and commit the dataframe
-            let repo_filepath = test::write_txt_file_to_path(
+            let repo_filepath = crate::test::write_txt_file_to_path(
                 repo_filepath,
                 r"instruction,context,response,category
 answer the question,what is the capital of france?,paris,geography
@@ -412,7 +411,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             repositories::commit(&repo, "Modifying the csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -509,9 +508,9 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
     // Test diff add cols to a csv
     #[tokio::test]
     async fn test_diff_entries_modify_remove_columns_csv() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // Add and commit the initial data
-            let test_file = test::test_csv_file_with_name("llm_fine_tune.csv");
+            let test_file = crate::test::test_csv_file_with_name("llm_fine_tune.csv");
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -522,11 +521,11 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -536,7 +535,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Modify and commit the dataframe
-            let repo_filepath = test::write_txt_file_to_path(
+            let repo_filepath = crate::test::write_txt_file_to_path(
                 repo_filepath,
                 r#"instruction,context,response
 answer the question,what is the capital of france?,paris
@@ -552,7 +551,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Modifying the csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -647,13 +646,13 @@ who won the game?,The packers beat up on the bears,packers
     // Test diff modify image passing the commit ids instead of the branch names
     #[tokio::test]
     async fn test_diff_entries_modify_image_pass_commit_ids() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the first cat
-            let test_file = test::test_img_file_with_name("cat_1.jpg");
+            let test_file = crate::test::test_img_file_with_name("cat_1.jpg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -661,11 +660,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_commit = repositories::commit(&repo, "Adding initial cat image")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -685,7 +684,7 @@ who won the game?,The packers beat up on the bears,packers
             let new_commit = repositories::commit(&repo, "Modifying the cat")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -736,9 +735,9 @@ who won the game?,The packers beat up on the bears,packers
 
     #[tokio::test]
     async fn test_list_diff_entries_cifar_csvs() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // Track test.csv file
-            let test_file = test::test_csv_file_with_name("test_cifar_2x9999.csv");
+            let test_file = crate::test::test_csv_file_with_name("test_cifar_2x9999.csv");
             let repo_filename = "test.csv";
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
@@ -750,7 +749,7 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Track train.csv file
-            let test_file = test::test_csv_file_with_name("train_cifar_2x50000.csv");
+            let test_file = crate::test::test_csv_file_with_name("train_cifar_2x50000.csv");
             let repo_filename = "train.csv";
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
@@ -759,11 +758,11 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding train csv with two columns and 50k rows")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -773,7 +772,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Modify test.csv file
-            let test_file = test::test_csv_file_with_name("test_cifar_2x10000.csv");
+            let test_file = crate::test::test_csv_file_with_name("test_cifar_2x10000.csv");
             let repo_filename = "test.csv";
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
@@ -782,7 +781,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding title row to csv")?;
 
             // Track train.csv file
-            let test_file = test::test_csv_file_with_name("train_cifar_5x50000.csv");
+            let test_file = crate::test::test_csv_file_with_name("train_cifar_5x50000.csv");
             let repo_filename = "train.csv";
             let repo_filepath = repo.path.join(repo_filename);
             util::fs::copy(&test_file, &repo_filepath)?;
@@ -848,14 +847,14 @@ who won the game?,The packers beat up on the bears,packers
 
     #[tokio::test]
     async fn test_list_diff_entries_added_images_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -867,11 +866,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -882,7 +881,7 @@ who won the game?,The packers beat up on the bears,packers
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -891,7 +890,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Set the proper remote
-            // let remote = test::repo_remote_url_from(&repo.dirname());
+            // let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -940,7 +939,7 @@ who won the game?,The packers beat up on the bears,packers
 
     #[tokio::test]
     async fn test_list_diff_entries_added_images_in_subdirs() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             let cats_dir = images_dir.join("cats");
@@ -948,7 +947,7 @@ who won the game?,The packers beat up on the bears,packers
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -960,11 +959,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -977,7 +976,7 @@ who won the game?,The packers beat up on the bears,packers
             let dogs_dir = images_dir.join("dogs");
             util::fs::create_dir_all(&dogs_dir)?;
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = dogs_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -986,7 +985,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Modify a cat
-            let test_file = test::test_img_file_with_name("cat_1.jpg");
+            let test_file = crate::test::test_img_file_with_name("cat_1.jpg");
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
 
             // Resize the image
@@ -997,7 +996,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &repo_filepath).await?;
 
             // Remove a cat
-            let test_file = test::test_img_file_with_name("cat_2.jpg");
+            let test_file = crate::test::test_img_file_with_name("cat_2.jpg");
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
             util::fs::remove_file(&repo_filepath)?;
 
@@ -1006,7 +1005,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Remove and modify some cats")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -1097,14 +1096,14 @@ who won the game?,The packers beat up on the bears,packers
     /*
     #[tokio::test]
     async fn test_list_diff_entries_removing_images_in_subdir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1116,11 +1115,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1141,7 +1140,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Removing cat images")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Push new branch real good
@@ -1210,14 +1209,14 @@ who won the game?,The packers beat up on the bears,packers
     #[tokio::test]
     async fn test_list_diff_entries_removing_images_by_rming_parent_in_subdir(
     ) -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1229,11 +1228,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1255,7 +1254,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Removing cat images")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -1324,14 +1323,14 @@ who won the game?,The packers beat up on the bears,packers
     #[tokio::test]
     async fn test_list_diff_entries_adding_images_in_one_subdir_two_levels() -> Result<(), OxenError>
     {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let cats_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&cats_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1343,11 +1342,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1360,7 +1359,7 @@ who won the game?,The packers beat up on the bears,packers
             let dogs_dir = repo.path.join("images").join("dogs").join("puppers");
             util::fs::create_dir_all(&dogs_dir)?;
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = dogs_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1369,7 +1368,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding dog images 🐕")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -1456,14 +1455,14 @@ who won the game?,The packers beat up on the bears,packers
 
     #[tokio::test]
     async fn test_list_diff_entries_adding_images_in_subdirs() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let cats_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&cats_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1475,11 +1474,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1492,7 +1491,7 @@ who won the game?,The packers beat up on the bears,packers
             let dogs_dir = repo.path.join("images").join("dogs");
             util::fs::create_dir_all(&dogs_dir)?;
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = dogs_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1501,7 +1500,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding dog images")?;
 
             // Add dwight vince to the cats dir
-            let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
+            let test_file = crate::test::test_img_file_with_name("dwight_vince.jpeg");
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
@@ -1509,7 +1508,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding dwight/vince image to cats")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -1597,14 +1596,14 @@ who won the game?,The packers beat up on the bears,packers
     /*
     #[tokio::test]
     async fn test_list_diff_entries_modifying_images_in_subdir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1616,11 +1615,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1643,7 +1642,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Modify cat images")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Push new branch real good
@@ -1711,14 +1710,14 @@ who won the game?,The packers beat up on the bears,packers
 
     #[tokio::test]
     async fn test_list_diff_entries_removing_images_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1730,11 +1729,11 @@ who won the game?,The packers beat up on the bears,packers
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1755,7 +1754,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Removing cat images")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
@@ -1801,14 +1800,14 @@ who won the game?,The packers beat up on the bears,packers
 
     #[tokio::test]
     async fn test_list_diff_entries_changed_images_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1821,7 +1820,7 @@ who won the game?,The packers beat up on the bears,packers
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -1830,11 +1829,11 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Adding initial dog images")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1863,7 +1862,7 @@ who won the game?,The packers beat up on the bears,packers
             repositories::commit(&repo, "Removing dog")?;
 
             // Add dwight howard and vince carter
-            let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
+            let test_file = crate::test::test_img_file_with_name("dwight_vince.jpeg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
             repositories::add(&repo, &images_dir).await?;

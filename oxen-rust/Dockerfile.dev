@@ -29,10 +29,10 @@ COPY --from=planner /usr/src/oxen-server/recipe.json recipe.json
 
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
-RUN cargo chef cook --bin oxen-server --features ffmpeg,perf-logging --recipe-path recipe.json
+RUN cargo chef cook -p oxen-server --features ffmpeg,perf-logging --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --bin oxen-server --features ffmpeg,perf-logging
+RUN cargo build -p oxen-server --features ffmpeg,perf-logging
 
 FROM debian:bookworm-slim AS runtime
 

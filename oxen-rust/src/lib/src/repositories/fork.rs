@@ -188,11 +188,11 @@ mod tests {
     use crate::config::RepositoryConfig;
     use crate::constants::REPO_CONFIG_FILENAME;
     use crate::error::OxenError;
-    use crate::{repositories, test};
+    use crate::repositories;
 
     #[tokio::test]
     async fn test_fork_operations() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|test_dir| {
+        crate::test::run_empty_dir_test_async(|test_dir| {
             async move {
                 let original_repo_path = test_dir.join("original");
                 let _original_repo = repositories::init(&original_repo_path)?;
