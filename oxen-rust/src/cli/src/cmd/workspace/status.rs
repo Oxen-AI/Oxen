@@ -31,12 +31,36 @@ impl RunCmd for WorkspaceStatusCmd {
     fn args(&self) -> Command {
         Command::new(NAME)
             .about("See at what files are ready to be added or committed")
+            // DEPRECATED: (start) announce migration now + remove in the next release
             .arg(
                 Arg::new("workspace")
                     .long("workspace")
+                    .required_unless_present("workspace-name")
+                    .required_unless_present("workspace-id")
+                    .conflicts_with("workspace-name")
+                    .conflicts_with("workspace-id")
+                    .help("DEPRECATED OPTION -- renamed to '--workspace-id'"),
+            )
+            // DEPRECATED: (end)
+            .arg(
+                Arg::new("workspace-id")
+                    .long("workspace-id")
                     .short('w')
-                    .help("Pass in the workspace id.")
-                    .action(clap::ArgAction::Set),
+                    .required_unless_present("workspace-name")
+                    .required_unless_present("workspace") // DEPRECATED: remove
+                    .conflicts_with("workspace-name")
+                    .conflicts_with("workspace") // DEPRECATED: remove
+                    .help("The workspace_id of the workspace"),
+            )
+            .arg(
+                Arg::new("workspace-name")
+                    .long("workspace-name")
+                    .short('n')
+                    .required_unless_present("workspace-id")
+                    .required_unless_present("workspace") // DEPRECATED: remove
+                    .conflicts_with("workspace") // DEPRECATED: remove
+                    .conflicts_with("workspace-id")
+                    .help("The name of the workspace"),
             )
             .arg(
                 Arg::new("skip")
@@ -64,11 +88,38 @@ impl RunCmd for WorkspaceStatusCmd {
             .arg(Arg::new("path").required(false))
     }
 
+    /// Parse CLI arguments and execute the workspace status command.
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
         let directory = args.get_one::<String>("path").map(PathBuf::from);
 
-        let Some(workspace_id) = args.get_one::<String>("workspace") else {
-            return Err(OxenError::basic_str("Must supply workspace id."));
+        // let workspace_id = args.get_one::<String>("workspace-id");
+        // DEPRECATED: (start) remove this logic and replace with the above commented-out line once we remove '--workspace'
+        let workspace_id = match args.get_one::<String>("workspace-id") {
+            None => match args.get_one::<String>("workspace") {
+                None => None,
+                something => {
+                    eprintln!("DEPRECATION WARNING: '--workspace' option has been renamed to '--workspace-id'. '--workspace' will be **REMOVED** in a future release!");
+                    something
+                }
+            },
+            something => something,
+        };
+        // DEPRECATED: (end)
+        let workspace_name = args.get_one::<String>("workspace-name");
+        let workspace_identifier = match workspace_id {
+            Some(id) => id,
+            None => {
+                // it's OK to use the name here since the server will resolve the input
+                // as a workspace name (it first tries to understand it as a workspace ID,
+                // it falls-back to treating it as a workspace name if that fails)
+                if let Some(name) = workspace_name {
+                    name
+                } else {
+                    return Err(OxenError::basic_str(
+                        "Either workspace-id or workspace-name must be provided.",
+                    ));
+                }
+            }
         };
 
         let skip = args
@@ -106,7 +157,9 @@ impl RunCmd for WorkspaceStatusCmd {
         let directory = directory.unwrap_or(PathBuf::from("."));
 
         let remote_repo = api::client::repositories::get_default_remote(&repository).await?;
-        let repo_status = Self::status(&remote_repo, workspace_id, &directory, &opts).await?;
+
+        let repo_status =
+            Self::status(&remote_repo, workspace_identifier, &directory, &opts).await?;
         repo_status.print_with_params(&opts);
 
         Ok(())
@@ -114,7 +167,8 @@ impl RunCmd for WorkspaceStatusCmd {
 }
 
 impl WorkspaceStatusCmd {
-    async fn status(
+    /// Retrieves the status of the workspace's files as compared to the workspace's commit.
+    pub(crate) async fn status(
         remote_repo: &RemoteRepository,
         workspace_id: &str,
         directory: impl AsRef<Path>,
@@ -151,5 +205,48 @@ impl WorkspaceStatusCmd {
         status.staged_files = added_files.into_iter().chain(added_mods).collect();
 
         Ok(status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liboxen::api;
+    use liboxen::error::OxenError;
+    use liboxen::test;
+
+    #[tokio::test]
+    async fn test_workspace_status_by_name() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let w_id = "test_workspace_id";
+            let w_name = "my_test_workspace_name";
+            let opts = StagedDataOpts {
+                paths: vec![PathBuf::from("")],
+                skip: 0,
+                limit: 10,
+                print_all: false,
+                is_remote: true,
+                ignore: None,
+            };
+
+            // Create a named workspace
+            api::client::workspaces::create_with_name(&remote_repo, "main", w_id, w_name).await?;
+            let status = WorkspaceStatusCmd::status(&remote_repo, w_id, ".", &opts).await?;
+            assert_eq!(status.staged_files.len(), 0);
+
+            // add a file to it and ensure that we can retrieve status via name
+            api::client::workspaces::files::upload_single_file(
+                &remote_repo,
+                w_name,
+                "",
+                test::test_img_file(),
+            )
+            .await?;
+            let status = WorkspaceStatusCmd::status(&remote_repo, w_name, ".", &opts).await?;
+            assert_eq!(status.staged_files.len(), 1);
+
+            Ok(remote_repo)
+        })
+        .await
     }
 }
