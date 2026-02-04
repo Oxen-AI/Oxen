@@ -255,7 +255,7 @@ cargo test -- --test-threads=$(nproc)
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```
-cargo nextest --lib test_get_metadata_text_readme
+cargo nextest run --lib test_get_metadata_text_readme
 ```
 
 To run the catchall (integration) tests

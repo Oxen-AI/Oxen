@@ -60,6 +60,7 @@ Run all tests
 ```bash
 ulimit -n 10240                       # Increase file handles before running tests
 cargo nextest run                     # Run all tests
+```
 
 ### Testing with Debug Output
 ```bash
