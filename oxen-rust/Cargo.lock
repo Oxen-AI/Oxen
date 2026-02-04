@@ -5716,6 +5716,7 @@ dependencies = [
  "actix-web-httpauth",
  "astral-tokio-tar",
  "async-compression",
+ "async_zip",
  "bytesize",
  "clap",
  "derive_more 1.0.0",
