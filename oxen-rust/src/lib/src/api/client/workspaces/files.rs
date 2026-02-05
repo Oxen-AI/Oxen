@@ -1063,7 +1063,7 @@ pub async fn download(
     if response.status().is_success() {
         // Save the raw file contents from the response stream
         let output_path = output_path.unwrap_or_else(|| Path::new(path));
-        let output_dir = output_path.parent().unwrap_or(Path::new(""));
+        let output_dir = output_path.parent().unwrap_or_else(|| Path::new(""));
 
         if !output_dir.exists() {
             util::fs::create_dir_all(output_dir)?;
@@ -1078,14 +1078,16 @@ pub async fn download(
         }
         file.flush().await?;
     } else {
-        log::error!(
-            "api::client::workspace::files::download failed with status: {}",
-            response.status()
-        );
-        let body = client::parse_json_body(&url, response).await?;
+        let status = response.status();
 
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(OxenError::path_does_not_exist(path));
+        }
+
+        log::error!("api::client::workspace::files::download failed with status: {status}");
+        let body = client::parse_json_body(&url, response).await?;
         return Err(OxenError::basic_str(format!(
-            "Error: Could not remove paths {body:?}"
+            "Error: Could not download file {body:?}"
         )));
     }
 
@@ -1125,9 +1127,10 @@ mod tests {
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::model::{EntryDataType, NewCommitBody};
+    use crate::model::{EntryDataType, NewCommitBody, RemoteRepository};
     use crate::opts::fetch_opts::FetchOpts;
     use crate::opts::CloneOpts;
+    use crate::view::workspaces::WorkspaceResponseWithStatus;
     use crate::{api, constants};
     use crate::{repositories, test};
     use std::path::PathBuf;
@@ -2038,6 +2041,263 @@ mod tests {
             let old_file =
                 api::client::entries::get_entry(&remote_repo, original_path, &commit.id).await?;
             assert!(old_file.is_none(), "File should not exist at original path");
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test that downloading a non-existent file returns OxenError::ResourceNotFound
+    #[tokio::test]
+    async fn test_download_file_from_nonexistent_workspace() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let non_existent_workspace_id = "workspace_does_not_exist";
+
+            // Verify the workspace doesn't exist
+            let workspace =
+                api::client::workspaces::get(&remote_repo, non_existent_workspace_id).await?;
+            assert!(workspace.is_none());
+
+            // Try to download a file from the non-existent workspace
+            let temp_dir = TempDir::new()?;
+            let output_path = temp_dir.path().join("output.md");
+
+            let result = api::client::workspaces::files::download(
+                &remote_repo,
+                non_existent_workspace_id,
+                "README.md",
+                Some(&output_path),
+            )
+            .await;
+
+            assert!(result.is_err());
+            assert!(!output_path.exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    async fn make_workspace(
+        remote_repo: &RemoteRepository,
+    ) -> Result<WorkspaceResponseWithStatus, OxenError> {
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = api::client::workspaces::create(
+            remote_repo,
+            &constants::DEFAULT_BRANCH_NAME,
+            &workspace_id,
+        )
+        .await?;
+        assert_eq!(
+            workspace.id, workspace_id,
+            "Expected to create workspace with ID {} but got ID {}",
+            workspace_id, workspace.id
+        );
+        Ok(workspace)
+    }
+
+    // Test that downloading a file uploaded to the workspace works
+    #[tokio::test]
+    async fn test_download_uploaded_file_from_workspace() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let workspace_id = make_workspace(&remote_repo).await?.id;
+            let temp_dir = TempDir::new()?;
+
+            let test_filename = "file_to_upload.txt";
+            let test_file = {
+                let p = temp_dir.path().join(test_filename);
+                tokio::fs::write(&p, b"Hello world! How are you today?").await?;
+                p
+            };
+
+            let upload_path = {
+                let upload_path = "images";
+                api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &workspace_id,
+                    upload_path,
+                    &test_file,
+                )
+                .await?;
+                upload_path
+            };
+
+            let output_path = {
+                let output_path = temp_dir.path().join("downloaded.jpeg");
+                let file_path = format!("{upload_path}/{test_filename}");
+                api::client::workspaces::files::download(
+                    &remote_repo,
+                    &workspace_id,
+                    &file_path,
+                    Some(&output_path),
+                )
+                .await?;
+                assert!(
+                    output_path.exists(),
+                    "Expecting to have downloaded file to: {}",
+                    output_path.display()
+                );
+                output_path
+            };
+
+            let downloaded_contents = tokio::fs::read_to_string(&output_path).await?;
+            assert_eq!(downloaded_contents, "Hello world! How are you today?");
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test that downloading a non-existent file from workspace fails
+    #[tokio::test]
+    async fn test_download_nonexistent_file_from_workspace() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let workspace_id = make_workspace(&remote_repo).await?.id;
+            let temp_dir = TempDir::new()?;
+
+            let output_path = temp_dir.path().join("output.txt");
+
+            let result = api::client::workspaces::files::download(
+                &remote_repo,
+                &workspace_id,
+                "this_file_does_not_exist.txt",
+                Some(&output_path),
+            )
+            .await;
+
+            assert!(result.is_err(), "{result:?}");
+            assert!(
+                !output_path.exists(),
+                "Not expecting '{}' to exist",
+                output_path.display()
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test the fallback path: download from commit when file not in workspace
+    // This tests the download_entry function which is used as fallback in CLI
+    #[tokio::test]
+    async fn test_download_entry_fallback_for_committed_file() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let workspace = make_workspace(&remote_repo).await?;
+            let temp_dir = TempDir::new()?;
+
+            // Download the README.md (which is in the commit, not uploaded to workspace)
+            // using download_entry (the fallback path in CLI)
+            let output_path = {
+                let output_path = temp_dir.path().join("fallback_readme.md");
+                api::client::entries::download_entry(
+                    &remote_repo,
+                    Path::new("README.md"),
+                    &output_path,
+                    &workspace.commit.id,
+                )
+                .await?;
+                assert!(
+                    output_path.exists(),
+                    "Expecting to have downloaded output to: {}",
+                    output_path.display()
+                );
+                output_path
+            };
+
+            let content = std::fs::read_to_string(&output_path)?;
+            assert!(!content.is_empty(), "Expecting non-empty README.md file");
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test workspace lookup by name for download scenario
+    #[tokio::test]
+    async fn test_workspace_lookup_by_name_for_download() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let workspace_name = "my-download-workspace";
+            let workspace = {
+                let workspace_id = uuid::Uuid::new_v4().to_string();
+                let workspace = api::client::workspaces::create_with_name(
+                    &remote_repo,
+                    &constants::DEFAULT_BRANCH_NAME,
+                    &workspace_id,
+                    workspace_name,
+                )
+                .await?;
+                assert_eq!(workspace.id, workspace_id);
+                assert_eq!(workspace.name, Some(workspace_name.to_string()));
+                workspace
+            };
+
+            // Look up workspace by name (as CLI does)
+            let found_workspace =
+                api::client::workspaces::get_by_name(&remote_repo, workspace_name).await?;
+            assert!(found_workspace.is_some());
+            let found_workspace = found_workspace.unwrap();
+            assert_eq!(found_workspace.id, workspace.id);
+
+            let temp_dir = TempDir::new()?;
+            let output_path = temp_dir.path().join("readme_by_name.md");
+
+            api::client::workspaces::files::download(
+                &remote_repo,
+                &found_workspace.id,
+                "README.md",
+                Some(&output_path),
+            )
+            .await?;
+
+            assert!(output_path.exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test that workspace lookup by non-existent name returns None
+    #[tokio::test]
+    async fn test_workspace_lookup_by_nonexistent_name() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let non_existent_name = "workspace_name_does_not_exist";
+
+            let workspace =
+                api::client::workspaces::get_by_name(&remote_repo, non_existent_name).await?;
+            assert!(workspace.is_none());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test that downloading a non-existent file returns OxenError::PathDoesNotExist
+    #[tokio::test]
+    async fn test_download_nonexistent_file_returns_path_dne() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let workspace_id = make_workspace(&remote_repo).await?.id;
+            let temp_dir = TempDir::new()?;
+            let output_path = temp_dir.path().join("output.txt");
+
+            let result = api::client::workspaces::files::download(
+                &remote_repo,
+                &workspace_id,
+                "this_file_does_not_exist.txt",
+                Some(&output_path),
+            )
+            .await;
+
+            assert!(result.is_err(), "Expected error for nonexistent file");
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, OxenError::PathDoesNotExist(_)),
+                "Expected PathDoesNotExist error, got: {err:?}"
+            );
+            assert!(
+                !output_path.exists(),
+                "Not expecting '{}' to exist",
+                output_path.display()
+            );
 
             Ok(remote_repo)
         })

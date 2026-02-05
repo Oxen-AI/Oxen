@@ -554,7 +554,9 @@ impl error::ResponseError for OxenHttpError {
             OxenHttpError::InternalOxenError(error) => match error {
                 OxenError::RepoNotFound(_) => StatusCode::NOT_FOUND,
                 OxenError::RevisionNotFound(_) => StatusCode::NOT_FOUND,
+                OxenError::ResourceNotFound(_) => StatusCode::NOT_FOUND,
                 OxenError::InvalidSchema(_) => StatusCode::BAD_REQUEST,
+                OxenError::PathDoesNotExist(_) => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
         }

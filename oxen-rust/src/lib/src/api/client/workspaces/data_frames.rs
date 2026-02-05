@@ -75,6 +75,20 @@ pub async fn download(
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
 
+    if !res.status().is_success() {
+        let status = res.status();
+
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(OxenError::resource_not_found(file_path_str));
+        }
+
+        log::error!("api::client::workspaces::data_frames::download failed with status: {status}");
+        let body = client::parse_json_body(&url, res).await?;
+        return Err(OxenError::basic_str(format!(
+            "Error: Could not download data frame {body:?}"
+        )));
+    }
+
     // Create the output file
     log::debug!("Download creating output file {output_path:?}");
     let mut file = util::fs::file_create(output_path)?;
@@ -673,6 +687,45 @@ mod tests {
                 let view_df = df.view.to_df().await;
                 assert_eq!(view_df.height(), 4);
 
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_download_nonexistent_data_frame_returns_resource_not_found(
+    ) -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(workspace.is_ok());
+
+            test::run_empty_dir_test_async(|sync_dir| async move {
+                let output_path = sync_dir.join("should_not_exist.csv");
+                let mut opts = DFOpts::empty();
+                opts.output = Some(output_path.clone());
+                let result = api::client::workspaces::data_frames::download(
+                    &remote_repo,
+                    workspace_id,
+                    Path::new("this/path/does_not_exist.csv"),
+                    &opts,
+                )
+                .await;
+
+                assert!(result.is_err());
+                let err = result.unwrap_err();
+                match err {
+                    OxenError::ResourceNotFound(_) => {} // expected
+                    other => panic!("Expected OxenError::ResourceNotFound, got: {other:?}"),
+                }
+                assert!(!output_path.exists());
                 Ok(())
             })
             .await?;
