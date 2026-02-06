@@ -1,5 +1,3 @@
-use rocksdb::{DBWithThreadMode, MultiThreaded};
-
 use actix_web::{web, Error};
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -12,13 +10,12 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use zip::ZipArchive;
 
-use crate::constants::STAGED_DIR;
+use crate::core;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
     process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
-use crate::core::{self, db};
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
@@ -203,28 +200,19 @@ pub async fn remove_files_from_staged_db(
 }
 
 pub fn delete(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let path = path.as_ref();
     let workspace_repo = &workspace.workspace_repo;
-
-    let path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
         staged_db_manager.delete_entry(&path)
     })
 }
 
 pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-    let path = path.as_ref();
     let workspace_repo = &workspace.workspace_repo;
-
-    let opts = db::key_val::opts::default();
-    let db_path = util::fs::oxen_hidden_dir(&workspace_repo.path).join(STAGED_DIR);
-    let staged_db: DBWithThreadMode<MultiThreaded> =
-        DBWithThreadMode::open_for_read_only(&opts, dunce::simplified(&db_path), false)?;
-
-    let path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
-    let relative_path_str = path.to_str().unwrap();
-    let result = staged_db.key_may_exist(relative_path_str);
-    Ok(result)
+    let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
+    with_staged_db_manager(workspace_repo, |staged_db_manager| {
+        staged_db_manager.exists(&path)
+    })
 }
 
 pub async fn import(
