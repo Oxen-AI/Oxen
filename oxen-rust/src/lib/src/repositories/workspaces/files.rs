@@ -183,4 +183,59 @@ mod tests {
         })
         .await
     }
+
+    /// Workspace created with no files staged; exists() should return Ok(false).
+    #[tokio::test]
+    async fn test_exists_returns_false_when_no_files_staged() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file = repo.path.join("hello.txt");
+            crate::util::fs::write_to_path(&file, "hello")?;
+            repositories::add(&repo, &file).await?;
+            let commit = repositories::commit(&repo, "Add hello.txt")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, "test-workspace", false)?;
+
+            let result = workspaces::files::exists(&workspace, std::path::Path::new("hello.txt"))?;
+            assert!(!result);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// exists() returns Ok(false) for an unstaged path and Ok(true) after staging it.
+    #[tokio::test]
+    async fn test_exists_false_before_staging_true_after() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file = repo.path.join("hello.txt");
+            crate::util::fs::write_to_path(&file, "hello")?;
+            repositories::add(&repo, &file).await?;
+            let commit = repositories::commit(&repo, "Add hello.txt")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, "test-workspace", false)?;
+
+            // Write modified content so the file is detected as changed
+            let workspace_file = workspace.workspace_repo.path.join("hello.txt");
+            crate::util::fs::write_to_path(&workspace_file, "hello world")?;
+
+            let hello = Path::new("hello.txt");
+            let nonexistent = Path::new("does_not_exist.txt");
+
+            // Before staging: both should be false
+            assert!(!workspaces::files::exists(&workspace, hello)?);
+            assert!(!workspaces::files::exists(&workspace, nonexistent)?);
+
+            // Stage the file in the workspace
+            workspaces::files::add(&workspace, &workspace_file).await?;
+
+            // After staging: staged file is true, non-existent file is still false
+            assert!(workspaces::files::exists(&workspace, hello)?);
+            assert!(!workspaces::files::exists(&workspace, nonexistent)?);
+
+            Ok(())
+        })
+        .await
+    }
 }

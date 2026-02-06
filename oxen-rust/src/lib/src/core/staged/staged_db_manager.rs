@@ -229,6 +229,23 @@ impl StagedDBManager {
         Ok(())
     }
 
+    /// True if the paths exists in the staged db. False means it does not exist.
+    pub fn exists(&self, path: impl AsRef<Path>) -> Result<bool, OxenError> {
+        let key = path.as_ref().to_string_lossy();
+        Ok({
+            let db_r = self.staged_db.read();
+            // key_may_exist is a bloom filter that doesn't hit I/O
+            // if it says it doesn't exist, it 100% does not exist
+            if !db_r.key_may_exist(key.as_bytes()) {
+                false
+            } else {
+                // otherwise, we have to confirm with actual read
+                // we use get_pinned to avoid copying data -- we only want to know if it exists
+                db_r.get_pinned(key.as_bytes())?.is_some()
+            }
+        })
+    }
+
     /// Read a file node from the staged db
     pub fn read_from_staged_db(
         &self,
