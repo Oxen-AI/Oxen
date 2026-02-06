@@ -394,6 +394,7 @@ fn file_node_to_metadata_entry(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn p_dir_entries(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
