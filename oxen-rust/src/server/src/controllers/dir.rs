@@ -44,10 +44,15 @@ pub async fn get(
     let page: usize = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size: usize = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
     let api_version = MinOxenVersion::or_latest(query.api_version.clone())?;
+    // depth: 0 = current only, positive = that many levels, negative = unlimited
+    let depth: usize = match query.depth.unwrap_or(0) {
+        d if d < 0 => usize::MAX,
+        d => d as usize,
+    };
     drop(_perf_parse);
 
     log::debug!(
-        "{} resource {namespace}/{repo_name}/{resource}",
+        "{} resource {namespace}/{repo_name}/{resource} depth {depth}",
         liboxen::current_function!()
     );
 
@@ -58,7 +63,7 @@ pub async fn get(
     };
 
     let _perf_list = perf_guard!("dir::get_list_directory");
-    let paginated_entries = repositories::entries::list_directory_w_workspace(
+    let paginated_entries = repositories::entries::list_directory_w_workspace_depth(
         &repo,
         &resource.path,
         revision,
@@ -68,6 +73,7 @@ pub async fn get(
             page_size,
         },
         api_version,
+        depth,
     )?;
     drop(_perf_list);
 

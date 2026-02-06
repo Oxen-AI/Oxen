@@ -104,6 +104,26 @@ pub fn list_directory_w_workspace(
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    list_directory_w_workspace_depth(
+        repo,
+        directory,
+        revision,
+        workspace,
+        paginate_opts,
+        version,
+        0,
+    )
+}
+
+pub fn list_directory_w_workspace_depth(
+    repo: &LocalRepository,
+    directory: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    workspace: Option<Workspace>,
+    paginate_opts: &PaginateOpts,
+    version: MinOxenVersion,
+    depth: usize,
+) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
 
     match version {
@@ -129,11 +149,12 @@ pub fn list_directory_w_workspace(
             };
             drop(_perf_setup);
 
-            core::v_latest::entries::list_directory(
+            core::v_latest::entries::list_directory_with_depth(
                 repo,
                 directory,
                 &parsed_resource,
                 paginate_opts,
+                depth,
             )
         }
     }
@@ -1096,6 +1117,122 @@ mod tests {
 
             assert_eq!(meta1.is_queryable, Some(false));
             assert_eq!(meta2.is_queryable, Some(true));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_directory_with_depth() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create nested directory structure:
+            // root/
+            //   dir_a/
+            //     file_a1.txt
+            //     subdir/
+            //       file_sub.txt
+            //   dir_b/
+            //     file_b1.txt
+            //   root_file.txt
+
+            let dir_a = repo.path.join("dir_a");
+            let dir_a_subdir = dir_a.join("subdir");
+            let dir_b = repo.path.join("dir_b");
+
+            util::fs::create_dir_all(&dir_a)?;
+            util::fs::create_dir_all(&dir_a_subdir)?;
+            util::fs::create_dir_all(&dir_b)?;
+
+            util::fs::write(repo.path.join("root_file.txt"), "root content")?;
+            util::fs::write(dir_a.join("file_a1.txt"), "a1 content")?;
+            util::fs::write(dir_a_subdir.join("file_sub.txt"), "sub content")?;
+            util::fs::write(dir_b.join("file_b1.txt"), "b1 content")?;
+
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding nested structure")?;
+
+            let paginate_opts = PaginateOpts {
+                page_num: 1,
+                page_size: 100,
+            };
+
+            // Test depth=0 (default) - no children populated
+            let paginated = repositories::entries::list_directory_w_workspace_depth(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                repo.min_version(),
+                0,
+            )?;
+
+            // Should have 3 entries at root: dir_a, dir_b, root_file.txt
+            assert_eq!(paginated.total_entries, 3);
+            for entry in &paginated.entries {
+                // With depth=0, no children should be populated
+                match entry {
+                    crate::view::entries::EMetadataEntry::MetadataEntry(e) => {
+                        assert!(e.children.is_none());
+                    }
+                    crate::view::entries::EMetadataEntry::WorkspaceMetadataEntry(e) => {
+                        assert!(e.children.is_none());
+                    }
+                }
+            }
+
+            // Test depth=1 - immediate children populated
+            let paginated = repositories::entries::list_directory_w_workspace_depth(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                repo.min_version(),
+                1,
+            )?;
+
+            assert_eq!(paginated.total_entries, 3);
+
+            // Find dir_a and check it has children
+            let dir_a_entry = paginated.entries.iter().find(|e| e.filename() == "dir_a");
+            assert!(dir_a_entry.is_some());
+
+            if let Some(crate::view::entries::EMetadataEntry::MetadataEntry(e)) = dir_a_entry {
+                assert!(e.children.is_some());
+                let children = e.children.as_ref().unwrap();
+                // dir_a should have: file_a1.txt and subdir
+                assert_eq!(children.len(), 2);
+
+                // With depth=1, subdir's children should NOT be populated
+                let subdir = children.iter().find(|c| c.filename == "subdir");
+                assert!(subdir.is_some());
+                assert!(subdir.unwrap().children.is_none());
+            }
+
+            // Test depth=2 - nested children populated
+            let paginated = repositories::entries::list_directory_w_workspace_depth(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                repo.min_version(),
+                2,
+            )?;
+
+            let dir_a_entry = paginated.entries.iter().find(|e| e.filename() == "dir_a");
+            if let Some(crate::view::entries::EMetadataEntry::MetadataEntry(e)) = dir_a_entry {
+                let children = e.children.as_ref().unwrap();
+                let subdir = children.iter().find(|c| c.filename == "subdir");
+                assert!(subdir.is_some());
+                // With depth=2, subdir should have its children populated
+                assert!(subdir.unwrap().children.is_some());
+                let sub_children = subdir.unwrap().children.as_ref().unwrap();
+                assert_eq!(sub_children.len(), 1);
+                assert_eq!(sub_children[0].filename, "file_sub.txt");
+            }
 
             Ok(())
         })

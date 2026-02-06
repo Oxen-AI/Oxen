@@ -42,6 +42,7 @@ pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
         extension,
         metadata,
         is_queryable: None,
+        children: None,
     })
 }
 
@@ -69,6 +70,7 @@ pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
         extension,
         metadata,
         is_queryable: None,
+        children: None,
     })
 }
 
@@ -96,6 +98,7 @@ pub fn from_file_node(
         extension: node.extension().to_string(),
         metadata: node.metadata(),
         is_queryable: None,
+        children: None,
     })
 }
 
@@ -116,6 +119,7 @@ pub fn from_dir_node(
         extension: "".to_string(),
         metadata: None,
         is_queryable: None,
+        children: None,
     })
 }
 
