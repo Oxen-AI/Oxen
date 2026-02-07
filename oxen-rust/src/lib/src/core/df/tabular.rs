@@ -1072,24 +1072,58 @@ pub fn df_hash_rows_on_cols(
     Ok(df)
 }
 
-fn sniff_db_csv_delimiter(path: impl AsRef<Path>, opts: &DFOpts) -> Result<u8, OxenError> {
-    if let Some(delimiter) = &opts.delimiter {
-        if delimiter.len() != 1 {
-            return Err(OxenError::basic_str("Delimiter must be a single character"));
+struct CsvDialect {
+    delimiter: u8,
+    quote_char: Option<u8>,
+}
+
+fn sniff_csv_dialect(path: impl AsRef<Path>, opts: &DFOpts) -> Result<CsvDialect, OxenError> {
+    let user_delimiter = match &opts.delimiter {
+        Some(delimiter) => {
+            if delimiter.len() != 1 {
+                return Err(OxenError::basic_str("Delimiter must be a single character"));
+            }
+            Some(delimiter.as_bytes()[0])
         }
-        return Ok(delimiter.as_bytes()[0]);
+        None => None,
+    };
+
+    let user_quote = opts.quote_char.as_ref().map(|s| s.as_bytes()[0]);
+
+    if let (Some(delimiter), Some(_)) = (user_delimiter, user_quote) {
+        return Ok(CsvDialect {
+            delimiter,
+            quote_char: user_quote,
+        });
     }
 
     match qsv_sniffer::Sniffer::new().sniff_path(&path) {
         Ok(metadata) => {
             log::debug!("Sniffed csv dialect: {:?}", metadata.dialect);
-            Ok(metadata.dialect.delimiter)
+            Ok(CsvDialect {
+                delimiter: user_delimiter.unwrap_or(metadata.dialect.delimiter),
+                quote_char: user_quote.or_else(|| Some(sniffed_quote(&metadata))),
+            })
         }
         Err(err) => {
-            let err = format!("Error sniffing csv {:?} -> {:?}", path.as_ref(), err);
-            log::warn!("{err}");
-            Ok(b',')
+            log::warn!("Error sniffing csv {:?} -> {:?}", path.as_ref(), err);
+            Ok(CsvDialect {
+                delimiter: user_delimiter.unwrap_or(DEFAULT_DELIMITER),
+                quote_char: user_quote.or(Some(DEFAULT_QUOTE_CHAR)),
+            })
         }
+    }
+}
+
+const DEFAULT_QUOTE_CHAR: u8 = b'"';
+const DEFAULT_DELIMITER: u8 = b',';
+
+/// Never disable quoting from the sniffer: extract the detected
+/// quote char or fall back to the RFC 4180 double-quote default.
+fn sniffed_quote(metadata: &qsv_sniffer::metadata::Metadata) -> u8 {
+    match metadata.dialect.quote {
+        qsv_sniffer::metadata::Quote::Some(ch) => ch,
+        qsv_sniffer::metadata::Quote::None => DEFAULT_QUOTE_CHAR,
     }
 }
 
@@ -1137,16 +1171,18 @@ async fn _read_lazy_df_with_extension(
         }
 
         log::debug!("Reading df with extension {:?} {:?}", &extension, &path);
-        let quote_char = opts_clone.quote_char.as_ref().map(|s| s.as_bytes()[0]);
 
         match extension.as_str() {
             "ndjson" | "jsonl" => read_df_jsonl(&path),
             "json" => read_df_json(&path),
             "csv" | "data" => {
-                let delimiter = sniff_db_csv_delimiter(&path, &opts_clone)?;
-                read_df_csv(&path, delimiter, quote_char)
+                let dialect = sniff_csv_dialect(&path, &opts_clone)?;
+                read_df_csv(&path, dialect.delimiter, dialect.quote_char)
             }
-            "tsv" => read_df_csv(&path, b'\t', quote_char),
+            "tsv" => {
+                let dialect = sniff_csv_dialect(&path, &opts_clone)?;
+                read_df_csv(&path, b'\t', dialect.quote_char)
+            }
             "parquet" => read_df_parquet(&path),
             "arrow" => {
                 if opts_clone.sql.is_some() {
@@ -1259,17 +1295,19 @@ fn p_scan_df_with_extension(
     let input_path = path.as_ref();
     log::debug!("Scanning df {input_path:?} with extension {extension:?}");
     let err = format!("Unknown file type scan_df {input_path:?} {extension:?}");
-    let quote_char = opts.quote_char.as_ref().map(|s| s.as_bytes()[0]);
     match extension {
         Some(extension) => match extension {
             "ndjson" => scan_df_jsonl(path, total_rows),
             "jsonl" => scan_df_jsonl(path, total_rows),
             "json" => scan_df_json(path),
             "csv" | "data" => {
-                let delimiter = sniff_db_csv_delimiter(&path, opts)?;
-                scan_df_csv(path, delimiter, quote_char, total_rows)
+                let dialect = sniff_csv_dialect(&path, opts)?;
+                scan_df_csv(path, dialect.delimiter, dialect.quote_char, total_rows)
             }
-            "tsv" => scan_df_csv(path, b'\t', quote_char, total_rows),
+            "tsv" => {
+                let dialect = sniff_csv_dialect(&path, opts)?;
+                scan_df_csv(path, b'\t', dialect.quote_char, total_rows)
+            }
             "parquet" => scan_df_parquet(path, total_rows),
             "arrow" => scan_df_arrow(path, total_rows),
             _ => Err(OxenError::basic_str(err)),
@@ -1943,6 +1981,30 @@ mod tests {
             tabular::read_df("data/test/csvs/spam_ham_data_w_quote.tsv", DFOpts::empty()).await?;
         assert_eq!(df.width(), 2);
         assert_eq!(df.height(), 100);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_read_csv_with_quoted_fields_default() -> Result<(), OxenError> {
+        let df = tabular::read_df("data/test/csvs/quoted_fields.csv", DFOpts::empty()).await?;
+        assert_eq!(df.width(), 3);
+        assert_eq!(df.height(), 10);
+
+        let desc_col = df.column("description").unwrap();
+        let alice_desc = desc_col.str().unwrap().get(0).unwrap();
+        assert!(
+            alice_desc.contains(','),
+            "Alice's description should contain a comma: {alice_desc}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_sniff_csv_dialect_detects_quote_char() -> Result<(), OxenError> {
+        let dialect =
+            super::sniff_csv_dialect("data/test/csvs/quoted_fields.csv", &DFOpts::empty())?;
+        assert_eq!(dialect.delimiter, b',');
+        assert_eq!(dialect.quote_char, Some(b'"'));
         Ok(())
     }
 
