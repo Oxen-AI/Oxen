@@ -203,7 +203,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::diff::diff_entry_status::DiffEntryStatus;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
     use crate::view::compare::{TabularCompareFieldBody, TabularCompareTargetBody};
     use polars::lazy::dsl::col;
@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compare_commits() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keep track of the commit ids
             let mut commit_ids = Vec::new();
 
@@ -222,7 +222,7 @@ mod tests {
             for i in 0..5 {
                 // Write a file
                 let file_path = format!("file_{i}.txt");
-                test::write_txt_file_to_path(
+                crate::test::write_txt_file_to_path(
                     local_repo.path.join(file_path),
                     format!("File content {i}"),
                 )?;
@@ -256,14 +256,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_compare_change_at_root_dir_tree() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|mut local_repo, remote_repo| async move {
+        crate::test::run_one_commit_sync_repo_test(|mut local_repo, remote_repo| async move {
             let og_commit = repositories::commits::head_commit(&local_repo)?;
 
             // Write a file
             let file_path = PathBuf::from("test_me_out.txt");
             let full_path = &local_repo.path.join(file_path);
 
-            test::write_txt_file_to_path(full_path, "i am the contents of test_me_out.txt")?;
+            crate::test::write_txt_file_to_path(full_path, "i am the contents of test_me_out.txt")?;
             repositories::add(&local_repo, &local_repo.path).await?;
 
             let commit_message = "add test_me_out.txt";
@@ -305,19 +305,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_compare_change_tabular_at_root_dir_tree() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|mut local_repo, remote_repo| async move {
+        crate::test::run_one_commit_sync_repo_test(|mut local_repo, remote_repo| async move {
             // Write a file
             let file_path = PathBuf::from("test_me_out.csv");
             let full_path = &local_repo.path.join(file_path);
 
-            test::write_txt_file_to_path(full_path, "image,label\n1,2\n3,4\n5,6")?;
+            crate::test::write_txt_file_to_path(full_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &local_repo.path).await?;
 
             let commit_message = "add test_me_out.csv";
             let og_commit = repositories::commit(&local_repo, commit_message)?;
 
             // Add another row
-            test::write_txt_file_to_path(full_path, "image,label\n1,2\n3,4\n5,6\n7,8")?;
+            crate::test::write_txt_file_to_path(full_path, "image,label\n1,2\n3,4\n5,6\n7,8")?;
             repositories::add(&local_repo, &local_repo.path).await?;
             let new_commit = repositories::commit(&local_repo, commit_message)?;
 
@@ -391,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compare_nested_dir_tree() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keep track of the commit ids
             let mut commit_ids = Vec::new();
 
@@ -406,7 +406,7 @@ mod tests {
                 // Create the directory
                 util::fs::create_dir_all(full_path.parent().unwrap())?;
 
-                test::write_txt_file_to_path(full_path, format!("File content {i}"))?;
+                crate::test::write_txt_file_to_path(full_path, format!("File content {i}"))?;
                 repositories::add(&local_repo, &local_repo.path).await?;
 
                 let commit_message = format!("Commit {i}");
@@ -442,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_create_compare_get_derived() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keying on first 3, targeting on d - should be:
             // 1 modified, 1 added, 1 removed?
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n9,0,1,2";
@@ -451,8 +451,8 @@ mod tests {
             let left_path = "left.csv";
             let right_path = "right.csv";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
-            test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
+            crate::test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
+            crate::test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
 
@@ -543,7 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_compare_does_not_update_automatically() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keying on first 3, targeting on d - should be:
             // 1 modified, 1 added, 1 removed?
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n9,0,1,2";
@@ -552,8 +552,8 @@ mod tests {
             let left_path = "left.csv";
             let right_path = "right.csv";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
-            test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
+            crate::test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
+            crate::test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
 
@@ -640,7 +640,7 @@ mod tests {
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7";
             // let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8\n0,1,9,2";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
+            crate::test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "committing files")?;

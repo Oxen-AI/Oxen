@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const AUTH_CONFIG_FILENAME: &str = "auth_config.toml";
 
@@ -58,11 +58,27 @@ impl AuthConfig {
 
     pub fn get() -> Result<AuthConfig, OxenError> {
         let config_dir = util::fs::oxen_config_dir()?;
-        let mut config_file = config_dir.join(Path::new(AUTH_CONFIG_FILENAME));
-        if std::env::var("TEST").is_ok() {
-            config_file = PathBuf::from("data/test/config/auth_config.toml");
-        }
-        log::trace!("looking for config file in...{config_file:?}");
+
+        // TODO: remove use of `TEST` env var and instead use `#[cfg(test)]` and `not(test)`
+        //       to gate test-specific code.
+        // TODO: refactor get() into impl Default {} and make a new function to create a config from a &path.
+        let config_file = match std::env::var("TEST") {
+            Ok(_) => {
+                #[cfg(test)]
+                {
+                    crate::test::REPO_ROOT.join("data/test/config/auth_config.toml")
+                }
+                #[cfg(not(test))]
+                {
+                    return Err(OxenError::basic_str(
+                        "TEST env var set but not in test mode",
+                    ));
+                }
+            }
+            Err(_) => config_dir.join(Path::new(AUTH_CONFIG_FILENAME)),
+        };
+
+        log::debug!("looking for config file in...{config_file:?}");
         if config_file.exists() {
             Ok(AuthConfig::new(&config_file))
         } else {
@@ -130,10 +146,10 @@ impl AuthConfig {
 mod tests {
     use crate::config::AuthConfig;
     use crate::error::OxenError;
-    use crate::test;
+
     #[test]
     fn test_second_auth_should_overwrite_first() -> Result<(), OxenError> {
-        let mut auth_config = AuthConfig::new(&test::auth_cfg_file());
+        let mut auth_config = AuthConfig::new(&crate::test::auth_cfg_file());
         let og_num_configs = auth_config.host_configs.len();
 
         let host = "hub.oxen.ai";

@@ -92,14 +92,14 @@ Next up we need a unit test to make sure the functionality works. Actix
 #[actix_web::test]
 async fn test_branches_index_multiple_branches() -> Result<(), OxenError> {
     // Create unique name for sync directory so tests can run in parallel
-    let sync_dir = test::get_sync_dir()?;
+    let sync_dir = crate::test::get_sync_dir()?;
 
     // Repository Name
     let namespace = "Testing-Namespace";
     let name = "Testing-Branches-1";
 
     // Create a local repository in the sync dir
-    let repo = test::create_local_repo(&sync_dir, namespace, name)?;
+    let repo = crate::test::create_local_repo(&sync_dir, namespace, name)?;
     api::local::branches::create(&repo, "branch-1")?;
     api::local::branches::create(&repo, "branch-2")?;
 
@@ -156,8 +156,14 @@ If you would like to see the API with `curl` on the command line you can run the
 In order to get a valid auth token you can run add a user to the server via
 
 ```shell
-$ ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+$ cargo run -p oxen-server -- add-user --email ox@oxen.ai --name Ox --output user_config.toml
 $ cat user_config.toml | grep token
+```
+
+Or using the compiled binary:
+
+```shell
+$ ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
 ```
 
 For more information on server setup look at the [Server Setup Documentation](../examples/0_ServerSetup.md)

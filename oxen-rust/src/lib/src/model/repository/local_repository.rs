@@ -515,7 +515,7 @@ impl LocalRepository {
 mod tests {
     use crate::error::OxenError;
     use crate::model::{LocalRepository, RepoNew};
-    use crate::test;
+
     use tempfile::TempDir;
 
     #[test]
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_get_set_has_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|mut local_repo| {
+        crate::test::run_empty_local_repo_test(|mut local_repo| {
             let url = "http://0.0.0.0:3000/repositories/OxenData";
             let remote_name = "origin";
             local_repo.set_remote(remote_name, url);
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_delete_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|mut local_repo| {
+        crate::test::run_empty_local_repo_test(|mut local_repo| {
             let origin_url = "http://0.0.0.0:3000/repositories/OxenData";
             let origin_name = "origin";
 

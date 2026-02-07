@@ -313,11 +313,10 @@ async fn prune_versions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test;
 
     #[tokio::test]
     async fn test_prune_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             let stats = prune(&repo, false).await?;
             assert_eq!(stats.nodes_scanned, 0);
             assert_eq!(stats.nodes_removed, 0);
@@ -330,11 +329,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_with_commits() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Add and commit some files
             let train_dir = repo.path.join("train");
-            test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
-            test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
+            crate::test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
+            crate::test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
             repositories::add(&repo, &train_dir).await?;
             repositories::commit(&repo, "Add files")?;
 
@@ -350,10 +349,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_branch() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let train_dir = repo.path.join("train");
-            test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
-            test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
+            crate::test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
+            crate::test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
             repositories::add(&repo, &train_dir).await?;
             let initial_commit = repositories::commit(&repo, "Add files")?;
 
@@ -373,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_dry_run() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let stats = prune(&repo, true).await?;
             // Dry run should not actually remove anything
             assert_eq!(stats.nodes_scanned, 0);
@@ -385,10 +384,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_deleted_branch_commits() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Initial commit
             let train_dir = repo.path.join("train");
-            let initial_file = test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
+            let initial_file = crate::test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
             repositories::add(&repo, &initial_file).await?;
             let initial_commit = repositories::commit(&repo, "Add file1")?;
 
@@ -396,7 +395,7 @@ mod tests {
             let branch_1_name = "branch-1";
             repositories::branches::create(&repo, branch_1_name, &initial_commit.id)?;
             repositories::checkout(&repo, branch_1_name).await?;
-            let branch_1_file = test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
+            let branch_1_file = crate::test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
             repositories::add(&repo, &branch_1_file).await?;
             let branch_1_commit = repositories::commit(&repo, "Commit on branch 1")?;
 
@@ -404,7 +403,7 @@ mod tests {
             let branch_2_name = "branch-2";
             repositories::branches::create(&repo, branch_2_name, &branch_1_commit.id)?;
             repositories::checkout(&repo, branch_2_name).await?;
-            let branch_2_file = test::add_txt_file_to_dir(&train_dir, "file3.txt")?;
+            let branch_2_file = crate::test::add_txt_file_to_dir(&train_dir, "file3.txt")?;
             repositories::add(&repo, &branch_2_file).await?;
             let branch_2_commit = repositories::commit(&repo, "Commit on branch 2")?;
 
@@ -430,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prune_does_not_delete_referenced_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Initial commit on main
             let file1 = repo.path.join("file1.txt");
             tokio::fs::write(&file1, "file1").await?;

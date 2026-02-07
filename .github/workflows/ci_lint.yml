@@ -42,12 +42,10 @@ jobs:
       - name: Cargo Check
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          # cargo build
-          cargo check --all-features
+          cargo check --workspace --all-features
 
           cd ${{ github.workspace }}/oxen-python
-          cargo build
-          # cargo check --all-targets --all-features
+          cargo build --workspace
 
       - name: Cargo Format
         run: |
@@ -60,7 +58,7 @@ jobs:
       - name: Cargo Clippy
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          cargo clippy --no-deps -- -D warnings
+          cargo clippy --workspace --no-deps -- -D warnings
 
           cd ${{ github.workspace }}/oxen-python
           cargo clippy --no-deps -- -D warnings
