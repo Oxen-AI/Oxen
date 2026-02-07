@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
@@ -10,7 +10,7 @@ use liboxen::constants::{self, TABLE_NAME};
 use liboxen::core::db::data_frames::df_db::with_df_db_manager;
 use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use liboxen::error::OxenError;
-use liboxen::model::{ParsedResource, Schema};
+use liboxen::model::{ParsedResource, Schema, Workspace};
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
 use liboxen::util::paginate;
@@ -244,6 +244,30 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     Ok(HttpResponse::Ok().json(schema))
 }
 
+fn determine_extension<'a>(opts: &'a DFOpts, file_path: &'a Path) -> &'a str {
+    match &opts.output {
+        // If the user specified a format, we'll export to that format
+        Some(output) => output
+            .extension()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default(),
+        None => file_path
+            .extension()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default(),
+    }
+}
+
+// fn determine_content_type(extension: &str) -> &str {
+//   match extension {
+//       "parquet" => "application/octet-stream",
+//       "json" | "jsonl" | "ndjson" => "application/json",
+//       _ => "text/csv",
+//   }
+// }
+
 pub async fn download(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
@@ -259,25 +283,27 @@ pub async fn download(
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
+    let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) else {
+        log::error!(
+            "Unable to get filename from request param path: {}",
+            file_path.display()
+        );
+        return Err(OxenHttpError::BadRequest(
+            "Unable to parse filename from 'path' parameter".into(),
+        ));
+    };
 
-    let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(&query, &mut opts);
-    opts.path = Some(file_path.clone());
-
-    opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM));
-    opts.page_size = Some(query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE));
+    let opts = df_opts_from_query(&query, file_path.clone());
 
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
     if !is_indexed {
-        let response = WorkspaceJsonDataFrameViewResponse {
-            status: StatusMessage::resource_found(),
-            data_frame: None,
-            resource: None,
-            commit: None, // Not at a committed state
-            derived_resource: None,
-            is_indexed,
-        };
+        let file_exists = file_exists_in_workspace_or_commit(&workspace, &file_path)?;
+        if !file_exists {
+            return Err(OxenHttpError::NotFound);
+        }
+
+        let response = df_not_indexed_response();
 
         return Ok(HttpResponse::Ok().json(response));
     }
@@ -287,36 +313,29 @@ pub async fn download(
 
     // Create temporary file
     let temp_dir = std::env::temp_dir();
-    let mut extension = file_path
-        .extension()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default();
-    // If the user specified a format, we'll export to that format
-    if let Some(output) = &opts.output {
-        extension = output
-            .extension()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default();
-    }
+
+    let extension = determine_extension(&opts, &file_path);
+
     let temp_file = temp_dir.join(format!("{}.{}", uuid::Uuid::new_v4(), extension));
 
     // Export the data frame
     match repositories::workspaces::data_frames::export(&workspace, &file_path, &opts, &temp_file) {
         Ok(_) => (),
         Err(e) => {
-            log::error!("Error exporting data frame {file_path:?}: {e:?}");
             let error_str = format!("{e:?}");
+            log::error!("Error exporting data frame {file_path:?}: {error_str}");
             let response = StatusMessageDescription::bad_request(error_str);
             return Ok(HttpResponse::BadRequest().json(response));
         }
     };
 
     // Read the entire file into memory
-    let mut file = std::fs::File::open(&temp_file)?;
-    let mut contents = Vec::new();
-    file.read_to_end(&mut contents)?;
+    let contents = {
+        let mut file = std::fs::File::open(&temp_file)?;
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents)?;
+        contents
+    };
 
     // Remove the temporary file
     if let Err(e) = std::fs::remove_file(&temp_file) {
@@ -324,15 +343,58 @@ pub async fn download(
     }
 
     // Create non-streaming response
-    let filename = file_path.file_name().and_then(|n| n.to_str()).unwrap();
-
     Ok(HttpResponse::Ok()
+        // .append_header(("Content-Type", determine_content_type(extension)))
         .append_header(("Content-Type", "text/csv"))
         .append_header((
             "Content-Disposition",
             format!("attachment; filename=\"{filename}\""),
         ))
         .body(contents))
+}
+
+fn df_opts_from_query(query: &web::Query<DFOptsQuery>, file_path: PathBuf) -> DFOpts {
+    let mut opts = DFOpts::empty();
+    opts = df_opts_query::parse_opts(query, &mut opts);
+    opts.path = Some(file_path);
+
+    opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM));
+    opts.page_size = Some(query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE));
+    opts
+}
+
+/// Check if the file exists in the repository or the workspace.
+/// If not, then it should be a genuine 404.
+fn file_exists_in_workspace_or_commit(
+    workspace: &Workspace,
+    file_path: impl AsRef<Path>,
+) -> Result<bool, OxenHttpError> {
+    let file_exists = {
+        (
+            // does the file exist in the base repository?
+            repositories::tree::get_file_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
+                &file_path,
+            )?
+            .is_some()
+        ) || (
+            // if not, does it exist in the workspace
+            repositories::workspaces::files::exists(workspace, &file_path)?
+        )
+    };
+    Ok(file_exists)
+}
+
+fn df_not_indexed_response() -> WorkspaceJsonDataFrameViewResponse {
+    WorkspaceJsonDataFrameViewResponse {
+        status: StatusMessage::resource_found(),
+        data_frame: None,
+        resource: None,
+        commit: None, // Not at a committed state
+        derived_resource: None,
+        is_indexed: false,
+    }
 }
 
 pub async fn download_streaming(
@@ -350,25 +412,27 @@ pub async fn download_streaming(
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
+    let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) else {
+        log::error!(
+            "Unable to get filename from request param path: {}",
+            file_path.display()
+        );
+        return Err(OxenHttpError::BadRequest(
+            "Unable to parse filename from 'path' parameter".into(),
+        ));
+    };
 
-    let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(&query, &mut opts);
-    opts.path = Some(file_path.clone());
-
-    opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM));
-    opts.page_size = Some(query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE));
+    let opts = df_opts_from_query(&query, file_path.clone());
 
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
     if !is_indexed {
-        let response = WorkspaceJsonDataFrameViewResponse {
-            status: StatusMessage::resource_found(),
-            data_frame: None,
-            resource: None,
-            commit: None, // Not at a committed state
-            derived_resource: None,
-            is_indexed,
-        };
+        let file_exists = file_exists_in_workspace_or_commit(&workspace, &file_path)?;
+        if !file_exists {
+            return Err(OxenHttpError::NotFound);
+        }
+
+        let response = df_not_indexed_response();
 
         return Ok(HttpResponse::Ok().json(response));
     }
@@ -378,11 +442,7 @@ pub async fn download_streaming(
 
     // Create temporary file
     let temp_dir = std::env::temp_dir();
-    let extension = file_path
-        .extension()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default();
+    let extension = determine_extension(&opts, &file_path);
     let temp_file = temp_dir.join(format!("{}.{}", uuid::Uuid::new_v4(), extension));
 
     // Export the data frame
@@ -396,12 +456,10 @@ pub async fn download_streaming(
         }
     };
 
-    // Create streaming response
-    let filename = file_path.file_name().and_then(|n| n.to_str()).unwrap();
-
     let stream = CleanupFileStream::new(temp_file)?;
 
     Ok(HttpResponse::Ok()
+        // .append_header(("Content-Type", determine_content_type(extension)))
         .append_header(("Content-Type", "text/csv"))
         .append_header((
             "Content-Disposition",
@@ -601,4 +659,383 @@ pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_data::OxenAppData;
+    use crate::controllers;
+    use crate::test;
+    use actix_web::{web, App};
+    use liboxen::error::OxenError;
+    use liboxen::repositories;
+    use liboxen::util;
+    use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
+
+    /// CSV committed, workspace created, dataframe indexed.
+    /// Expected: 200 with `text/csv` body containing the data.
+    #[actix_web::test]
+    async fn test_download_indexed_data_frame_returns_csv_content() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Create a CSV file and commit
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        // Create a workspace and index the data frame
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+        let file_path = std::path::Path::new("data/test.csv");
+        repositories::workspaces::data_frames::index(&repo, &workspace, file_path)?;
+
+        // Request download for the indexed file
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{}",
+            file_path.display()
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // Verify it returned CSV content, not JSON
+        let content_type = resp
+            .headers()
+            .get("Content-Type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(content_type, "text/csv");
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(body.contains("col_a"));
+        assert!(body.contains("col_b"));
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// File NOT in base commit, only staged in workspace via `files::add`.
+    /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
+    #[actix_web::test]
+    async fn test_download_unindexed_workspace_only_file_returns_200() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Create an initial file and commit so we have a valid commit for the workspace
+        let readme = repo.path.join("README.md");
+        util::fs::write_to_path(&readme, "# Test")?;
+        repositories::add(&repo, &readme).await?;
+        let commit = repositories::commit(&repo, "Initial commit")?;
+
+        // Create workspace, then add a NEW CSV that doesn't exist in the base commit
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // Write the new CSV into the workspace directory and stage it
+        let workspace_csv_dir = workspace.dir().join("data");
+        util::fs::create_dir_all(&workspace_csv_dir)?;
+        let workspace_csv_path = workspace_csv_dir.join("new.csv");
+        util::fs::write_to_path(&workspace_csv_path, "x,y\n10,20\n")?;
+        repositories::workspaces::files::add(&workspace, &workspace_csv_path).await?;
+
+        // Request download for the workspace-only file
+        let file_path = "data/new.csv";
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{file_path}"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // Parse the response body and verify is_indexed is false
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: WorkspaceJsonDataFrameViewResponse = serde_json::from_slice(&bytes)?;
+        assert!(!response.is_indexed);
+        assert!(response.data_frame.is_none());
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// File doesn't exist in base commit or workspace.
+    /// Expected: 404.
+    #[actix_web::test]
+    async fn test_download_nonexistent_path_returns_404() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Create a CSV file and commit so we have a valid repo
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        // Create a workspace
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // Request download for a file that does not exist
+        let nonexistent_path = "data/this_does_not_exist.csv";
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{nonexistent_path}"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// CSV committed, workspace created, NOT indexed.
+    /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
+    #[actix_web::test]
+    async fn test_download_existing_unindexed_returns_200_with_is_indexed_false(
+    ) -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Create a CSV file and commit
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        // Create a workspace but do NOT index the data frame
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // Request download for the existing-but-unindexed file
+        let file_path = "data/test.csv";
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{file_path}"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // Parse the response body and verify is_indexed is false
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: WorkspaceJsonDataFrameViewResponse = serde_json::from_slice(&bytes)?;
+        assert!(!response.is_indexed);
+        assert!(response.data_frame.is_none());
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// CSV committed, workspace created, file not staged in workspace.
+    /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
+    #[actix_web::test]
+    async fn test_download_streaming_unindexed_committed_file_returns_200() -> Result<(), OxenError>
+    {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        let file_path = "data/test.csv";
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download_streaming/{file_path}"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download_streaming/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download_streaming),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: WorkspaceJsonDataFrameViewResponse = serde_json::from_slice(&bytes)?;
+        assert!(!response.is_indexed);
+        assert!(response.data_frame.is_none());
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// File NOT in base commit, only staged in workspace via `files::add`.
+    /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
+    #[actix_web::test]
+    async fn test_download_streaming_unindexed_workspace_only_file_returns_200(
+    ) -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let readme = repo.path.join("README.md");
+        util::fs::write_to_path(&readme, "# Test")?;
+        repositories::add(&repo, &readme).await?;
+        let commit = repositories::commit(&repo, "Initial commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        let workspace_csv_dir = workspace.dir().join("data");
+        util::fs::create_dir_all(&workspace_csv_dir)?;
+        let workspace_csv_path = workspace_csv_dir.join("new.csv");
+        util::fs::write_to_path(&workspace_csv_path, "x,y\n10,20\n")?;
+        repositories::workspaces::files::add(&workspace, &workspace_csv_path).await?;
+
+        let file_path = "data/new.csv";
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download_streaming/{file_path}"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download_streaming/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download_streaming),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: WorkspaceJsonDataFrameViewResponse = serde_json::from_slice(&bytes)?;
+        assert!(!response.is_indexed);
+        assert!(response.data_frame.is_none());
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// File doesn't exist in base commit or workspace.
+    /// Expected: 404.
+    #[actix_web::test]
+    async fn test_download_streaming_nonexistent_path_returns_404() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        let nonexistent_path = "data/this_does_not_exist.csv";
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download_streaming/{nonexistent_path}"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download_streaming/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::download_streaming),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
 }
