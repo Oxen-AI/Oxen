@@ -41,12 +41,12 @@ The CLI and server both depend on the shared library to avoid code duplication. 
 ## Common Development Commands
 
 *IMPORTANT*: Our codebase assumes cargo commands are run on the whole workspace, from the workspace root, _NOT_ on specific packages.
-GOOD: `cargo check`
+GOOD: `cargo check --workspace`
 BAD: `cargo check --package liboxen`
 
 ### Building
 ```bash
-cargo build                           # Debug build
+cargo build --workspace                           # Debug build
 ```
 
 ### Testing
@@ -69,9 +69,9 @@ env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo test -- --nocapture
 
 ### Code Quality
 ```bash
-cargo fmt                              # Format code
-cargo clippy --no-deps -- -D warnings  # Lint code
-pre-commit run --all-files             # Run pre-commit hooks (runs format and lint)
+cargo fmt --all                                    # Format code
+cargo clippy --workspace --no-deps -- -D warnings  # Lint code
+pre-commit run --all-files                         # Run pre-commit hooks (runs format and lint)
 ```
 
 ### Server Development
@@ -105,4 +105,3 @@ oxen push origin main               # Push to remote
 - When possible, put tests in the higher-level `repositories` module rather than the lower-level, version-specific implementation.
     - e.g., Tests should go in `repositories/commits.rs` rather than `core/v_latest/commits.rs`.
 - Tests create unique temporary directories and clean up automatically
-

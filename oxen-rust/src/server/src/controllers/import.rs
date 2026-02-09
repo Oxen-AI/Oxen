@@ -452,7 +452,7 @@ async fn parse_multipart_fields_for_upload_zip(
 mod tests {
 
     use crate::app_data::OxenAppData;
-    use crate::{controllers, test};
+    use crate::controllers;
 
     use liboxen::view::CommitResponse;
     use liboxen::{repositories, util};
@@ -469,13 +469,13 @@ mod tests {
             return Ok(());
         }
 
-        test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
+        liboxen::test::init_test_env();
+        let sync_dir = crate::test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
         let author = "test_user";
         let email = "ox@oxen.ai";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -513,31 +513,27 @@ mod tests {
         let resp: CommitResponse = serde_json::from_str(body)?;
         assert_eq!(resp.status.status, "success");
 
-        let entry = repositories::entries::get_file(
-            &repo,
-            &resp.commit,
-            PathBuf::from("data/cats_vs_dogs.tsv"),
-        )?
-        .unwrap();
+        let entry =
+            repositories::entries::get_file(&repo, &resp.commit, "data/cats_vs_dogs.tsv")?.unwrap();
         let version_store = repo.version_store()?;
         let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         assert!(version_path.exists());
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        crate::test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }
 
     #[actix_web::test]
     async fn test_controllers_file_import_text_file() -> Result<(), OxenError> {
-        test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
+        liboxen::test::init_test_env();
+        let sync_dir = crate::test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
         let author = "test_user";
         let email = "ox@oxen.ai";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -586,7 +582,7 @@ mod tests {
         assert!(version_path.exists());
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        crate::test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }
