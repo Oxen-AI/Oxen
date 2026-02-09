@@ -43,6 +43,10 @@ pub struct MetadataEntry {
     pub metadata: Option<GenericMetadata>,
     // If it's a tabular file, is it indexed for querying?
     pub is_queryable: Option<bool>,
+    // Nested children entries when depth > 0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(no_recursion)]
+    pub children: Option<Vec<MetadataEntry>>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
@@ -66,6 +70,10 @@ pub struct WorkspaceMetadataEntry {
     pub is_queryable: Option<bool>,
     // Workspace changes if the entry is part of a workspace
     pub changes: Option<WorkspaceChanges>,
+    // Nested children entries when depth > 0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(no_recursion)]
+    pub children: Option<Vec<WorkspaceMetadataEntry>>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
@@ -110,6 +118,9 @@ impl WorkspaceMetadataEntry {
             metadata: metadata.metadata,
             is_queryable: metadata.is_queryable,
             changes: None,
+            children: metadata
+                .children
+                .map(|c| c.into_iter().map(Self::from_metadata_entry).collect()),
         }
     }
 }

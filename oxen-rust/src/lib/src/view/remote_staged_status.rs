@@ -174,6 +174,7 @@ impl RemoteStagedStatus {
                     resource: None,
                     metadata: None,
                     is_queryable: None,
+                    children: None,
                 }
             })
             .collect()

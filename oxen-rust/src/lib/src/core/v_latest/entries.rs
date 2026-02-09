@@ -45,6 +45,16 @@ pub fn list_directory(
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    list_directory_with_depth(repo, directory, parsed_resource, paginate_opts, 0)
+}
+
+pub fn list_directory_with_depth(
+    repo: &LocalRepository,
+    directory: impl AsRef<Path>,
+    parsed_resource: &ParsedResource,
+    paginate_opts: &PaginateOpts,
+    depth: usize,
+) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("core::entries::list_directory");
 
     let directory = directory.as_ref();
@@ -57,7 +67,7 @@ pub fn list_directory(
         version: revision.clone(),
     });
 
-    log::debug!("list_directory directory {directory:?} revision {revision:?}");
+    log::debug!("list_directory directory {directory:?} revision {revision:?} depth {depth}");
 
     let commit = parsed_resource
         .commit
@@ -96,8 +106,14 @@ pub fn list_directory(
     log::debug!("list_directory dir_entry {dir_entry:?}");
 
     let _perf_entries = crate::perf_guard!("core::entries::collect_dir_entries");
-    let entries: Vec<MetadataEntry> =
-        dir_entries(repo, &dir, directory, parsed_resource, &mut found_commits)?;
+    let entries: Vec<MetadataEntry> = dir_entries_with_depth(
+        repo,
+        &dir,
+        directory,
+        parsed_resource,
+        &mut found_commits,
+        depth,
+    )?;
     log::debug!("list_directory got {} entries", entries.len());
     drop(_perf_entries);
 
@@ -205,6 +221,53 @@ pub fn dir_entries(
         parsed_resource,
         found_commits,
         &mut entries,
+        0,
+    )?;
+    drop(_perf_recurse);
+
+    log::debug!("dir_entries got {} entries", entries.len());
+
+    let _perf_sort = crate::perf_guard!("core::entries::sort_entries");
+    // Sort entries by is_dir first, then by filename
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.filename.cmp(&b.filename))
+    });
+    drop(_perf_sort);
+
+    Ok(entries)
+}
+
+pub fn dir_entries_with_depth(
+    repo: &LocalRepository,
+    dir: &MerkleTreeNode,
+    search_directory: impl AsRef<Path>,
+    parsed_resource: &ParsedResource,
+    found_commits: &mut HashMap<MerkleHash, Commit>,
+    depth: usize,
+) -> Result<Vec<MetadataEntry>, OxenError> {
+    let _perf = crate::perf_guard!("core::entries::dir_entries");
+
+    log::debug!(
+        "dir_entries search_directory {:?} dir {} depth {}",
+        search_directory.as_ref(),
+        dir,
+        depth
+    );
+    let mut entries: Vec<MetadataEntry> = Vec::new();
+    let current_directory = search_directory.as_ref();
+
+    let _perf_recurse = crate::perf_guard!("core::entries::p_dir_entries_recurse");
+    p_dir_entries(
+        repo,
+        dir,
+        &search_directory,
+        current_directory,
+        parsed_resource,
+        found_commits,
+        &mut entries,
+        depth,
     )?;
     drop(_perf_recurse);
 
@@ -268,6 +331,7 @@ fn dir_node_to_metadata_entry(
             dir_node.data_types(),
         ))),
         is_queryable: None,
+        children: None,
     }))
 }
 
@@ -326,9 +390,11 @@ fn file_node_to_metadata_entry(
         extension: file_node.extension().to_string(),
         metadata: file_node.metadata(),
         is_queryable: is_indexed,
+        children: None,
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn p_dir_entries(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
@@ -337,23 +403,14 @@ fn p_dir_entries(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     entries: &mut Vec<MetadataEntry>,
+    depth: usize,
 ) -> Result<(), OxenError> {
     let search_directory = search_directory.as_ref();
     let current_directory = current_directory.as_ref();
-    // log::debug!(
-    //     "p_dir_entries current_directory {:?} search_directory {:?} node {}",
-    //     current_directory,
-    //     search_directory,
-    //     node
-    // );
+
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
-                // log::debug!(
-                //     "p_dir_entries got vnode {:?} search_directory {:?}",
-                //     current_directory,
-                //     search_directory
-                // );
                 p_dir_entries(
                     repo,
                     child,
@@ -362,29 +419,64 @@ fn p_dir_entries(
                     parsed_resource,
                     found_commits,
                     entries,
+                    depth,
                 )?;
             }
             EMerkleTreeNode::Directory(child_dir) => {
-                // log::debug!(
-                //     "p_dir_entries current_directory {:?} search_directory {:?} child_dir {:?}",
-                //     current_directory,
-                //     search_directory,
-                //     child_dir.name
-                // );
                 if current_directory == search_directory && !child_dir.name().is_empty() {
-                    // log::debug!(
-                    //     "p_dir_entries adding dir entry current_directory {:?}",
-                    //     current_directory
-                    // );
-                    let metadata = dir_node_to_metadata_entry(
+                    let mut metadata = dir_node_to_metadata_entry(
                         repo,
                         child,
                         parsed_resource,
                         found_commits,
                         true,
-                    )?;
-                    // log::debug!("p_dir_entries added dir entry {:?}", metadata);
-                    entries.push(metadata.unwrap());
+                    )?
+                    .unwrap();
+
+                    // Populate children if depth > 0
+                    if depth > 0 {
+                        let child_path = search_directory.join(child_dir.name());
+                        let commit = parsed_resource
+                            .commit
+                            .as_ref()
+                            .ok_or_else(|| OxenError::basic_str("No commit in parsed resource"))?;
+
+                        if let Some(subdir_node) = repositories::tree::get_dir_with_children(
+                            repo,
+                            commit,
+                            &child_path,
+                            None,
+                        )? {
+                            let mut sub_resource = parsed_resource.clone();
+                            sub_resource.path = child_path.clone();
+                            sub_resource.resource = parsed_resource.version.join(&child_path);
+
+                            let mut children: Vec<MetadataEntry> = Vec::new();
+                            p_dir_entries(
+                                repo,
+                                &subdir_node,
+                                &child_path,
+                                &child_path,
+                                &sub_resource,
+                                found_commits,
+                                &mut children,
+                                depth - 1,
+                            )?;
+
+                            // Sort children
+                            children.sort_by(|a, b| {
+                                b.is_dir
+                                    .cmp(&a.is_dir)
+                                    .then_with(|| a.filename.cmp(&b.filename))
+                            });
+
+                            if !children.is_empty() {
+                                metadata.children = Some(children);
+                            }
+                        }
+                    }
+
+                    entries.push(metadata);
                 }
                 let current_directory = current_directory.join(child_dir.name());
                 p_dir_entries(
@@ -395,33 +487,17 @@ fn p_dir_entries(
                     parsed_resource,
                     found_commits,
                     entries,
+                    depth,
                 )?;
             }
             EMerkleTreeNode::File(child_file) => {
-                // log::debug!(
-                //     "p_dir_entries current_directory {:?} search_directory {:?} child_file {:?}",
-                //     current_directory,
-                //     search_directory,
-                //     child_file.name
-                // );
-
                 if current_directory == search_directory {
-                    // log::debug!(
-                    //     "p_dir_entries adding file entry current_directory {:?} file_name {:?}",
-                    //     current_directory,
-                    //     child_file.name
-                    // );
                     let metadata = file_node_to_metadata_entry(
                         repo,
                         child_file,
                         parsed_resource,
                         found_commits,
                     )?;
-                    // log::debug!(
-                    //     "p_dir_entries added file entry {:?} file_name {:?}",
-                    //     metadata,
-                    //     child_file.name
-                    // );
                     entries.push(metadata.unwrap());
                 }
             }
