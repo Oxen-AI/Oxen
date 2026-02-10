@@ -120,10 +120,7 @@ pub async fn download(
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let resource = parse_resource(&req, &repo)?;
-    let commit = resource
-        .clone()
-        .commit
-        .ok_or_else(|| OxenError::basic_str("Resource commit not found"))?;
+    let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let path = resource.path.clone();
 
     log::debug!("Download resource {namespace}/{repo_name}/{resource} version file");
@@ -491,7 +488,7 @@ pub struct UploadVersionFile {
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
     ),
     request_body(
-        content_type = "multipart/form-data", 
+        content_type = "multipart/form-data",
         description = "Multipart upload of files. Each form field 'file[]' or 'file' should contain the file content (optionally gzip compressed), and the filename should be the content hash (e.g., 'file.jpg' is not used, the hash is the identifier).",
         content = UploadVersionFile,
     ),
@@ -668,6 +665,48 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(bytes, "Hello");
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_versions_download_bad_commit_returns_404() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // create test file and commit so we have a valid repo
+        util::fs::create_dir_all(repo.path.join("data"))?;
+        let relative_path = "data/hello.txt";
+        let hello_file = repo.path.join(relative_path);
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        repositories::commit(&repo, "First commit")?;
+
+        // Request with a nonexistent commit/revision
+        let uri =
+            format!("/oxen/{namespace}/{repo_name}/versions/nonexistent_commit_id/{relative_path}");
+        let req = actix_web::test::TestRequest::get()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/versions/{resource:.*}",
+                    web::get().to(controllers::versions::download),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         // cleanup
         test::cleanup_sync_dir(&sync_dir)?;

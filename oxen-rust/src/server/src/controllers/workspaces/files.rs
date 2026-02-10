@@ -118,9 +118,7 @@ pub async fn get(
                 )? {
                     Ok(file_node)
                 } else {
-                    Err(OxenError::basic_str(
-                        "File not found in workspace staged DB or base repo",
-                    ))
+                    Err(OxenError::resource_not_found(&path))
                 }
             }
         }
@@ -148,7 +146,7 @@ pub async fn get(
         let file_stream = util::fs::handle_image_resize(
             Arc::clone(&version_store),
             hash_str.clone(),
-            &PathBuf::from(path),
+            &PathBuf::from(&path),
             &version_path,
             img_resize,
         )
@@ -173,7 +171,7 @@ pub async fn get(
         let thumbnail_path = util::fs::handle_video_thumbnail(
             Arc::clone(&version_store),
             hash_str,
-            &PathBuf::from(path),
+            &PathBuf::from(&path),
             &version_path,
             video_thumbnail,
         )?;
@@ -769,4 +767,58 @@ fn record_error_file(
         error,
     };
     err_files.push(info);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_data::OxenAppData;
+    use crate::controllers;
+    use crate::test;
+    use actix_web::{web, App};
+    use liboxen::error::OxenError;
+    use liboxen::repositories;
+    use liboxen::util;
+
+    #[actix_web::test]
+    async fn test_get_nonexistent_file_returns_404() -> Result<(), OxenError> {
+        test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Create a file and commit so we have a valid commit for the workspace
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        // Create a workspace
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // Request a file that does not exist in the workspace or the base repo
+        let file_path = "this_file_does_not_exist.txt";
+        let uri =
+            format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{file_path}");
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
+                    web::get().to(controllers::workspaces::files::get),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
 }
