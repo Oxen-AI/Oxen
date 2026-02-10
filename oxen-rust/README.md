@@ -30,12 +30,34 @@ Oxen is purely written in Rust 🦀. You should install the Rust toolchain with 
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+We also use [Just](https://github.com/casey/just) as a command runner. Install it with:
+
+```
+brew install just
+```
+
+Or see the [Just installation guide](https://github.com/casey/just#installation) for other platforms.
+
+Once installed, list all available recipes with `just --list`. Common recipes:
+
+| Command | Description |
+|---------|-------------|
+| `just build` | Build the workspace (debug mode) |
+| `just check` | Type-check the workspace |
+| `just lint` | Run cargo fmt check + clippy |
+| `just test` | Run all tests with nextest |
+| `just test-only NAME` | Run a specific test by name substring |
+| `just doc` | Generate rustdoc |
+| `just serve` | Start server with live-reload (bacon) |
+| `just pre-commit` | Run pre-commit hooks |
+| `just test-cli` | Run CLI integration tests |
+
 If you are a developer and want to learn more about adding code or the overall architecture [start here](docs/dev/AddLibraryCode.md). Otherwise, a quick start to make sure everything is working follows.
 
 ## Build
 
 ```
-cargo build
+cargo build   # or `just build`
 ```
 
 If on intel mac, you may need to build with the following
@@ -177,7 +199,7 @@ cargo install --locked bacon
 Then run the server like this
 
 ```
-bacon server
+bacon server   # or `just serve`
 ```
 
 
@@ -223,6 +245,8 @@ docker load -i result
 
 # Unit & Integration Tests
 
+The simplest way to run all tests is via Just (`just test`), which automatically creates the test user config and sets file handle limits. For manual setup, follow the steps below.
+
 Make sure your user is configured and server is running on the default port and host, by following these setup steps:
 
 ```bash
@@ -244,7 +268,7 @@ ulimit -n 10240
 
 Run tests with nextest (preferred):
 ```
-cargo nextest run
+cargo nextest run   # or `just test`
 ```
 
 Run with vanilla cargo:
@@ -255,7 +279,7 @@ cargo test -- --test-threads=$(nproc)
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```
-cargo nextest run --lib test_get_metadata_text_readme
+cargo nextest run --lib test_get_metadata_text_readme   # or `just test-only test_get_metadata_text_readme`
 ```
 
 To run the catchall (integration) tests
@@ -278,6 +302,20 @@ To set a different test host you can set the `OXEN_TEST_HOST` environment variab
 env OXEN_TEST_HOST=0.0.0.0:4000 cargo nextest run
 ```
 
+### CLI Integration Tests
+
+There is a Python-based CLI test suite in `cli-test/`. Run it with:
+
+```
+just test-cli
+```
+
+Or manually:
+
+```bash
+cd cli-test && uv sync && uv run pytest tests -v
+```
+
 ## Pre-Commit Hook
 
 We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
@@ -285,6 +323,11 @@ make sure to install [`pre-commit-hooks`](https://pre-commit.com/) library
 and then install the precommits locally using
 ```
 pre-commit install
+```
+
+You can also run pre-commit checks on all files via Just:
+```
+just pre-commit
 ```
 
 # Oxen Server

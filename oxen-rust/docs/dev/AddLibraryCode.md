@@ -95,13 +95,13 @@ Feel free to browse the rest of the RefReader class to see the implementation, b
 To run this specific unit test use the command
 
 ```shell
-cargo test test_ref_reader_list_branches
+cargo test test_ref_reader_list_branches   # or `just test-only test_ref_reader_list_branches`
 ```
 
 To run all unit tests to make sure you haven't broken anything in the process just run
 
 ```shell
-cargo test
+cargo test   # or `just test`
 ```
 
 If you want to see all the debug output for the commands you must set the `RUST_LOG` environment variable. In fish shell the an example command might look like

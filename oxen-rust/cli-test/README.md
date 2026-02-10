@@ -23,7 +23,7 @@ oxen-server start
 
 Run all tests:
 ```bash
-uv run pytest tests
+uv run pytest tests   # or from the oxen-rust root: `just test-cli`
 ```
 
 Run specific test file:

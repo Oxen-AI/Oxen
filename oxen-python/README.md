@@ -1,4 +1,4 @@
-# 🐂 🐍 Oxen Python Interface 
+# 🐂 🐍 Oxen Python Interface
 
 The Oxen python interface makes it easy to integrate Oxen datasets directly into machine learning dataloaders or other data pipelines.
 
@@ -41,7 +41,7 @@ repo.checkout()
 If you don't want to download the data locally, you can use the `RemoteRepo` class to interact with a remote repository on OxenHub.
 
 ```python
-import oxen 
+import oxen
 
 repo = RemoteRepo("https://hub.oxen.ai/ox/CatDogBBox")
 ```
@@ -61,4 +61,21 @@ repo.commit("Adding another training image")
 ```
 
 Note that no "push" command is required here, since the above code creates a commit directly on the remote branch.
+
+## Development
+
+This sub-project uses [Just](https://github.com/casey/just) as a command runner. Install it with `brew install just` or see the [installation guide](https://github.com/casey/just#installation).
+
+List all available recipes with `just --list`. Common recipes:
+
+| Command | Description |
+|---------|-------------|
+| `just build` | Install deps and compile Rust extension into venv |
+| `just lint` | Lint Python (ruff) and Rust (fmt + clippy) |
+| `just check` | Type-check Python code with mypy |
+| `just test` | Run all Python tests |
+| `just test-only NAME` | Run a specific test by keyword |
+| `just doc` | Generate Python API docs with pdoc |
+
+See `Develop.md` for more detailed development instructions.
 
