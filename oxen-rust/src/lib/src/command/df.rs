@@ -3,7 +3,7 @@
 //! Interact with DataFrames
 //!
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::core::df::tabular;
 use crate::error::OxenError;
@@ -72,6 +72,24 @@ pub async fn add_row(path: &Path, data: &str) -> Result<(), OxenError> {
         let err = format!("{} is not a tabular file", path.display());
         Err(OxenError::basic_str(err))
     }
+}
+
+/// Add images to a dataframe, copying external images into the repo and staging all files.
+pub async fn add_images(
+    repo: &LocalRepository,
+    df_path: &Path,
+    image_paths: &[PathBuf],
+    dest: Option<&Path>,
+    extension_override: Option<&str>,
+) -> Result<Vec<PathBuf>, OxenError> {
+    repositories::data_frames::images::add_images_to_df(
+        repo,
+        df_path,
+        image_paths,
+        dest,
+        extension_override,
+    )
+    .await
 }
 
 /// Add a column to a dataframe

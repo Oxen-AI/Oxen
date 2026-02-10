@@ -9,6 +9,9 @@ use liboxen::model::LocalRepository;
 use liboxen::util::fs;
 
 use crate::cmd::RunCmd;
+
+pub mod add_image;
+
 pub const NAME: &str = "df";
 pub struct DFCmd;
 
@@ -20,10 +23,14 @@ impl RunCmd for DFCmd {
 
     fn args(&self) -> Command {
         // Setups the CLI args for the command
+        let add_image_cmd = add_image::AddImageCmd;
         Command::new(NAME)
         .about("View and transform data frames. Supported types: csv, tsv, ndjson, jsonl, parquet.")
         .arg(arg!(<PATH> ... "The DataFrame you want to process. If in the schema subcommand the schema ref."))
         .arg_required_else_help(true)
+        .subcommand_negates_reqs(true)
+        .args_conflicts_with_subcommands(true)
+        .subcommand(add_image_cmd.args())
         .arg(
             Arg::new("write")
                 .long("write")
@@ -240,6 +247,21 @@ impl RunCmd for DFCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        // Check for subcommands first
+        if let Some((name, sub_matches)) = args.subcommand() {
+            match name {
+                add_image::NAME => {
+                    let cmd = add_image::AddImageCmd;
+                    return cmd.run(sub_matches).await;
+                }
+                _ => {
+                    return Err(OxenError::basic_str(format!(
+                        "Unknown df subcommand: {name}"
+                    )));
+                }
+            }
+        }
+
         // Parse Args
         let mut opts = DFCmd::parse_df_args(args);
         let Some(path) = args.get_one::<String>("PATH") else {
