@@ -1,0 +1,46 @@
+# Oxen Rust workspace: library, CLI, and server
+
+# Build the workspace (debug mode)
+build:
+    cargo build
+
+# Type-check the workspace
+check:
+    cargo check
+
+# Run format check and clippy (both run even if one fails)
+lint:
+    #!/usr/bin/env bash
+    rc=0
+    cargo fmt --all -- --check || rc=1
+    cargo clippy --no-deps -- -D warnings || rc=1
+    exit $rc
+
+# Run all tests with nextest
+test:
+    #!/usr/bin/env bash
+    if [ ! -f data/test/config/user_config.toml ]; then
+        cargo run --bin oxen-server add-user --email ox@oxen.ai --name Ox --output data/test/config/user_config.toml
+    fi
+    ulimit -n 10240
+    cargo nextest run
+
+# Run a specific test by name substring
+test-only NAME:
+    cargo test {{NAME}}
+
+# Generate rustdoc
+doc:
+    cargo doc --no-deps
+
+# Run pre-commit hooks
+pre-commit:
+    pre-commit run --all-files
+
+# Run CLI integration tests (Python-based)
+test-cli:
+    cd cli-test && uv sync && uv run pytest tests -v
+
+# Start server with live-reload via bacon
+serve:
+    bacon server
