@@ -28,6 +28,10 @@ pub fn versions() -> Scope {
             web::put().to(controllers::versions::chunks::upload),
         )
         .route(
+            "/{version_id}/chunks/{chunk_number}",
+            web::put().to(controllers::versions::chunks::upload),
+        )
+        .route(
             "/{version_id}/complete",
             web::post().to(controllers::versions::chunks::complete),
         )

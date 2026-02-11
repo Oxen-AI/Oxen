@@ -521,7 +521,6 @@ pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
-    // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
         log::error!("Failed to get version store: {oxen_err:?}");
         actix_web::error::ErrorInternalServerError(oxen_err.to_string())
@@ -534,18 +533,45 @@ pub async fn save_multiparts(
         let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
-
         if let Some(name) = content_disposition.get_name() {
             if name == "file[]" || name == "file" {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-                let upload_filehash = content_disposition.get_filename().map_or_else(
-                    || {
-                        Err(actix_web::error::ErrorBadRequest(
-                            "Missing hash in multipart request",
-                        ))
-                    },
-                    |fhash_os_str| Ok(fhash_os_str.to_string()),
-                )?;
+                let upload_filehash = content_disposition.get_filename();
+                let Some(upload_filehash) = upload_filehash else {
+                    log::error!("Missing hash in multipart request");
+                    record_error_file(
+                        &mut err_files,
+                        "".to_string(),
+                        None,
+                        "Missing hash in multipart request".to_string(),
+                    );
+                    continue;
+                };
+
+                // Get file size from header
+                let raw_headers = field.headers();
+                let file_size = raw_headers
+                    .get("X-Oxen-File-Size")
+                    .and_then(|val| val.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok());
+
+                let size = match file_size {
+                    Some(size) => {
+                        log::debug!("versions::save_multiparts got file_size from header: {size}");
+                        size
+                    }
+                    None => {
+                        log::error!("Failed to get file size for hash {upload_filehash}");
+                        record_error_file(
+                            &mut err_files,
+                            upload_filehash.to_string(),
+                            None,
+                            "Failed to get file size".to_string(),
+                        );
+                        continue;
+                    }
+                };
+
                 log::debug!("upload file_hash: {upload_filehash:?}");
 
                 let is_gzipped = field
@@ -556,12 +582,13 @@ pub async fn save_multiparts(
                     .unwrap_or(false);
 
                 // Read the bytes from the stream
+                // TODO: Implement streaming here
                 let mut field_bytes = Vec::new();
                 while let Some(chunk) = field.try_next().await? {
                     field_bytes.extend_from_slice(&chunk);
                 }
 
-                let mut reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
+                let reader: Box<dyn AsyncRead + Send + Sync + Unpin> = if is_gzipped {
                     // async decompression
                     let cursor = std::io::Cursor::new(field_bytes);
                     let buf_reader = BufReader::new(cursor);
@@ -572,17 +599,17 @@ pub async fn save_multiparts(
                 };
 
                 match version_store
-                    .store_version_from_reader(&upload_filehash, &mut reader)
+                    .store_version_from_reader_with_size(upload_filehash, reader, size)
                     .await
                 {
                     Ok(_) => {
                         log::info!("Successfully stored version for hash: {upload_filehash}");
                     }
                     Err(e) => {
-                        log::error!("Failed to store version for hash {upload_filehash}: {e}");
+                        log::error!("Failed to store version: {e}");
                         record_error_file(
                             &mut err_files,
-                            upload_filehash.clone(),
+                            upload_filehash.to_string(),
                             None,
                             format!("Failed to store version: {e}"),
                         );
@@ -616,15 +643,13 @@ mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
-    use actix_multipart::test::create_form_data_payload_and_headers;
-    use actix_web::{web, web::Bytes, App};
+    use actix_web::{web, App};
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::ErrorFilesResponse;
-    use mime;
     use std::io::Write;
 
     #[actix_web::test]
@@ -732,23 +757,41 @@ mod tests {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(file_content.as_bytes())?;
         let compressed_bytes = encoder.finish()?;
+        let file_size = file_content.len();
 
-        // create multipart request
-        let (body, headers) = create_form_data_payload_and_headers(
-            "file[]",
-            Some(file_hash.clone()),
-            Some("application/gzip".parse::<mime::Mime>().unwrap()),
-            Bytes::from(compressed_bytes),
+        // Construct multipart request body
+        let boundary = "----oxen-boundary";
+
+        let mut body = Vec::new();
+
+        // including self defined header x-oxen-file-size
+        body.extend_from_slice(
+            format!(
+                "--{b}\r\n\
+            Content-Disposition: form-data; name=\"file[]\"; filename=\"{file_hash}\"\r\n\
+            Content-Type: application/gzip\r\n\
+            X-Oxen-File-Size: {size}\r\n\
+            \r\n",
+                b = boundary,
+                size = file_size,
+                file_hash = file_hash,
+            )
+            .as_bytes(),
         );
+
+        body.extend_from_slice(&compressed_bytes);
+
+        body.extend_from_slice(format!("\r\n--{b}--\r\n", b = boundary).as_bytes());
+
         let uri = format!("/oxen/{namespace}/{repo_name}/versions");
 
         let req = actix_web::test::TestRequest::post()
             .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
-
-        let req = headers
-            .into_iter()
-            .fold(req, |req, hdr| req.insert_header(hdr))
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            ))
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
             .set_payload(body)
             .to_request();
 

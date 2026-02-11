@@ -503,9 +503,12 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     };
 
     // Delete in a background thread because it could take awhile
-    std::thread::spawn(move || match repositories::delete(&repository) {
-        Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
-        Err(err) => log::error!("Err deleting repo: {err}"),
+    tokio::spawn(async move {
+        log::info!("🗑️ Deleting repository {namespace}/{name}");
+        match repositories::delete(&repository).await {
+            Ok(_) => log::info!("🗑️ Deleted repo: {namespace}/{name}"),
+            Err(err) => log::error!("Err deleting repo: {err}"),
+        }
     });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
