@@ -332,6 +332,10 @@ async fn handle_json_creation(
             log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
+        Err(OxenError::InvalidRepoName(msg)) => {
+            log::debug!("Invalid repo name: {msg}");
+            Ok(HttpResponse::BadRequest().json(StatusMessage::error(msg.to_string())))
+        }
         Err(err) => {
             println!("Err repositories::create: {err:?}");
             log::error!("Err repositories::create: {err:?}");
@@ -470,6 +474,10 @@ async fn handle_multipart_creation(
         Err(OxenError::RepoAlreadyExists(path)) => {
             log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
+        }
+        Err(OxenError::InvalidRepoName(msg)) => {
+            log::debug!("Invalid repo name: {msg}");
+            Ok(HttpResponse::BadRequest().json(StatusMessage::error(msg.to_string())))
         }
         Err(err) => {
             log::error!("Err repositories::create: {err:?}");

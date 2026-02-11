@@ -47,6 +47,7 @@ pub enum OxenError {
     LocalRepoNotFound(Box<PathBufError>),
     RepoAlreadyExists(Box<RepoNew>),
     RepoAlreadyExistsAtDestination(Box<StringError>),
+    InvalidRepoName(StringError),
 
     // Fork
     ForkStatusNotFound(StringError),
@@ -255,6 +256,10 @@ impl OxenError {
 
     pub fn parsed_resource_not_found(resource: ParsedResource) -> Self {
         OxenError::ParsedResourceNotFound(Box::new(resource.resource.into()))
+    }
+
+    pub fn invalid_repo_name(s: impl AsRef<str>) -> Self {
+        OxenError::InvalidRepoName(StringError::from(s.as_ref()))
     }
 
     pub fn repo_already_exists(repo: RepoNew) -> Self {

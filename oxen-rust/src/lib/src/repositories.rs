@@ -207,6 +207,22 @@ pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
 ) -> Result<LocalRepositoryWithEntries, OxenError> {
+    // Validate repo name does not contain spaces
+    if new_repo.name.contains(' ') {
+        return Err(OxenError::invalid_repo_name(format!(
+            "Repository name '{}' cannot contain spaces",
+            new_repo.name
+        )));
+    }
+
+    // Validate namespace does not contain spaces
+    if new_repo.namespace.contains(' ') {
+        return Err(OxenError::invalid_repo_name(format!(
+            "Namespace '{}' cannot contain spaces",
+            new_repo.namespace
+        )));
+    }
+
     let repo_dir = root_dir
         .join(&new_repo.namespace)
         .join(Path::new(&new_repo.name));
@@ -442,6 +458,55 @@ mod tests {
 
             // Test that we can successful load a repository from that dir
             let _repo = LocalRepository::from_dir(&repo_path)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_local_repository_api_create_rejects_name_with_spaces() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace = "test-namespace";
+            let name = "repo with spaces";
+            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
+            let result = repositories::create(&sync_dir, repo_new).await;
+
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                OxenError::InvalidRepoName(msg) => {
+                    assert!(
+                        msg.to_string().contains("cannot contain spaces"),
+                        "Error message should mention spaces, got: {msg}"
+                    );
+                }
+                other => panic!("Expected InvalidRepoName error, got: {other:?}"),
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_local_repository_api_create_rejects_namespace_with_spaces(
+    ) -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace = "namespace with spaces";
+            let name = "valid-repo";
+            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
+            let result = repositories::create(&sync_dir, repo_new).await;
+
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                OxenError::InvalidRepoName(msg) => {
+                    assert!(
+                        msg.to_string().contains("cannot contain spaces"),
+                        "Error message should mention spaces, got: {msg}"
+                    );
+                }
+                other => panic!("Expected InvalidRepoName error, got: {other:?}"),
+            }
 
             Ok(())
         })
