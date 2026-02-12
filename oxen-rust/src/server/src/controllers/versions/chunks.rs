@@ -102,9 +102,8 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
         }
 
         // Combine all the chunks for a version file into a single file
-        let cleanup = true;
         let version_path = version_store
-            .combine_version_chunks(&version_id, cleanup)
+            .combine_version_chunks(&version_id, true)
             .await?;
 
         // If the workspace id is provided, stage the file
@@ -126,6 +125,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                 &workspace,
                 &version_path,
                 &dst_path,
+                &version_id,
             )?;
         }
 
