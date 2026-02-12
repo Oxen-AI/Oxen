@@ -44,7 +44,7 @@ pub async fn add(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
+    local_repo: Option<&LocalRepository>,
 ) -> Result<(), OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
@@ -63,15 +63,14 @@ pub async fn add(
         walk_dirs: true,
     };
 
-    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref())?;
-    let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.clone())?.into_iter().collect::<Vec<_>>();
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
     match upload_multiple_files(
         remote_repo,
         workspace_id,
         directory,
-        expanded_paths.clone(),
+        &expanded_paths,
         local_repo,
     )
     .await
@@ -158,12 +157,16 @@ pub async fn upload_bytes_as_file(
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
 }
 
+
+/// Represents unprocessed batches
+type PieceOfWork = Vec<(PathBuf, u64)>;
+
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
-    paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
+    paths: &[PathBuf],
+    local_repo: Option<&LocalRepository>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -172,23 +175,22 @@ async fn upload_multiple_files(
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
-    // Separate files by size, storing the file size with each path
-    let mut large_files = Vec::new();
-    let mut small_files = Vec::new();
-    let mut small_files_size = 0;
-
     let repo_path = if let Some(local_repo) = local_repo {
         local_repo.path.clone()
     } else {
         PathBuf::new()
     };
 
+    // Separate files by size, storing the file size with each path
+    let mut large_files: PieceOfWork = Vec::new();
+    let mut small_files: PieceOfWork = Vec::new();
+
     // Group files by size
-    for path in paths {
+    for path in paths.iter() {
         // Adjustment for remote-mode repos
         let path = if local_repo.is_some() {
             let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-            repo_path.join(&relative_path)
+            &repo_path.join(&relative_path)
         } else {
             path
         };
@@ -207,7 +209,6 @@ async fn upload_multiple_files(
                 } else {
                     // Small file goes to batch
                     small_files.push((path, file_size));
-                    small_files_size += file_size;
                 }
             }
             Err(err) => {
@@ -221,6 +222,7 @@ async fn upload_multiple_files(
     let total_size = large_files_size + small_files_size;
 
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
+
     // Process large files individually with parallel upload
     for (path, _size) in large_files {
         match api::client::versions::parallel_large_file_upload(
@@ -243,7 +245,7 @@ async fn upload_multiple_files(
         remote_repo,
         workspace_id,
         directory,
-        small_files,
+        &small_files,
         small_files_size,
         local_repo,
     )
@@ -252,13 +254,64 @@ async fn upload_multiple_files(
     Ok(())
 }
 
+
+/// Splits input into (small, large).
+fn partition_small_large(
+  local_repo: Option<&LocalRepository>,
+  repo_path: &Path,
+  paths: &[&Path],
+) -> Result<(PieceOfWork, PieceOfWork), OxenError> {
+  // Separate files by size, storing the file size with each path
+  let mut large_files: PieceOfWork = Vec::new();
+  let mut small_files: PieceOfWork = Vec::new();
+
+  // Group files by size
+  for path in paths.iter() {
+      // Adjustment for remote-mode repos
+      let path = if local_repo.is_some() {
+          let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+          &repo_path.join(&relative_path)
+      } else {
+          path
+      };
+
+      if !path.exists() {
+          log::warn!("File does not exist: {path:?}");
+          continue;
+      }
+
+      match path.metadata() {
+          Ok(metadata) => {
+              let file_size = metadata.len();
+              if file_size > chunk_size() {
+                  // Large file goes directly to parallel upload
+                  large_files.push((path, file_size));
+              } else {
+                  // Small file goes to batch
+                  small_files.push((path, file_size));
+              }
+          }
+          Err(err) => {
+              log::warn!("Failed to get metadata for file {path:?}: {err}");
+              continue;
+          }
+      }
+  }
+  (small_files, large_files)
+}
+
+
+/// Represents processed batches
+type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
+
+
 async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
-    small_files: Vec<(PathBuf, u64)>,
+    small_files: &[(&Path, u64)],
     small_files_size: u64,
-    local_repo: &Option<LocalRepository>,
+    local_repo: Option<&LocalRepository>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
@@ -274,30 +327,8 @@ async fn parallel_batched_small_file_upload(
     let workspace_id = workspace_id.as_ref().to_string();
     let directory = directory.as_ref().to_str().unwrap_or_default().to_string();
 
-    // Represents unprocessed batches
-    type PieceOfWork = Vec<(PathBuf, u64)>;
 
-    // Represents processed batches
-    type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
-
-    // Split files into batches
-    let mut file_batches: Vec<PieceOfWork> = Vec::new();
-    let mut current_batch: Vec<(PathBuf, u64)> = Vec::new();
-    let mut current_batch_size = 0;
-    let mut total_size = 0;
-
-    for (idx, (path, file_size)) in small_files.iter().enumerate() {
-        current_batch.push((path.clone(), *file_size));
-        current_batch_size += file_size;
-
-        if current_batch_size > chunk_size() || idx >= small_files.len() - 1 {
-            file_batches.push(current_batch.clone());
-
-            current_batch.clear();
-            total_size += current_batch_size;
-            current_batch_size = 0;
-        }
-    }
+    let (file_batches, total_size) = split_into_batches(small_files, chunk_size());
 
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
@@ -609,6 +640,54 @@ async fn parallel_batched_small_file_upload(
     }
 
     Ok(())
+}
+
+
+/// Split files into batches
+fn split_into_batches(small_files: &[(&Path, u64)], chunk_size: u64) -> (Vec<PieceOfWork>, u64) {
+
+  struct Batches {
+    file_batches: Vec<PieceOfWork>,
+    current_batch: PieceOfWork,
+    current_batch_size: u64,
+    total_size: u64,
+  }
+
+  impl Batches {
+
+    /// pushes the contents of current_batch into file_batches and updates total_size
+    fn finish_current_batch(&mut self) {
+      self.file_batches.push(self.current_batch.clone());
+      self.current_batch.clear();
+      self.total_size += self.current_batch_size;
+      self.current_batch_size = 0;
+    }
+
+    /// pushes the path + size into the current batch and updates current's size
+    fn push_current(&mut self, path: PathBuf, file_size: u64) {
+      self.current_batch.push((path, file_size));
+      self.current_batch_size += file_size;
+    }
+  }
+
+  let mut state = Batches {
+    file_batches: Vec::new(),
+    current_batch: Vec::new(),
+    current_batch_size: 0,
+    total_size: 0,
+  };
+
+  for (path, file_size) in small_files.iter() {
+    state.push_current(path.to_path_buf(), *file_size);
+    if state.current_batch_size >= chunk_size {
+        state.finish_current_batch();
+    }
+  }
+  if !state.current_batch.is_empty() {
+    state.finish_current_batch();
+  }
+
+  (state.file_batches, state.total_size)
 }
 
 // Retry stage_files_to_workspace until successful or retry limit breached
