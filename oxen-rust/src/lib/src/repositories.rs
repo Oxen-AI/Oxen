@@ -20,8 +20,10 @@ use crate::repositories::fork::FORK_STATUS_FILENAME;
 use crate::util;
 use fd_lock::RwLock;
 use jwalk::WalkDir;
+use regex::Regex;
 use std::fs::File;
 use std::path::Path;
+use std::sync::LazyLock;
 
 pub mod add;
 pub mod branches;
@@ -203,10 +205,27 @@ pub fn transfer_namespace(
     }
 }
 
+static VALID_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[[:alnum:]][[:alnum:]_.\-]+$").unwrap());
+
+fn is_valid_repo_name(name: &str) -> bool {
+    VALID_NAME_RE.is_match(name)
+}
+
 pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
 ) -> Result<LocalRepositoryWithEntries, OxenError> {
+    // Validate repo name
+    if !is_valid_repo_name(&new_repo.name) {
+        return Err(OxenError::invalid_repo_name(&new_repo.name));
+    }
+
+    // Validate namespace
+    if !is_valid_repo_name(&new_repo.namespace) {
+        return Err(OxenError::invalid_repo_name(&new_repo.namespace));
+    }
+
     let repo_dir = root_dir
         .join(&new_repo.namespace)
         .join(Path::new(&new_repo.name));
@@ -442,6 +461,79 @@ mod tests {
 
             // Test that we can successful load a repository from that dir
             let _repo = LocalRepository::from_dir(&repo_path)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[test]
+    fn test_is_valid_repo_name_accepts_valid_names() {
+        // Basic alphanumeric
+        assert!(repositories::is_valid_repo_name("my-repo"));
+        assert!(repositories::is_valid_repo_name("my_repo"));
+        assert!(repositories::is_valid_repo_name("my.repo"));
+        assert!(repositories::is_valid_repo_name("MyRepo123"));
+        assert!(repositories::is_valid_repo_name("a1"));
+        assert!(repositories::is_valid_repo_name("Cat-Dog-Classifier"));
+        assert!(repositories::is_valid_repo_name("v2.0.1"));
+        assert!(repositories::is_valid_repo_name("test_repo.v2"));
+    }
+
+    #[test]
+    fn test_is_valid_repo_name_rejects_invalid_names() {
+        // Spaces
+        assert!(!repositories::is_valid_repo_name("repo with spaces"));
+        // Starts with non-alphanumeric
+        assert!(!repositories::is_valid_repo_name("-repo"));
+        assert!(!repositories::is_valid_repo_name(".repo"));
+        assert!(!repositories::is_valid_repo_name("_repo"));
+        // Too short (must be at least 2 chars)
+        assert!(!repositories::is_valid_repo_name("a"));
+        assert!(!repositories::is_valid_repo_name(""));
+        // Contains special characters
+        assert!(!repositories::is_valid_repo_name("repo/name"));
+        assert!(!repositories::is_valid_repo_name("repo@name"));
+        assert!(!repositories::is_valid_repo_name("repo name"));
+        assert!(!repositories::is_valid_repo_name("repo!name"));
+    }
+
+    #[tokio::test]
+    async fn test_local_repository_api_create_rejects_invalid_name() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace = "test-namespace";
+            let name = "repo with spaces";
+            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
+            let result = repositories::create(&sync_dir, repo_new).await;
+
+            assert!(result.is_err(), "Expected error but got: {:?}", result);
+            match result.unwrap_err() {
+                OxenError::InvalidRepoName(invalid_name) => {
+                    assert_eq!(invalid_name.to_string(), name);
+                }
+                other => panic!("Expected InvalidRepoName error, got: {other:?}"),
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_local_repository_api_create_rejects_invalid_namespace() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace = "-invalid-namespace";
+            let name = "valid-repo";
+            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
+            let result = repositories::create(&sync_dir, repo_new).await;
+
+            assert!(result.is_err(), "Expected error but got: {:?}", result);
+            match result.unwrap_err() {
+                OxenError::InvalidRepoName(invalid_name) => {
+                    assert_eq!(invalid_name.to_string(), namespace);
+                }
+                other => panic!("Expected InvalidRepoName error, got: {other:?}"),
+            }
 
             Ok(())
         })

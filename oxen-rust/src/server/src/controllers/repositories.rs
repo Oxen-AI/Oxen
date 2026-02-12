@@ -332,6 +332,12 @@ async fn handle_json_creation(
             log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
         }
+        Err(OxenError::InvalidRepoName(name)) => {
+            log::debug!("Invalid repo name: {name}");
+            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
+                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
+            ))))
+        }
         Err(err) => {
             println!("Err repositories::create: {err:?}");
             log::error!("Err repositories::create: {err:?}");
@@ -470,6 +476,12 @@ async fn handle_multipart_creation(
         Err(OxenError::RepoAlreadyExists(path)) => {
             log::debug!("Repo already exists: {path:?}");
             Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
+        }
+        Err(OxenError::InvalidRepoName(name)) => {
+            log::debug!("Invalid repo name: {name}");
+            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
+                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
+            ))))
         }
         Err(err) => {
             log::error!("Err repositories::create: {err:?}");

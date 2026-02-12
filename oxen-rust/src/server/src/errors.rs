@@ -428,6 +428,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    OxenError::InvalidRepoName(name) => {
+                        log::debug!("Invalid repo name: {name}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "invalid_repo_name",
+                                "title": "Invalid Repository Name",
+                                "detail": format!("Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::ImportFileError(desc) => {
                         let error_json = json!({
                             "error": {
@@ -556,6 +569,7 @@ impl error::ResponseError for OxenHttpError {
                 OxenError::RevisionNotFound(_) => StatusCode::NOT_FOUND,
                 OxenError::ResourceNotFound(_) => StatusCode::NOT_FOUND,
                 OxenError::InvalidSchema(_) => StatusCode::BAD_REQUEST,
+                OxenError::InvalidRepoName(_) => StatusCode::BAD_REQUEST,
                 OxenError::PathDoesNotExist(_) => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
