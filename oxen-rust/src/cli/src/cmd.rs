@@ -117,6 +117,9 @@ pub use workspace::WorkspaceCmd;
 pub mod prune;
 pub use prune::PruneCmd;
 
+pub mod fsck;
+pub use fsck::FsckCmd;
+
 #[async_trait]
 pub trait RunCmd {
     fn name(&self) -> &str;

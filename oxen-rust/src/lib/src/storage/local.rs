@@ -385,7 +385,10 @@ impl VersionStore for LocalVersionStore {
     }
 
     // It's left here for a quick fix. TODO: Move the business logic to versions controller.
-    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError> {
+    async fn clean_corrupted_versions(
+        &self,
+        dry_run: bool,
+    ) -> Result<CleanCorruptedVersionsResult, OxenError> {
         // Keep record of the stats
         #[derive(Default)]
         struct Stats {
@@ -497,10 +500,10 @@ impl VersionStore for LocalVersionStore {
                         let data = match fs::read(&data_path).await {
                             Ok(b) => b,
                             Err(_) => {
-                                // cannot read data - treat as corrupted: delete dir
+                                // cannot read data - treat as corrupted
                                 stats_cl.incr_io_error();
 
-                                if fs::remove_dir_all(&suffix_path).await.is_ok() {
+                                if !dry_run && fs::remove_dir_all(&suffix_path).await.is_ok() {
                                     stats_cl.incr_deleted();
                                 }
                                 drop(permit);
@@ -523,7 +526,7 @@ impl VersionStore for LocalVersionStore {
                                     );
                                     stats_cl.incr_io_error();
 
-                                    if fs::remove_dir_all(&suffix_path).await.is_ok() {
+                                    if !dry_run && fs::remove_dir_all(&suffix_path).await.is_ok() {
                                         stats_cl.incr_deleted();
                                     }
                                     drop(permit);
@@ -533,18 +536,20 @@ impl VersionStore for LocalVersionStore {
 
                         if actual_hash != expected_hash {
                             log::debug!("version file {actual_hash} is corrupted!");
-                            // mismatch - delete the corrupted version dir
                             stats_cl.incr_corrupted();
-                            match fs::remove_dir_all(&suffix_path).await {
-                                Ok(_) => {
-                                    stats_cl.incr_deleted();
-                                    log::debug!("Corrupted version file {actual_hash} deleted");
-                                }
-                                Err(_) => {
-                                    stats_cl.incr_io_error();
-                                    log::debug!(
-                                        "Failed to delete corrupted version file {actual_hash}"
-                                    );
+                            if !dry_run {
+                                // mismatch - delete the corrupted version dir
+                                match fs::remove_dir_all(&suffix_path).await {
+                                    Ok(_) => {
+                                        stats_cl.incr_deleted();
+                                        log::debug!("Corrupted version file {actual_hash} deleted");
+                                    }
+                                    Err(_) => {
+                                        stats_cl.incr_io_error();
+                                        log::debug!(
+                                            "Failed to delete corrupted version file {actual_hash}"
+                                        );
+                                    }
                                 }
                             }
                         }
