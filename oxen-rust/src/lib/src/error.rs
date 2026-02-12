@@ -151,6 +151,10 @@ impl fmt::Display for OxenError {
             OxenError::OxenUpdateRequired(err)
             | OxenError::Basic(err)
             | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
+            OxenError::InvalidRepoName(name) => write!(
+                f,
+                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
+            ),
             _ => {
                 write!(f, "{self:?}")
             }

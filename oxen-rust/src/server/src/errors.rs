@@ -428,13 +428,13 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
-                    OxenError::InvalidRepoName(msg) => {
-                        log::debug!("Invalid repo name: {msg}");
+                    OxenError::InvalidRepoName(name) => {
+                        log::debug!("Invalid repo name: {name}");
                         let error_json = json!({
                             "error": {
                                 "type": "invalid_repo_name",
                                 "title": "Invalid Repository Name",
-                                "detail": format!("{}", msg),
+                                "detail": format!("Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,

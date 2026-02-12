@@ -20,8 +20,10 @@ use crate::repositories::fork::FORK_STATUS_FILENAME;
 use crate::util;
 use fd_lock::RwLock;
 use jwalk::WalkDir;
+use regex::Regex;
 use std::fs::File;
 use std::path::Path;
+use std::sync::LazyLock;
 
 pub mod add;
 pub mod branches;
@@ -203,40 +205,25 @@ pub fn transfer_namespace(
     }
 }
 
-/// Validates that a name matches the pattern `^[[:alnum:]][[:alnum:]_.-]+$`:
-/// - Starts with an alphanumeric character
-/// - Followed by one or more alphanumeric characters, underscores, dots, or hyphens
-/// - At least 2 characters total
+static VALID_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[[:alnum:]][[:alnum:]_.\-]+$").unwrap());
+
 fn is_valid_repo_name(name: &str) -> bool {
-    if name.len() < 2 {
-        return false;
-    }
-    let mut chars = name.chars();
-    let first = chars.next().unwrap();
-    if !first.is_ascii_alphanumeric() {
-        return false;
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+    VALID_NAME_RE.is_match(name)
 }
 
 pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
 ) -> Result<LocalRepositoryWithEntries, OxenError> {
-    // Validate repo name matches ^[[:alnum:]][[:alnum:]_.-]+$
+    // Validate repo name
     if !is_valid_repo_name(&new_repo.name) {
-        return Err(OxenError::invalid_repo_name(format!(
-            "Invalid repository name '{}'. Names must be at least 2 characters and match [a-zA-Z0-9][a-zA-Z0-9_.-]+",
-            new_repo.name
-        )));
+        return Err(OxenError::invalid_repo_name(&new_repo.name));
     }
 
-    // Validate namespace matches the same pattern
+    // Validate namespace
     if !is_valid_repo_name(&new_repo.namespace) {
-        return Err(OxenError::invalid_repo_name(format!(
-            "Invalid namespace '{}'. Namespaces must be at least 2 characters and match [a-zA-Z0-9][a-zA-Z0-9_.-]+",
-            new_repo.namespace
-        )));
+        return Err(OxenError::invalid_repo_name(&new_repo.namespace));
     }
 
     let repo_dir = root_dir
@@ -519,9 +506,11 @@ mod tests {
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
             let result = repositories::create(&sync_dir, repo_new).await;
 
-            assert!(result.is_err());
+            assert!(result.is_err(), "Expected error but got: {:?}", result);
             match result.unwrap_err() {
-                OxenError::InvalidRepoName(_) => {}
+                OxenError::InvalidRepoName(invalid_name) => {
+                    assert_eq!(invalid_name.to_string(), name);
+                }
                 other => panic!("Expected InvalidRepoName error, got: {other:?}"),
             }
 
@@ -538,9 +527,11 @@ mod tests {
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
             let result = repositories::create(&sync_dir, repo_new).await;
 
-            assert!(result.is_err());
+            assert!(result.is_err(), "Expected error but got: {:?}", result);
             match result.unwrap_err() {
-                OxenError::InvalidRepoName(_) => {}
+                OxenError::InvalidRepoName(invalid_name) => {
+                    assert_eq!(invalid_name.to_string(), namespace);
+                }
                 other => panic!("Expected InvalidRepoName error, got: {other:?}"),
             }
 
