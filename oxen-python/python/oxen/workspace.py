@@ -1,8 +1,7 @@
-import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 
-from typing import Optional, TYPE_CHECKING
-
-from .oxen import PyWorkspace, PyCommit
+from .oxen import PyCommit, PyWorkspace
 
 # Use TYPE_CHECKING for type hints to avoid runtime circular imports
 if TYPE_CHECKING:
@@ -55,7 +54,7 @@ class Workspace:
         workspace_id: Optional[str] = None,
         workspace_name: Optional[str] = None,
         path: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Create a new Workspace.
 
@@ -86,9 +85,9 @@ class Workspace:
             print(
                 f"\033[91mMake sure that you have write access to `{repo.namespace}/{repo.name}`\033[0m\n"
             )
-            raise e
+            raise
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Workspace(id={self._workspace.id()}, branch={self._workspace.branch()}, commit_id={self._workspace.commit_id()})"
 
     @property
@@ -113,7 +112,7 @@ class Workspace:
         return self._workspace.branch()
 
     @property
-    def commit_id(self):
+    def commit_id(self) -> str:
         """
         Get the commit id of the workspace.
         """
@@ -126,7 +125,7 @@ class Workspace:
         """
         return self._repo
 
-    def status(self, path: str = ""):
+    def status(self, path: str = "") -> None:
         """
         Get the status of the workspace.
 
@@ -136,30 +135,59 @@ class Workspace:
         """
         return self._workspace.status(path)
 
-    def add(self, src: str, dst: str = ""):
+    def add(
+        self, src: str | Iterable[str] | Path | Iterable[Path], dst: str = ""
+    ) -> None:
         """
-        Add a file to the workspace
+        Add files to the workspace.
+
+        Accepts a single file, a single directory, or multiple of either.
+
+        Recursively walks directories to add all accessible files. Preserves
+        relative path to destination when adding multiple files from a directory.
 
         Args:
-            src: `str`
-                The path to the local file to be staged
+            src: `str` | Iterable[str] | Path | Iterable[Path]
+                The path(s) to the local file(s) to be staged.
             dst: `str`
-                The path in the remote repo where the file will be added
+                The path in the remote repo where the file(s) will be added.
+
+        Raises:
+            ValueError if the provided input is not a valid filepath, an invalid
+            directory, or it points to an empty directory, or is a collection
+            of empty directories.
         """
-        # Add a file to the workspace
-        if os.path.isdir(src):
-            paths = []
-            for dir_path, _, files in os.walk(src):
-                for file_name in files:
-                    path = os.path.join(dir_path, file_name)
-                    paths.append(path)
-            self._workspace.add_many(paths, dst)
+
+        if isinstance(src, str) or isinstance(src, Path):
+            p_src = Path(src)
+            if not p_src.exists():
+                raise ValueError(f"Provided single path that does not exist: {src}")
+            paths: list[str] = list(map(str, _filepaths_from(p_src)))
         else:
-            # Add a single file
-            self._workspace.add(src, dst)
 
+            def stringify_ok(fpath: str | Path) -> str:
+                if not Path(fpath).exists():
+                    raise ValueError(
+                        f"Provided an input path that does not exist: {fpath}"
+                    )
+                return str(fpath)
 
-    def add_bytes(self, src: str, buf: bytes, dst: str = ""):
+            paths = [
+                stringify_ok(fpath)
+                for path in src
+                for fpath in _filepaths_from(Path(path))
+            ]
+
+        if len(paths) == 0:
+            if isinstance(src, str) or isinstance(src, Path):
+                raise ValueError(f"{src} is not a valid filepath nor directory.")
+            else:
+                raise ValueError(
+                    "No valid filepaths provided: adding nothing to a workspace is invalid."
+                )
+        self._workspace.add(paths, dst)
+
+    def add_bytes(self, src: str, buf: bytes, dst: str = "") -> None:
         """
         Adds from a memory buffer to the workspace
 
@@ -174,7 +202,7 @@ class Workspace:
 
         self._workspace.add_bytes(src, buf, dst)
 
-    def rm(self, path: str):
+    def rm(self, path: str) -> None:
         """
         Remove a file from the workspace
 
@@ -203,8 +231,22 @@ class Workspace:
             branch_name = self._workspace.branch()
         return self._workspace.commit(message, branch_name)
 
-    def delete(self):
+    def delete(self) -> None:
         """
         Delete the workspace
         """
         self._workspace.delete()
+
+
+def _filepaths_from(path: Path) -> Iterator[Path]:
+    """Yields all files from the given path.
+
+    Yield the input if its a valid filepath.
+    If its a directory, yields all files from the directory and and sub-directories.
+    """
+    if path.is_file():
+        yield path
+    elif path.is_dir():
+        for something_under in path.rglob("*"):
+            if something_under.is_file():
+                yield something_under
