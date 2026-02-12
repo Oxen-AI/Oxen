@@ -40,6 +40,12 @@ impl RunCmd for PullCmd {
                     .help("This pulls the full commit history, all the data files, and all the commit databases. Useful if you want to have the entire history locally or push to a new remote.")
                     .action(clap::ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("missing-files")
+                    .long("missing-files")
+                    .help("Re-download any version files that are missing locally (useful after fsck --clean or a failed pull)")
+                    .action(clap::ArgAction::SetTrue),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -60,6 +66,7 @@ impl RunCmd for PullCmd {
         };
 
         let all = args.get_flag("all");
+        let missing_files = args.get_flag("missing-files");
         let (scheme, host) = get_scheme_and_host_from_repo(&repo)?;
 
         check_repo_migration_needed(&repo)?;
@@ -72,6 +79,7 @@ impl RunCmd for PullCmd {
         fetch_opts.subtree_paths = repo.subtree_paths();
         fetch_opts.branch = branch;
         fetch_opts.all = all;
+        fetch_opts.missing_files = missing_files;
 
         repositories::pull_remote_branch(&repo, &fetch_opts).await?;
         Ok(())

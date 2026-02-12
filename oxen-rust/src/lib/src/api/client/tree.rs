@@ -627,6 +627,7 @@ mod tests {
                 remote: remote_repo_clone.url().to_string(),
                 branch: "main".to_string(),
                 should_update_branch_head: true,
+                missing_files: false,
             };
             api::client::tree::download_trees_from(
                 &download_local_repo_2,

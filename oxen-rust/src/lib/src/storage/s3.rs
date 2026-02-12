@@ -435,7 +435,10 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
-    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError> {
+    async fn clean_corrupted_versions(
+        &self,
+        _dry_run: bool,
+    ) -> Result<CleanCorruptedVersionsResult, OxenError> {
         // TODO: Implement S3 version chunk combination
         Err(OxenError::basic_str(
             "S3VersionStore clean_corrupted_versions not yet implemented",

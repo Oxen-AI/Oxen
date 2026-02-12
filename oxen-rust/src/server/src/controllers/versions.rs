@@ -79,7 +79,7 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let version_store = repo.version_store()?;
-    let result = version_store.clean_corrupted_versions().await?;
+    let result = version_store.clean_corrupted_versions(false).await?;
 
     Ok(HttpResponse::Ok().json(CleanCorruptedVersionsResponse {
         status: StatusMessage::resource_found(),

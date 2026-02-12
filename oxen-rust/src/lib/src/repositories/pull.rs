@@ -1997,4 +1997,57 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_pull_missing_files_redownloads_deleted_versions() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|repo_dir| async move {
+                let repo_dir = repo_dir.join("cloned_repo");
+                let cloned_repo =
+                    repositories::clone_url(&remote_repo.remote.url, &repo_dir).await?;
+
+                // Verify the clone has version files
+                let version_store = cloned_repo.version_store()?;
+                let versions = version_store.list_versions().await?;
+                assert!(
+                    !versions.is_empty(),
+                    "Cloned repo should have version files"
+                );
+
+                // Delete a version file to simulate corruption cleanup
+                let deleted_hash = versions[0].clone();
+                version_store.delete_version(&deleted_hash).await?;
+                assert!(
+                    !version_store.version_exists(&deleted_hash).await?,
+                    "Version file should be deleted"
+                );
+
+                // Normal pull should say "up to date" and not re-download
+                repositories::pull(&cloned_repo).await?;
+                assert!(
+                    !version_store.version_exists(&deleted_hash).await?,
+                    "Normal pull should not re-download deleted version"
+                );
+
+                // Pull with --missing-files should re-download the deleted version
+                let fetch_opts = FetchOpts {
+                    missing_files: true,
+                    ..FetchOpts::new()
+                };
+                repositories::pull_remote_branch(&cloned_repo, &fetch_opts).await?;
+                assert!(
+                    version_store.version_exists(&deleted_hash).await?,
+                    "pull --missing-files should re-download deleted version"
+                );
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
 }
