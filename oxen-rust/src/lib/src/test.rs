@@ -1608,6 +1608,24 @@ fn should_cleanup() -> bool {
         .unwrap_or(false)
 }
 
+/// Removes Oxen caches for a repository and optionally deletes the repository directory.
+///
+/// This removes all in-memory/on-disk caches associated with the repository at `repo_dir`.
+/// If the `NO_CLEANUP` environment variable is not set, the repository directory itself will
+/// be removed from the filesystem; otherwise the directory is left in place.
+///
+/// # Errors
+///
+/// Returns an `Err(OxenError)` if any cache eviction or directory removal operation fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// // Given a repository path `repo_path`, evict caches and (if enabled) remove the dir.
+/// let repo_path = Path::new("/tmp/some_test_repo");
+/// let _ = oxen::test::maybe_cleanup_repo(repo_path);
+/// ```
 pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     // Always remove caches
     merkle_tree_node_cache::remove_from_cache(repo_dir)?;

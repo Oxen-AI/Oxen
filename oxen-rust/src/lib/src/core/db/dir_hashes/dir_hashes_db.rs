@@ -24,6 +24,18 @@ pub fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
     dir_hash_db_path_from_commit_id(repo, commit_id)
 }
 
+/// Builds the filesystem path to the dir_hashes database for a specific commit in the repository.
+///
+/// The resulting path is: `<repo>/.oxen/history/{commit_id}/dir_hashes`.
+///
+/// # Parameters
+///
+/// - `repo`: The local repository whose hidden `.oxen` directory is the base.
+/// - `commit_id`: Commit identifier (string-like) used to locate the commit-specific directory.
+///
+/// # Returns
+///
+/// A `PathBuf` pointing to the dir_hashes database directory for the given commit.
 pub fn dir_hash_db_path_from_commit_id(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
@@ -35,8 +47,21 @@ pub fn dir_hash_db_path_from_commit_id(
         .join(DIR_HASHES_DIR)
 }
 
-/// Removes all dir_hashes DB instances from cache whose path starts with the given prefix.
-/// Used in test cleanup to release file handles before directory deletion.
+/// Remove cached dir_hashes database instances whose filesystem path starts with `db_path_prefix`.
+///
+/// This releases in-process handles (useful for test cleanup) so directories under the prefix can be removed on disk.
+///
+/// # Returns
+///
+/// `Ok(())` on success, or an `OxenError` if the cache's write lock cannot be acquired.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// // Remove any cached DBs under the given repository history subtree.
+/// let _ = remove_from_cache_with_children(Path::new("/tmp/repo/.oxen/history/commit123"));
+/// ```
 pub fn remove_from_cache_with_children(db_path_prefix: impl AsRef<Path>) -> Result<(), OxenError> {
     let db_path_prefix = db_path_prefix.as_ref();
     let mut dbs_to_remove: Vec<PathBuf> = vec![];
@@ -54,6 +79,28 @@ pub fn remove_from_cache_with_children(db_path_prefix: impl AsRef<Path>) -> Resu
     Ok(())
 }
 
+/// Acquire a cached read-only dir_hashes RocksDB for the specified commit and execute `operation` with it.
+///
+/// This function looks up a RocksDB instance for the commit's dir_hashes database in an in-process LRU cache;
+/// on a cache miss it opens the database in read-only mode, inserts it into the cache, and then runs `operation`.
+/// The returned result is the direct result of `operation`. Errors are returned when the cache lock cannot be acquired,
+/// the commit's dir_hashes directory is missing, or opening the database fails.
+///
+/// # Returns
+///
+/// `Ok(T)` with the value returned by `operation` on success, `Err(OxenError)` on failure.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// // let repository: LocalRepository = ...;
+/// // let commit_id = String::from("abc123");
+/// let result = with_dir_hash_db_manager(&repository, &commit_id, |db| {
+///     // perform read-only queries against `db`
+///     Ok(()) as Result<(), OxenError>
+/// });
+/// ```
 pub fn with_dir_hash_db_manager<F, T>(
     repository: &LocalRepository,
     commit_id: &String,

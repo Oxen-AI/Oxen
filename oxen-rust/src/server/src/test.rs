@@ -27,6 +27,22 @@ pub fn get_sync_dir() -> Result<PathBuf, OxenError> {
     Ok(sync_dir)
 }
 
+/// Removes all in-memory DB caches for a sync directory and deletes the directory tree.
+///
+/// Clears cached instances for staged changes, reference manager, data-frames DB, and directory-hashes DB associated with `sync_dir`, then removes `sync_dir` and all its contents.
+///
+/// # Errors
+///
+/// Returns an `OxenError` if any cache cannot be removed or if deleting the directory fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// // Assume `cleanup_sync_dir` and `OxenError` are in scope
+/// let sync_dir = Path::new("/tmp/oxen_test_run");
+/// let _ = cleanup_sync_dir(sync_dir);
+/// ```
 pub fn cleanup_sync_dir(sync_dir: &Path) -> Result<(), OxenError> {
     // Close DB instances before trying to delete the directory
     staged::remove_from_cache_with_children(sync_dir)?;

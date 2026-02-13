@@ -62,6 +62,25 @@ pub struct StagedDBManager {
     repository: LocalRepository,
 }
 
+/// Provides a StagedDBManager for performing an operation against the repository's staged DB,
+/// reusing a cached DB instance when available or creating/opening the staged DB directory and instance when needed.
+///
+/// The provided closure is executed with a reference to the manager; its return value is propagated.
+///
+/// # Returns
+///
+/// `Ok(T)` with the closure's result on success, or `Err(OxenError)` if creating the staged DB directory,
+/// opening the RocksDB instance, or performing the operation fails.
+///
+/// # Examples
+///
+/// ```ignore
+/// let res = with_staged_db_manager(&repo, |mgr| {
+///     // perform operations using mgr
+///     Ok(())
+/// });
+/// assert!(res.is_ok());
+/// ```
 pub fn with_staged_db_manager<F, T>(
     repository: &LocalRepository,
     operation: F,
@@ -117,14 +136,49 @@ where
     operation(&manager)
 }
 
-/// Normalizes a path to use forward slashes for use as a DB key.
-/// This ensures cross-platform consistency since DB keys should be platform-agnostic.
+/// Convert a filesystem path into a DB-friendly key using forward slashes.
+
+///
+
+/// This produces a platform-agnostic string key by replacing Windows backslashes (`\`)
+
+/// with forward slashes (`/`) and using a lossy string conversion for non-UTF-8 paths.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// use std::path::Path;
+
+/// let key = normalize_key(Path::new(r"dir\subdir\file.txt"));
+
+/// assert_eq!(key, "dir/subdir/file.txt");
+
+/// ```
 fn normalize_key(path: impl AsRef<Path>) -> String {
     path.as_ref().to_string_lossy().replace('\\', "/")
 }
 
 impl StagedDBManager {
-    /// Upsert a file node to the staged db
+    /// Insert or update a file entry in the staged database for the given relative path.
+    ///
+    /// The stored entry will have the provided `status` and a `MerkleTreeNode` built from `file_node`.
+    ///
+    /// # Returns
+    ///
+    /// `Some(StagedMerkleTreeNode)` containing the staged node that was written on success.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Assuming `mgr` is a `StagedDBManager` and `file_node` is a `FileNode`:
+    /// // let res = mgr.upsert_file_node("path/to/file", StagedEntryStatus::Added, &file_node)?;
+    /// // assert!(res.is_some());
+    /// ```
     pub fn upsert_file_node(
         &self,
         relative_path: impl AsRef<Path>,
@@ -142,7 +196,26 @@ impl StagedDBManager {
         Ok(Some(staged_file_node))
     }
 
-    /// Upsert a staged node to the staged db
+    /// Insert or update a staged Merkle tree node in the repository's staged DB under the normalized path.
+    ///
+    /// The provided `path` is normalized to use forward slashes before being used as the DB key.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - File or directory path where the staged node will be stored; converted to a normalized key.
+    /// * `staged_node` - The staged Merkle tree node to serialize and store.
+    /// * `db_w` - Optional external write guard to reuse an existing write context; if `None`, the method acquires its own write lock.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, `Err(OxenError)` on failure.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // Assuming `mgr` is a StagedDBManager and `node` is a StagedMerkleTreeNode:
+    /// mgr.upsert_staged_node("path/to/file.txt", &node, None).unwrap();
+    /// ```
     pub fn upsert_staged_node(
         &self,
         path: impl AsRef<Path>,
@@ -179,8 +252,29 @@ impl StagedDBManager {
         Ok(())
     }
 
-    /// Delete an entry from the staged db
-    /// If db_w is provided, use that write lock; otherwise acquire a new one
+    /// Delete the staged DB entry for the given path.
+    ///
+    /// If `db_w` is provided, the deletion is performed using that write lock; otherwise the method
+    /// acquires its own write lock on the staged DB. The supplied `path` is normalized to use
+    /// forward slashes before performing the lookup and deletion.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: Path to the staged entry to remove.
+    /// - `db_w`: Optional write guard to reuse an existing DB write lock; pass `None` to let the method
+    ///   acquire and release the lock internally.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, `Err(OxenError)` if the DB operation or normalization fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Remove an entry using an internal lock
+    /// let res = manager.delete_entry_with_lock("some/dir/file.txt", None);
+    /// assert!(res.is_ok());
+    /// ```
     pub fn delete_entry_with_lock(
         &self,
         path: impl AsRef<Path>,
@@ -235,7 +329,20 @@ impl StagedDBManager {
         Ok(())
     }
 
-    /// True if the paths exists in the staged db. False means it does not exist.
+    /// Checks whether a given path is present in the staged database.
+    ///
+    /// The provided path is normalized to the DB key format before lookup.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // assume `mgr` is a `StagedDBManager`
+    /// let present = mgr.exists("dir/file.txt").unwrap();
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `true` if the path exists in the staged DB, `false` otherwise.
     pub fn exists(&self, path: impl AsRef<Path>) -> Result<bool, OxenError> {
         let key = normalize_key(&path);
         Ok({
@@ -252,7 +359,24 @@ impl StagedDBManager {
         })
     }
 
-    /// Read a file node from the staged db
+    /// Reads and deserializes the staged Merkle tree node stored under the given path.
+    ///
+    /// The path is normalized for DB key lookup before querying the staged database.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(node))` with the deserialized `StagedMerkleTreeNode` if an entry exists for the path, `Ok(None)` if no entry is found, or `Err(OxenError)` if reading from or deserializing the stored data fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Assume `manager` is a `StagedDBManager` already created for a repository.
+    /// let maybe_node = manager.read_from_staged_db("data/file.txt").unwrap();
+    /// match maybe_node {
+    ///     Some(node) => println!("Found staged node for file"),
+    ///     None => println!("No staged node present for file"),
+    /// }
+    /// ```
     pub fn read_from_staged_db(
         &self,
         path: impl AsRef<Path>,
@@ -400,7 +524,19 @@ impl StagedDBManager {
         Ok(())
     }
 
-    /// Removes an empty directory from the staged db
+    /// Delete the directory entry at `path` from the staged DB if there are no other keys beneath it.
+    ///
+    /// Scans all keys in the provided write-locked DB guard; if no stored key is a descendant of `path`
+    /// (excluding `path` itself), removes the `path` entry from the DB. Returns any `OxenError` that
+    /// occurs while iterating, decoding keys as UTF-8, or deleting the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::path::Path;
+    /// # // assume `manager` provides access and `db_w` is a write guard for the staged DB
+    /// # // manager.cleanup_empty_dirs_with_lock(Path::new("some/dir"), &db_w).unwrap();
+    /// ```
     fn cleanup_empty_dirs_with_lock(
         &self,
         path: &Path,
