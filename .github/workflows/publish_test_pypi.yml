@@ -1,0 +1,40 @@
+name: 🧪 Publish to Test PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g., v0.44.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish_wheels:
+    name: Publish wheels to Test PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: robinraju/release-downloader@v1.12
+        id: download-release
+        with:
+          tag: ${{ inputs.tag }}
+          fileName: oxen-wheels-*
+          out-file-path: oxen-wheels
+
+      - name: Extract wheels
+        run: |
+          cd ${{ github.workspace }}/oxen-wheels
+
+          for file in ${{ github.workspace }}/oxen-wheels/*.tar.gz; do tar -xzvf "$file" -C ${{ github.workspace }}/oxen-wheels; done
+          for file in ${{ github.workspace }}/oxen-wheels/*.zip; do unzip "$file" -d ${{ github.workspace }}/oxen-wheels; done
+
+      - name: Publish wheels to Test PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --repository-url https://test.pypi.org/legacy/ --skip-existing ${{ github.workspace }}/oxen-wheels/*.whl
+          maturin-version: v1.8.5

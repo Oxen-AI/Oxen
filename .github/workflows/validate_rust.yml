@@ -1,0 +1,130 @@
+name: 🔍 Validate Rust Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to validate (e.g., v0.44.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Test, document, and validate release binaries
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oxen-rust
+
+    steps:
+      - name: Free up disk space
+        working-directory: .
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo apt-get clean
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Download oxen binary
+        uses: robinraju/release-downloader@v1.12
+        with:
+          tag: ${{ inputs.tag }}
+          fileName: oxen-linux-x86_64.tar.gz
+          out-file-path: release-download
+
+      - name: Download oxen-server binary
+        uses: robinraju/release-downloader@v1.12
+        with:
+          tag: ${{ inputs.tag }}
+          fileName: oxen-server-linux-x86_64.tar.gz
+          out-file-path: release-download
+
+      - name: Extract release binaries
+        working-directory: .
+        run: |
+          mkdir -p release-bin
+          tar -xzvf release-download/oxen-linux-x86_64.tar.gz -C release-bin/
+          tar -xzvf release-download/oxen-server-linux-x86_64.tar.gz -C release-bin/
+          chmod +x release-bin/oxen release-bin/oxen-server
+          echo "${{ github.workspace }}/release-bin" >> $GITHUB_PATH
+
+      - name: Verify release binaries
+        working-directory: .
+        run: |
+          release-bin/oxen --version
+          release-bin/oxen-server --version
+
+      - name: Copy rust-toolchain.toml to root
+        working-directory: .
+        run: cp oxen-rust/rust-toolchain.toml .
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oxen-rust
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Generate documentation
+        run: cargo doc --no-deps
+
+      - name: Run doctests
+        run: cargo test --doc
+
+      - name: Setup test directories
+        run: |
+          mkdir -p data/test/runs
+          mkdir -p /tmp/oxen_sync/
+
+      - name: Setup oxen-server user
+        run: |
+          oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          cp user_config.toml data/test/config/user_config.toml
+
+      - name: Start oxen-server
+        run: |
+          oxen-server start &
+          echo $! > /tmp/oxen-server.pid
+          sleep 2
+
+      - name: Run tests
+        id: nextest
+        continue-on-error: true
+        run: cargo nextest run --profile ci
+
+      - name: Run CLI tests
+        id: cli-tests
+        continue-on-error: true
+        run: |
+          cd ${{ github.workspace }}/oxen-rust/cli-test
+          uv sync
+          uv run pytest tests -v
+
+      - name: Stop oxen-server
+        if: always()
+        run: kill $(cat /tmp/oxen-server.pid) || true
+
+      - name: Check test results
+        if: steps.nextest.outcome == 'failure' || steps.cli-tests.outcome == 'failure'
+        run: |
+          echo "Test failures detected:"
+          echo "  nextest: ${{ steps.nextest.outcome }}"
+          echo "  cli-tests: ${{ steps.cli-tests.outcome }}"
+          exit 1
