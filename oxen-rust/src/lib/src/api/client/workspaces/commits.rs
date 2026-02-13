@@ -92,11 +92,12 @@ mod tests {
                 test::test_img_file_with_name("cole_anthony.jpeg"),
             ];
             api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -127,11 +128,12 @@ mod tests {
             let paths = vec![test::test_img_file()];
             api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                 .await?;
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -166,11 +168,12 @@ mod tests {
 
             // add an image file to workspace 1
             let paths = vec![test::test_img_file()];
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_1_id,
                 directory_name.to_str().unwrap(),
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -197,11 +200,12 @@ mod tests {
             let data = "file,label\ntest/test.jpg,dog";
             util::fs::write_to_path(&bbox_path, data)?;
             let paths = vec![bbox_path];
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_2_id,
                 directory_name.to_str().unwrap(),
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -259,11 +263,12 @@ mod tests {
             let data = "file,label,min_x,min_y,width,height\ntest/test.jpg,dog,13.5,32.0,385,330";
             util::fs::write_to_path(&bbox_path, data)?;
             let paths = vec![bbox_path];
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_1_id,
                 directory_name.to_str().unwrap(),
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -290,11 +295,12 @@ mod tests {
             let data = "file,label\ntest/test.jpg,dog";
             util::fs::write_to_path(&bbox_path, data)?;
             let paths = vec![bbox_path];
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_2_id,
                 directory_name.to_str().unwrap(),
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
@@ -417,29 +423,36 @@ mod tests {
             assert_eq!(branch.name, branch_name);
 
             let workspace_id = UserConfig::identifier()?;
+            let ws =
+                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            assert_eq!(ws.id, workspace_id);
+
             let directory_name = "";
             let paths = vec![test::test_100_parquet()];
-            api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            let result = api::client::workspaces::files::add_many(
+
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 paths,
+                &None,
             )
             .await;
-            assert!(result.is_ok());
+            assert!(result.is_ok(), "{:?}", result);
 
-            let body = NewCommitBody {
-                message: "Adding 100 row parquet".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            let commit =
-                api::client::workspaces::commit(&remote_repo, branch_name, &workspace_id, &body)
-                    .await?;
+            let commit = api::client::workspaces::commit(
+                &remote_repo,
+                branch_name,
+                &workspace_id,
+                &NewCommitBody {
+                    message: "Adding 100 row parquet".to_string(),
+                    author: "Test User".to_string(),
+                    email: "test@oxen.ai".to_string(),
+                },
+            )
+            .await?;
 
             let remote_commit = api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
-            assert!(remote_commit.is_some());
             assert_eq!(commit.id, remote_commit.unwrap().id);
 
             // List the files on main
@@ -456,27 +469,36 @@ mod tests {
 
             // Add the same file again
             let workspace_id = UserConfig::identifier()? + "2";
-            api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            let ws =
+                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            assert_eq!(ws.id, workspace_id);
+
             let paths = vec![test::test_100_parquet()];
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 paths,
+                &None,
             )
             .await;
-            assert!(result.is_ok());
+            assert!(result.is_ok(), "{:?}", result);
+
+            println!("RESULT FROM 2nd ADD: {:?}", result.unwrap());
 
             // Commit the changes
-            let body = NewCommitBody {
-                message: "Adding 100 row parquet AGAIN".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            let result =
-                api::client::workspaces::commit(&remote_repo, branch_name, &workspace_id, &body)
-                    .await;
-            assert!(result.is_err());
+            let result = api::client::workspaces::commit(
+                &remote_repo,
+                branch_name,
+                &workspace_id,
+                &NewCommitBody {
+                    message: "Adding 100 row parquet AGAIN".to_string(),
+                    author: "Test User".to_string(),
+                    email: "test@oxen.ai".to_string(),
+                },
+            )
+            .await;
+            assert!(result.is_err(), "{:?}", result);
 
             // List the files on main
             let entries =

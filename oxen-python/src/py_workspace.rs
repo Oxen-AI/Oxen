@@ -132,21 +132,6 @@ impl PyWorkspace {
         Ok(PyStagedData::from(remote_status))
     }
 
-    fn add(&self, src: PathBuf, dst: String) -> Result<(), PyOxenError> {
-        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            let paths = vec![src];
-            api::client::workspaces::files::add(
-                &self.repo.repo,
-                &self.get_identifier(),
-                &dst,
-                paths,
-                &None,
-            )
-            .await
-        })?;
-        Ok(())
-    }
-
     fn add_bytes(&self, src: PathBuf, buf: Vec<u8>, dst: String) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add_bytes(
@@ -161,7 +146,7 @@ impl PyWorkspace {
         Ok(())
     }
 
-    fn add_many(&self, src: Vec<PathBuf>, dst: String) -> Result<(), PyOxenError> {
+    fn add(&self, src: Vec<PathBuf>, dst: String) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add(
                 &self.repo.repo,

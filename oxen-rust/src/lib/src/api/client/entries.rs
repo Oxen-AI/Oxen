@@ -99,11 +99,12 @@ pub async fn upload_entries(
         api::client::workspaces::create(remote_repo, &branch_name, &workspace_id).await?;
     assert_eq!(workspace.id, workspace_id);
 
-    api::client::workspaces::files::add_many(
+    api::client::workspaces::files::add(
         remote_repo,
         &workspace_id,
         &opts.dst.to_string_lossy(),
         file_paths,
+        &None,
     )
     .await?;
 
