@@ -121,6 +121,47 @@ Code bases to contribute to:
 
 If you are building anything with Oxen.ai or have any questions we would love to hear from you in our [discord](https://discord.gg/s3tBEn7Ptg).
 
+## Developer Quick Start
+
+The project uses [Just](https://github.com/casey/just) as a command runner to provide a consistent developer interface across all sub-projects. Install it first:
+
+```bash
+# macOS
+brew install just
+
+# Or see https://github.com/casey/just#installation for other platforms
+```
+
+Then from the repository root you can run common tasks across all sub-projects:
+
+```bash
+just build    # Build all sub-projects
+just check    # Type-check (cargo check + mypy)
+just lint     # Run all linters and format checkers
+just test     # Run all tests (Rust + CLI integration + Python)
+just doc      # Generate all documentation
+```
+
+Each sub-project also has its own Justfile with more specific recipes:
+
+```bash
+just rust build        # Build the Rust workspace
+just rust test         # Run Rust tests with nextest
+just rust test-only NAME  # Run a specific Rust test by name
+just rust lint         # cargo fmt --check + clippy
+just rust serve        # Start server with live-reload (bacon)
+just rust test-cli     # Run CLI integration tests
+
+just python build      # Install deps + compile Rust extension
+just python test       # Run Python tests
+just python test-only NAME  # Run a specific Python test by keyword
+just python check      # Type-check with mypy
+just python lint       # ruff + cargo fmt --check + clippy
+just python doc        # Generate API docs with pdoc
+```
+
+See `oxen-rust/Justfile` and `oxen-python/Justfile` for the full list of recipes.
+
 ## Build 🔨
 
 Set up virtual environment:
@@ -136,7 +177,7 @@ $ pip install -r requirements.txt
 # Install rust
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Run maturin
+# Run maturin (or `just python build`)
 $ cd oxen
 $ maturin develop
 ```
@@ -144,7 +185,7 @@ $ maturin develop
 ## Test
 
 ```bash
-$ pytest -s tests/
+$ pytest -s tests/  # or `just python test`
 ```
 
 ## Why build Oxen?

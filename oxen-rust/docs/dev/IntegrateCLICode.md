@@ -1,6 +1,6 @@
 # How to add a command to CLI
 
-Once you have written the library code from [this example](AddLibraryCode.md) it's time to integrate it into the CLI. The entry point for parsing command line arguments is in [src/cli/src/main.rs](https://github.com/Oxen-AI/Oxen/blob/main/src/cli/src/main.rs). 
+Once you have written the library code from [this example](AddLibraryCode.md) it's time to integrate it into the CLI. The entry point for parsing command line arguments is in [src/cli/src/main.rs](https://github.com/Oxen-AI/Oxen/blob/main/src/cli/src/main.rs).
 
 We use the [clap](https://docs.rs/clap/latest/clap/) library to parse the arguments.
 
@@ -63,7 +63,7 @@ pub fn set_remote(name: &str, url: &str) -> Result<(), OxenError> {
 }
 ```
 
-You can build with `cargo build` and run the CLI with `./target/debug/oxen config --set-remote <REMOTE> <URL>`.
+You can build with `cargo build` (`just build`) and run the CLI with `./target/debug/oxen config --set-remote <REMOTE> <URL>`.
 
 Tip: For developing it is nice to just have this debug oxen binary in your path so you can use it from anywhere. You can just make a symbolic link to wherever your system looks for binaries in your path.
 
