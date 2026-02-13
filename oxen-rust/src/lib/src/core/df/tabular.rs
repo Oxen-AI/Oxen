@@ -2045,7 +2045,18 @@ mod tests {
             .sorted()
             .collect::<Vec<_>>();
         assert_eq!(columns, vec!["caption", "media_path"]);
-        assert_eq!(df.column("caption").unwrap().get(0).unwrap().str_value().to_string().as_str(), "[VISUAL]: Jade Mills, a woman in her 60s with blonde shoulder-length hair, sits in a professional podcast interview setting. She wears a dusty pink blazer over a white high-neck lace top with intricate detailing. The background features a soft teal-green gradient with large windows showing blurred outdoor scenery. A professional black microphone on a boom arm is positioned to her right. Jade Mills gazes slightly upward and to her left with a contemplative expression, her eyes looking off-camera. Her posture is upright and engaged, seated on what appears to be a dark chair or couch with teal cushions visible at the edge of the frame.\n\n[CHARACTER_SPEECH]: Jade Mills: I don't want a baby in a wife on the road with me, and he left. So...");
+        let nl = if cfg!(windows) { "\r\n" } else { "\n" };
+        let expected = format!("[VISUAL]: Jade Mills, a woman in her 60s with blonde shoulder-length hair, sits in a professional podcast interview setting. She wears a dusty pink blazer over a white high-neck lace top with intricate detailing. The background features a soft teal-green gradient with large windows showing blurred outdoor scenery. A professional black microphone on a boom arm is positioned to her right. Jade Mills gazes slightly upward and to her left with a contemplative expression, her eyes looking off-camera. Her posture is upright and engaged, seated on what appears to be a dark chair or couch with teal cushions visible at the edge of the frame.{nl}{nl}[CHARACTER_SPEECH]: Jade Mills: I don't want a baby in a wife on the road with me, and he left. So...");
+        assert_eq!(
+            df.column("caption")
+                .unwrap()
+                .get(0)
+                .unwrap()
+                .str_value()
+                .to_string()
+                .as_str(),
+            expected
+        );
         Ok(())
     }
 
