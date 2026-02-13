@@ -85,6 +85,19 @@ jobs:
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-cache"
+          cache-all-crates: true
+          cache-on-failure: true
+          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
+          # Other branches will still use the cache but won't save it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            oxen-rust
+            oxen-python
+
       - name: Build oxen binaries
         run: |
           refreshenv
