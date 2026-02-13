@@ -1741,6 +1741,112 @@ mod tests {
         .await
     }
 
+
+    async fn foo(remote_repo: &RemoteRepository, fi: &PathBuf) -> Result<String, OxenError>{
+
+      // tokio::fs::create_dir_all(&fi).await?;
+      // tokio::fs::write(&fi, b"Hello world!").await?;
+
+      let writing_to_dir = std::env::temp_dir();
+
+      let parent = fi.parent().unwrap();
+      // println!("creating dir: {}", parent.display());
+      crate::util::fs::create_dir_all(parent)?;
+
+      let file_name = fi.file_name().unwrap();
+      let to_write = writing_to_dir.join(file_name);
+      // println!("writing file: {}", fi.display());
+      // crate::util::fs::write(&fi, b"Hello world!")?;
+      println!("writing file: {}", to_write.display());
+      crate::util::fs::write(&to_write, b"Hello world!")?;
+
+      println!("putting file: {}", fi.display());
+      let commit = crate::api::client::file::put_file(
+        &remote_repo,
+        DEFAULT_BRANCH_NAME,
+        &parent.to_string_lossy(),
+        &to_write,
+        // &fi,
+        // weird(),
+        // None::<String>,
+        Some(&file_name.to_string_lossy()),
+        Some(crate::model::commit::NewCommitBody{
+          message: "a message".into(),
+          author: "a person".into(),
+          email: "email".into(),
+        }),
+      ).await?;
+
+      // println!("removing file: {}", fi.display());
+      // let x = tokio::fs::remove_dir(&fi).await?;
+      // Ok(x)
+      Ok(commit.commit.id)
+    }
+
+    // Test that downloading a non-existent file returns OxenError::PathDoesNotExist
+    #[tokio::test]
+    async fn test_rm_directory() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+
+            // Remove the committed directory "annotations/train"
+            let annotations_d = Path::new("annotations");
+            let train_d = annotations_d.join("train");
+            let test_d = annotations_d.join("test");
+
+            // fn weird() -> Option<impl AsRef<str>> {
+            //     None::<String>
+            // }
+
+            let train_fi = train_d.join("some_file");
+            let _train_commit = foo(&remote_repo, &train_fi).await?;
+
+            let test_fi = test_d.join("a_different_file");
+            let test_commit = foo(&remote_repo, &test_fi).await?;
+
+            println!("creating workspace");
+            let workspace_id = uuid::Uuid::new_v4().to_string();
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id).await?;
+            assert_eq!(workspace.id, workspace_id);
+
+            assert_eq!(workspace.commit.id, test_commit);
+
+            // Remove the committed directory "annotations/train"
+
+            println!("removing directory from workspace {}: {}", workspace_id, train_d.display());
+            let result =
+                api::client::workspaces::files::rm(&remote_repo, &workspace_id, &train_d).await;
+            // TODO: why isn't files::rm removing a directory?
+            let result = api::client::workspaces::files::rm
+            assert!(result.is_ok(), "{:?}", result);
+
+            println!("committing workspace {}", workspace_id);
+            let _ = api::client::workspaces::commit(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id,
+              &NewCommitBody { message: "delete".into(), author: "author".into(), email: "ox@oxen.ai".into() }).await?;
+
+            let contents = api::client::file::get_file(&remote_repo, DEFAULT_BRANCH_NAME, &train_fi).await;
+            assert!(contents.is_err(), "{:?}", contents);
+
+            // // Verify that the file inside the directory is staged as removed
+            // let page_num = constants::DEFAULT_PAGE_NUM;
+            // let page_size = constants::DEFAULT_PAGE_SIZE;
+            // let path = Path::new("annotations").join("train");
+            // let entries = api::client::workspaces::changes::list(
+            //     &remote_repo,
+            //     &workspace_id,
+            //     &path,
+            //     page_num,
+            //     page_size,
+            // )
+            // .await?;
+            // assert_eq!(entries.removed_files.total_entries, 1);
+            // assert_eq!(entries.removed_files.entries.len(), 1);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_stage_file_in_multiple_subdirectories() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -2218,7 +2324,7 @@ mod tests {
         .await
     }
 
-    // Test that downloading a non-existent file returns OxenError::PathDoesNotExist
+
     #[tokio::test]
     async fn test_download_nonexistent_file_returns_path_dne() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
