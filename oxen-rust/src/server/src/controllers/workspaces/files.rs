@@ -250,7 +250,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         let dst_path = PathBuf::from(&directory).join(file_name);
         let version_path = version_store.get_version_path(&upload_file.hash)?;
 
-        let ret_file = match core::v_latest::workspaces::files::add_version_file_with_hash(
+        let ret_file = match core::v_latest::workspaces::files::add_version_file(
             &workspace,
             &version_path,
             &dst_path,

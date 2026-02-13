@@ -13,8 +13,8 @@ use zip::ZipArchive;
 use crate::core;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_file_node, get_status_and_add_file,
-    process_add_file_with_staged_db_manager, stage_file_with_hash,
+    add_file_node_to_staged_db, get_file_node, process_add_file_with_staged_db_manager,
+    stage_file_with_hash,
 };
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
@@ -67,48 +67,22 @@ pub fn add_version_file(
     workspace: &Workspace,
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    // version_path is where the file is stored, dst_path is the relative path to the repo path
-    let version_path = version_path.as_ref();
-    let dst_path = dst_path.as_ref();
-
-    let workspace_repo = &workspace.workspace_repo;
-    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        get_status_and_add_file(
-            workspace_repo,
-            version_path,
-            dst_path,
-            staged_db_manager,
-            &seen_dirs,
-        )
-    })?;
-
-    Ok(dst_path.to_path_buf())
-}
-
-// Skips re-computing the hash in the add logic
-pub fn add_version_file_with_hash(
-    workspace: &Workspace,
-    version_path: impl AsRef<Path>,
-    dst_path: impl AsRef<Path>,
     file_hash: &str,
 ) -> Result<PathBuf, OxenError> {
     // version_path is where the file is stored, dst_path is the relative path to the repo
-    let version_path = version_path.as_ref();
+    // let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
-    let workspace_repo = &workspace.workspace_repo;
-    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    // let workspace_repo = &workspace.workspace_repo;
+    // let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
+    with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
         stage_file_with_hash(
             workspace,
-            version_path,
+            version_path.as_ref(),
             dst_path,
             file_hash,
             staged_db_manager,
-            &seen_dirs,
+            &Arc::new(Mutex::new(HashSet::new())),
         )
     })?;
 
@@ -133,10 +107,11 @@ pub fn add_version_files(
             let version_path = version_store.get_version_path(&item.hash)?;
             let target_path = PathBuf::from(directory).join(&item.path);
 
-            match get_status_and_add_file(
-                workspace_repo,
+            match stage_file_with_hash(
+                workspace,
                 &version_path,
                 &target_path,
+                &item.hash,
                 staged_db_manager,
                 &seen_dirs,
             ) {

@@ -12,7 +12,6 @@ use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
 use parking_lot::Mutex;
-use pluralizer::pluralize;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -810,59 +809,6 @@ async fn p_upload_bytes_as_file(
     }
 }
 
-pub async fn add_many(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory_name: impl AsRef<str>,
-    paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory_name = directory_name.as_ref();
-    // Check if the total size of the files is too large (over 100mb for now)
-    let limit = WORKSPACE_ADD_LIMIT;
-    let total_size: u64 = paths.iter().map(|p| p.metadata().unwrap().len()).sum();
-    if total_size > limit {
-        let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
-        return Err(OxenError::basic_str(error_msg));
-    }
-
-    println!(
-        "Uploading {} from {} {}",
-        ByteSize(total_size),
-        paths.len(),
-        pluralize("file", paths.len() as isize, true)
-    );
-
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let mut form = reqwest::multipart::Form::new();
-    for path in paths {
-        let file_name = path
-            .file_name()
-            .unwrap()
-            .to_os_string()
-            .into_string()
-            .ok()
-            .unwrap();
-        let file = std::fs::read(&path).unwrap();
-        let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
-        form = form.part("file[]", file_part);
-    }
-
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let response: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match response {
-        Ok(val) => Ok(val.paths),
-        Err(err) => {
-            let err = format!("api::staging::add_files error parsing response from {url}\n\nErr {err:?} \n\n{body}");
-            Err(OxenError::basic_str(err))
-        }
-    }
-}
-
 // TODO: Merge this with 'rm_files'
 // Splitting them is a temporary solution to preserve compatibility with the python repo
 pub async fn rm(
@@ -1263,11 +1209,12 @@ mod tests {
                 test::test_img_file(),
                 test::test_img_file_with_name("cole_anthony.jpeg"),
             ];
-            let result = api::client::workspaces::files::add_many(
+            let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
                 paths,
+                &None,
             )
             .await;
             assert!(result.is_ok());
