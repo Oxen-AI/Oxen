@@ -180,7 +180,7 @@ jobs:
         run: |
           cd ${{ github.workspace }}\oxen-rust
           Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo nextest run --profile ci --test-threads=1
+          cargo nextest run --profile ci
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)
