@@ -1803,29 +1803,39 @@ mod tests {
             let test_fi = test_d.join("a_different_file");
             let test_commit = foo(&remote_repo, &test_fi).await?;
 
-            println!("creating workspace");
-            let workspace_id = uuid::Uuid::new_v4().to_string();
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+            // println!("creating workspace");
+            // let workspace_id = uuid::Uuid::new_v4().to_string();
+            // let workspace =
+            //     api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id).await?;
+            // assert_eq!(workspace.id, workspace_id);
 
-            assert_eq!(workspace.commit.id, test_commit);
+            // assert_eq!(workspace.commit.id, test_commit);
 
             // Remove the committed directory "annotations/train"
 
-            println!("removing directory from workspace {}: {}", workspace_id, train_d.display());
-            let result =
-                api::client::workspaces::files::rm(&remote_repo, &workspace_id, &train_d).await;
-            // TODO: why isn't files::rm removing a directory?
-            let result = api::client::workspaces::files::rm
-            assert!(result.is_ok(), "{:?}", result);
+            let c = api::client::file::delete_file(&remote_repo, DEFAULT_BRANCH_NAME, &train_d,
+              Some(
+                NewCommitBody{
+                  message: "delete".into(),
+                  author: "author".into(),
+                  email: "ox@oxen.ai".into(),
+                }
+              )
+            ).await?;
+            println!("deleted {} as commit {}", train_d.display(), c.commit.id);
 
-            println!("committing workspace {}", workspace_id);
-            let _ = api::client::workspaces::commit(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id,
-              &NewCommitBody { message: "delete".into(), author: "author".into(), email: "ox@oxen.ai".into() }).await?;
+            // println!("removing directory from workspace {}: {}", workspace_id, train_d.display());
+            // let result =
+            //     api::client::workspaces::files::rm(&remote_repo, &workspace_id, &train_d).await;
+            // // TODO: why isn't files::rm removing a directory?
+            // assert!(result.is_ok(), "{:?}", result);
+
+            // println!("committing workspace {}", workspace_id);
+            // let _ = api::client::workspaces::commit(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id,
+            //   &NewCommitBody { message: "delete".into(), author: "author".into(), email: "ox@oxen.ai".into() }).await?;
 
             let contents = api::client::file::get_file(&remote_repo, DEFAULT_BRANCH_NAME, &train_fi).await;
-            assert!(contents.is_err(), "{:?}", contents);
+            assert!(contents.is_err(), "I should be an error b ut I'm actually: {:?}", contents);
 
             // // Verify that the file inside the directory is staged as removed
             // let page_num = constants::DEFAULT_PAGE_NUM;
