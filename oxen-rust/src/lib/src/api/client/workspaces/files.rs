@@ -1827,7 +1827,8 @@ mod tests {
             // println!("removing directory from workspace {}: {}", workspace_id, train_d.display());
             // let result =
             //     api::client::workspaces::files::rm(&remote_repo, &workspace_id, &train_d).await;
-            // // TODO: why isn't files::rm removing a directory?
+            /// TODO: why isn't files::rm removing a directory?
+            /// TODO: I think the server file::rm call is making a workspace and deleeting then comitting, so why does this not work when I call it?
             // assert!(result.is_ok(), "{:?}", result);
 
             // println!("committing workspace {}", workspace_id);
