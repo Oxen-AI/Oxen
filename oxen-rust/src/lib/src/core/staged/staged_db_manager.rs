@@ -117,6 +117,12 @@ where
     operation(&manager)
 }
 
+/// Normalizes a path to use forward slashes for use as a DB key.
+/// This ensures cross-platform consistency since DB keys should be platform-agnostic.
+fn normalize_key(path: impl AsRef<Path>) -> String {
+    path.as_ref().to_string_lossy().replace('\\', "/")
+}
+
 impl StagedDBManager {
     /// Upsert a file node to the staged db
     pub fn upsert_file_node(
@@ -143,7 +149,7 @@ impl StagedDBManager {
         staged_node: &StagedMerkleTreeNode,
         db_w: Option<&parking_lot::RwLockWriteGuard<DB>>,
     ) -> Result<(), OxenError> {
-        let key = path.as_ref().to_string_lossy().into_owned();
+        let key = normalize_key(&path);
         let mut buf = Vec::new();
         staged_node
             .serialize(&mut Serializer::new(&mut buf))
@@ -180,7 +186,7 @@ impl StagedDBManager {
         path: impl AsRef<Path>,
         db_w: Option<&parking_lot::RwLockWriteGuard<DB>>,
     ) -> Result<(), OxenError> {
-        let key = path.as_ref().to_string_lossy();
+        let key = normalize_key(&path);
 
         match db_w {
             Some(write_guard) => {
@@ -231,7 +237,7 @@ impl StagedDBManager {
 
     /// True if the paths exists in the staged db. False means it does not exist.
     pub fn exists(&self, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-        let key = path.as_ref().to_string_lossy();
+        let key = normalize_key(&path);
         Ok({
             let db_r = self.staged_db.read();
             // key_may_exist is a bloom filter that doesn't hit I/O
@@ -251,7 +257,7 @@ impl StagedDBManager {
         &self,
         path: impl AsRef<Path>,
     ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-        let key = path.as_ref().to_string_lossy();
+        let key = normalize_key(&path);
 
         let db_r = self.staged_db.read();
         let data = match db_r.get(key.as_bytes())? {
@@ -428,7 +434,7 @@ impl StagedDBManager {
         log::debug!("total sub paths for dir {path:?}: {total}");
         if total == 0 {
             log::debug!("removing empty dir: {path:?}");
-            db_w.delete(path.to_string_lossy().as_bytes())?;
+            db_w.delete(normalize_key(path).as_bytes())?;
         }
         Ok(())
     }
