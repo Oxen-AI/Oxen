@@ -1365,4 +1365,149 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_list_by_path_commit_count_with_edge_cases() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit 1: Create data/a.txt and src/b.txt
+            let data_a = repo.path.join("data").join("a.txt");
+            let src_b = repo.path.join("src").join("b.txt");
+            util::fs::write_to_path(&data_a, "a-v1")?;
+            util::fs::write_to_path(&src_b, "b-v1")?;
+            repositories::add(&repo, &repo.path.join("data")).await?;
+            repositories::add(&repo, &repo.path.join("src")).await?;
+            let _c1 = repositories::commit(&repo, "c1: add data/a.txt and src/b.txt")?;
+
+            // Commit 2: Modify data/a.txt
+            util::fs::write_to_path(&data_a, "a-v2")?;
+            repositories::add(&repo, &data_a).await?;
+            let _c2 = repositories::commit(&repo, "c2: modify data/a.txt")?;
+
+            // Commit 3: Empty commit (no changes)
+            let _c3 = commit_allow_empty(&repo, "c3: empty commit")?;
+
+            // Commit 4: Add src/c.txt
+            let src_c = repo.path.join("src").join("c.txt");
+            util::fs::write_to_path(&src_c, "c-v1")?;
+            repositories::add(&repo, &src_c).await?;
+            let _c4 = repositories::commit(&repo, "c4: add src/c.txt")?;
+
+            // Commit 5: Empty commit (no tree changes, should not appear in any path history)
+            let _c5 = commit_allow_empty(&repo, "c5: another empty commit")?;
+
+            // Commit 6: Add root-level other.txt
+            let other = repo.path.join("other.txt");
+            util::fs::write_to_path(&other, "other-v1")?;
+            repositories::add(&repo, &other).await?;
+            let _c6 = repositories::commit(&repo, "c6: add other.txt")?;
+
+            // Commit 7: Modify src/b.txt
+            util::fs::write_to_path(&src_b, "b-v2")?;
+            repositories::add(&repo, &src_b).await?;
+            let _c7 = repositories::commit(&repo, "c7: modify src/b.txt")?;
+
+            // Commit 8: Modify data/a.txt
+            util::fs::write_to_path(&data_a, "a-v3")?;
+            repositories::add(&repo, &data_a).await?;
+            let _c8 = repositories::commit(&repo, "c8: modify data/a.txt again")?;
+
+            // Commit 9: Revert data/a.txt back to its c1 content ("a-v1").
+            // The content matches c1, but the tree hash differs from parent c8,
+            // so this should count as a real commit for data/a.txt.
+            util::fs::write_to_path(&data_a, "a-v1")?;
+            repositories::add(&repo, &data_a).await?;
+            let _c9 = repositories::commit(&repo, "c9: revert data/a.txt to v1")?;
+
+            let head = repositories::commits::head_commit(&repo)?;
+            let opts = PaginateOpts::default();
+
+            // data/a.txt: should have 4 commits (c9, c8, c2, c1)
+            // c9 reverts to c1 content, but it differs from parent c8 so it counts
+            let result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head,
+                &PathBuf::from("data/a.txt"),
+                opts.clone(),
+            )?;
+            assert_eq!(
+                result.commits.len(),
+                4,
+                "data/a.txt expected 4 commits, got {}",
+                result.commits.len()
+            );
+
+            // src/b.txt: should have 2 commits (c7, c1)
+            let result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head,
+                &PathBuf::from("src/b.txt"),
+                opts.clone(),
+            )?;
+            assert_eq!(
+                result.commits.len(),
+                2,
+                "src/b.txt expected 2 commits, got {}",
+                result.commits.len()
+            );
+
+            // src/c.txt: should have 1 commit (c4)
+            let result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head,
+                &PathBuf::from("src/c.txt"),
+                opts.clone(),
+            )?;
+            assert_eq!(
+                result.commits.len(),
+                1,
+                "src/c.txt expected 1 commit, got {}",
+                result.commits.len()
+            );
+
+            // other.txt: should have 1 commit (c6)
+            let result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head,
+                &PathBuf::from("other.txt"),
+                opts.clone(),
+            )?;
+            assert_eq!(
+                result.commits.len(),
+                1,
+                "other.txt expected 1 commit, got {}",
+                result.commits.len()
+            );
+
+            // data/ directory: should have 4 commits (c9, c8, c2, c1)
+            let result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head,
+                &PathBuf::from("data"),
+                opts.clone(),
+            )?;
+            assert_eq!(
+                result.commits.len(),
+                4,
+                "data/ expected 4 commits, got {}",
+                result.commits.len()
+            );
+
+            // src/ directory: should have 3 commits (c7, c4, c1)
+            let result = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &head,
+                &PathBuf::from("src"),
+                opts.clone(),
+            )?;
+            assert_eq!(
+                result.commits.len(),
+                3,
+                "src/ expected 3 commits, got {}",
+                result.commits.len()
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }
