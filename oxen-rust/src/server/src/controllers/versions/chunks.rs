@@ -94,7 +94,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                     "Missing both num_chunks and upload_results in request".into(),
                 )
             })?;
-        log::debug!("Client uploaded {} chunks", num_chunks);
+        log::debug!("Client uploaded {num_chunks} chunks");
         let version_store = repo.version_store()?;
 
         let chunks = version_store.list_version_chunks(&version_id).await?;
