@@ -130,7 +130,7 @@ pub async fn parallel_large_file_upload(
     )
     .await?;
     let num_chunks = results.len();
-    log::debug!("multipart_large_file_upload num_chunks: {:?}", num_chunks);
+    log::debug!("multipart_large_file_upload num_chunks: {num_chunks:?}");
     complete_multipart_large_file_upload(remote_repo, upload, num_chunks, workspace_id).await
 }
 
