@@ -869,8 +869,9 @@ fn list_by_path_recursive_impl(
                     return Ok(true);
                 }
                 let parent_hash = match repositories::revisions::get(repo, parent_id.clone())? {
-                    Some(pc) => repositories::tree::get_node_by_path(repo, &pc, path)?
-                        .map(|n| n.hash),
+                    Some(pc) => {
+                        repositories::tree::get_node_by_path(repo, &pc, path)?.map(|n| n.hash)
+                    }
                     None => None,
                 };
                 Ok(parent_hash != Some(current_node_hash))
