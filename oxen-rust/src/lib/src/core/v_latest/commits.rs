@@ -860,8 +860,7 @@ fn list_by_path_recursive_impl(
         let last_commit_id = node.latest_commit_id()?;
 
         // Check if current_commit modified the file by comparing the node hash
-        // with each parent's. This is reliable regardless of content-addressed
-        // storage sharing the last_commit_id field.
+        // with each parent's.
         let file_modified = current_commit.parent_ids.iter().try_fold(
             // No parents means the file was added in this commit.
             current_commit.parent_ids.is_empty(),
@@ -869,13 +868,11 @@ fn list_by_path_recursive_impl(
                 if modified {
                     return Ok(true);
                 }
-                let parent_hash = repositories::revisions::get(repo, parent_id.clone())?
-                    .and_then(|pc| {
-                        repositories::tree::get_node_by_path(repo, &pc, path)
-                            .ok()
-                            .flatten()
-                    })
-                    .map(|n| n.hash);
+                let parent_hash = match repositories::revisions::get(repo, parent_id.clone())? {
+                    Some(pc) => repositories::tree::get_node_by_path(repo, &pc, path)?
+                        .map(|n| n.hash),
+                    None => None,
+                };
                 Ok(parent_hash != Some(current_node_hash))
             },
         )?;
