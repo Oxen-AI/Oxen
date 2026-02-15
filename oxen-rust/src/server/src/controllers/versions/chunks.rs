@@ -85,18 +85,27 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
         }
 
         let file = &request.files[0];
-        log::debug!("Client uploaded {} chunks", file.num_chunks);
+        // Support both new clients (num_chunks) and old clients (upload_results)
+        let num_chunks = file
+            .num_chunks
+            .or_else(|| file.upload_results.as_ref().map(|r| r.len()))
+            .ok_or_else(|| {
+                OxenHttpError::BadRequest(
+                    "Missing both num_chunks and upload_results in request".into(),
+                )
+            })?;
+        log::debug!("Client uploaded {} chunks", num_chunks);
         let version_store = repo.version_store()?;
 
         let chunks = version_store.list_version_chunks(&version_id).await?;
         log::debug!("Found {} chunks on server", chunks.len());
 
-        if chunks.len() != file.num_chunks {
+        if chunks.len() != num_chunks {
             return Ok(
                 HttpResponse::BadRequest().json(StatusMessage::error(format!(
                     "Number of chunks does not match expected number of chunks: {} != {}",
                     chunks.len(),
-                    file.num_chunks
+                    num_chunks
                 ))),
             );
         }

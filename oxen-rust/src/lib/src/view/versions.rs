@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use crate::model::MerkleHash;
 
@@ -41,8 +41,12 @@ pub struct CompletedFileUpload {
     pub hash: String,
     pub file_name: String,        // The name of the file
     pub dst_dir: Option<PathBuf>, // The destination directory for the file
-    // Number of chunks that were uploaded for this file
-    pub num_chunks: usize,
+    // Number of chunks that were uploaded for this file (new clients send this)
+    #[serde(default)]
+    pub num_chunks: Option<usize>,
+    // Deprecated: old clients send this list of chunk upload headers
+    #[serde(default)]
+    pub upload_results: Option<Vec<HashMap<String, String>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

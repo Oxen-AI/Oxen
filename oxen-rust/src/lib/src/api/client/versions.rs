@@ -462,7 +462,8 @@ async fn complete_multipart_large_file_upload(
                 .to_string_lossy()
                 .to_string(),
             dst_dir: upload.dst_dir.clone(),
-            num_chunks,
+            num_chunks: Some(num_chunks),
+            upload_results: None,
         }],
         workspace_id,
     };
