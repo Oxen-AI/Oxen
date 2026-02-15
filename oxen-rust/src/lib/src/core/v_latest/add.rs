@@ -625,19 +625,19 @@ pub fn get_file_node(
     dir_node: &Option<MerkleTreeNode>,
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
-    if let Some(node) = dir_node {
-        if let Some(node) = node.get_by_path(path)? {
-            if let EMerkleTreeNode::File(file_node) = &node.node {
-                Ok(Some(file_node.clone()))
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    } else {
-        Ok(None)
-    }
+    let Some(node) = dir_node else {
+        return Ok(None);
+    };
+
+    let Some(node) = node.get_by_path(path)? else {
+        return Ok(None);
+    };
+
+    let EMerkleTreeNode::File(file_node) = &node.node else {
+        return Ok(None);
+    };
+
+    Ok(Some(file_node.clone()))
 }
 
 async fn add_file_inner(
@@ -648,13 +648,13 @@ async fn add_file_inner(
     staged_db: &DBWithThreadMode<MultiThreaded>,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    let mut maybe_dir_node = None;
-    if let Some(head_commit) = maybe_head_commit {
+    let maybe_dir_node = if let Some(head_commit) = maybe_head_commit {
         let path = util::fs::path_relative_to_dir(path, repo_path)?;
         let parent_path = path.parent().unwrap_or(Path::new(""));
-        maybe_dir_node =
-            repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?;
-    }
+        repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?
+    } else {
+        None
+    };
 
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let file_status = determine_file_status(&maybe_dir_node, &file_name, path)?;
@@ -957,42 +957,6 @@ pub fn add_file_node_to_staged_db(
         )?;
         Ok(())
     })
-}
-
-// seperate data path and dst path in case it's in the version store
-pub fn get_status_and_add_file(
-    repo: &LocalRepository,
-    data_path: &Path,
-    dst_path: &Path,
-    staged_db_manager: &StagedDBManager,
-    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
-) -> Result<(), OxenError> {
-    let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
-
-    let file_name = dst_path.file_name().unwrap().to_string_lossy();
-    let maybe_dir_node = None;
-    let file_status =
-        core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, data_path)?;
-    let status = file_status.status.clone();
-    // Don't have to add the file to the staged db if it hasn't changed
-    if status == StagedEntryStatus::Unmodified {
-        log::debug!("file has not changed - skipping add");
-        return Ok(());
-    }
-    let file_node = generate_file_node(repo, data_path, dst_path, &file_status)?;
-
-    // Only add the file to the staged db if it has changed
-    if let Some(file_node) = file_node {
-        let status = file_status.status.clone();
-        add_file_node_and_parent_dir(
-            &file_node,
-            status,
-            &relative_path,
-            staged_db_manager,
-            seen_dirs,
-        )?;
-    }
-    Ok(())
 }
 
 pub fn stage_file_with_hash(

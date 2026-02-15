@@ -17,6 +17,8 @@ pub struct FetchOpts {
     pub all: bool,
     // Defaults to true, but on pull we want to only update the branch head if there are no conflicts
     pub should_update_branch_head: bool,
+    // If true, re-scan all commits for missing version files and download them
+    pub missing_files: bool,
 }
 
 impl Default for FetchOpts {
@@ -35,6 +37,7 @@ impl FetchOpts {
             depth: None,
             all: false,
             should_update_branch_head: true,
+            missing_files: false,
         }
     }
 

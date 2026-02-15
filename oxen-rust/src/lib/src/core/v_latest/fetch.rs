@@ -44,25 +44,28 @@ pub async fn fetch_remote_branch(
     if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
         log::debug!("Head commit: {head_commit}");
         log::debug!("Remote branch commit: {}", remote_branch.commit_id);
-        // If the head commit is the same as the remote branch commit, we are up to date
         if head_commit.id == remote_branch.commit_id {
-            println!("Repository is up to date.");
-            with_ref_manager(repo, |manager| {
-                manager.set_branch_commit_id(&remote_branch.name, &remote_branch.commit_id)
-            })?;
-            return Ok(remote_branch);
+            if !fetch_opts.missing_files {
+                // Already up to date, nothing to do
+                println!("Repository is up to date.");
+                with_ref_manager(repo, |manager| {
+                    manager.set_branch_commit_id(&remote_branch.name, &remote_branch.commit_id)
+                })?;
+                return Ok(remote_branch);
+            }
+            // missing_files: skip tree sync (trees are already local), fall through to entry scan
+        } else {
+            // Download the nodes from the commits between the head and the remote head
+            sync_from_head(
+                repo,
+                remote_repo,
+                fetch_opts,
+                &remote_branch,
+                &head_commit,
+                &pull_progress,
+            )
+            .await?;
         }
-
-        // Download the nodes from the commits between the head and the remote head
-        sync_from_head(
-            repo,
-            remote_repo,
-            fetch_opts,
-            &remote_branch,
-            &head_commit,
-            &pull_progress,
-        )
-        .await?;
     } else {
         // If there is no head commit, we are fetching all commits from the remote branch commit
         log::debug!(
@@ -94,14 +97,21 @@ pub async fn fetch_remote_branch(
 
     // If all, fetch all the missing entries from all the commits
     // Otherwise, fetch the missing entries from the head commit
+    // If missing_files, skip sync status check so we re-scan for missing version files
     let commits = if fetch_opts.all {
-        repositories::commits::list_unsynced_from(repo, &remote_branch.commit_id)?
+        if fetch_opts.missing_files {
+            repositories::commits::list_from(repo, &remote_branch.commit_id)?
+                .into_iter()
+                .collect()
+        } else {
+            repositories::commits::list_unsynced_from(repo, &remote_branch.commit_id)?
+        }
     } else {
         let hash = remote_branch.commit_id.parse()?;
         let commit_node = repositories::tree::get_node_by_id(repo, &hash)?
             .ok_or(OxenError::basic_str("Commit node not found"))?;
 
-        if core::commit_sync_status::commit_is_synced(repo, &hash) {
+        if !fetch_opts.missing_files && core::commit_sync_status::commit_is_synced(repo, &hash) {
             HashSet::new()
         } else {
             HashSet::from([commit_node.commit()?.to_commit()])
@@ -116,6 +126,7 @@ pub async fn fetch_remote_branch(
         &commits,
         &fetch_opts.subtree_paths,
         &fetch_opts.depth,
+        fetch_opts.missing_files,
         &mut total_bytes,
     )?;
     log::debug!(
@@ -234,24 +245,28 @@ fn collect_missing_entries(
     commits: &HashSet<Commit>,
     subtree_paths: &Option<Vec<PathBuf>>,
     depth: &Option<i32>,
+    skip_shared_hashes: bool,
     total_bytes: &mut u64,
 ) -> Result<HashSet<Entry>, OxenError> {
     let mut missing_entries = HashSet::new();
 
-    let mut shared_hashes =
-        if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
-            let mut starting_node_hashes = HashSet::new();
-            repositories::tree::populate_starting_hashes(
-                repo,
-                &head_commit,
-                &None,
-                &None,
-                &mut starting_node_hashes,
-            )?;
-            starting_node_hashes
-        } else {
-            HashSet::new()
-        };
+    // When skip_shared_hashes is true (e.g. --missing-files), start with an empty set
+    // so all entries in the commit tree are considered candidates for download.
+    let mut shared_hashes = if skip_shared_hashes {
+        HashSet::new()
+    } else if let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? {
+        let mut starting_node_hashes = HashSet::new();
+        repositories::tree::populate_starting_hashes(
+            repo,
+            &head_commit,
+            &None,
+            &None,
+            &mut starting_node_hashes,
+        )?;
+        starting_node_hashes
+    } else {
+        HashSet::new()
+    };
 
     let mut file_hashes_seen = HashSet::new();
 

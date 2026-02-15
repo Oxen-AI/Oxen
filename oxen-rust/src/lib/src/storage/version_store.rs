@@ -215,7 +215,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;
 
     /// Clean corrupted version files
-    async fn clean_corrupted_versions(&self) -> Result<CleanCorruptedVersionsResult, OxenError>;
+    /// If `dry_run` is true, only scan and report without deleting
+    async fn clean_corrupted_versions(
+        &self,
+        dry_run: bool,
+    ) -> Result<CleanCorruptedVersionsResult, OxenError>;
 
     /// Get the storage type identifier (e.g., "local", "s3")
     fn storage_type(&self) -> &str;

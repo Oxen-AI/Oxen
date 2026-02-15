@@ -36,6 +36,7 @@ pub mod download;
 pub mod entries;
 pub mod fetch;
 pub mod fork;
+pub mod fsck;
 pub mod init;
 pub mod load;
 pub mod merge;
