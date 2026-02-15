@@ -129,11 +129,9 @@ pub async fn parallel_large_file_upload(
         progress,
     )
     .await?;
-    log::debug!(
-        "multipart_large_file_upload results length: {:?}",
-        results.len()
-    );
-    complete_multipart_large_file_upload(remote_repo, upload, results, workspace_id).await
+    let num_chunks = results.len();
+    log::debug!("multipart_large_file_upload num_chunks: {num_chunks:?}");
+    complete_multipart_large_file_upload(remote_repo, upload, num_chunks, workspace_id).await
 }
 
 /// Creates a new multipart large file upload
@@ -444,7 +442,7 @@ async fn upload_chunk(
 async fn complete_multipart_large_file_upload(
     remote_repo: &RemoteRepository,
     upload: MultipartLargeFileUpload,
-    results: Vec<HashMap<String, String>>,
+    num_chunks: usize,
     workspace_id: Option<String>,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let file_hash = &upload.hash.to_string();
@@ -464,7 +462,8 @@ async fn complete_multipart_large_file_upload(
                 .to_string_lossy()
                 .to_string(),
             dst_dir: upload.dst_dir.clone(),
-            upload_results: results,
+            num_chunks: Some(num_chunks),
+            upload_results: None,
         }],
         workspace_id,
     };
