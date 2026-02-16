@@ -218,24 +218,27 @@ pub async fn list(
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     log::debug!("workspaces::list got repo: {:?}", repo.path);
-    let workspaces = repositories::workspaces::list(&repo)?;
-    let workspace_views = workspaces
-        .iter()
-        .map(|workspace| WorkspaceResponse {
-            id: workspace.id.clone(),
-            name: workspace.name.clone(),
-            commit: workspace.commit.clone().into(),
-        })
-        .filter(|workspace| {
-            // TODO: Would be faster to have a map of names to namespaces, but this works for now
-            //       if getting a workspace is slow then we can optimize it
-            if let Some(name) = &params.name {
-                workspace.name == Some(name.to_string())
-            } else {
-                true
-            }
-        })
-        .collect();
+
+    let workspace_views: Vec<WorkspaceResponse> = if let Some(name) = &params.name {
+        // O(1) lookup by name instead of loading all workspaces
+        match repositories::workspaces::get_by_name(&repo, name)? {
+            Some(ws) => vec![WorkspaceResponse {
+                id: ws.id,
+                name: ws.name,
+                commit: ws.commit.into(),
+            }],
+            None => vec![],
+        }
+    } else {
+        repositories::workspaces::list(&repo)?
+            .iter()
+            .map(|workspace| WorkspaceResponse {
+                id: workspace.id.clone(),
+                name: workspace.name.clone(),
+                commit: workspace.commit.clone().into(),
+            })
+            .collect()
+    };
 
     Ok(HttpResponse::Ok().json(ListWorkspaceResponseView {
         status: StatusMessage::resource_created(),

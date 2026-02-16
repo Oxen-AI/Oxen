@@ -1,8 +1,9 @@
 use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACE_NAMES_DIR};
 use crate::core;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
+use crate::core::workspaces::with_workspace_name_manager;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
@@ -38,19 +39,14 @@ pub fn get(
     workspace_id: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
     let workspace_id = workspace_id.as_ref();
-    let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
-    log::debug!("workspace::get workspace_id: {workspace_id:?} hash: {workspace_id_hash:?}");
-
-    let workspace_dir = Workspace::workspace_dir(repo, &workspace_id_hash);
+    let workspace_dir = workspace_id_to_dir(repo, workspace_id);
     let config_path = Workspace::config_path_from_dir(&workspace_dir);
 
     log::debug!("workspace::get directory: {workspace_dir:?}");
     if config_path.exists() {
         get_by_dir(repo, workspace_dir)
     } else if let Some(workspace) = get_by_name(repo, workspace_id)? {
-        let workspace_id = util::hasher::hash_str_sha256(&workspace.id);
-        let workspace_dir = Workspace::workspace_dir(repo, &workspace_id);
-        get_by_dir(repo, workspace_dir)
+        Ok(Some(workspace))
     } else {
         Ok(None)
     }
@@ -98,14 +94,36 @@ pub fn get_by_dir(
     }))
 }
 
+fn workspace_id_to_dir(repo: &LocalRepository, workspace_id: &str) -> std::path::PathBuf {
+    let hash = util::hasher::hash_str_sha256(workspace_id);
+    log::debug!("workspace::get workspace_id: {workspace_id:?} hash: {hash:?}");
+    let dir = Workspace::workspace_dir(repo, &hash);
+    dir
+}
+
 pub fn get_by_name(
     repo: &LocalRepository,
     workspace_name: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
     let workspace_name = workspace_name.as_ref();
+
+    // Try the index first (O(1))
+    let maybe_workspace_from_name_index =
+        with_workspace_name_manager(repo, |manager| manager.get_id_for_name(workspace_name))?;
+    if let Some(workspace_id) = maybe_workspace_from_name_index {
+        let ws_dir = workspace_id_to_dir(repo, &workspace_id);
+        return get_by_dir(repo, dir);
+    }
+
+    // Fallback: scan for backwards compatibility with pre-index repos.
+    // Self-heal by writing to the index if found. (O(# workspaces))
     let workspaces = list(repo)?;
     for workspace in workspaces {
         if workspace.name == Some(workspace_name.to_string()) {
+            // Populate index for future lookups
+            let _ = with_workspace_name_manager(repo, |manager| {
+                manager.set_name(workspace_name, &workspace.id)
+            })?;
             return Ok(Some(workspace));
         }
     }
@@ -130,8 +148,7 @@ pub fn create_with_name(
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
     let workspace_id = workspace_id.as_ref();
-    let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
-    let workspace_dir = Workspace::workspace_dir(base_repo, &workspace_id_hash);
+    let workspace_dir = workspace_id_to_dir(base_repo, workspace_id);
     let oxen_dir = workspace_dir.join(OXEN_HIDDEN_DIR);
 
     log::debug!("index::workspaces::create called! {oxen_dir:?}");
@@ -142,15 +159,32 @@ pub fn create_with_name(
             "Workspace {workspace_id} already exists"
         )));
     }
-    let workspaces = list(base_repo)?;
 
-    // Check for existing non-editable workspaces on the same commit
-    for workspace in workspaces {
-        if !is_editable {
-            check_non_editable_workspace(&workspace, commit)?;
+    // Check name uniqueness via O(1) index lookup, with fallback scan for pre-index repos
+    if let Some(ref name) = workspace_name {
+        let has_name =
+            with_workspace_name_manager(base_repo, |manager| Ok(manager.has_name(name)))?;
+        if has_name {
+            return Err(OxenError::basic_str(format!(
+                "A workspace with the name {name} already exists"
+            )));
         }
-        if let Some(workspace_name) = workspace_name.clone() {
-            check_existing_workspace_name(&workspace, &workspace_name)?;
+
+        // CLAUDE: review comment => how can we do a better job of migrationg?
+
+        // Fallback: scan all workspaces to catch pre-index entries and check name == id conflicts
+        let workspaces = list(base_repo)?;
+        for workspace in &workspaces {
+            check_existing_workspace_name(workspace, name)?;
+            if !is_editable {
+                check_non_editable_workspace(workspace, commit)?;
+            }
+        }
+    } else if !is_editable {
+        // No name provided, but still need to check non-editable constraint
+        let workspaces = list(base_repo)?;
+        for workspace in &workspaces {
+            check_non_editable_workspace(workspace, commit)?;
         }
     }
 
@@ -179,6 +213,12 @@ pub fn create_with_name(
     let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
     log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
     util::fs::write_to_path(&workspace_config_path, toml_string)?;
+
+    // Populate the name index for O(1) lookups
+    if let Some(ref name) = workspace_name {
+        let _ =
+            with_workspace_name_manager(base_repo, |manager| manager.set_name(name, workspace_id))?;
+    }
 
     Ok(Workspace {
         id: workspace_id.to_owned(),
@@ -307,6 +347,12 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
 
     log::debug!("workspace::delete cleaning up workspace dir: {workspace_dir:?}");
 
+    // Clean up name index
+    if let Some(ref name) = workspace.name {
+        let _ =
+            with_workspace_name_manager(&workspace.base_repo, |manager| manager.delete_name(name))?;
+    }
+
     // Clean up caches before deleting the workspace
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
@@ -325,6 +371,14 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     }
 
     util::fs::remove_dir_all(&workspaces_dir)?;
+
+    // Clear the workspace names index
+    core::workspaces::remove_from_cache(&repo.path)?;
+    let names_dir = util::fs::oxen_hidden_dir(&repo.path).join(WORKSPACE_NAMES_DIR);
+    if names_dir.exists() {
+        util::fs::remove_dir_all(&names_dir)?;
+    }
+
     Ok(())
 }
 
@@ -962,6 +1016,106 @@ mod tests {
             }
 
             Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_by_name_returns_named_workspace() -> Result<(), OxenError> {
+        fn check(found: &Workspace, ws: &Workspace) {
+            assert_eq!(found.id, ws.id);
+
+            if let Some(found_name) = found.name {
+                assert_eq!(found_name, ws_name);
+            } else {
+                panic!("Expecting found.name to be non-None");
+            }
+        }
+
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws_name = "my-workspace";
+            let ws = create_with_name(&repo, &commit, "ws-id-1", Some(ws_name.to_string()), true)?;
+
+            let Some(found_by_name) = get_by_name(&repo, ws_name)?.expect(&format!(
+                "Expected to find a named workspace (`get_by_name`): {ws_name}"
+            ));
+            check(&found_by_name, &ws);
+
+            let Some(found_get) = get(&repo, ws_name)?.expect(&format!(
+                "Expected to find a named workspace (`get`): {ws_name}"
+            ));
+            check(&found_get, &ws);
+
+            delete(&found)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_by_name_returns_none_after_delete() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws_name = "delete-me";
+            let ws = create_with_name(&repo, &commit, "ws-id-2", Some(ws_name.to_string()), true)?;
+            delete(&ws)?;
+
+            let found = get_by_name(&repo, ws_name)?;
+            assert!(found.is_none(), "{:?}", found);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_name_fails() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws_name = "unique-name";
+            let ws = create_with_name(&repo, &commit, "ws-id-3", Some(ws_name.to_string()), true)?;
+
+            let result =
+                create_with_name(&repo, &commit, "ws-id-4", Some(ws_name.to_string()), true);
+            assert!(result.is_err(), "{:?}", result);
+
+            delete(&ws)?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_clear_removes_name_index() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws_name = "clear-test";
+            create_with_name(&repo, &commit, "ws-id-5", Some(ws_name.to_string()), true)?;
+
+            clear(&repo)?;
+
+            let found = get_by_name(&repo, ws_name)?;
+            assert!(found.is_none(), "{:?}", found);
+
+            Ok(())
         })
         .await
     }
