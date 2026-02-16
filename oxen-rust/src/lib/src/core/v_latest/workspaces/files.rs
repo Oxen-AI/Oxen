@@ -3,7 +3,7 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::header::HeaderValue;
 use reqwest::Client;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -17,16 +17,184 @@ use crate::core::v_latest::add::{
     stage_file_with_hash,
 };
 use crate::error::OxenError;
+use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, StagedEntryStatus};
-use crate::model::{LocalRepository, NewCommitBody};
+use crate::model::{Branch, Commit, MerkleHash, ParsedResource, StagedEntryStatus};
+use crate::model::{LocalRepository, MetadataEntry, NewCommitBody};
+use crate::opts::PaginateOpts;
 use crate::repositories;
 use crate::util;
-use crate::view::{ErrorFileInfo, FileWithHash};
+use crate::view::entries::EMetadataEntry;
+use crate::view::{ErrorFileInfo, FileWithHash, PaginatedDirEntries};
+
+/// List the effective view of files in a workspace directory.
+///
+/// Merges commit tree entries with workspace changes (additions, modifications,
+/// removals) *before* paginating. Removed files are excluded from the output.
+pub fn list(
+    workspace: &Workspace,
+    directory: impl AsRef<Path>,
+    paginate_opts: &PaginateOpts,
+) -> Result<PaginatedDirEntries, OxenError> {
+    let directory = directory.as_ref();
+    let base_repo = &workspace.base_repo;
+    let commit = &workspace.commit;
+
+    // Build a ParsedResource for generating MetadataEntry objects
+    let parsed_resource = ParsedResource {
+        commit: Some(commit.clone()),
+        branch: None,
+        workspace: Some(workspace.clone()),
+        path: directory.to_path_buf(),
+        version: PathBuf::from(&commit.id),
+        resource: directory.to_path_buf(),
+    };
+
+    // Step 1: Get commit tree entries for this directory (if it exists)
+    let maybe_dir = repositories::tree::get_dir_with_children(base_repo, commit, directory, None)?;
+
+    let mut found_commits: HashMap<MerkleHash, Commit> = HashMap::new();
+    let commit_entries: Vec<MetadataEntry> = if let Some(ref dir) = maybe_dir {
+        core::v_latest::entries::dir_entries_with_depth(
+            base_repo,
+            dir,
+            directory,
+            &parsed_resource,
+            &mut found_commits,
+            0,
+        )?
+    } else {
+        Vec::new()
+    };
+
+    // Step 2: Get workspace status for this directory
+    let workspace_changes =
+        repositories::workspaces::status::status_from_dir(workspace, directory)?;
+
+    // Step 3: Build status maps from staged files
+    let mut additions_map: HashMap<String, StagedEntryStatus> = HashMap::new();
+    let mut other_changes_map: HashMap<String, StagedEntryStatus> = HashMap::new();
+
+    for (file_path, entry) in workspace_changes.staged_files.iter() {
+        let status = entry.status.clone();
+        if status == StagedEntryStatus::Added {
+            // For added files, use the full path as key (relative to repo root)
+            let key = file_path.to_str().unwrap().to_string();
+            additions_map.insert(key, status);
+        } else {
+            // For modified or removed files, use the filename as key
+            let key = file_path.file_name().unwrap().to_string_lossy().to_string();
+            other_changes_map.insert(key, status);
+        }
+    }
+
+    // Step 4: Apply workspace changes to commit entries
+    let mut merged_entries: Vec<EMetadataEntry> = Vec::new();
+
+    for entry in commit_entries {
+        let filename = &entry.filename;
+        if let Some(status) = other_changes_map.get(filename) {
+            match status {
+                StagedEntryStatus::Removed => {
+                    // Filter out removed files
+                    continue;
+                }
+                _ => {
+                    // Modified — annotate with workspace changes
+                    let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
+                    ws_entry.changes = Some(WorkspaceChanges {
+                        status: status.clone(),
+                    });
+                    merged_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
+                }
+            }
+        } else {
+            // Unmodified commit entry
+            let ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
+            merged_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
+        }
+    }
+
+    // Step 5: Add workspace additions
+    for (file_path_str, status) in additions_map.iter() {
+        if *status != StagedEntryStatus::Added {
+            continue;
+        }
+        let file_path = Path::new(file_path_str);
+
+        let staged_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+            staged_db_manager.read_from_staged_db(file_path)
+        })?;
+
+        let Some(staged_node) = staged_node else {
+            log::warn!("Staged node in status not present in staged db: {file_path_str}");
+            continue;
+        };
+
+        let metadata = match staged_node.node.node {
+            EMerkleTreeNode::File(ref file_node) => {
+                repositories::metadata::from_file_node(base_repo, file_node, commit)?
+            }
+            EMerkleTreeNode::Directory(ref dir_node) => {
+                repositories::metadata::from_dir_node(base_repo, dir_node, commit)?
+            }
+            _ => {
+                log::warn!("Unexpected node type found in staged db for {file_path_str}");
+                continue;
+            }
+        };
+
+        let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
+        ws_entry.changes = Some(WorkspaceChanges {
+            status: StagedEntryStatus::Added,
+        });
+        merged_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
+    }
+
+    // Step 6: Sort — directories first, then alphabetically by filename
+    merged_entries.sort_by(|a, b| {
+        b.is_dir()
+            .cmp(&a.is_dir())
+            .then_with(|| a.filename().cmp(b.filename()))
+    });
+
+    // Step 7: Paginate
+    let (page_entries, pagination) = util::paginate(
+        merged_entries,
+        paginate_opts.page_num,
+        paginate_opts.page_size,
+    );
+
+    // Step 8: Build dir metadata entry for the directory itself
+    let dir_entry = if let Some(ref dir) = maybe_dir {
+        let dir_metadata = core::v_latest::entries::dir_node_to_metadata_entry_public(
+            base_repo,
+            dir,
+            &parsed_resource,
+            &mut found_commits,
+        )?;
+        dir_metadata.map(|e| {
+            EMetadataEntry::WorkspaceMetadataEntry(WorkspaceMetadataEntry::from_metadata_entry(e))
+        })
+    } else {
+        None
+    };
+
+    Ok(PaginatedDirEntries {
+        dir: dir_entry,
+        entries: page_entries,
+        resource: None,
+        metadata: None,
+        page_size: paginate_opts.page_size,
+        page_number: paginate_opts.page_num,
+        total_pages: pagination.total_pages,
+        total_entries: pagination.total_entries,
+    })
+}
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
 const MAX_CONTENT_LENGTH: u64 = 1024 * 1024 * 1024; // 1GB limit

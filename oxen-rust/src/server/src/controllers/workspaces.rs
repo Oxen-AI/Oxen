@@ -18,6 +18,7 @@ use utoipa;
 pub mod changes;
 pub mod data_frames;
 pub mod files;
+pub mod ls;
 
 /// Get or create workspace
 #[utoipa::path(
