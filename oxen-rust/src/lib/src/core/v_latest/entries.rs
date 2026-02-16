@@ -285,6 +285,16 @@ pub fn dir_entries_with_depth(
     Ok(entries)
 }
 
+/// Public wrapper for getting a directory's own metadata entry (without appending resource).
+pub fn dir_node_to_metadata_entry_public(
+    repo: &LocalRepository,
+    node: &MerkleTreeNode,
+    parsed_resource: &ParsedResource,
+    found_commits: &mut HashMap<MerkleHash, Commit>,
+) -> Result<Option<MetadataEntry>, OxenError> {
+    dir_node_to_metadata_entry(repo, node, parsed_resource, found_commits, false)
+}
+
 fn dir_node_to_metadata_entry(
     repo: &LocalRepository,
     node: &MerkleTreeNode,

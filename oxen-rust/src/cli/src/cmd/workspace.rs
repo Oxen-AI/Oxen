@@ -25,6 +25,9 @@ pub use download::WorkspaceDownloadCmd;
 pub mod list;
 pub use list::WorkspaceListCmd;
 
+pub mod ls;
+pub use ls::WorkspaceLsCmd;
+
 pub mod restore;
 pub use restore::WorkspaceRestoreCmd;
 
@@ -96,6 +99,7 @@ impl WorkspaceCmd {
             Box::new(WorkspaceDiffCmd),
             Box::new(WorkspaceDeleteCmd),
             Box::new(WorkspaceListCmd),
+            Box::new(WorkspaceLsCmd),
             Box::new(WorkspaceRmCmd),
             Box::new(WorkspaceRestoreCmd),
             Box::new(WorkspaceStatusCmd),
