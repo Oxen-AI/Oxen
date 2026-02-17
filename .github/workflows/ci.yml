@@ -5,9 +5,11 @@ name: 🐂 Continuous integration
 
 jobs:
   lint:
+    if: github.event.pull_request.draft == false
     name: Lint
     uses: ./.github/workflows/ci_lint.yml
 
   test:
+    if: github.event.pull_request.draft == false
     name: Test Suite
     uses: ./.github/workflows/ci_test.yml
