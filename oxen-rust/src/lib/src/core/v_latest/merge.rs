@@ -1032,9 +1032,20 @@ pub async fn find_merge_conflicts(
                 }
             }
         } else if write_to_disk {
-            // merge entry does not exist in base, so create it
-            log::debug!("bottom update entry");
-            if restore::should_restore_file(repo, None, merge_file_node, entry_path)? {
+            log::debug!("bottom update entry {entry_path:?}");
+            let lca_base_node = lca_commit_tree
+                .get_by_path(entry_path)?
+                .and_then(|node| node.file().ok());
+
+            if lca_base_node.is_some() {
+                if let Some(parent) = entry_path.parent() {
+                    if let Some(dir_node) = lca_commit_tree.get_by_path(parent)? {
+                        shared_hashes.remove(&dir_node.hash);
+                    }
+                }
+            }
+
+            if restore::should_restore_file(repo, lca_base_node, merge_file_node, entry_path)? {
                 entries_to_restore.push(FileToRestore {
                     file_node: merge_file_node.clone(),
                     path: entry_path.to_path_buf(),

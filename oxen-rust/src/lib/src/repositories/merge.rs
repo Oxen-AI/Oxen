@@ -1091,4 +1091,57 @@ mod tests {
         })
         .await
     }
+
+    // Regression test: files modified only on the merge branch whose parent directory
+    // hash is shared between the LCA and base should not trigger "your local changes
+    // would be overwritten."
+    #[tokio::test]
+    async fn test_merge_three_way_file_modified_only_on_merge_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Setup: create initial files in a subdirectory
+            let models_dir = repo.path.join("models");
+            util::fs::create_dir_all(&models_dir)?;
+
+            let a_path = models_dir.join("a.toml");
+            let b_path = models_dir.join("b.toml");
+            util::fs::write_to_path(&a_path, "version = 1")?;
+            util::fs::write_to_path(&b_path, "version = 1")?;
+            repositories::add(&repo, &models_dir).await?;
+            repositories::commit(&repo, "Add models/a.toml and models/b.toml")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create branch B and modify models/a.toml
+            let merge_branch_name = "B";
+            repositories::branches::create_checkout(&repo, merge_branch_name)?;
+            util::fs::write_to_path(&a_path, "version = 2")?;
+            repositories::add(&repo, &a_path).await?;
+            repositories::commit(&repo, "Update models/a.toml on branch B")?;
+
+            // Back on main, make a diverging commit (different file, outside models/)
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let other_path = repo.path.join("other.txt");
+            util::fs::write_to_path(&other_path, "hello")?;
+            repositories::add(&repo, &other_path).await?;
+            repositories::commit(&repo, "Add other.txt on main")?;
+
+            // Merge branch B into main — this should succeed without conflict
+            let merge_commit = repositories::merge::merge(&repo, merge_branch_name).await?;
+            assert!(
+                merge_commit.is_some(),
+                "Merge should succeed without conflict"
+            );
+
+            // Verify the merged file has the updated content from branch B
+            let content = util::fs::read_from_path(&a_path)?;
+            assert_eq!(content, "version = 2");
+
+            // Verify the other files are still intact
+            assert!(b_path.exists());
+            assert!(other_path.exists());
+
+            Ok(())
+        })
+        .await
+    }
 }
