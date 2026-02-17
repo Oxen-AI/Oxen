@@ -27,9 +27,12 @@ pub fn versions() -> Scope {
             "/{version_id}/chunks",
             web::put().to(controllers::versions::chunks::upload),
         )
-        .route(
-            "/{version_id}/complete",
-            web::post().to(controllers::versions::chunks::complete),
+        .service(
+            web::resource("/{version_id}/complete")
+                // Allow larger payloads for backward compat with old clients
+                // that send the full upload_results list
+                .app_data(web::PayloadConfig::default().limit(20 * 1024 * 1024))
+                .route(web::post().to(controllers::versions::chunks::complete)),
         )
         .route(
             // TODO: change the endpoint to /{version_id} for consistency and a more efficient download when client has the file hash
