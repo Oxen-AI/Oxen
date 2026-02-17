@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use glob_match::glob_match;
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
+use sqlparser::keywords::LARGE;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -157,24 +158,43 @@ pub async fn upload_bytes_as_file(
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
 }
 
-async fn upload_multiple_files(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
-) -> Result<(), OxenError> {
-    if paths.is_empty() {
-        return Ok(());
+struct ToUpload<'a> {
+    local: &'a Path,
+    remote: &'a Path,
+}
+
+enum NotUploaded<'a> {
+    DoesNotexist(&'a Path),
+    MetadataFetchFailed(&'a Path, std::io::Error),
+    UploadFailed(&'a Path),
+}
+
+impl std::fmt::Display for NotUploaded<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotUploaded::DoesNotexist(path) => write!(f, "File does not exist: {}", path.display()),
+            NotUploaded::MetadataFetchFailed(path, err) => write!(
+                f,
+                "Failed to fetch metadata for file {}: {}",
+                path.display(),
+                err
+            ),
+            NotUploaded::UploadFailed(path) => {
+                write!(f, "Upload failed for file: {}", path.display())
+            }
+        }
     }
+}
 
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-
-    // Separate files by size, storing the file size with each path
-    let mut large_files = Vec::new();
-    let mut small_files = Vec::new();
-    let mut small_files_size = 0;
+async fn upload_multiple_files<'a>(
+    remote_repo: &RemoteRepository,
+    workspace_id: &str,
+    paths: Vec<ToUpload<'a>>,
+    local_repo: Option<&LocalRepository>,
+) -> Result<Vec<NotUploaded<'a>>, OxenError> {
+    if paths.is_empty() {
+        return Ok(Vec::with_capacity(0));
+    }
 
     let repo_path = if let Some(local_repo) = local_repo {
         local_repo.path.clone()
@@ -182,49 +202,72 @@ async fn upload_multiple_files(
         PathBuf::new()
     };
 
-    // Group files by size
-    for path in paths {
-        // Adjustment for remote-mode repos
-        let path = if local_repo.is_some() {
-            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-            repo_path.join(&relative_path)
-        } else {
-            path
-        };
+    let mut not_uploaded = Vec::new();
 
-        if !path.exists() {
-            log::warn!("File does not exist: {path:?}");
-            continue;
-        }
+    // Separate files by size, storing the file size with each path
+    let (large_files, large_files_size, small_files, small_files_size) = {
+        let mut large_files = Vec::new();
+        let mut large_files_size: u64 = 0;
 
-        match path.metadata() {
-            Ok(metadata) => {
-                let file_size = metadata.len();
-                if file_size > chunk_size() {
-                    // Large file goes directly to parallel upload
-                    large_files.push((path, file_size));
-                } else {
-                    // Small file goes to batch
-                    small_files.push((path, file_size));
-                    small_files_size += file_size;
-                }
-            }
-            Err(err) => {
-                log::warn!("Failed to get metadata for file {path:?}: {err}");
+        let mut small_files = Vec::new();
+        let mut small_files_size: u64 = 0;
+
+        let large_file_size = chunk_size();
+
+        // Group files by size
+        for ToUpload { local, remote } in paths {
+            if !local.exists() {
+                not_uploaded.push(NotUploaded::DoesNotexist(local));
                 continue;
             }
+
+            match local.metadata() {
+                Ok(metadata) => {
+                    let file_size = metadata.len();
+                    if file_size >= large_file_size {
+                        // Large file goes directly to parallel upload
+                        large_files.push((local, file_size, remote));
+                        large_files_size += file_size;
+                    } else {
+                        // Small file goes to batch
+                        small_files.push((local, file_size, remote));
+                        small_files_size += file_size;
+                    }
+                }
+                Err(err) => {
+                    not_uploaded.push(NotUploaded::MetadataFetchFailed(local, err));
+                    continue;
+                }
+            }
         }
-    }
 
-    let large_files_size = large_files.iter().map(|(_, size)| size).sum::<u64>();
-    let total_size = large_files_size + small_files_size;
+        (
+            // large files first
+            large_files,
+            large_files_size,
+            // then small files
+            small_files,
+            small_files_size,
+        )
+    };
 
-    validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
+    validate_upload_feasibility(
+        remote_repo,
+        workspace_id,
+        large_files_size + small_files_size,
+    )
+    .await?;
+
     // Process large files individually with parallel upload
-    for (path, _size) in large_files {
+    for (local, _, remote) in large_files {
+        let directory = {
+            let rel = util::fs::path_relative_to_dir(&remote, &repo_path)?;
+            rel.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+        };
+
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
-            &path,
+            local,
             Some(directory),
             Some(workspace_id.to_string()),
             None,
@@ -232,35 +275,12 @@ async fn upload_multiple_files(
         )
         .await
         {
-            Ok(_) => log::debug!("Successfully uploaded large file: {path:?}"),
-            Err(err) => log::error!("Failed to upload large file {path:?}: {err}"),
+            Ok(_) => log::debug!("Successfully uploaded large file: {local:?} as {remote:?}"),
+            Err(err) => {
+                log::error!("Failed to upload large file {local:?}: {err}");
+                not_uploaded.push(NotUploaded::UploadFailed(local));
+            }
         }
-    }
-
-    // Upload small files in batches
-    parallel_batched_small_file_upload(
-        remote_repo,
-        workspace_id,
-        directory,
-        small_files,
-        small_files_size,
-        local_repo,
-    )
-    .await?;
-
-    Ok(())
-}
-
-async fn parallel_batched_small_file_upload(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    small_files: Vec<(PathBuf, u64)>,
-    small_files_size: u64,
-    local_repo: &Option<LocalRepository>,
-) -> Result<(), OxenError> {
-    if small_files.is_empty() {
-        return Ok(());
     }
 
     // Batch small files in chunks of ~AVG_CHUNK_SIZE
@@ -269,27 +289,44 @@ async fn parallel_batched_small_file_upload(
         small_files.len(),
         small_files_size
     );
+    // Upload small files in batches
+    let small_files_not_uploaded =
+        parallel_batched_small_file_upload(remote_repo, workspace_id, small_files, &repo_path)
+            .await?;
 
-    let workspace_id = workspace_id.as_ref().to_string();
-    let directory = directory.as_ref().to_str().unwrap_or_default().to_string();
+    not_uploaded.extend(small_files_not_uploaded);
+    Ok(not_uploaded)
+}
+
+async fn parallel_batched_small_file_upload<'a>(
+    remote_repo: &RemoteRepository,
+    workspace_id: &str,
+    small_files: Vec<(&Path, u64, &Path)>,
+    local_repo: Option<&LocalRepository>,
+) -> Result<Vec<NotUploaded<'a>>, OxenError> {
+    if small_files.is_empty() {
+        return Ok(Vec::with_capacity(0));
+    }
 
     // Represents unprocessed batches
-    type PieceOfWork = Vec<(PathBuf, u64)>;
+    type PieceOfWork = Vec<(PathBuf, u64, PathBuf)>;
 
     // Represents processed batches
     type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
 
     // Split files into batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
-    let mut current_batch: Vec<(PathBuf, u64)> = Vec::new();
+    let mut current_batch: PieceOfWork = Vec::new();
     let mut current_batch_size = 0;
     let mut total_size = 0;
 
-    for (idx, (path, file_size)) in small_files.iter().enumerate() {
-        current_batch.push((path.clone(), *file_size));
+    let max_batch_size = chunk_size();
+
+    for (idx, (local, file_size, remote)) in small_files.iter().enumerate() {
+        current_batch.push((local.to_path_buf(), *file_size, remote.to_path_buf()));
         current_batch_size += file_size;
 
-        if current_batch_size > chunk_size() || idx >= small_files.len() - 1 {
+        if current_batch_size >= max_batch_size || idx >= small_files.len() - 1 {
             file_batches.push(current_batch.clone());
 
             current_batch.clear();
@@ -300,14 +337,16 @@ async fn parallel_batched_small_file_upload(
 
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
-    let repo_path = if let Some(ref local_repo) = local_repo {
+
+    let repo_path = if let Some(local_repo) = local_repo {
         local_repo.path.clone()
     } else {
         PathBuf::new()
     };
 
-    let head_commit_maybe = if let Some(ref local_repo) = local_repo {
+    let head_commit_maybe = if let Some(local_repo) = local_repo {
         repositories::commits::head_commit_maybe(local_repo)?
+            .map(|head_commit| (head_commit, local_repo))
     } else {
         None
     };
@@ -327,22 +366,21 @@ async fn parallel_batched_small_file_upload(
     ));
 
     let producer_errors = Arc::clone(&errors);
-    let maybe_local_repo = local_repo.clone();
+    // let maybe_local_repo = local_repo.clone();
 
     // Initiate the producer
     let producer_handle = tokio::spawn(async move {
         stream::iter(file_batches)
             .for_each_concurrent(worker_count, |batch| {
-                let repo_path_clone = repo_path.clone();
-                let head_commit_maybe_clone = head_commit_maybe.clone();
-                let local_repo_clone = maybe_local_repo.clone();
+                let repo_path = repo_path.clone();
+                let head_commit_maybe = head_commit_maybe.clone();
+
                 let errors = Arc::clone(&producer_errors);
                 let tx_clone = tx.clone();
 
                 async move {
-                    let repo_path_clone = repo_path_clone.clone();
-                    let local_repo_clone = local_repo_clone.clone();
-                    let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+                    let repo_path = repo_path.clone();
+                    let head_commit_maybe = head_commit_maybe.clone();
 
                     let result: Result<(), OxenError> = async move {
                         let mut batch_size = 0;
@@ -351,75 +389,68 @@ async fn parallel_batched_small_file_upload(
 
                         // Build the multiparts for each file
                         log::debug!("Starting file processing loop with {:?} files", batch.len());
-                        for (path, size) in batch {
-                            let local_repo_clone = local_repo_clone.clone();
-                            let repo_path_clone = repo_path_clone.clone();
-                            let head_commit_maybe_clone = head_commit_maybe_clone.clone();
-
+                        for (local, size, remote) in batch {
                             let file_data_maybe: Option<(
                                 reqwest::multipart::Part,
                                 String,
                                 PathBuf,
                                 u64,
                             )> = tokio::task::spawn_blocking(move || {
-                                let relative_path =
-                                    util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
-
                                 // In remote-mode repos, skip adding files already present in tree
-                                if let Some(ref head_commit) = head_commit_maybe_clone {
+                                if let Some((ref head_commit, local_repo)) = head_commit_maybe {
+                                    let relative_path =
+                                        util::fs::path_relative_to_dir(&local, &repo_path)?;
                                     if let Some(file_node) = repositories::tree::get_file_by_path(
-                                        &local_repo_clone.unwrap(),
+                                        local_repo,
                                         head_commit,
                                         &relative_path,
                                     )? {
-                                        if !util::fs::is_modified_from_node(&path, &file_node)? {
-                                            log::debug!("Skipping add on unmodified path {path:?}");
+                                        if !util::fs::is_modified_from_node(&local, &file_node)? {
+                                            log::debug!(
+                                                "Skipping add on unmodified path {local:?}"
+                                            );
                                             return Ok(None);
                                         }
                                     }
                                 }
 
-                                // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name
-                                let staging_path = if head_commit_maybe_clone.is_some() {
-                                    relative_path
-                                } else {
-                                    PathBuf::from(relative_path.file_name().unwrap())
-                                };
-
-                                let file = std::fs::read(&path).map_err(|e| {
+                                let file = std::fs::read(&local).map_err(|e| {
                                     OxenError::basic_str(format!(
-                                        "Failed to read file '{path:?}': {e}"
+                                        "Failed to read file '{local:?}': {e}"
                                     ))
                                 })?;
 
                                 let hash = hasher::hash_buffer(&file);
 
-                                let mut encoder =
-                                    GzEncoder::new(Vec::new(), Compression::default());
-                                std::io::copy(&mut file.as_slice(), &mut encoder).map_err(|e| {
-                                    OxenError::basic_str(format!(
-                                        "Failed to copy file '{path:?}' to encoder: {e}"
-                                    ))
-                                })?;
+                                let compressed_bytes = {
+                                    let mut encoder =
+                                        GzEncoder::new(Vec::new(), Compression::default());
 
-                                let file_part = {
-                                    let compressed_bytes = match encoder.finish() {
+                                    std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
+                                        |e| {
+                                            OxenError::basic_str(format!(
+                                                "Failed to copy file '{local:?}' to encoder: {e}"
+                                            ))
+                                        },
+                                    )?;
+
+                                    match encoder.finish() {
                                         Ok(bytes) => bytes,
                                         Err(e) => {
                                             // If compressing a file fails, cancel the operation
                                             return Err(OxenError::basic_str(format!(
-                                                "Failed to finish gzip for file {}: {}",
-                                                &hash, e
+                                                "Failed to finish gzip for file {} ({:?}): {}",
+                                                &hash, local, e
                                             )));
                                         }
-                                    };
-
-                                    reqwest::multipart::Part::bytes(compressed_bytes)
-                                        .file_name(hash.clone())
-                                        .mime_str("application/gzip")?
+                                    }
                                 };
 
-                                Ok(Some((file_part, hash, staging_path, size)))
+                                let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+                                    .file_name(hash.clone())
+                                    .mime_str("application/gzip")?;
+
+                                Ok(Some((file_part, hash, remote, size)))
                             })
                             .await??;
 
@@ -461,7 +492,7 @@ async fn parallel_batched_small_file_upload(
     let workspace_id_clone = workspace_id.clone();
     let remote_repo_clone = remote_repo.clone();
     let directory_clone = directory.clone();
-    let local_repo_clone = local_repo.clone();
+    // let local_repo_clone = local_repo.clone();
 
     let consumer_err_files = Arc::clone(&err_files);
     let consumer_errors = Arc::clone(&errors);
