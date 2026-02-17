@@ -10,7 +10,7 @@ on:
 
 name: 🐂 Continuous integration
 
-# Each CI job on a branch gets a unique key name like "lint-refs/head/your-feature-branch".
+# Each CI job on a branch gets a unique key name like "lint-refs/heads/your-feature-branch".
 # GH actions will only let one job per unique key run if cancel-in-progress is true.
 # cancel-in-progress is always true unless the branch name is `main` - `main` jobs are never cancelled.
 concurrency:
