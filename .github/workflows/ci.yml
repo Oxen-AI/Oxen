@@ -1,13 +1,22 @@
 on:
-  push
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # opened: A new pull request is created.
+    # synchronize: New commits are pushed to the PR's head branch, or the base branch is changed (i.e. a 'push' event on the PR branch).
+    # reopened: The PR is reopened.
+    # ready_for_review: The PR is marked as ready for review.
 
 name: 🐂 Continuous integration
 
 jobs:
   lint:
+    if: github.event.pull_request.draft != true
     name: Lint
     uses: ./.github/workflows/ci_lint.yml
 
   test:
+    if: github.event.pull_request.draft != true
     name: Test Suite
     uses: ./.github/workflows/ci_test.yml
