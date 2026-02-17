@@ -72,6 +72,7 @@ pub async fn add(
         directory,
         expanded_paths.clone(),
         local_repo,
+        false,
     )
     .await
     {
@@ -79,6 +80,76 @@ pub async fn add(
             println!(
                 "🐂 oxen added {} entries to workspace {}",
                 expanded_paths.len(),
+                workspace_id
+            );
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Add files to a remote workspace while preserving their relative paths
+/// within the repository. Unlike `add`, which places files into a flat
+/// destination directory, this function uses each file's path relative to
+/// the local repo root as its staging path on the server.
+pub async fn add_files(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    local_repo: &LocalRepository,
+    paths: Vec<PathBuf>,
+) -> Result<(), OxenError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let workspace_id = workspace_id.as_ref();
+    let repo_path = &local_repo.path;
+
+    // Resolve paths and filter out non-existent / non-file entries
+    let resolved_paths: Vec<PathBuf> = paths
+        .into_iter()
+        .map(|p| {
+            if p.is_absolute() {
+                p
+            } else {
+                repo_path.join(&p)
+            }
+        })
+        .filter(|p| {
+            if !p.exists() {
+                log::warn!("add_files: path does not exist, skipping: {p:?}");
+                false
+            } else if !p.is_file() {
+                log::warn!("add_files: path is not a file, skipping: {p:?}");
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if resolved_paths.is_empty() {
+        return Ok(());
+    }
+
+    let local_repo_opt = Some(local_repo.clone());
+    match upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        "",
+        resolved_paths.clone(),
+        &local_repo_opt,
+        true,
+    )
+    .await
+    {
+        Ok(()) => {
+            println!(
+                "🐂 oxen added {} entries to workspace {}",
+                resolved_paths.len(),
                 workspace_id
             );
         }
@@ -163,6 +234,7 @@ async fn upload_multiple_files(
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
+    preserve_paths: bool,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -222,10 +294,16 @@ async fn upload_multiple_files(
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
     // Process large files individually with parallel upload
     for (path, _size) in large_files {
+        let dst_dir = if preserve_paths {
+            let rel = util::fs::path_relative_to_dir(&path, &repo_path)?;
+            rel.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+        } else {
+            directory.to_path_buf()
+        };
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
-            Some(directory),
+            Some(&dst_dir),
             Some(workspace_id.to_string()),
             None,
             None,
@@ -245,6 +323,7 @@ async fn upload_multiple_files(
         small_files,
         small_files_size,
         local_repo,
+        preserve_paths,
     )
     .await?;
 
@@ -258,6 +337,7 @@ async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_repo: &Option<LocalRepository>,
+    preserve_paths: bool,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
@@ -366,25 +446,36 @@ async fn parallel_batched_small_file_upload(
                                     util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
 
                                 // In remote-mode repos, skip adding files already present in tree
-                                if let Some(ref head_commit) = head_commit_maybe_clone {
-                                    if let Some(file_node) = repositories::tree::get_file_by_path(
-                                        &local_repo_clone.unwrap(),
-                                        head_commit,
-                                        &relative_path,
-                                    )? {
-                                        if !util::fs::is_modified_from_node(&path, &file_node)? {
-                                            log::debug!("Skipping add on unmodified path {path:?}");
-                                            return Ok(None);
+                                // (but not when preserve_paths is set, since the caller
+                                // explicitly listed these files for upload)
+                                if !preserve_paths {
+                                    if let Some(ref head_commit) = head_commit_maybe_clone {
+                                        if let Some(file_node) =
+                                            repositories::tree::get_file_by_path(
+                                                &local_repo_clone.unwrap(),
+                                                head_commit,
+                                                &relative_path,
+                                            )?
+                                        {
+                                            if !util::fs::is_modified_from_node(&path, &file_node)?
+                                            {
+                                                log::debug!(
+                                                    "Skipping add on unmodified path {path:?}"
+                                                );
+                                                return Ok(None);
+                                            }
                                         }
                                     }
                                 }
 
-                                // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name
-                                let staging_path = if head_commit_maybe_clone.is_some() {
-                                    relative_path
-                                } else {
-                                    PathBuf::from(relative_path.file_name().unwrap())
-                                };
+                                // When preserve_paths is set or in remote-mode repos, use the
+                                // full relative path. Otherwise use just the filename.
+                                let staging_path =
+                                    if preserve_paths || head_commit_maybe_clone.is_some() {
+                                        relative_path
+                                    } else {
+                                        PathBuf::from(relative_path.file_name().unwrap())
+                                    };
 
                                 let file = std::fs::read(&path).map_err(|e| {
                                     OxenError::basic_str(format!(
