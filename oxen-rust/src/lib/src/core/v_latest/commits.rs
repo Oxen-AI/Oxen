@@ -848,41 +848,68 @@ fn list_by_path_recursive_impl(
     let mut stack = vec![commit.clone()];
 
     while let Some(current_commit) = stack.pop() {
-        let node = repositories::tree::get_node_by_path(repo, &current_commit, path)?;
+        if !visited.insert(current_commit.id.clone()) {
+            continue;
+        }
 
-        let last_commit = if let Some(node) = node {
-            let last_commit_id = node.latest_commit_id()?;
-
-            // Check if the commit already exists in the commits vector, if so, skip it
-            if visited.contains(&last_commit_id.to_string()) {
-                continue;
-            }
-
-            repositories::revisions::get(repo, last_commit_id.to_string())?.ok_or_else(|| {
-                OxenError::basic_str(format!(
-                    "Commit not found for last_commit_id: {last_commit_id}"
-                ))
-            })?
-        } else {
+        let Some(node) = repositories::tree::get_node_by_path(repo, &current_commit, path)? else {
             continue;
         };
 
-        // Mark last_commit as visited and add to results
-        visited.insert(last_commit.id.clone());
-        commits.push(last_commit.clone());
+        let current_node_hash = node.hash;
+        let last_commit_id = node.latest_commit_id()?;
 
-        let parent_ids = last_commit.parent_ids;
-
-        for parent_id in parent_ids {
-            let parent_commit = repositories::revisions::get(repo, parent_id)?;
-            if let Some(parent_commit_obj) = parent_commit {
-                if !visited.contains(&parent_commit_obj.id) {
-                    stack.push(parent_commit_obj);
+        // Check if current_commit modified the file by comparing the node hash
+        // with each parent's.
+        let file_modified = current_commit.parent_ids.iter().try_fold(
+            // No parents means the file was added in this commit.
+            current_commit.parent_ids.is_empty(),
+            |modified, parent_id| -> Result<bool, OxenError> {
+                if modified {
+                    return Ok(true);
                 }
+                let parent_hash = match repositories::revisions::get(repo, parent_id.clone())? {
+                    Some(pc) => {
+                        repositories::tree::get_node_by_path(repo, &pc, path)?.map(|n| n.hash)
+                    }
+                    None => None,
+                };
+                Ok(parent_hash != Some(current_node_hash))
+            },
+        )?;
+
+        if file_modified {
+            // This commit modified the file — add it and explore parents.
+            commits.push(current_commit.clone());
+            push_unvisited_parents(repo, &current_commit, visited, &mut stack)?;
+        } else {
+            // File not modified here. Use last_commit_id to jump ahead to the
+            // next commit that did, skipping intermediate unmodified commits.
+            match repositories::revisions::get(repo, last_commit_id.to_string())? {
+                Some(jump_commit) if !visited.contains(&jump_commit.id) => {
+                    stack.push(jump_commit);
+                }
+                _ => push_unvisited_parents(repo, &current_commit, visited, &mut stack)?,
             }
         }
     }
 
+    Ok(())
+}
+
+fn push_unvisited_parents(
+    repo: &LocalRepository,
+    commit: &Commit,
+    visited: &HashSet<String>,
+    stack: &mut Vec<Commit>,
+) -> Result<(), OxenError> {
+    for parent_id in &commit.parent_ids {
+        if let Some(parent) = repositories::revisions::get(repo, parent_id.clone())? {
+            if !visited.contains(&parent.id) {
+                stack.push(parent);
+            }
+        }
+    }
     Ok(())
 }
 
