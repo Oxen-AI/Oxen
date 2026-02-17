@@ -2,7 +2,7 @@ use crate::api::client;
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
-use crate::model::{LocalRepository, RemoteRepository};
+use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
@@ -298,6 +298,12 @@ async fn upload_multiple_files<'a>(
     Ok(not_uploaded)
 }
 
+// Represents unprocessed batches
+type PieceOfWork = Vec<(PathBuf, u64, PathBuf)>;
+
+// Represents processed batches
+type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
+
 async fn parallel_batched_small_file_upload<'a>(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -307,12 +313,6 @@ async fn parallel_batched_small_file_upload<'a>(
     if small_files.is_empty() {
         return Ok(Vec::with_capacity(0));
     }
-
-    // Represents unprocessed batches
-    type PieceOfWork = Vec<(PathBuf, u64, PathBuf)>;
-
-    // Represents processed batches
-    type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
 
     // Split files into batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
@@ -390,74 +390,19 @@ async fn parallel_batched_small_file_upload<'a>(
                         // Build the multiparts for each file
                         log::debug!("Starting file processing loop with {:?} files", batch.len());
                         for (local, size, remote) in batch {
-                            let file_data_maybe: Option<(
-                                reqwest::multipart::Part,
-                                String,
-                                PathBuf,
-                                u64,
-                            )> = tokio::task::spawn_blocking(move || {
-                                // In remote-mode repos, skip adding files already present in tree
-                                if let Some((ref head_commit, local_repo)) = head_commit_maybe {
-                                    let relative_path =
-                                        util::fs::path_relative_to_dir(&local, &repo_path)?;
-                                    if let Some(file_node) = repositories::tree::get_file_by_path(
-                                        local_repo,
-                                        head_commit,
-                                        &relative_path,
-                                    )? {
-                                        if !util::fs::is_modified_from_node(&local, &file_node)? {
-                                            log::debug!(
-                                                "Skipping add on unmodified path {local:?}"
-                                            );
-                                            return Ok(None);
-                                        }
-                                    }
-                                }
-
-                                let file = std::fs::read(&local).map_err(|e| {
-                                    OxenError::basic_str(format!(
-                                        "Failed to read file '{local:?}': {e}"
-                                    ))
-                                })?;
-
-                                let hash = hasher::hash_buffer(&file);
-
-                                let compressed_bytes = {
-                                    let mut encoder =
-                                        GzEncoder::new(Vec::new(), Compression::default());
-
-                                    std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
-                                        |e| {
-                                            OxenError::basic_str(format!(
-                                                "Failed to copy file '{local:?}' to encoder: {e}"
-                                            ))
-                                        },
-                                    )?;
-
-                                    match encoder.finish() {
-                                        Ok(bytes) => bytes,
-                                        Err(e) => {
-                                            // If compressing a file fails, cancel the operation
-                                            return Err(OxenError::basic_str(format!(
-                                                "Failed to finish gzip for file {} ({:?}): {}",
-                                                &hash, local, e
-                                            )));
-                                        }
-                                    }
-                                };
-
-                                let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
-                                    .file_name(hash.clone())
-                                    .mime_str("application/gzip")?;
-
-                                Ok(Some((file_part, hash, remote, size)))
-                            })
-                            .await??;
-
-                            let (file_part, file_hash, file_path, file_size) = match file_data_maybe
-                            {
-                                Some(data) => data,
-                                None => continue,
+                            let Some((file_part, file_hash, file_path, file_size)) =
+                                tokio::task::spawn_blocking(move || {
+                                    create_upload_part(
+                                        &repo_path,
+                                        head_commit_maybe,
+                                        local,
+                                        size,
+                                        remote,
+                                    )
+                                })
+                                .await??
+                            else {
+                                continue;
                             };
 
                             batch_parts.push(file_part);
@@ -639,6 +584,57 @@ async fn parallel_batched_small_file_upload<'a>(
     }
 
     Ok(())
+}
+
+fn create_upload_part(
+    repo_path: &'static Path,
+    head_commit_maybe: Option<(Commit, &'static LocalRepository)>,
+    local: PathBuf,
+    size: u64,
+    remote: PathBuf,
+) -> Result<Option<(reqwest::multipart::Part, String, PathBuf, u64)>, OxenError> {
+    // In remote-mode repos, skip adding files already present in tree
+    if let Some((ref head_commit, local_repo)) = head_commit_maybe {
+        let relative_path = util::fs::path_relative_to_dir(&local, &repo_path)?;
+        if let Some(file_node) =
+            repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
+        {
+            if !util::fs::is_modified_from_node(&local, &file_node)? {
+                log::debug!("Skipping add on unmodified path {local:?}");
+                return Ok(None);
+            }
+        }
+    }
+
+    let file = std::fs::read(&local)
+        .map_err(|e| OxenError::basic_str(format!("Failed to read file '{local:?}': {e}")))?;
+
+    let hash = hasher::hash_buffer(&file);
+
+    let compressed_bytes = {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+
+        std::io::copy(&mut file.as_slice(), &mut encoder).map_err(|e| {
+            OxenError::basic_str(format!("Failed to copy file '{local:?}' to encoder: {e}"))
+        })?;
+
+        match encoder.finish() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                // If compressing a file fails, cancel the operation
+                return Err(OxenError::basic_str(format!(
+                    "Failed to finish gzip for file {} ({:?}): {}",
+                    &hash, local, e
+                )));
+            }
+        }
+    };
+
+    let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+        .file_name(hash.clone())
+        .mime_str("application/gzip")?;
+
+    Ok(Some((file_part, hash, remote, size)))
 }
 
 // Retry stage_files_to_workspace until successful or retry limit breached
