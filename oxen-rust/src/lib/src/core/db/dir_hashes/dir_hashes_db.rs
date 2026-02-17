@@ -35,6 +35,28 @@ pub fn dir_hash_db_path_from_commit_id(
         .join(DIR_HASHES_DIR)
 }
 
+/// Removes all dir_hashes DB instances from cache whose path starts with the given prefix.
+/// Used in test cleanup to release file handles before directory deletion.
+pub fn remove_from_cache_with_children(db_path_prefix: impl AsRef<Path>) -> Result<(), OxenError> {
+    let db_path_prefix = db_path_prefix.as_ref();
+
+    let mut instances = DB_INSTANCES.write().map_err(|e| {
+        OxenError::basic_str(format!("Could not write LRU for dir hash db cache: {e:?}"))
+    })?;
+
+    let dbs_to_remove = instances
+        .iter()
+        .filter(|(key, _)| key.starts_with(db_path_prefix))
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+
+    for db in dbs_to_remove {
+        let _ = instances.pop(&db);
+    }
+
+    Ok(())
+}
+
 pub fn with_dir_hash_db_manager<F, T>(
     repository: &LocalRepository,
     commit_id: &String,

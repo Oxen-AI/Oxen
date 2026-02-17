@@ -1613,6 +1613,8 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     merkle_tree_node_cache::remove_from_cache(repo_dir)?;
     core::staged::remove_from_cache_with_children(repo_dir)?;
     core::refs::ref_manager::remove_from_cache_with_children(repo_dir)?;
+    core::db::data_frames::df_db::remove_df_db_from_cache_with_children(repo_dir)?;
+    core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(repo_dir)?;
 
     if should_cleanup() {
         log::debug!("maybe_cleanup_repo: cleaning up repo: {repo_dir:?}");
