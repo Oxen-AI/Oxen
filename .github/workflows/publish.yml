@@ -38,16 +38,21 @@ jobs:
           maturin-version: v1.8.5
 
   publish_liboxen_crate:
+    # See https://crates.io/docs/trusted-publishing for details
     name: Publish liboxen crate to crates.io
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write     # Required for OIDC token exchange
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
       - name: Upload to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           cd ${{ github.workspace }}/oxen-rust/src/lib
-          cargo login ${{ secrets.CRATES_IO_TOKEN }}
           cargo publish
 
   publish_homebrew_oxen:
