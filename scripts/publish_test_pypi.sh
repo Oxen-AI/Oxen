@@ -78,19 +78,7 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # Patch versions
 # ---------------------------------------------------------------------------
-echo "Patching pyproject.toml → $PEP440_VERSION"
-if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' 's/^version = ".*"/version = "'"$PEP440_VERSION"'"/' "$PYPROJECT"
-else
-    sed -i  's/^version = ".*"/version = "'"$PEP440_VERSION"'"/' "$PYPROJECT"
-fi
-
-echo "Patching Cargo.toml    → $CARGO_VERSION"
-if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$CARGO_VERSION"'"/' "$CARGO_TOML"
-else
-    sed -i  '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$CARGO_VERSION"'"/' "$CARGO_TOML"
-fi
+"$REPO_ROOT/scripts/patch_dev_version.sh" "$PEP440_VERSION"
 
 echo "Updating Cargo.lock..."
 (cd "$REPO_ROOT/oxen-python" && cargo update -p oxen --quiet)

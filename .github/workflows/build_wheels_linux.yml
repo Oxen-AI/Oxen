@@ -97,12 +97,7 @@ jobs:
 
       - name: Patch version in pyproject.toml and Cargo.toml
         run: |
-          sed -i 's/^version = ".*"/version = "${{ inputs.VERSION_OVERRIDE }}"/' \
-            ${{ github.workspace }}/oxen-python/pyproject.toml
-
-          CARGO_VERSION=$(echo "${{ inputs.VERSION_OVERRIDE }}" | sed 's/\.dev/-dev./')
-          sed -i "0,/^version = \".*\"/s//version = \"${CARGO_VERSION}\"/" \
-            ${{ github.workspace }}/oxen-python/Cargo.toml
+          bash ${{ github.workspace }}/scripts/patch_dev_version.sh "${{ inputs.VERSION_OVERRIDE }}"
 
       - name: Install rustup
         run: |

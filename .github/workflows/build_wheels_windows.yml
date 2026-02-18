@@ -83,14 +83,25 @@ jobs:
 
       - name: Patch version in pyproject.toml and Cargo.toml
         run: |
-          $content = Get-Content "${{ github.workspace }}\oxen-python\pyproject.toml" -Raw
+          $pyprojectPath = "${{ github.workspace }}\oxen-python\pyproject.toml"
+          $content = Get-Content "$pyprojectPath" -Raw
           $content = $content -replace '(?m)^version = ".*"', 'version = "${{ inputs.VERSION_OVERRIDE }}"'
-          Set-Content "${{ github.workspace }}\oxen-python\pyproject.toml" $content
+          Set-Content "$pyprojectPath" $content
 
           $cargoVersion = "${{ inputs.VERSION_OVERRIDE }}" -replace '\.dev', '-dev.'
-          $cargoContent = Get-Content "${{ github.workspace }}\oxen-python\Cargo.toml" -Raw
-          $cargoContent = $cargoContent -replace '(?m)^version = ".*"', "version = `"$cargoVersion`""
-          Set-Content "${{ github.workspace }}\oxen-python\Cargo.toml" $cargoContent
+          $cargoPath = "${{ github.workspace }}\oxen-python\Cargo.toml"
+          $cargoLines = Get-Content "$cargoPath"
+          $inPackage = $false
+          $patched = $false
+          $newLines = foreach ($line in $cargoLines) {
+              if ($line -match '^\[package\]') { $inPackage = $true }
+              elseif ($line -match '^\[') { $inPackage = $false }
+              if ($inPackage -and !$patched -and $line -match '^version = ".*"') {
+                  "version = `"$cargoVersion`""
+                  $patched = $true
+              } else { $line }
+          }
+          Set-Content "$cargoPath" $newLines
 
       - name: Install dependencies
         run: |
