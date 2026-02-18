@@ -2,6 +2,7 @@ use crate::api::client;
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
+use crate::model::repository::local_repository;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
@@ -247,7 +248,6 @@ pub async fn upload_bytes_as_file(
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
 }
 
-
 /// TODO: this needs to return the Commit !
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
@@ -255,7 +255,9 @@ async fn upload_multiple_files(
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-    preserve_path_base_dir: Option<PathBuf>,
+    preserve_paths: Option<&Path>,
+    strict_errors: bool,
+    progress: Option<&Arc<PushProgress>>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -264,30 +266,7 @@ async fn upload_multiple_files(
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
-    let repo_path = if let Some(local_repo) = local_repo {
-        local_repo.path.clone()
-    } else {
-        PathBuf::new()
-    };
-
     let large_file_threshold = chunk_size();
-
-
-
-
-    let to_staging_path = {
-      let local_repo = local_repo.clone();
-      let preserve_path_base_dir = preserve_path_base_dir.clone();
-      move |path: PathBuf| -> PathBuf {
-        match preserve_path_base_dir {
-          Some(base_dir) => {
-            let relative_path = util::fs::path_relative_to_dir(&path, &base_dir)
-            base_dir.join(&relative_path)
-          },
-          None => path,
-        }
-      }
-    };
 
     // Separate files by size, storing the file size with each path
     let mut large_files = Vec::new();
@@ -299,15 +278,21 @@ async fn upload_multiple_files(
     for path in paths {
 
         // Adjustment for remote-mode repos
-        let path = if local_repo.is_some() {
-            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        let path = match local_repo {
+          Some(local_repository) => {
+            let repo_path = &local_repository.path;
+            let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
             repo_path.join(&relative_path)
-        } else {
-            path
+          },
+          None => path,
         };
 
         if !path.exists() {
-            log::warn!("File does not exist: {path:?}");
+            let msg = format!("File does not exist: {path:?}");
+            if strict_errors {
+              return Err(OxenError::basic_str(msg))
+            }
+            log::warn!("{msg}");
             continue;
         }
 
@@ -325,7 +310,11 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                log::warn!("Failed to get metadata for file {path:?}: {err}");
+                let msg = format!("Failed to get metadata for file {path:?}: {err}");
+                if strict_errors {
+                  return Err(OxenError::basic_str(msg))
+                }
+                log::warn!("{msg}");
                 continue;
             }
         }
@@ -334,13 +323,19 @@ async fn upload_multiple_files(
     let total_size = large_files_size + small_files_size;
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
+    let base_dir = match local_repo {
+      Some(local_repository) => local_repository.path.clone(),
+      None => PathBuf::new(),
+    };
+
     // Process large files individually with parallel upload
     for (path, _) in large_files {
-        let dst_dir = if preserve_paths {
-            let rel = util::fs::path_relative_to_dir(&path, &repo_path)?;
+        let dst_dir = match preserve_paths {
+          Some(base_dir) => {
+            let rel = util::fs::path_relative_to_dir(&path, &base_dir)?;
             rel.parent().map(|p| p.to_path_buf()).unwrap_or_default()
-        } else {
-            directory.to_path_buf()
+          },
+          None => directory.to_path_buf(),
         };
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
@@ -348,7 +343,7 @@ async fn upload_multiple_files(
             Some(&dst_dir),
             Some(workspace_id.to_string()),
             None,
-            None,
+            progress.clone(),
         )
         .await
         {
@@ -366,6 +361,7 @@ async fn upload_multiple_files(
         small_files_size,
         local_repo,
         preserve_paths,
+        progress.clone(),
     )
     .await?;
 
@@ -379,7 +375,8 @@ async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_repo: &Option<LocalRepository>,
-    preserve_paths: bool,
+    preserve_paths: Option<&Path>,
+    progress: Option<&Arc<PushProgress>>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
