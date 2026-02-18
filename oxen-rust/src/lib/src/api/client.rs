@@ -23,6 +23,7 @@ pub mod entries;
 pub mod export;
 pub mod file;
 pub mod import;
+pub(crate) mod internal_types;
 pub mod merger;
 pub mod metadata;
 pub mod oxen_version;

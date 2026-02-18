@@ -1,4 +1,5 @@
 use crate::api::client;
+use crate::api::client::internal_types::LocalOrBase;
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
@@ -323,11 +324,6 @@ async fn upload_multiple_files(
     let total_size = large_files_size + small_files_size;
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
-    let base_dir = match local_repo {
-      Some(local_repository) => local_repository.path.clone(),
-      None => PathBuf::new(),
-    };
-
     // Process large files individually with parallel upload
     for (path, _) in large_files {
         let dst_dir = match preserve_paths {
@@ -368,19 +364,41 @@ async fn upload_multiple_files(
     Ok(())
 }
 
-async fn parallel_batched_small_file_upload(
+pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
-    local_repo: &Option<LocalRepository>,
-    preserve_paths: Option<&Path>,
-    progress: Option<&Arc<PushProgress>>,
+    // local_repo: &Option<LocalRepository>,
+    // preserve_paths: Option<&Path>,
+    local_or_base: Option<&LocalOrBase>,
+    // progress: Option<&Arc<PushProgress>>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
     }
+
+    // let base_or_repo_path = match (local_repo, preserve_paths) {
+    //   (Some(_), Some(_)) => {
+    //     return Err(OxenError::basic_str("Cannot supply a local repository and a preserve paths base directory."));
+    //   },
+    //   (Some(local_repository), None) => local_repository.path.clone(),
+    //   (None, Some(base_dir)) => base_dir.to_path_buf(),
+    //   (None, None) => PathBuf::new(),
+    // };
+    let (base_or_repo_path, head_commit_or_maybe, keep_relative_paths) = match local_or_base {
+      Some(LocalOrBase::Local(local_repository)) => {
+        let head_commit_maybe = repositories::commits::head_commit_maybe(local_repository)?;
+        (
+          local_repository.path.clone(),
+          head_commit_maybe,
+          head_commit_maybe.is_some(),
+        )
+      },
+      Some(LocalOrBase::Base(base_dir)) => (base_dir.to_path_buf(), None, true),
+      None => (PathBuf::new(), None, false),
+    };
 
     // Batch small files in chunks of ~AVG_CHUNK_SIZE
     log::debug!(
@@ -400,7 +418,7 @@ async fn parallel_batched_small_file_upload(
 
     // Split files into batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
-    let mut current_batch: Vec<(PathBuf, u64)> = Vec::new();
+    let mut current_batch: PieceOfWork = Vec::new();
     let mut current_batch_size = 0;
     let mut total_size = 0;
 
@@ -419,17 +437,14 @@ async fn parallel_batched_small_file_upload(
 
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
-    let repo_path = if let Some(ref local_repo) = local_repo {
-        local_repo.path.clone()
-    } else {
-        PathBuf::new()
-    };
 
-    let head_commit_maybe = if let Some(ref local_repo) = local_repo {
-        repositories::commits::head_commit_maybe(local_repo)?
-    } else {
-        None
-    };
+    // let head_commit_maybe = if let Some(ref local_repo) = local_repo {
+    //     repositories::commits::head_commit_maybe(local_repo)?
+    // } else {
+    //     None
+    // };
+
+    // let keep_relative_paths = preserve_paths.is_some() || head_commit_maybe.is_some();
 
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
@@ -452,14 +467,14 @@ async fn parallel_batched_small_file_upload(
     let producer_handle = tokio::spawn(async move {
         stream::iter(file_batches)
             .for_each_concurrent(worker_count, |batch| {
-                let repo_path_clone = repo_path.clone();
+                let base_or_repo_path_clone = base_or_repo_path.clone();
                 let head_commit_maybe_clone = head_commit_maybe.clone();
                 let local_repo_clone = maybe_local_repo.clone();
                 let errors = Arc::clone(&producer_errors);
                 let tx_clone = tx.clone();
 
                 async move {
-                    let repo_path_clone = repo_path_clone.clone();
+                    let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                     let local_repo_clone = local_repo_clone.clone();
                     let head_commit_maybe_clone = head_commit_maybe_clone.clone();
 
@@ -472,7 +487,7 @@ async fn parallel_batched_small_file_upload(
                         log::debug!("Starting file processing loop with {:?} files", batch.len());
                         for (path, size) in batch {
                             let local_repo_clone = local_repo_clone.clone();
-                            let repo_path_clone = repo_path_clone.clone();
+                            let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                             let head_commit_maybe_clone = head_commit_maybe_clone.clone();
 
                             let file_data_maybe: Option<(
@@ -481,13 +496,14 @@ async fn parallel_batched_small_file_upload(
                                 PathBuf,
                                 u64,
                             )> = tokio::task::spawn_blocking(move || {
+
                                 let relative_path =
-                                    util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
+                                    util::fs::path_relative_to_dir(&path, &base_or_repo_path_clone)?;
 
                                 // In remote-mode repos, skip adding files already present in tree
-                                if let Some(ref head_commit) = head_commit_maybe_clone {
+                                if let (Some(ref head_commit), Some(ref local_repository)) = (head_commit_maybe_clone, local_repo_clone) {
                                     if let Some(file_node) = repositories::tree::get_file_by_path(
-                                        &local_repo_clone.unwrap(),
+                                        local_repository,
                                         head_commit,
                                         &relative_path,
                                     )? {
@@ -500,12 +516,11 @@ async fn parallel_batched_small_file_upload(
 
                                 // When preserve_paths is set or in remote-mode repos, use the
                                 // full relative path. Otherwise use just the filename.
-                                let staging_path =
-                                    if preserve_paths || head_commit_maybe_clone.is_some() {
-                                        relative_path
-                                    } else {
-                                        PathBuf::from(relative_path.file_name().unwrap())
-                                    };
+                                let staging_path = if keep_relative_paths {
+                                    relative_path
+                                } else {
+                                    PathBuf::from(relative_path.file_name().unwrap())
+                                };
 
                                 let file = std::fs::read(&path).map_err(|e| {
                                     OxenError::basic_str(format!(
@@ -565,7 +580,7 @@ async fn parallel_batched_small_file_upload(
                         // Once all the files in the batch are processed,
                         // Send them to the receiver for upload
                         let processed_batch: ProcessedBatch =
-                            (batch_parts, files_to_stage, batch_size);
+                          (batch_parts, files_to_stage, batch_size);
                         match tx_clone.send(processed_batch).await {
                             Ok(_) => Ok(()),
                             Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
