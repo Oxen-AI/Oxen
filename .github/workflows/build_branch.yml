@@ -62,7 +62,7 @@ jobs:
           echo "RELEASE_VERSION=nightly-$(date +'%Y-%m-%d-%H_%M_%S')" >> $GITHUB_ENV
 
       - name: Build Docker Image
-        run: cd oxen-rust && docker build -t oxen/oxen-server .
+        run: cd oxen-rust && docker build -t oxen/oxen-server --platform linux/arm64 .
 
       - name: Save Docker
         run: docker save oxen/oxen-server -o oxen-server-docker-arm64-${{ env.RELEASE_VERSION }}.tar
