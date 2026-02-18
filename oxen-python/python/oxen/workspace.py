@@ -187,50 +187,43 @@ class Workspace:
                 )
         self._workspace.add(paths, dst)
 
-    def add_files_in_repository(
+    def add_files(
         self,
-        repo_dir: str | Path,
+        base_dir: str | Path,
         paths: Iterable[str] | Iterable[Path],
     ) -> None:
         """
-        Add files to the workspace while preserving their relative paths
-        within the repository.
+        A workspace add that preserves relative paths of files that share a common base.
 
         Unlike `add`, which places files into a flat destination directory,
-        this method uses each file's path relative to the local repo root as
-        its staging path on the server. For example, a file at
+        this method uses each file's path relative to the supplied base directory as
+        its staging path on the server.
+
+        The `base_dir` serves as a stand-in for the root of the remote repository. The key
+        use of `add_files` is to import a large file tree into an existing repository.
+
+        For example, a file at
         ``repo/data/images/cat.jpg`` will be staged as ``data/images/cat.jpg``.
 
         Args:
-            repo_dir: `str` | `Path`
-                Path to the root of the local Oxen repository.
+            base_dir: `str` | `Path`
+                The base directory: all added files share this as an ancestor.
             paths: `Iterable[str]` | `Iterable[Path]`
                 The file paths to add. Can be absolute or relative to the
-                repo root. Each path must point to an existing file.
+                base directory. Each path must point to an existing file.
 
         Raises:
             ValueError: If no valid file paths are provided.
         """
-        repo_dir = Path(repo_dir)
-        if not repo_dir.is_dir():
-            raise ValueError(f"repo_dir is not a valid directory: {repo_dir}")
-
-        if not (repo_dir / ".oxen").is_dir():
-            raise ValueError(f"repo_dir is not a valid Oxen repository: {repo_dir}")
+        base_dir = Path(base_dir)
+        base_dir = base_dir.resolve()
+        if not base_dir.is_dir():
+            raise ValueError(f"base_dir is not a valid directory: {base_dir}")
 
         resolved: list[str] = []
         for p in paths:
             p = Path(p)
-            if not p.is_absolute():
-                p = repo_dir / p
-            else:
-                resolved_repo = repo_dir.resolve()
-                resolved_p = p.resolve()
-                if not resolved_p.is_relative_to(resolved_repo):
-                    raise ValueError(f"Absolute path is not under repo_dir: {p}")
-            if not p.is_file():
-                raise ValueError(f"Path is not a file: {p}")
-
+            _assert_file_in_base(base_dir, p)
             resolved.append(str(p))
 
         if len(resolved) == 0:
@@ -238,7 +231,7 @@ class Workspace:
                 "No valid file paths provided: adding nothing to a workspace is invalid."
             )
 
-        self._workspace.add_files(str(repo_dir), resolved)
+        self._workspace.add_files(str(base_dir), resolved)
 
     def add_bytes(self, src: str, buf: bytes, dst: str = "") -> None:
         """
@@ -303,3 +296,18 @@ def _filepaths_from(path: Path) -> Iterator[Path]:
         for something_under in path.rglob("*"):
             if something_under.is_file():
                 yield something_under
+
+
+def _assert_file_in_base(base_dir: Path, p: Path):
+    """ValueError if `p` doesn't have `base_dir` as an ancesor or isn't a file.
+
+    Assumes that `base_dir` (1) is a directory and (2) is a resolved path.
+    """
+    if not p.is_absolute():
+        p = base_dir / p
+    else:
+        p = p.resolve()
+        if not p.is_relative_to(base_dir):
+            raise ValueError(f"Absolute path is not under base_dir ({base_dir}): {p}")
+    if not p.is_file():
+        raise ValueError(f"Path is not a file: {p}")

@@ -2,7 +2,7 @@ use crate::api::client;
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
-use crate::model::{LocalRepository, RemoteRepository};
+use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
@@ -20,7 +20,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
-use futures::stream;
+use futures::{SinkExt, stream};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::util::hasher;
@@ -91,58 +91,77 @@ pub async fn add(
     Ok(())
 }
 
-/// Add files to a remote workspace while preserving their relative paths
-/// within the repository. Unlike `add`, which places files into a flat
-/// destination directory, this function uses each file's path relative to
-/// the local repo root as its staging path on the server.
+pub struct AddResult {
+  pub added: Option<(Commit, Vec<PathBuf>)>,
+  pub not_in_base: Vec<PathBuf>,
+  pub not_file: Vec<PathBuf>,
+}
+
+
+// either:
+// 1) no commit => added is empty
+// 2) commit => added is non-empty
+//
+
+/// Add files to a remote workspace while preserving their relative paths within the repository.
+///
+/// Unlike `add`, which places files into a flat destination directory, this function uses each
+/// file's path relative to the supplied base directory as the staging path for the server's
+/// remote repository. Files are added into a temporary workspace which is then comitted.
+///
+/// The intended use case is to import a large pre-existing file-directory structure into a
+/// repository.
 pub async fn add_files(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
-    local_repo: &LocalRepository,
+    base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-) -> Result<(), OxenError> {
+) -> Result<AddResult, OxenError> {
+    let base_dir = std::fs::canonicalize(base_dir)?;
+    if !base_dir.is_dir() {
+        return Err(OxenError::basic_str(format!("base_dir is not a directory: {}", base_dir.display())));
+    }
+
     if paths.is_empty() {
-        return Ok(());
+      return Ok(AddResult{added: None, not_in_base: Vec::with_capacity(0), not_file: Vec::with_capacity(0)})
     }
 
     let workspace_id = workspace_id.as_ref();
-    let repo_path = &local_repo.path;
 
-    // Resolve paths and filter out non-existent / non-file entries
-    let resolved_paths: Vec<PathBuf> = paths
-        .into_iter()
-        .map(|p| {
-            if p.is_absolute() {
-                p
-            } else {
-                repo_path.join(&p)
-            }
-        })
-        .filter(|p| {
-            if !p.exists() {
-                log::warn!("add_files: path does not exist, skipping: {p:?}");
-                false
-            } else if !p.is_file() {
-                log::warn!("add_files: path is not a file, skipping: {p:?}");
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    if resolved_paths.is_empty() {
-        return Ok(());
+    struct Adding {
+      resolved_paths: Vec<PathBuf>,
+      not_in_base: Vec<PathBuf>,
+      not_file: Vec<PathBuf>,
     }
 
-    let local_repo_opt = Some(local_repo.clone());
+    // Resolve paths and filter out entries that don't exist/aren't files in the base directory
+    let Adding{resolved_paths, not_in_base, not_file} = paths.into_iter()
+      .fold(Adding{resolved_paths: Vec::new(), not_in_base: Vec::new(), not_file: Vec::new()}, |mut acc, p| {
+        let p = if p.is_absolute() { p } else { base_dir.join(&p) };
+
+        if !p.is_file() {
+          acc.not_file.push(p);
+        } else if !p.starts_with(base_dir) {
+          acc.not_in_base.push(p);
+        } else {
+          acc.resolved_paths.push(p);
+        }
+        acc
+      });
+
+    if resolved_paths.is_empty() {
+        return Ok(AddResult{added: None, not_in_base, not_file})
+    }
+
     match upload_multiple_files(
         remote_repo,
         workspace_id,
-        "",
+        "", // Each path has the right relative directory components, so it's crucial that they're
+        //    "placed" at the repo root since the server API expects to add files into a directory
+        //    for a single API call.
         resolved_paths.clone(),
-        &local_repo_opt,
-        true,
+        &None, // Base dir isn't necessarily a local repository
+        Some(base_dir),
     )
     .await
     {
@@ -158,7 +177,7 @@ pub async fn add_files(
         }
     }
 
-    Ok(())
+    Ok(Added::)
 }
 
 pub async fn add_bytes(
@@ -228,13 +247,15 @@ pub async fn upload_bytes_as_file(
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
 }
 
+
+/// TODO: this needs to return the Commit !
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-    preserve_paths: bool,
+    preserve_path_base_dir: Option<PathBuf>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -243,19 +264,40 @@ async fn upload_multiple_files(
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
-    // Separate files by size, storing the file size with each path
-    let mut large_files = Vec::new();
-    let mut small_files = Vec::new();
-    let mut small_files_size = 0;
-
     let repo_path = if let Some(local_repo) = local_repo {
         local_repo.path.clone()
     } else {
         PathBuf::new()
     };
 
+    let large_file_threshold = chunk_size();
+
+
+
+
+    let to_staging_path = {
+      let local_repo = local_repo.clone();
+      let preserve_path_base_dir = preserve_path_base_dir.clone();
+      move |path: PathBuf| -> PathBuf {
+        match preserve_path_base_dir {
+          Some(base_dir) => {
+            let relative_path = util::fs::path_relative_to_dir(&path, &base_dir)
+            base_dir.join(&relative_path)
+          },
+          None => path,
+        }
+      }
+    };
+
+    // Separate files by size, storing the file size with each path
+    let mut large_files = Vec::new();
+    let mut large_files_size = 0;
+    let mut small_files = Vec::new();
+    let mut small_files_size = 0;
+
     // Group files by size
     for path in paths {
+
         // Adjustment for remote-mode repos
         let path = if local_repo.is_some() {
             let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
@@ -272,9 +314,10 @@ async fn upload_multiple_files(
         match path.metadata() {
             Ok(metadata) => {
                 let file_size = metadata.len();
-                if file_size > chunk_size() {
+                if file_size > large_file_threshold {
                     // Large file goes directly to parallel upload
                     large_files.push((path, file_size));
+                    large_files_size += file_size;
                 } else {
                     // Small file goes to batch
                     small_files.push((path, file_size));
@@ -288,12 +331,11 @@ async fn upload_multiple_files(
         }
     }
 
-    let large_files_size = large_files.iter().map(|(_, size)| size).sum::<u64>();
     let total_size = large_files_size + small_files_size;
-
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
+
     // Process large files individually with parallel upload
-    for (path, _size) in large_files {
+    for (path, _) in large_files {
         let dst_dir = if preserve_paths {
             let rel = util::fs::path_relative_to_dir(&path, &repo_path)?;
             rel.parent().map(|p| p.to_path_buf()).unwrap_or_default()
