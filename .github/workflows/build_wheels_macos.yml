@@ -1,0 +1,67 @@
+name: 🍏 Build macOS Wheels
+
+on:
+  workflow_call:
+    inputs:
+      PYTHON_VERSIONS:
+        description: "Python versions to build"
+        required: true
+        type: string
+      CHECKOUT_REF:
+        description: "Git ref (SHA or branch) to checkout"
+        required: true
+        type: string
+      VERSION_OVERRIDE:
+        description: "Version string to set in pyproject.toml (e.g. 0.44.1.dev0)"
+        required: true
+        type: string
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: 10.13
+
+jobs:
+  build_wheels:
+    name: Build Python wheels
+    runs-on: macos-15-xlarge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.CHECKOUT_REF }}
+
+      - name: Patch version in pyproject.toml and Cargo.toml
+        run: |
+          bash ${{ github.workspace }}/scripts/patch_dev_version.sh "${{ inputs.VERSION_OVERRIDE }}"
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release-python"
+          workspaces: "oxen-python -> target"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build Python wheels
+        run: |
+          uv python install ${{ inputs.PYTHON_VERSIONS }}
+
+          cd ${{ github.workspace }}/oxen-python
+
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+
+          for version in ${{ inputs.PYTHON_VERSIONS }}; do
+            uvx maturin build --release --interpreter /Users/runner/.local/bin/python${version} --target aarch64-apple-darwin
+            uvx maturin build --release --interpreter /Users/runner/.local/bin/python${version} --target x86_64-apple-darwin
+          done
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos
+          path: ${{ github.workspace }}/oxen-python/target/wheels/*.whl
+          retention-days: 1
