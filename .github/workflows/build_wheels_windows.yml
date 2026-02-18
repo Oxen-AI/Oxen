@@ -1,4 +1,4 @@
-name: 🚀 Release Windows
+name: 🪟 Build Windows Wheels
 
 on:
   workflow_call:
@@ -6,7 +6,6 @@ on:
       ARCHITECTURE:
         description: "The architecture to build for"
         required: true
-        default: "x86_64"
         type: string
       AWS_ROLE:
         description: "AWS role to assume"
@@ -18,6 +17,14 @@ on:
         type: string
       PYTHON_VERSIONS:
         description: "Python versions to build"
+        required: true
+        type: string
+      CHECKOUT_REF:
+        description: "Git ref (SHA or branch) to checkout"
+        required: true
+        type: string
+      VERSION_OVERRIDE:
+        description: "Version string to set in pyproject.toml (e.g. 0.44.1.dev0)"
         required: true
         type: string
     secrets:
@@ -62,21 +69,45 @@ jobs:
               {"Key": "Name", "Value": "ec2-github-runner"}
             ]
 
-  release_windows:
-    name: Build Oxen CLI, Server, and Python wheels
+  build_wheels:
+    name: Build Python wheels
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.CHECKOUT_REF }}
 
-      - name: Create release directory
-        run: mkdir ${{ github.workspace }}\release
+      - name: Patch version in pyproject.toml and Cargo.toml
+        run: |
+          $pyprojectPath = "${{ github.workspace }}\oxen-python\pyproject.toml"
+          $content = Get-Content "$pyprojectPath" -Raw
+          $content = $content -replace '(?m)^version = ".*"', 'version = "${{ inputs.VERSION_OVERRIDE }}"'
+          Set-Content "$pyprojectPath" $content
+
+          $cargoVersion = "${{ inputs.VERSION_OVERRIDE }}" -replace '\.dev', '-dev.'
+          $cargoPath = "${{ github.workspace }}\oxen-python\Cargo.toml"
+          $cargoLines = Get-Content "$cargoPath"
+          $inPackage = $false
+          $patched = $false
+          $newLines = foreach ($line in $cargoLines) {
+              if ($line -match '^\[package\]') { $inPackage = $true }
+              elseif ($line -match '^\[') { $inPackage = $false }
+              if ($inPackage -and !$patched -and $line -match '^version = ".*"') {
+                  "version = `"$cargoVersion`""
+                  $patched = $true
+              } else { $line }
+          }
+          Set-Content "$cargoPath" $newLines
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install
+          choco install -y cmake llvm uv
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
@@ -85,11 +116,11 @@ jobs:
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Build oxen binaries
-        run: |
-          refreshenv
-          cd ${{ github.workspace }}\oxen-rust
-          cargo build --release
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release-python"
+          workspaces: "oxen-python -> target"
 
       - name: Build Python wheels
         run: |
@@ -100,34 +131,23 @@ jobs:
 
           $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
           foreach ($version in $versions) {
-              uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
+              $interpDir = Get-ChildItem "C:\Users\Administrator\AppData\Roaming\uv\python" -Directory -Filter "cpython-$version.*" | Select-Object -First 1
+              if (-not $interpDir) { throw "No uv python found for cpython-$version.*" }
+              uvx maturin build --release --interpreter "$($interpDir.FullName)\python.exe"
           }
 
-      - name: Create zip with oxen binaries
-        run: |
-          Compress-Archive -Path "${{ github.workspace }}\oxen-rust\target\release\oxen.exe" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
-          Compress-Archive -Path "${{ github.workspace }}\oxen-rust\target\release\oxen-server.exe" -DestinationPath "${{ github.workspace }}\release\oxen-server-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
-
-      - name: Create zip with Python wheels
-        run: |
-          Compress-Archive -Path ${{ github.workspace }}\oxen-python\target\wheels\* -DestinationPath ${{ github.workspace }}\release\oxen-wheels-windows-${{ inputs.ARCHITECTURE }}.zip
-
-      - name: Create zip with all artifacts
-        run: |
-          Compress-Archive -Path "${{ github.workspace }}\release\*" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip"
-
-      - name: Upload all artifacts
+      - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oxen-windows-release-${{ inputs.ARCHITECTURE }}.zip
-          path: ${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip
+          name: wheels-windows-${{ inputs.ARCHITECTURE }}
+          path: ${{ github.workspace }}\oxen-python\target\wheels\*.whl
           retention-days: 1
 
   stop-self-hosted-runner:
     name: Stop self-hosted EC2 runner
     needs:
       - start-self-hosted-runner
-      - release_windows
+      - build_wheels
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
