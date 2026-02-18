@@ -609,9 +609,11 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
     Ok(result)
 }
 
-pub async fn workspace_multipart_batch_upload_versions(
+pub(crate) async fn workspace_multipart_batch_upload_versions(
     remote_repo: &RemoteRepository,
-    local_repo: &Option<LocalRepository>,
+    // local_repo: &Option<LocalRepository>,
+    // repo_or_base_path: &Path,
+    repo_or_base_path:
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
     result: UploadResult,
@@ -741,12 +743,13 @@ pub async fn workspace_multipart_batch_upload_versions(
     Ok(result)
 }
 
-pub async fn workspace_multipart_batch_upload_parts_with_retry(
+pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
     form: reqwest::multipart::Form,
     files_to_retry: &mut Vec<FileWithHash>,
-    local_repo: &Option<LocalRepository>,
+    // local_repo: &Option<LocalRepository>,
+    repo_or_base_path: &Path,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("Beginning workspace multipart batch upload");
     let uri = ("/versions").to_string();
@@ -787,7 +790,8 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
 
         upload_result = match workspace_multipart_batch_upload_versions(
             remote_repo,
-            local_repo,
+            // local_repo,
+            repo_or_base_path,
             client.clone(),
             paths,
             upload_result,
