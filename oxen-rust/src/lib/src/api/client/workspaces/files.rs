@@ -2335,4 +2335,99 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let branch_name = "add-files-preserve-paths";
+            let branch = api::client::branches::create_from_branch(
+                &remote_repo,
+                branch_name,
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?;
+            assert_eq!(branch.name, branch_name);
+
+            let workspace_id = uuid::Uuid::new_v4().to_string();
+            let workspace =
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+            assert_eq!(workspace.id, workspace_id);
+
+            // Create new (uncommitted) files at nested paths inside the local repo
+            let sub_dir = local_repo.path.join("data").join("nested");
+            std::fs::create_dir_all(&sub_dir)?;
+            test::write_txt_file_to_path(sub_dir.join("file_a.txt"), "content a")?;
+            test::write_txt_file_to_path(sub_dir.join("file_b.txt"), "content b")?;
+
+            // Also create a file at the repo root
+            test::write_txt_file_to_path(local_repo.path.join("root_file.txt"), "root content")?;
+
+            // Build paths (mix of absolute and relative)
+            let paths = vec![
+                local_repo
+                    .path
+                    .join("data")
+                    .join("nested")
+                    .join("file_a.txt"),
+                local_repo
+                    .path
+                    .join("data")
+                    .join("nested")
+                    .join("file_b.txt"),
+                local_repo.path.join("root_file.txt"),
+            ];
+
+            // Call add_files — should preserve relative paths
+            let result = api::client::workspaces::files::add_files(
+                &remote_repo,
+                &workspace_id,
+                &local_repo,
+                paths,
+            )
+            .await;
+            assert!(result.is_ok(), "add_files failed: {result:?}");
+
+            // Verify all 3 files were staged
+            let page_num = constants::DEFAULT_PAGE_NUM;
+            let page_size = constants::DEFAULT_PAGE_SIZE;
+            let entries = api::client::workspaces::changes::list(
+                &remote_repo,
+                &workspace_id,
+                Path::new(""),
+                page_num,
+                page_size,
+            )
+            .await?;
+            assert_eq!(
+                entries.added_files.total_entries, 3,
+                "Expected 3 staged files, got {}",
+                entries.added_files.total_entries
+            );
+
+            // Collect the staged filenames and verify paths are preserved
+            let mut staged_paths: Vec<String> = entries
+                .added_files
+                .entries
+                .iter()
+                .map(|e| e.filename().to_string())
+                .collect();
+            staged_paths.sort();
+
+            assert!(
+                staged_paths.contains(&"data/nested/file_a.txt".to_string()),
+                "Expected 'data/nested/file_a.txt' in staged paths, got: {staged_paths:?}"
+            );
+            assert!(
+                staged_paths.contains(&"data/nested/file_b.txt".to_string()),
+                "Expected 'data/nested/file_b.txt' in staged paths, got: {staged_paths:?}"
+            );
+            assert!(
+                staged_paths.contains(&"root_file.txt".to_string()),
+                "Expected 'root_file.txt' in staged paths, got: {staged_paths:?}"
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
 }
