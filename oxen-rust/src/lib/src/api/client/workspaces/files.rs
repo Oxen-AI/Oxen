@@ -446,24 +446,15 @@ async fn parallel_batched_small_file_upload(
                                     util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
 
                                 // In remote-mode repos, skip adding files already present in tree
-                                // (but not when preserve_paths is set, since the caller
-                                // explicitly listed these files for upload)
-                                if !preserve_paths {
-                                    if let Some(ref head_commit) = head_commit_maybe_clone {
-                                        if let Some(file_node) =
-                                            repositories::tree::get_file_by_path(
-                                                &local_repo_clone.unwrap(),
-                                                head_commit,
-                                                &relative_path,
-                                            )?
-                                        {
-                                            if !util::fs::is_modified_from_node(&path, &file_node)?
-                                            {
-                                                log::debug!(
-                                                    "Skipping add on unmodified path {path:?}"
-                                                );
-                                                return Ok(None);
-                                            }
+                                if let Some(ref head_commit) = head_commit_maybe_clone {
+                                    if let Some(file_node) = repositories::tree::get_file_by_path(
+                                        &local_repo_clone.unwrap(),
+                                        head_commit,
+                                        &relative_path,
+                                    )? {
+                                        if !util::fs::is_modified_from_node(&path, &file_node)? {
+                                            log::debug!("Skipping add on unmodified path {path:?}");
+                                            return Ok(None);
                                         }
                                     }
                                 }
@@ -485,16 +476,19 @@ async fn parallel_batched_small_file_upload(
 
                                 let hash = hasher::hash_buffer(&file);
 
-                                let mut encoder =
-                                    GzEncoder::new(Vec::new(), Compression::default());
-                                std::io::copy(&mut file.as_slice(), &mut encoder).map_err(|e| {
-                                    OxenError::basic_str(format!(
-                                        "Failed to copy file '{path:?}' to encoder: {e}"
-                                    ))
-                                })?;
+                                let compressed_bytes: Vec<u8> = {
+                                    let mut encoder =
+                                        GzEncoder::new(Vec::new(), Compression::default());
 
-                                let file_part = {
-                                    let compressed_bytes = match encoder.finish() {
+                                    std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
+                                        |e| {
+                                            OxenError::basic_str(format!(
+                                                "Failed to copy file '{path:?}' to encoder: {e}"
+                                            ))
+                                        },
+                                    )?;
+
+                                    match encoder.finish() {
                                         Ok(bytes) => bytes,
                                         Err(e) => {
                                             // If compressing a file fails, cancel the operation
@@ -503,12 +497,12 @@ async fn parallel_batched_small_file_upload(
                                                 &hash, e
                                             )));
                                         }
-                                    };
-
-                                    reqwest::multipart::Part::bytes(compressed_bytes)
-                                        .file_name(hash.clone())
-                                        .mime_str("application/gzip")?
+                                    }
                                 };
+
+                                let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+                                    .file_name(hash.clone())
+                                    .mime_str("application/gzip")?;
 
                                 Ok(Some((file_part, hash, staging_path, size)))
                             })
