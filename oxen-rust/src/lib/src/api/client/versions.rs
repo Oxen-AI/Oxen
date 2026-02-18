@@ -1,9 +1,11 @@
 use crate::api;
 use crate::api::client;
+use crate::api::client::internal_types::LocalOrBase;
 use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
+use crate::opts::local_storage_opts;
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
     CleanCorruptedVersionsResponse, CompleteVersionUploadRequest, CompletedFileUpload,
@@ -576,7 +578,8 @@ pub async fn multipart_batch_upload(
 
 pub async fn workspace_multipart_batch_upload_versions_with_retry(
     remote_repo: &RemoteRepository,
-    local_repo: &Option<LocalRepository>,
+    // local_repo: &Option<LocalRepository>,
+    repo_or_base_path: Option<&LocalOrBase>,
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
 ) -> Result<UploadResult, OxenError> {
@@ -594,7 +597,7 @@ pub async fn workspace_multipart_batch_upload_versions_with_retry(
 
         result = workspace_multipart_batch_upload_versions(
             remote_repo,
-            local_repo,
+            repo_or_base_path.clone(),
             client.clone(),
             paths.clone(),
             result,
@@ -613,7 +616,7 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
     remote_repo: &RemoteRepository,
     // local_repo: &Option<LocalRepository>,
     // repo_or_base_path: &Path,
-    repo_or_base_path:
+    local_or_base: Option<&LocalOrBase>,
     client: Arc<reqwest::Client>,
     paths: Vec<PathBuf>,
     result: UploadResult,
@@ -641,6 +644,8 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
     } else {
         None
     };
+
+
 
     // Get repo path if provided
     let repo_path = if let Some(local_repo) = local_repo {
