@@ -12,8 +12,10 @@ use aws_sdk_s3::operation::head_bucket;
 use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
+use mockito::Request;
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
+use reqwest::Client;
 use sqlparser::keywords::LARGE;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -438,10 +440,13 @@ async fn parallel_batched_small_file_upload<'a>(
                             let num_entries = current_batch_parts.len();
 
                             // Build the multipart form
-                            let mut form = reqwest::multipart::Form::new();
-                            for part in current_batch_parts {
-                                form = form.part("file[]", part);
-                            }
+                            let form = {
+                              let mut form = reqwest::multipart::Form::new();
+                              for part in current_batch_parts {
+                                  form = form.part("file[]", part);
+                              }
+                              form
+                            };
 
                             let mut files_to_retry = files_to_stage.clone();
                             match api::client::versions::workspace_multipart_batch_upload_parts_with_retry(
@@ -639,6 +644,124 @@ fn create_upload_part(
         .mime_str("application/gzip")?;
 
     Ok(Some((file_part, hash, size)))
+}
+
+fn build_multipart_request(
+    current_batch_parts: Vec<reqwest::multipart::Part>,
+) -> reqwest::multipart::Form {
+    let mut form = reqwest::multipart::Form::new();
+    for part in current_batch_parts {
+        form = form.part("file[]", part);
+    }
+    form
+}
+
+struct UploadMultipartResult {
+    upload_err_files: Vec<ErrorFileInfo>,
+    files_to_retry: Vec<FileWithHash>,
+}
+
+impl UploadMultipartResult {
+    fn new(files_to_retry: Vec<FileWithHash>) -> Self {
+        Self {
+            upload_err_files: Vec::with_capacity(0),
+            files_to_retry,
+        }
+    }
+}
+
+async fn foo(
+    workspace_id: &str,
+    remote_repo: &RemoteRepository,
+    client: Arc<Client>,
+    processed_batch: ProcessedBatch,
+    local_repo: Option<&LocalRepository>,
+) -> Result<UploadMultipartResult, OxenError> {
+    let result: Result<(), OxenError> = async move {
+        let (current_batch_parts, files_to_stage, current_batch_size) = processed_batch;
+        let num_entries = current_batch_parts.len();
+
+        let form = build_multipart_request(current_batch_parts);
+
+        let mut result = UploadMultipartResult::new(files_to_stage.clone());
+
+        match api::client::versions::workspace_multipart_batch_upload_parts_with_retry(
+            remote_repo,
+            client.clone(),
+            form,
+            &mut result.files_to_retry,
+            local_repo,
+        )
+        .await
+        {
+            Ok(upload_err_files) => {
+                if !upload_err_files.is_empty() {
+                    result.upload_err_files = upload_err_files;
+                }
+
+                log::debug!(
+                    "Version file upload successful with {:?} err files. Beginning staging for {:?} files",
+                    upload_err_files.len(),
+                    files_to_stage.len()
+                );
+                match stage_files_to_workspace_with_retry(
+                    &remote_repo,
+                    client.clone(),
+                    workspace_id,
+                    Arc::new(files_to_stage),
+                    &directory_str,
+                    upload_err_files,
+                )
+                .await
+                {
+                    // If the staging operation returned successfully, record the err_files for re-upload
+                    Ok(staging_err_files) => {
+                        log::debug!("Successfully staged files to workspace with errs {:?}", staging_err_files.len());
+
+                        bar.add_bytes(current_batch_size);
+                        bar.add_files(num_entries as u64);
+
+                        if !staging_err_files.is_empty() {
+                            let mut err_files = err_files_clone.lock();
+                            err_files.extend(staging_err_files.clone());
+                        }
+                    }
+                    // If staging failed, cancel the operation
+                    Err(e) => {
+                        log::error!("failed to stage files to workspace: {e}");
+                        return Err(OxenError::basic_str(format!(
+                            "failed to stage to workspace: {e}"
+                        )));
+                    }
+                }
+
+                Ok(())
+            }
+            // If uploading the version files fails, cancel the operation
+            Err(e) => {
+                let mut err_files = err_files_clone.lock();
+                err_files.extend(
+                    files_to_stage
+                        .iter()
+                        .map(|f| ErrorFileInfo {
+                            hash: f.hash.clone(),
+                            path: Some(f.path.clone()),
+                            error: format!("{e:?}"),
+                        })
+                        .collect::<Vec<ErrorFileInfo>>()
+                );
+
+                log::error!("failed to upload version files to workspace: {e}");
+                Err(OxenError::basic_str(format!(
+                    "failed to upload version files to workspace: {e}"
+                )))
+            }
+        }
+    }.await;
+
+    if let Err(e) = result {
+        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+    }
 }
 
 // Retry stage_files_to_workspace until successful or retry limit breached

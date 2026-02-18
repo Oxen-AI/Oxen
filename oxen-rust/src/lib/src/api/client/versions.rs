@@ -746,7 +746,7 @@ pub async fn workspace_multipart_batch_upload_parts_with_retry(
     client: Arc<reqwest::Client>,
     form: reqwest::multipart::Form,
     files_to_retry: &mut Vec<FileWithHash>,
-    local_repo: &Option<LocalRepository>,
+    local_repo: Option<&LocalRepository>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("Beginning workspace multipart batch upload");
     let uri = ("/versions").to_string();
