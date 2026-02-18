@@ -8,6 +8,7 @@ use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
 
+use aws_sdk_s3::operation::head_bucket;
 use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
@@ -365,72 +366,42 @@ async fn parallel_batched_small_file_upload<'a>(
         total_size,
     ));
 
-    let producer_errors = Arc::clone(&errors);
-    // let maybe_local_repo = local_repo.clone();
-
     // Initiate the producer
-    let producer_handle = tokio::spawn(async move {
-        stream::iter(file_batches)
-            .for_each_concurrent(worker_count, |batch| {
-                let repo_path = repo_path.clone();
-                let head_commit_maybe = head_commit_maybe.clone();
+    let producer_handle = tokio::spawn({
+        let errors = errors.clone();
+        let tx = tx.clone();
+        let repo_path = repo_path.clone();
+        let head_commit_maybe = head_commit_maybe.clone();
 
-                let errors = Arc::clone(&producer_errors);
-                let tx_clone = tx.clone();
-
-                async move {
+        async move {
+            stream::iter(file_batches)
+                .for_each_concurrent(worker_count, |batch| {
                     let repo_path = repo_path.clone();
                     let head_commit_maybe = head_commit_maybe.clone();
+                    let errors = errors.clone();
+                    let tx = tx.clone();
 
-                    let result: Result<(), OxenError> = async move {
-                        let mut batch_size = 0;
-                        let mut batch_parts = Vec::new();
-                        let mut files_to_stage = Vec::new();
+                    async move {
+                        let batch_result = tokio::task::spawn_blocking({
+                            let repo_path = repo_path.clone();
+                            let head_commit_maybe = head_commit_maybe.clone();
+                            move || prepare_upload_batch(repo_path, head_commit_maybe, batch)
+                        })
+                        .await?;
 
-                        // Build the multiparts for each file
-                        log::debug!("Starting file processing loop with {:?} files", batch.len());
-                        for (local, size, remote) in batch {
-                            let Some((file_part, file_hash, file_path, file_size)) =
-                                tokio::task::spawn_blocking(move || {
-                                    create_upload_part(
-                                        &repo_path,
-                                        head_commit_maybe,
-                                        local,
-                                        size,
-                                        remote,
-                                    )
-                                })
-                                .await??
-                            else {
-                                continue;
-                            };
-
-                            batch_parts.push(file_part);
-                            files_to_stage.push(FileWithHash {
-                                hash: file_hash,
-                                path: file_path,
-                            });
-
-                            batch_size += file_size;
-                        }
-
-                        // Once all the files in the batch are processed,
-                        // Send them to the receiver for upload
-                        let processed_batch: ProcessedBatch =
-                            (batch_parts, files_to_stage, batch_size);
-                        match tx_clone.send(processed_batch).await {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+                        match batch_result {
+                            Ok(processed_batch) => match tx.send(processed_batch).await {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    errors.lock().push(OxenError::basic_str(format!("{e:?}")))
+                                }
+                            },
+                            Err(e) => errors.lock().push(OxenError::basic_str(format!("{e:?}"))),
                         }
                     }
-                    .await;
-
-                    if let Err(e) = result {
-                        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
-                    }
-                }
-            })
-            .await;
+                })
+                .await;
+        }
     });
 
     let client_clone = client.clone();
@@ -586,27 +557,60 @@ async fn parallel_batched_small_file_upload<'a>(
     Ok(())
 }
 
+fn prepare_upload_batch(
+    repo_path: PathBuf,
+    head_commit_maybe: Option<(Commit, &LocalRepository)>,
+    batch: PieceOfWork,
+) -> Result<ProcessedBatch, OxenError> {
+    let repo_path = repo_path.as_path();
+
+    let mut batch_parts = Vec::new();
+    let mut files_to_stage = Vec::new();
+    let mut batch_size = 0;
+
+    // Build the multiparts for each file
+    log::debug!("Starting file processing loop with {:?} files", batch.len());
+    for (local, size, remote) in batch {
+        let Some((file_part, file_hash, file_size)) =
+            create_upload_part(repo_path, &head_commit_maybe, local.as_path(), size)?
+        else {
+            continue;
+        };
+
+        batch_parts.push(file_part);
+        files_to_stage.push(FileWithHash {
+            hash: file_hash,
+            path: remote,
+        });
+
+        batch_size += file_size;
+    }
+
+    // Once all the files in the batch are processed,
+    // Send them to the receiver for upload
+    Ok((batch_parts, files_to_stage, batch_size))
+}
+
 fn create_upload_part(
-    repo_path: &'static Path,
-    head_commit_maybe: Option<(Commit, &'static LocalRepository)>,
-    local: PathBuf,
+    repo_path: &Path,
+    head_commit_maybe: &Option<(Commit, &LocalRepository)>,
+    local: &Path,
     size: u64,
-    remote: PathBuf,
-) -> Result<Option<(reqwest::multipart::Part, String, PathBuf, u64)>, OxenError> {
+) -> Result<Option<(reqwest::multipart::Part, String, u64)>, OxenError> {
     // In remote-mode repos, skip adding files already present in tree
-    if let Some((ref head_commit, local_repo)) = head_commit_maybe {
-        let relative_path = util::fs::path_relative_to_dir(&local, &repo_path)?;
+    if let Some((head_commit, local_repo)) = head_commit_maybe {
+        let relative_path = util::fs::path_relative_to_dir(local, repo_path)?;
         if let Some(file_node) =
-            repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
+            repositories::tree::get_file_by_path(*local_repo, head_commit, relative_path.as_path())?
         {
-            if !util::fs::is_modified_from_node(&local, &file_node)? {
+            if !util::fs::is_modified_from_node(local, &file_node)? {
                 log::debug!("Skipping add on unmodified path {local:?}");
                 return Ok(None);
             }
         }
     }
 
-    let file = std::fs::read(&local)
+    let file = std::fs::read(local)
         .map_err(|e| OxenError::basic_str(format!("Failed to read file '{local:?}': {e}")))?;
 
     let hash = hasher::hash_buffer(&file);
@@ -634,7 +638,7 @@ fn create_upload_part(
         .file_name(hash.clone())
         .mime_str("application/gzip")?;
 
-    Ok(Some((file_part, hash, remote, size)))
+    Ok(Some((file_part, hash, size)))
 }
 
 // Retry stage_files_to_workspace until successful or retry limit breached
