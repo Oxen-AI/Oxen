@@ -1,6 +1,6 @@
 use liboxen::api;
 use liboxen::config::UserConfig;
-use liboxen::model::NewCommitBody;
+use liboxen::model::{LocalRepository, NewCommitBody};
 use pyo3::prelude::*;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -154,6 +154,20 @@ impl PyWorkspace {
                 &dst,
                 src,
                 &None,
+            )
+            .await
+        })?;
+        Ok(())
+    }
+
+    fn add_files(&self, repo_dir: PathBuf, src: Vec<PathBuf>) -> Result<(), PyOxenError> {
+        let local_repo = LocalRepository::from_dir(&repo_dir)?;
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::workspaces::files::add_files(
+                &self.repo.repo,
+                &self.get_identifier(),
+                &local_repo,
+                src,
             )
             .await
         })?;
