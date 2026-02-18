@@ -68,15 +68,30 @@ pub async fn add(
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
-    match upload_multiple_files(
-        remote_repo,
-        workspace_id,
-        directory,
-        expanded_paths.clone(),
-        local_repo,
-        false,
-    )
-    .await
+
+    match match local_repo {
+        Some(local_repo) => {
+          let local = LocalOrBase::Local(local_repo.clone());
+          upload_multiple_files(
+              remote_repo,
+              workspace_id,
+              directory,
+              expanded_paths.clone(),
+              // local_repo,
+              Some(&local),
+              false,
+          ).await
+        },
+        None => upload_multiple_files(
+            remote_repo,
+            workspace_id,
+            directory,
+            expanded_paths.clone(),
+            // local_repo,
+            None,
+            false,
+        ).await
+      }
     {
         Ok(()) => {
             println!(
@@ -124,17 +139,40 @@ pub async fn add_files(
         return Err(OxenError::basic_str(format!("base_dir is not a directory: {}", base_dir.display())));
     }
 
+    // if paths.is_empty() {
+    //   return Ok(AddResult{added: None, not_in_base: Vec::with_capacity(0), not_file: Vec::with_capacity(0)})
+    // }
     if paths.is_empty() {
-      return Ok(AddResult{added: None, not_in_base: Vec::with_capacity(0), not_file: Vec::with_capacity(0)})
+      return Err(OxenError::basic_str(format!("No paths to add!")));
     }
 
     let workspace_id = workspace_id.as_ref();
 
-    struct Adding {
-      resolved_paths: Vec<PathBuf>,
-      not_in_base: Vec<PathBuf>,
-      not_file: Vec<PathBuf>,
-    }
+    // struct Adding {
+    //   resolved_paths: Vec<PathBuf>,
+    //   not_in_base: Vec<PathBuf>,
+    //   not_file: Vec<PathBuf>,
+    // }
+
+    // // Resolve paths and filter out entries that don't exist/aren't files in the base directory
+    // let Adding{resolved_paths, not_in_base, not_file} = paths.into_iter()
+    //   .fold(Adding{resolved_paths: Vec::new(), not_in_base: Vec::new(), not_file: Vec::new()}, |mut acc, p| {
+    //     let p = if p.is_absolute() { p } else { base_dir.join(&p) };
+
+    //     if !p.is_file() {
+    //       acc.not_file.push(p);
+    //     } else if !p.starts_with(base_dir) {
+    //       acc.not_in_base.push(p);
+    //     } else {
+    //       acc.resolved_paths.push(p);
+    //     }
+    //     acc
+    //   });
+    //
+    // if resolved_paths.is_empty() {
+    //     return Ok(AddResult{added: None, not_in_base, not_file})
+    // }
+
 
     // Resolve paths and filter out entries that don't exist/aren't files in the base directory
     let Adding{resolved_paths, not_in_base, not_file} = paths.into_iter()
@@ -152,8 +190,10 @@ pub async fn add_files(
       });
 
     if resolved_paths.is_empty() {
-        return Ok(AddResult{added: None, not_in_base, not_file})
+      return
     }
+
+    let base_dir_enum = LocalOrBase::Base(base_dir);
 
     match upload_multiple_files(
         remote_repo,
@@ -162,8 +202,10 @@ pub async fn add_files(
         //    "placed" at the repo root since the server API expects to add files into a directory
         //    for a single API call.
         resolved_paths.clone(),
-        &None, // Base dir isn't necessarily a local repository
-        Some(base_dir),
+        // &None, // Base dir isn't necessarily a local repository
+        // Some(base_dir),
+        Some(&base_dir_enum),
+        true
     )
     .await
     {
@@ -179,7 +221,7 @@ pub async fn add_files(
         }
     }
 
-    Ok(Added::)
+    Ok(())
 }
 
 pub async fn add_bytes(
@@ -255,10 +297,11 @@ async fn upload_multiple_files(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
-    preserve_paths: Option<&Path>,
+    // local_repo: &Option<LocalRepository>,
+    // preserve_paths: Option<&Path>,
+    local_or_base: Option<&LocalOrBase>,
     strict_errors: bool,
-    progress: Option<&Arc<PushProgress>>,
+    // progress: Option<&Arc<PushProgress>>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -355,9 +398,10 @@ async fn upload_multiple_files(
         directory,
         small_files,
         small_files_size,
-        local_repo,
-        preserve_paths,
-        progress.clone(),
+        local_or_base,
+        // local_repo,
+        // preserve_paths,
+        // progress.clone(),
     )
     .await?;
 
