@@ -187,6 +187,50 @@ class Workspace:
                 )
         self._workspace.add(paths, dst)
 
+    def add_files(
+        self,
+        repo_dir: str | Path,
+        paths: Iterable[str] | Iterable[Path],
+    ) -> None:
+        """
+        Add files to the workspace while preserving their relative paths
+        within the repository.
+
+        Unlike `add`, which places files into a flat destination directory,
+        this method uses each file's path relative to the local repo root as
+        its staging path on the server. For example, a file at
+        ``repo/data/images/cat.jpg`` will be staged as ``data/images/cat.jpg``.
+
+        Args:
+            repo_dir: `str` | `Path`
+                Path to the root of the local Oxen repository.
+            paths: `Iterable[str]` | `Iterable[Path]`
+                The file paths to add. Can be absolute or relative to the
+                repo root. Each path must point to an existing file.
+
+        Raises:
+            ValueError: If no valid file paths are provided.
+        """
+        repo_dir = Path(repo_dir)
+        if not repo_dir.is_dir():
+            raise ValueError(f"repo_dir is not a valid directory: {repo_dir}")
+
+        resolved: list[str] = []
+        for p in paths:
+            p = Path(p)
+            if not p.is_absolute():
+                p = repo_dir / p
+            if not p.is_file():
+                raise ValueError(f"Path is not a file: {p}")
+            resolved.append(str(p))
+
+        if len(resolved) == 0:
+            raise ValueError(
+                "No valid file paths provided: adding nothing to a workspace is invalid."
+            )
+
+        self._workspace.add_files(str(repo_dir), resolved)
+
     def add_bytes(self, src: str, buf: bytes, dst: str = "") -> None:
         """
         Adds from a memory buffer to the workspace
