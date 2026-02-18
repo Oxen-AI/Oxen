@@ -187,7 +187,7 @@ class Workspace:
                 )
         self._workspace.add(paths, dst)
 
-    def add_files(
+    def add_files_in_repository(
         self,
         repo_dir: str | Path,
         paths: Iterable[str] | Iterable[Path],
@@ -215,13 +215,22 @@ class Workspace:
         if not repo_dir.is_dir():
             raise ValueError(f"repo_dir is not a valid directory: {repo_dir}")
 
+        if not (repo_dir / ".oxen").is_dir():
+            raise ValueError(f"repo_dir is not a valid Oxen repository: {repo_dir}")
+
         resolved: list[str] = []
         for p in paths:
             p = Path(p)
             if not p.is_absolute():
                 p = repo_dir / p
+            else:
+                resolved_repo = repo_dir.resolve()
+                resolved_p = p.resolve()
+                if not resolved_p.is_relative_to(resolved_repo):
+                    raise ValueError(f"Absolute path is not under repo_dir: {p}")
             if not p.is_file():
                 raise ValueError(f"Path is not a file: {p}")
+
             resolved.append(str(p))
 
         if len(resolved) == 0:
