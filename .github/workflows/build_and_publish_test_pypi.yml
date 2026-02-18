@@ -1,0 +1,149 @@
+name: 🧪 Build & Publish to Test PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit SHA to build from"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+  AWS_REGION: us-west-1
+  PYTHON_VERSIONS: "3.13 3.12 3.11 3.10"
+
+jobs:
+  set_env:
+    name: Set env
+    runs-on: ubuntu-latest
+    outputs:
+      aws_role: ${{ steps.set-env.outputs.aws_role }}
+      aws_region: ${{ steps.set-env.outputs.aws_region }}
+      python_versions: ${{ steps.set-env.outputs.python_versions }}
+
+    steps:
+      - name: Set env
+        id: set-env
+        run: |
+          echo "aws_role=${{ env.AWS_ROLE }}" >> $GITHUB_OUTPUT
+          echo "aws_region=${{ env.AWS_REGION }}" >> $GITHUB_OUTPUT
+          echo "python_versions=${{ env.PYTHON_VERSIONS }}" >> $GITHUB_OUTPUT
+
+  compute_version:
+    name: Compute dev version
+    needs: set_env
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          sparse-checkout: oxen-python/pyproject.toml
+          sparse-checkout-cone-mode: false
+
+      - name: Compute next dev version
+        id: compute
+        run: |
+          BASE_VERSION=$(grep -m1 '^version = ' oxen-python/pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Base version: ${BASE_VERSION}"
+
+          ESCAPED=$(echo "$BASE_VERSION" | sed 's/\./\\./g')
+          NEXT_DEV=0
+          MAX_DEV=$(curl -sf "https://test.pypi.org/pypi/oxenai/json" \
+            | jq -r ".releases | keys[]" \
+            | grep -oP "^${ESCAPED}\.dev\K[0-9]+" \
+            | sort -n | tail -1) && [ -n "$MAX_DEV" ] && NEXT_DEV=$((MAX_DEV + 1))
+
+          VERSION="${BASE_VERSION}.dev${NEXT_DEV}"
+          echo "Computed version: ${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+  build_linux_x86_64:
+    name: Linux x86_64 wheels
+    needs: [set_env, compute_version]
+    uses: ./.github/workflows/build_wheels_linux.yml
+    with:
+      ARCHITECTURE: x86_64
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
+      PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      CHECKOUT_REF: ${{ inputs.commit }}
+      VERSION_OVERRIDE: ${{ needs.compute_version.outputs.version }}
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  build_linux_arm64:
+    name: Linux arm64 wheels
+    needs: [set_env, compute_version]
+    uses: ./.github/workflows/build_wheels_linux.yml
+    with:
+      ARCHITECTURE: arm64
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
+      PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      CHECKOUT_REF: ${{ inputs.commit }}
+      VERSION_OVERRIDE: ${{ needs.compute_version.outputs.version }}
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  build_macos:
+    name: macOS wheels
+    needs: [set_env, compute_version]
+    uses: ./.github/workflows/build_wheels_macos.yml
+    with:
+      PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      CHECKOUT_REF: ${{ inputs.commit }}
+      VERSION_OVERRIDE: ${{ needs.compute_version.outputs.version }}
+
+  build_windows:
+    name: Windows wheels
+    needs: [set_env, compute_version]
+    uses: ./.github/workflows/build_wheels_windows.yml
+    with:
+      ARCHITECTURE: x86_64
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
+      PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      CHECKOUT_REF: ${{ inputs.commit }}
+      VERSION_OVERRIDE: ${{ needs.compute_version.outputs.version }}
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  publish_wheels:
+    name: Publish to Test PyPI
+    runs-on: ubuntu-latest
+    needs:
+      - compute_version
+      - build_linux_x86_64
+      - build_linux_arm64
+      - build_macos
+      - build_windows
+    if: ${{ !cancelled() }}
+
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: wheels
+
+      - name: List wheels
+        run: ls -la wheels/
+
+      - name: Publish to Test PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --repository-url https://test.pypi.org/legacy/ --skip-existing wheels/*.whl
+          maturin-version: v1.8.5
