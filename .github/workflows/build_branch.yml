@@ -1,4 +1,4 @@
-name: Build branch for docker
+name: 🐳 Build branch for docker
 
 on:
   workflow_dispatch:
@@ -61,7 +61,7 @@ jobs:
         run: |
           echo "RELEASE_VERSION=nightly-$(date +'%Y-%m-%d-%H_%M_%S')" >> $GITHUB_ENV
 
-      - name: Build Docker Image
+      - name: Build oxen-server Docker Image (arm64)
         run: cd oxen-rust && docker build -t oxen/oxen-server --platform linux/arm64 .
 
       - name: Save Docker

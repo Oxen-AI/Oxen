@@ -1,10 +1,10 @@
-name: 🚀 Release Docker
+name: 🚀🐳 Release Docker
 
 on:
   workflow_call:
     inputs:
       ARCHITECTURE:
-        description: "The architecture to build for"
+        description: "The architecture to build for. Either 'x86_64' or 'arm64'"
         required: true
         default: "x86_64"
         type: string

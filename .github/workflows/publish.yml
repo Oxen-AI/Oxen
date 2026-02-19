@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   publish_wheels:
-    name: Publish wheels to PyPI
+    name: 🐍 Publish wheels to PyPI
     runs-on: ubuntu-latest
     steps:
       - uses: robinraju/release-downloader@v1.12
@@ -39,7 +39,7 @@ jobs:
 
   publish_liboxen_crate:
     # See https://crates.io/docs/trusted-publishing for details
-    name: Publish liboxen crate to crates.io
+    name: 🦀 Publish liboxen crate to crates.io
     runs-on: ubuntu-latest
     permissions:
       id-token: write     # Required for OIDC token exchange
@@ -56,7 +56,7 @@ jobs:
           cargo publish
 
   publish_homebrew_oxen:
-    name: Update oxen formula on homebrew-core
+    name: 🍺 Update oxen formula on homebrew-core
     runs-on: ubuntu-latest
     steps:
       - name: Update oxen formula on homebrew-core
@@ -75,7 +75,7 @@ jobs:
           COMMITTER_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
   publish_homebrew_oxen_server:
-    name: Update oxen-server formula on Oxen-AI/homebrew-oxen-server
+    name: 🍺 Update oxen-server formula on Oxen-AI/homebrew-oxen-server
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

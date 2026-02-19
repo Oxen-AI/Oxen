@@ -1,4 +1,4 @@
-name: 🐂 Continuous integration - Test Suite
+name: 🐂📝 Continuous integration - Test Suite
 
 on:
   workflow_call:

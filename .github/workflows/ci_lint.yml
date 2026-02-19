@@ -1,4 +1,4 @@
-name: 🐂 Continuous integration - Lint
+name: 🐂🔎 Continuous integration - Lint
 
 on:
   workflow_call:
