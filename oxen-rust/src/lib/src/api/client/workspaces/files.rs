@@ -3,7 +3,6 @@ use crate::api::client::internal_types::LocalOrBase;
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
-use crate::model::repository::local_repository;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
@@ -22,7 +21,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
-use futures::{stream, SinkExt};
+use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::util::hasher;
@@ -123,22 +122,23 @@ pub struct AddResult {
 //
 
 /// Resolve paths and error on entries that don't exist/aren't files in the base directory.
-fn resolve_paths_in_place(base_dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), OxenError> {
+#[allow(clippy::needless_range_loop)]
+fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), OxenError> {
     for i in 0..paths.len() {
-        if !(&paths[i]).is_absolute() {
+        if !paths[i].is_absolute() {
             paths[i] = base_dir.join(&paths[i]);
         }
 
-        if !(&paths[i]).is_file() {
+        if !paths[i].is_file() {
             return Err(OxenError::basic_str(format!(
                 "Cannot upload non-existant file: {}",
-                (&paths[i]).display()
+                paths[i].display()
             )));
-        } else if !(&paths[i]).starts_with(&base_dir) {
+        } else if !paths[i].starts_with(base_dir) {
             return Err(OxenError::basic_str(format!(
                 "Cannot upload path that doesn't exist in base directory ({}): {}",
                 base_dir.display(),
-                (&paths[i]).display()
+                paths[i].display()
             )));
         }
     }
@@ -168,7 +168,7 @@ pub async fn add_files(
     }
 
     if paths.is_empty() {
-        return Err(OxenError::basic_str(format!("No paths to add!")));
+        return Err(OxenError::basic_str("No paths to add!"));
     }
 
     let workspace_id = workspace_id.as_ref();
@@ -197,10 +197,7 @@ pub async fn add_files(
     .await
     {
         Ok(()) => {
-            println!(
-                "🐂 oxen added {} entries to workspace {}",
-                n_paths_uploaded, workspace_id
-            );
+            println!("🐂 oxen added {n_paths_uploaded} entries to workspace {workspace_id}");
         }
         Err(e) => {
             return Err(e);
@@ -355,7 +352,7 @@ async fn upload_multiple_files(
     for (path, _) in large_files {
         let dst_dir = match local_or_base {
             Some(LocalOrBase::Base(base_dir)) => {
-                let rel = util::fs::path_relative_to_dir(&path, &base_dir)?;
+                let rel = util::fs::path_relative_to_dir(&path, base_dir)?;
                 rel.parent().map(|p| p.to_path_buf()).unwrap_or_default()
             }
             Some(LocalOrBase::Local(_)) | None => directory.to_path_buf(),
@@ -495,27 +492,23 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let producer_errors = Arc::clone(&errors);
     // let maybe_local_repo = local_repo.clone();
 
-    let local_or_base_clone = local_or_base.cloned();
     let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
 
     // Initiate the producer
     let producer_handle = tokio::spawn(async move {
         stream::iter(file_batches)
             .for_each_concurrent(worker_count, {
-                let local_or_base_clone = local_or_base_clone.clone();
                 let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
                 move |batch| {
                     let base_or_repo_path_clone = base_or_repo_path.clone();
                     let head_commit_local_repo_maybe_clone =
                         head_commit_local_repo_maybe_clone.clone();
-                    let local_or_base_clone = local_or_base_clone.clone();
                     // let head_commit_maybe_clone = head_commit_maybe.clone();
                     // let local_repo_clone = maybe_local_repo.clone();
                     let errors = Arc::clone(&producer_errors);
                     let tx_clone = tx.clone();
 
                     async move {
-                        let local_or_base_clone = local_or_base_clone.clone();
                         let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                         let head_commit_local_repo_maybe_clone =
                             head_commit_local_repo_maybe_clone.clone();
@@ -536,7 +529,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 // let local_repo_clone = local_repo_clone.clone();
                                 // let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                                 // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
-                                let local_or_base_clone = local_or_base_clone.clone();
                                 let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                                 let head_commit_local_repo_maybe_clone =
                                     head_commit_local_repo_maybe_clone.clone();
