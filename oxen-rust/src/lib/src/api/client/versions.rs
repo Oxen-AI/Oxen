@@ -632,6 +632,7 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
     } else {
         result.err_files.iter().map(|f| f.hash.clone()).collect()
     };
+
     // generate a map of the file paths to hashes
     let path_to_hash: HashMap<PathBuf, String> = result
         .files_to_add
@@ -639,113 +640,103 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
         .map(|f| (f.path.clone(), f.hash.clone()))
         .collect();
 
-    let head_commit_maybe = if let Some(local_repo) = local_repo {
-        repositories::commits::head_commit_maybe(local_repo)?
-    } else {
-        None
+    let (repo_or_base_path, head_commit_local_repo_maybe) = match local_or_base {
+        Some(LocalOrBase::Local(local_repo)) => {
+          let head_commit_maybe = repositories::commits::head_commit_maybe(local_repo)?;
+          (local_repo.path.clone(), head_commit_maybe.map(|head_commit| (head_commit, local_repo)))
+        },
+        Some(LocalOrBase::Base(base_dir)) => (base_dir.clone(), None),
+        None => (PathBuf::new(), None),
     };
 
 
+    let form = {
+      let mut form = reqwest::multipart::Form::new();
 
-    // Get repo path if provided
-    let repo_path = if let Some(local_repo) = local_repo {
-        local_repo.path.clone()
-    } else {
-        PathBuf::new()
+      for path in paths {
+          let relative_path = util::fs::path_relative_to_dir(&path, &repo_or_base_path)?;
+          // Skip adding files already present in tree
+          if let Some((ref head_commit, local_repo)) = head_commit_local_repo_maybe {
+              if let Some(file_node) = repositories::tree::get_file_by_path(
+                  local_repo,
+                  head_commit,
+                  &relative_path,
+              )? {
+                  if !util::fs::is_modified_from_node(&path, &file_node)? {
+                      continue;
+                  }
+              }
+          }
+
+          // if it's not the first try
+          if !result.err_files.is_empty() {
+              // if the file doesn't have a hash it failed, so we need to retry it
+              if let Some(hash) = path_to_hash.get(&path) {
+                  // check if the file is in the retry list. if not, skip
+                  if !retry_hashes.contains(hash) {
+                      continue;
+                  }
+              }
+          }
+
+          let Some(_file_name) = path.file_name() else {
+              return Err(OxenError::basic_str(format!("Invalid file path: {path:?}")));
+          };
+
+          let file = std::fs::read(&path)
+              .map_err(|e| OxenError::basic_str(format!("Failed to read file '{path:?}': {e}")))?;
+
+          let hash = hasher::hash_buffer(&file);
+
+          // Workspaces expect just the file name, while remote-mode repos expect the relative path
+          // TODO: Refactor this into separate modules later, but for now, remote-mode repos will always have
+          //       a local_repo, whereas workspaces will have local_repo be None
+          files_to_add.push(FileWithHash {
+              hash: hash.clone(),
+              path: match local_or_base {
+                Some(_) => relative_path,
+                None => PathBuf::from(path.file_name().unwrap()),
+              },
+          });
+
+          // gzip the file
+          let compressed_bytes: Vec<u8> = {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            std::io::copy(&mut file.as_slice(), &mut encoder)?;
+            match encoder.finish() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    log::error!("Failed to finish gzip for file {}: {}", &hash, e);
+                    // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
+                    err_files.push(ErrorFileInfo {
+                        hash: hash.clone(),
+                        path: None,
+                        error: format!("Failed to finish gzip for file {}: {}", &hash, e),
+                    });
+                    continue;
+                }
+            }
+          };
+
+          let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+              .file_name(hash)
+              .mime_str("application/gzip")?;
+
+          form = form.part("file[]", file_part);
+      }
+
+      form
     };
 
-    let mut form = reqwest::multipart::Form::new();
-
-    for path in paths {
-        let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-        // Skip adding files already present in tree
-        if let Some(ref head_commit) = head_commit_maybe {
-            if let Some(file_node) = repositories::tree::get_file_by_path(
-                &local_repo.clone().unwrap(),
-                head_commit,
-                &relative_path,
-            )? {
-                if !util::fs::is_modified_from_node(&path, &file_node)? {
-                    continue;
-                }
-            }
-        }
-
-        // if it's not the first try
-        if !result.err_files.is_empty() {
-            // if the file doesn't have a hash it failed, so we need to retry it
-            if let Some(hash) = path_to_hash.get(&path) {
-                // check if the file is in the retry list. if not, skip
-                if !retry_hashes.contains(hash) {
-                    continue;
-                }
-            }
-        }
-
-        let Some(_file_name) = path.file_name() else {
-            return Err(OxenError::basic_str(format!("Invalid file path: {path:?}")));
-        };
-
-        let file = std::fs::read(&path)
-            .map_err(|e| OxenError::basic_str(format!("Failed to read file '{path:?}': {e}")))?;
-
-        let hash = hasher::hash_buffer(&file);
-        let file_name = PathBuf::from(path.file_name().unwrap());
-
-        // Workspaces expect just the file name, while remote-mode repos expect the relative path
-        // TODO: Refactor this into separate modules later, but for now, remote-mode repos will always have
-        //       a local_repo, whereas workspaces will have local_repo be None
-        if local_repo.is_some() {
-            files_to_add.push(FileWithHash {
-                hash: hash.clone(),
-                path: relative_path,
-            });
-        } else {
-            files_to_add.push(FileWithHash {
-                hash: hash.clone(),
-                path: file_name,
-            });
-        }
-
-        // gzip the file
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        std::io::copy(&mut file.as_slice(), &mut encoder)?;
-        let compressed_bytes = match encoder.finish() {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                log::error!("Failed to finish gzip for file {}: {}", &hash, e);
-                // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
-                err_files.push(ErrorFileInfo {
-                    hash: hash.clone(),
-                    path: None,
-                    error: format!("Failed to finish gzip for file {}: {}", &hash, e),
-                });
-                continue;
-            }
-        };
-
-        let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
-            .file_name(hash)
-            .mime_str("application/gzip")?;
-
-        form = form.part("file[]", file_part);
-    }
-
-    let uri = ("/versions").to_string();
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
+    let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
     let response = client.post(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, response).await?;
+
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
-
     log::debug!("workspace_multipart_batch_upload got response: {response:?}");
-
     err_files.extend(response.err_files);
-    let result = UploadResult {
-        files_to_add,
-        err_files,
-    };
-    Ok(result)
+
+    Ok(UploadResult { files_to_add, err_files })
 }
 
 pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
@@ -754,7 +745,7 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     form: reqwest::multipart::Form,
     files_to_retry: &mut Vec<FileWithHash>,
     // local_repo: &Option<LocalRepository>,
-    repo_or_base_path: &Path,
+    local_or_base: Option<&LocalOrBase>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("Beginning workspace multipart batch upload");
     let uri = ("/versions").to_string();
@@ -796,7 +787,7 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
         upload_result = match workspace_multipart_batch_upload_versions(
             remote_repo,
             // local_repo,
-            repo_or_base_path,
+            local_or_base.clone(),
             client.clone(),
             paths,
             upload_result,
