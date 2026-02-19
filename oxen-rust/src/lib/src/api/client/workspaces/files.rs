@@ -2491,7 +2491,7 @@ mod tests {
             let result = api::client::workspaces::files::add_files(
                 &remote_repo,
                 &workspace_id,
-                &local_repo,
+                local_repo.path.as_path(),
                 paths,
             )
             .await;
