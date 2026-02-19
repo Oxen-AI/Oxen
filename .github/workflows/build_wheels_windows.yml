@@ -81,6 +81,7 @@ jobs:
           ref: ${{ inputs.CHECKOUT_REF }}
 
       - name: Patch version in pyproject.toml and Cargo.toml
+        shell: pwsh
         run: |
           $pyprojectPath = "${{ github.workspace }}\oxen-python\pyproject.toml"
           $content = Get-Content "$pyprojectPath" -Raw
@@ -102,12 +103,10 @@ jobs:
           }
           Set-Content "$cargoPath" $newLines
 
-      - name: Setup Rust Toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
       - name: Install dependencies
+        shell: pwsh
         run: |
-          choco install -y cmake llvm uv
+          choco install -y cmake llvm uv rustup.install
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
@@ -123,6 +122,7 @@ jobs:
           workspaces: "oxen-python -> target"
 
       - name: Build Python wheels
+        shell: pwsh
         run: |
           refreshenv
           uv python install ${{ inputs.PYTHON_VERSIONS }}
