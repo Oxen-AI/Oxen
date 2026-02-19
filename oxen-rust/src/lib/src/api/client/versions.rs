@@ -5,7 +5,6 @@ use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
-use crate::opts::local_storage_opts;
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
     CleanCorruptedVersionsResponse, CompleteVersionUploadRequest, CompletedFileUpload,
@@ -576,42 +575,6 @@ pub async fn multipart_batch_upload(
     Ok(err_files)
 }
 
-pub async fn workspace_multipart_batch_upload_versions_with_retry(
-    remote_repo: &RemoteRepository,
-    // local_repo: &Option<LocalRepository>,
-    repo_or_base_path: Option<&LocalOrBase>,
-    client: Arc<reqwest::Client>,
-    paths: Vec<PathBuf>,
-) -> Result<UploadResult, OxenError> {
-    let mut result: UploadResult = UploadResult {
-        files_to_add: vec![],
-        err_files: vec![],
-    };
-    let mut first_try = true;
-    let mut retry_count: usize = 0;
-    let max_retries = max_retries();
-
-    while (first_try || !result.err_files.is_empty()) && retry_count < max_retries {
-        first_try = false;
-        retry_count += 1;
-
-        result = workspace_multipart_batch_upload_versions(
-            remote_repo,
-            repo_or_base_path.clone(),
-            client.clone(),
-            paths.clone(),
-            result,
-        )
-        .await?;
-
-        if !result.err_files.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-            sleep(Duration::from_millis(wait_time as u64)).await;
-        }
-    }
-    Ok(result)
-}
-
 pub(crate) async fn workspace_multipart_batch_upload_versions(
     remote_repo: &RemoteRepository,
     // local_repo: &Option<LocalRepository>,
@@ -791,7 +754,7 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
         upload_result = match workspace_multipart_batch_upload_versions(
             remote_repo,
             // local_repo,
-            local_or_base.clone(),
+            local_or_base,
             client.clone(),
             paths,
             upload_result,
