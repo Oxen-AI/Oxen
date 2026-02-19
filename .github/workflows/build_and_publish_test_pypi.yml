@@ -130,7 +130,12 @@ jobs:
       - build_linux_arm64
       - build_macos
       - build_windows
-    if: ${{ !cancelled() }}
+    if: >-
+      !cancelled() &&
+      (needs.build_linux_x86_64.result == 'success' ||
+       needs.build_linux_arm64.result == 'success' ||
+       needs.build_macos.result == 'success' ||
+       needs.build_windows.result == 'success')
 
     steps:
       - name: Download all wheel artifacts
