@@ -114,7 +114,7 @@ echo ""
 echo "Uploading to Test PyPI..."
 MATURIN_PYPI_TOKEN="$TEST_PYPI_API_TOKEN" \
     maturin upload \
-        --repository-url https://test.pypi.org/legacy/ \
+        --repository-url=https://test.pypi.org/legacy/ \
         --skip-existing \
         "${WHEELS[@]}"
 

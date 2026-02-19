@@ -33,8 +33,9 @@ jobs:
         run: |
           bash ${{ github.workspace }}/scripts/patch_dev_version.sh "${{ inputs.VERSION_OVERRIDE }}"
 
-      - name: Setup Rust Toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
