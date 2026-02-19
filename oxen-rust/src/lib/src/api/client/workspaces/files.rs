@@ -120,6 +120,22 @@ pub struct AddResult {
 // 2) commit => added is non-empty
 //
 
+/// Resolve paths and error on entries that don't exist/aren't files in the base directory.
+fn resolve_paths_in_place(base_dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), OxenError>{
+  for i in 0..paths.len() {
+    if !(&paths[i]).is_absolute() {
+      paths[i] = base_dir.join(&paths[i]);
+    }
+
+    if !(&paths[i]).is_file() {
+      return Err(OxenError::basic_str(format!("Cannot upload non-existant file: {}", (&paths[i]).display())));
+    } else if !(&paths[i]).starts_with(&base_dir) {
+      return Err(OxenError::basic_str(format!("Cannot upload path that doesn't exist in base directory ({}): {}", base_dir.display(), (&paths[i]).display())));
+    }
+  }
+  Ok(())
+}
+
 /// Add files to a remote workspace while preserving their relative paths within the repository.
 ///
 /// Unlike `add`, which places files into a flat destination directory, this function uses each
@@ -133,75 +149,34 @@ pub async fn add_files(
     workspace_id: impl AsRef<str>,
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-) -> Result<AddResult, OxenError> {
+) -> Result<(), OxenError> {
     let base_dir = std::fs::canonicalize(base_dir)?;
     if !base_dir.is_dir() {
         return Err(OxenError::basic_str(format!("base_dir is not a directory: {}", base_dir.display())));
     }
 
-    // if paths.is_empty() {
-    //   return Ok(AddResult{added: None, not_in_base: Vec::with_capacity(0), not_file: Vec::with_capacity(0)})
-    // }
     if paths.is_empty() {
       return Err(OxenError::basic_str(format!("No paths to add!")));
     }
 
     let workspace_id = workspace_id.as_ref();
 
-    // struct Adding {
-    //   resolved_paths: Vec<PathBuf>,
-    //   not_in_base: Vec<PathBuf>,
-    //   not_file: Vec<PathBuf>,
-    // }
-
-    // // Resolve paths and filter out entries that don't exist/aren't files in the base directory
-    // let Adding{resolved_paths, not_in_base, not_file} = paths.into_iter()
-    //   .fold(Adding{resolved_paths: Vec::new(), not_in_base: Vec::new(), not_file: Vec::new()}, |mut acc, p| {
-    //     let p = if p.is_absolute() { p } else { base_dir.join(&p) };
-
-    //     if !p.is_file() {
-    //       acc.not_file.push(p);
-    //     } else if !p.starts_with(base_dir) {
-    //       acc.not_in_base.push(p);
-    //     } else {
-    //       acc.resolved_paths.push(p);
-    //     }
-    //     acc
-    //   });
-    //
-    // if resolved_paths.is_empty() {
-    //     return Ok(AddResult{added: None, not_in_base, not_file})
-    // }
-
-
-    // Resolve paths and filter out entries that don't exist/aren't files in the base directory
-    let Adding{resolved_paths, not_in_base, not_file} = paths.into_iter()
-      .fold(Adding{resolved_paths: Vec::new(), not_in_base: Vec::new(), not_file: Vec::new()}, |mut acc, p| {
-        let p = if p.is_absolute() { p } else { base_dir.join(&p) };
-
-        if !p.is_file() {
-          acc.not_file.push(p);
-        } else if !p.starts_with(base_dir) {
-          acc.not_in_base.push(p);
-        } else {
-          acc.resolved_paths.push(p);
-        }
-        acc
-      });
-
-    if resolved_paths.is_empty() {
-      return
-    }
+    let paths: Vec<PathBuf> = {
+      let mut paths = paths;
+      resolve_paths_in_place(&base_dir, &mut paths)?;
+      paths
+    };
 
     let base_dir_enum = LocalOrBase::Base(base_dir);
 
+    let n_paths_uploaded = paths.len();
     match upload_multiple_files(
         remote_repo,
         workspace_id,
         "", // Each path has the right relative directory components, so it's crucial that they're
         //    "placed" at the repo root since the server API expects to add files into a directory
         //    for a single API call.
-        resolved_paths.clone(),
+        paths,
         // &None, // Base dir isn't necessarily a local repository
         // Some(base_dir),
         Some(&base_dir_enum),
@@ -212,7 +187,7 @@ pub async fn add_files(
         Ok(()) => {
             println!(
                 "🐂 oxen added {} entries to workspace {}",
-                resolved_paths.len(),
+                n_paths_uploaded,
                 workspace_id
             );
         }
