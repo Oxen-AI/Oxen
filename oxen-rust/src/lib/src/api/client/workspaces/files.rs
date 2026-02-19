@@ -125,17 +125,11 @@ pub struct AddResult {
 #[allow(clippy::needless_range_loop)]
 fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), OxenError> {
     for i in 0..paths.len() {
-
-        println!("\tinspecting (base_dir={}), path={}", base_dir.display(), paths[i].display());
-
         if !paths[i].is_absolute() {
             paths[i] = base_dir.join(&paths[i]);
         }
 
         paths[i] = std::path::absolute(&(paths[i]))?;
-
-        println!("\t\tpath is now: {}", paths[i].display());
-
 
         if !paths[i].is_file() {
             return Err(OxenError::basic_str(format!(
@@ -2457,105 +2451,152 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_files_preserves_paths() -> Result<(), OxenError> {
+    async fn test_add_files_preserves_paths_local_repo_relative_paths() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let branch_name = "add-files-preserve-paths";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
-
-            let workspace_id = uuid::Uuid::new_v4().to_string();
-            let workspace =
-                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
-
-            // Create new (uncommitted) files at nested paths inside the local repo
-            // let base_dir_guard = tempfile::tempdir()?;
-            // let base_dir = base_dir_guard.path().to_path_buf();
-            let base_dir = local_repo.path.clone();
-            let sub_dir_1 = base_dir.join("data_being_added");
-            let sub_dir_2 = sub_dir_1.join("nested");
-            std::fs::create_dir_all(&sub_dir_2)?;
-
-            let file_a = sub_dir_2.join("file_a.txt");
-            let file_b = sub_dir_2.join("file_b.txt");
-            let file_c = sub_dir_1.join("file_c.txt");
-            test::write_txt_file_to_path(&file_a, "content a")?;
-            test::write_txt_file_to_path(&file_b, "content b")?;
-            test::write_txt_file_to_path(&file_c, "contents c")?;
-
-            // Also create a file at the repo root
-            let file_root = base_dir.join("root_file.txt");
-            test::write_txt_file_to_path(&file_root, "root content")?;
-
-            // Build paths (mix of absolute and relative)
-            let paths = vec![file_a, file_b, file_c, file_root];
-            println!("\n\n\n\n");
-            println!("base dir path:\n{}\n", base_dir.display());
-            for p in paths.iter() {
-              println!("ADDING: {}", p.display());
-            }
-            println!("\n\n\n\n");
-
-            // Call add_files — should preserve relative paths
-            let result = api::client::workspaces::files::add_files(
-                &remote_repo,
-                &workspace_id,
-                base_dir.as_path(),
-                paths,
-            )
-            .await;
-            assert!(result.is_ok(), "add_files failed: {result:?}");
-
-            // Verify all 4 files were staged
-            let page_num = constants::DEFAULT_PAGE_NUM;
-            let page_size = constants::DEFAULT_PAGE_SIZE;
-            let entries = api::client::workspaces::changes::list(
-                &remote_repo,
-                &workspace_id,
-                Path::new(""),
-                page_num,
-                page_size,
-            )
-            .await?;
-            assert_eq!(
-                entries.added_files.total_entries, 4,
-                "Expected 4 staged files, got {}",
-                entries.added_files.total_entries
-            );
-
-            // Collect the staged filenames and verify paths are preserved
-            let mut staged_paths: Vec<String> = entries
-                .added_files
-                .entries
-                .iter()
-                .map(|e| e.filename().to_string())
-                .collect();
-            staged_paths.sort();
-
-            assert!(
-                staged_paths.contains(&"data_being_added/nested/file_a.txt".to_string()),
-                "Expected 'data_being_added/nested/file_a.txt' in staged paths, got: {staged_paths:?}"
-            );
-            assert!(
-                staged_paths.contains(&"data_being_added/nested/file_b.txt".to_string()),
-                "Expected 'data_being_added/nested/file_b.txt' in staged paths, got: {staged_paths:?}"
-            );
-            assert!(
-                staged_paths.contains(&"data_being_added/file_c.txt".to_string()),
-                "Expected 'data_being_added/file_c.txt' in staged paths, got: {staged_paths:?}"
-            );
-            assert!(
-                staged_paths.contains(&"root_file.txt".to_string()),
-                "Expected 'root_file.txt' in staged paths, got: {staged_paths:?}"
-            );
-
+            help_test_add_files_preserve_path(&remote_repo, &local_repo.path, true).await?;
             Ok(remote_repo)
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_local_repo_absolute_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            help_test_add_files_preserve_path(
+                &remote_repo,
+                &std::path::absolute(local_repo.path).unwrap(),
+                false,
+            )
+            .await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_tempdir_relative_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+            let base_dir_guard = tempfile::tempdir()?;
+            let base_dir = base_dir_guard.path().to_path_buf();
+            help_test_add_files_preserve_path(&remote_repo, &base_dir, true).await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_tempdir_absolute_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+            let base_dir_guard = tempfile::tempdir()?;
+            let base_dir = base_dir_guard.path().to_path_buf();
+            help_test_add_files_preserve_path(&remote_repo, &base_dir, false).await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    async fn help_test_add_files_preserve_path(
+        remote_repo: &RemoteRepository,
+        base_dir: &Path,
+        use_relative_paths: bool,
+    ) -> Result<(), OxenError> {
+        let branch_name = "add-files-preserve-paths";
+        let branch = api::client::branches::create_from_branch(
+            &remote_repo,
+            branch_name,
+            DEFAULT_BRANCH_NAME,
+        )
+        .await?;
+        assert_eq!(branch.name, branch_name);
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace =
+            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+        assert_eq!(workspace.id, workspace_id);
+
+        let sub_dir_1 = base_dir.join("data_being_added");
+        let sub_dir_2 = sub_dir_1.join("nested");
+        std::fs::create_dir_all(&sub_dir_2)?;
+
+        let file_a = sub_dir_2.join("file_a.txt");
+        let file_b = sub_dir_2.join("file_b.txt");
+        let file_c = sub_dir_1.join("file_c.txt");
+        let file_root = base_dir.join("root_file.txt");
+
+        test::write_txt_file_to_path(&file_a, "content a")?;
+        test::write_txt_file_to_path(&file_b, "content b")?;
+        test::write_txt_file_to_path(&file_c, "contents c")?;
+
+        // Also create a file at the repo root
+        test::write_txt_file_to_path(&file_root, "root content")?;
+
+        // Build paths (mix of absolute and relative)
+        // let paths = vec![file_a, file_b, file_c, file_root];
+
+        let paths: Vec<PathBuf> = {
+            let paths = vec![file_a, file_b, file_c, file_root];
+            if use_relative_paths {
+                paths
+                    .into_iter()
+                    .map(|p| p.strip_prefix(&base_dir).unwrap().to_path_buf())
+                    .collect()
+            } else {
+                paths
+                    .into_iter()
+                    .map(|p| std::path::absolute(p).unwrap())
+                    .collect()
+            }
+        };
+
+        // Call add_files — should preserve relative paths
+        let result =
+            api::client::workspaces::files::add_files(&remote_repo, &workspace_id, base_dir, paths)
+                .await;
+        assert!(result.is_ok(), "add_files failed: {result:?}");
+
+        // Verify all 4 files were staged
+        let page_num = constants::DEFAULT_PAGE_NUM;
+        let page_size = constants::DEFAULT_PAGE_SIZE;
+        let entries = api::client::workspaces::changes::list(
+            &remote_repo,
+            &workspace_id,
+            Path::new(""),
+            page_num,
+            page_size,
+        )
+        .await?;
+        assert_eq!(
+            entries.added_files.total_entries, 4,
+            "Expected 4 staged files, got {}",
+            entries.added_files.total_entries
+        );
+
+        // Collect the staged filenames and verify paths are preserved
+        let mut staged_paths: Vec<String> = entries
+            .added_files
+            .entries
+            .iter()
+            .map(|e| e.filename().to_string())
+            .collect();
+        staged_paths.sort();
+
+        assert!(
+            staged_paths.contains(&"data_being_added/nested/file_a.txt".to_string()),
+            "Expected 'data_being_added/nested/file_a.txt' in staged paths, got: {staged_paths:?}"
+        );
+        assert!(
+            staged_paths.contains(&"data_being_added/nested/file_b.txt".to_string()),
+            "Expected 'data_being_added/nested/file_b.txt' in staged paths, got: {staged_paths:?}"
+        );
+        assert!(
+            staged_paths.contains(&"data_being_added/file_c.txt".to_string()),
+            "Expected 'data_being_added/file_c.txt' in staged paths, got: {staged_paths:?}"
+        );
+        assert!(
+            staged_paths.contains(&"root_file.txt".to_string()),
+            "Expected 'root_file.txt' in staged paths, got: {staged_paths:?}"
+        );
+
+        Ok(())
     }
 }
