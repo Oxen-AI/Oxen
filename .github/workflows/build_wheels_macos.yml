@@ -19,6 +19,10 @@ on:
 env:
   MACOSX_DEPLOYMENT_TARGET: 10.13
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   build_wheels:
     name: Build Python wheels
