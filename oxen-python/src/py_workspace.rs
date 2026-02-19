@@ -1,6 +1,6 @@
 use liboxen::api;
 use liboxen::config::UserConfig;
-use liboxen::model::{LocalRepository, NewCommitBody};
+use liboxen::model::NewCommitBody;
 use pyo3::prelude::*;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -165,7 +165,7 @@ impl PyWorkspace {
             api::client::workspaces::files::add_files(
                 &self.repo.repo,
                 &self.get_identifier(),
-                &None,
+                base_dir,
                 src,
             )
             .await
