@@ -1,4 +1,4 @@
-name: 🪟 Build Windows Wheels
+name: 🧪🪟 Build Windows Wheels
 
 on:
   workflow_call:

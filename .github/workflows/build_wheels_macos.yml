@@ -1,4 +1,4 @@
-name: 🍏 Build macOS Wheels
+name: 🧪🍏 Build macOS Wheels
 
 on:
   workflow_call:

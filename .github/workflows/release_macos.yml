@@ -1,4 +1,4 @@
-name: 🚀 Release MacOS
+name: 🚀🍏 Release MacOS
 
 on:
   workflow_call:
