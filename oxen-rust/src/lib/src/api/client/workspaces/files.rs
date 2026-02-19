@@ -2464,28 +2464,19 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             // Create new (uncommitted) files at nested paths inside the local repo
-            let sub_dir = local_repo.path.join("data").join("nested");
+            let sub_dir = local_repo.path.join("data_being_added").join("nested");
             std::fs::create_dir_all(&sub_dir)?;
-            test::write_txt_file_to_path(sub_dir.join("file_a.txt"), "content a")?;
-            test::write_txt_file_to_path(sub_dir.join("file_b.txt"), "content b")?;
+            let file_a = sub_dir.join("file_a.txt");
+            let file_b = sub_dir.join("file_b.txt");
+            test::write_txt_file_to_path(&file_a, "content a")?;
+            test::write_txt_file_to_path(&file_b, "content b")?;
 
             // Also create a file at the repo root
-            test::write_txt_file_to_path(local_repo.path.join("root_file.txt"), "root content")?;
+            let file_root = local_repo.path.join("root_file.txt");
+            test::write_txt_file_to_path(&file_root, "root content")?;
 
             // Build paths (mix of absolute and relative)
-            let paths = vec![
-                local_repo
-                    .path
-                    .join("data")
-                    .join("nested")
-                    .join("file_a.txt"),
-                local_repo
-                    .path
-                    .join("data")
-                    .join("nested")
-                    .join("file_b.txt"),
-                local_repo.path.join("root_file.txt"),
-            ];
+            let paths = vec![file_a, file_b, file_root];
 
             // Call add_files — should preserve relative paths
             let result = api::client::workspaces::files::add_files(
