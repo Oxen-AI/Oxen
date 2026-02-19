@@ -69,6 +69,28 @@ def test_workspace_add_many(celeba_remote_repo_one_image_pushed, shared_datadir)
     )
 
 
+def test_workspace_add_files_preserve_paths(celeba_remote_repo_one_image_pushed, shared_datadir):
+    _, remote_repo = celeba_remote_repo_one_image_pushed
+    workspace = Workspace(remote_repo, "main", "test-workspace")
+
+    shared_datadir = Path(shared_datadir)
+    image_paths: list[Path] = [
+        shared_datadir / "CelebA" / "images" / f"{i}.jpg" for i in [1, 2, 3]
+    ]
+
+    # force it to actually work on an Iterable[str]
+    workspace.add_files(shared_datadir, image_paths)
+
+    status = workspace.status()
+    added_files = status.added_files()
+
+    assert len(added_files) == 3
+    assert sorted(added_files) == sorted(
+        [
+            'CelebA/images/1.jpg', 'CelebA/images/2.jpg', 'CelebA/images/3.jpg'
+        ]
+    )
+
 def test_workspace_add_invalid_path(tmp_path, celeba_remote_repo_one_image_pushed):
     _, remote_repo = celeba_remote_repo_one_image_pushed
     workspace = Workspace(remote_repo, "main", "test-workspace")
