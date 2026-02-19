@@ -61,8 +61,23 @@ jobs:
         run: |
           echo "RELEASE_VERSION=nightly-$(date +'%Y-%m-%d-%H_%M_%S')" >> $GITHUB_ENV
 
+      - name: Get build metadata
+        id: metadata
+        run: |
+          VERSION=$(grep -m1 '^version = ' ${{ github.workspace }}/oxen-rust/src/server/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "COMMIT=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
       - name: Build oxen-server Docker Image (arm64)
-        run: cd oxen-rust && docker build -t oxen/oxen-server --platform linux/arm64 .
+        run: |
+          cd oxen-rust
+          docker build \
+            --label "COMMIT=${{ steps.metadata.outputs.COMMIT }}" \
+            --label "VERSION=${{ steps.metadata.outputs.VERSION }}" \
+            --label "BUILD_DATE_UTC=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
+            --label "ARCHITECTURE=arm64" \
+            -t oxen/oxen-server --platform linux/arm64 .
 
       - name: Save Docker
         run: docker save oxen/oxen-server -o oxen-server-docker-arm64-${{ env.RELEASE_VERSION }}.tar
