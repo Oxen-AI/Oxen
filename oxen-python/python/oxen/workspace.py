@@ -231,7 +231,11 @@ class Workspace:
         #         "No valid file paths provided: adding nothing to a workspace is invalid."
         #     )
         base_dir = Path(base_dir).absolute()
-        resolved = [str(Path(p).absolute()) for p in paths]
+        resolved: list[str] = []
+        for p in paths:
+            p = Path(p)
+            abs_path = p if p.is_absolute() else (base_dir / p).absolute()
+            resolved.append(str(abs_path))
         self._workspace.add_files(str(base_dir), resolved)
 
     def add_bytes(self, src: str, buf: bytes, dst: str = "") -> None:
