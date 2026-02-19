@@ -9,6 +9,10 @@ permissions:
   contents: write
   pull-requests: write
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   publish_wheels:
     name: 🐍 Publish wheels to PyPI

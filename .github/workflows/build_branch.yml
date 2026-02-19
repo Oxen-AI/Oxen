@@ -16,6 +16,10 @@ permissions:
   id-token: write
   contents: write
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   start-self-hosted-runner:
     name: Start self-hosted EC2 runner

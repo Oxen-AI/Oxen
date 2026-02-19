@@ -21,6 +21,10 @@ env:
   AWS_REGION: us-west-1
   PYTHON_VERSIONS: "3.13 3.12 3.11 3.10"
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   set_env:
     name: Set env

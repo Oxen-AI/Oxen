@@ -3,6 +3,10 @@ name: 🐂🔎 Continuous integration - Lint
 on:
   workflow_call:
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   check:
     name: Cargo check, format, clippy + Ruff
