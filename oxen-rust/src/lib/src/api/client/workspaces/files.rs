@@ -2477,6 +2477,11 @@ mod tests {
 
             // Build paths (mix of absolute and relative)
             let paths = vec![file_a, file_b, file_root];
+            println!("\n\n\n\n");
+            for p in paths.iter() {
+              println!("ADDING: {}", p.display());
+            }
+            println!("\n\n\n\n");
 
             // Call add_files — should preserve relative paths
             let result = api::client::workspaces::files::add_files(
