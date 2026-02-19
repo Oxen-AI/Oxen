@@ -410,10 +410,11 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let (base_or_repo_path, head_commit_local_repo_maybe, keep_relative_paths) = match local_or_base {
       Some(LocalOrBase::Local(local_repository)) => {
         let head_commit_maybe = repositories::commits::head_commit_maybe(local_repository)?;
+        let head_commit_exists = head_commit_maybe.is_some();
         (
           local_repository.path.clone(),
           head_commit_maybe.map(|head_commit| (head_commit, local_repository)),
-          head_commit_maybe.is_some(),
+          head_commit_exists,
         )
       },
       Some(LocalOrBase::Base(base_dir)) => (base_dir.to_path_buf(), None, true),
@@ -482,143 +483,149 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
     let producer_errors = Arc::clone(&errors);
     // let maybe_local_repo = local_repo.clone();
-    let maybe_local_or_base = local_or_base.clone();
+
+    let local_or_base_clone = local_or_base.clone();
+    let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
 
     // Initiate the producer
     let producer_handle = tokio::spawn(async move {
         stream::iter(file_batches)
-            .for_each_concurrent(worker_count, |batch| {
-                let base_or_repo_path_clone = base_or_repo_path.clone();
-                // let head_commit_maybe_clone = head_commit_maybe.clone();
-                // let local_repo_clone = maybe_local_repo.clone();
-                let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
-                let local_or_base_clone = maybe_local_or_base.clone();
-                let errors = Arc::clone(&producer_errors);
-                let tx_clone = tx.clone();
+            .for_each_concurrent(worker_count, {
+              let local_or_base_clone = local_or_base_clone.clone();
+              let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
+              |batch| {
+                  let base_or_repo_path_clone = base_or_repo_path.clone();
+                  let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
+                  // let head_commit_maybe_clone = head_commit_maybe.clone();
+                  // let local_repo_clone = maybe_local_repo.clone();
+                  let errors = Arc::clone(&producer_errors);
+                  let tx_clone = tx.clone();
 
-                async move {
-                    let base_or_repo_path_clone = base_or_repo_path_clone.clone();
-                    let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
-                    // let local_repo_clone = local_repo_clone.clone();
-                    // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+                  async move {
+                      let local_or_base_clone = local_or_base_clone.clone();
+                      let base_or_repo_path_clone = base_or_repo_path_clone.clone();
+                      let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
+                      // let local_repo_clone = local_repo_clone.clone();
+                      // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
 
-                    let result: Result<(), OxenError> = async move {
-                        let mut batch_size = 0;
-                        let mut batch_parts = Vec::new();
-                        let mut files_to_stage = Vec::new();
+                      let result: Result<(), OxenError> = async move {
+                          let mut batch_size = 0;
+                          let mut batch_parts = Vec::new();
+                          let mut files_to_stage = Vec::new();
 
-                        // Build the multiparts for each file
-                        log::debug!("Starting file processing loop with {:?} files", batch.len());
-                        for (path, size) in batch {
-                            // let local_repo_clone = local_repo_clone.clone();
-                            // let base_or_repo_path_clone = base_or_repo_path_clone.clone();
-                            // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
-                            let local_or_base_clone = local_or_base_clone.clone();
-                            let base_or_repo_path_clone = base_or_repo_path_clone.clone();
-                            let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
+                          // Build the multiparts for each file
+                          log::debug!("Starting file processing loop with {:?} files", batch.len());
+                          for (path, size) in batch {
+                              // let local_repo_clone = local_repo_clone.clone();
+                              // let base_or_repo_path_clone = base_or_repo_path_clone.clone();
+                              // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+                              let local_or_base_clone = local_or_base.clone();
+                              let base_or_repo_path_clone = base_or_repo_path_clone.clone();
+                              let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
 
-                            let file_data_maybe: Option<(
-                                reqwest::multipart::Part,
-                                String,
-                                PathBuf,
-                                u64,
-                            )> = tokio::task::spawn_blocking(move || {
+                              let file_data_maybe: Option<(
+                                  reqwest::multipart::Part,
+                                  String,
+                                  PathBuf,
+                                  u64,
+                              )> = tokio::task::spawn_blocking(move || {
 
-                                let relative_path =
-                                    util::fs::path_relative_to_dir(&path, &base_or_repo_path_clone)?;
+                                  let relative_path =
+                                      util::fs::path_relative_to_dir(&path, &base_or_repo_path_clone)?;
 
-                                // In remote-mode repos, skip adding files already present in tree
-                                if let Some((ref head_commit, local_repository)) = head_commit_local_repo_maybe_clone {
-                                    if let Some(file_node) = repositories::tree::get_file_by_path(
-                                        local_repository,
-                                        head_commit,
-                                        &relative_path,
-                                    )? {
-                                        if !util::fs::is_modified_from_node(&path, &file_node)? {
-                                            log::debug!("Skipping add on unmodified path {path:?}");
-                                            return Ok(None);
-                                        }
-                                    }
-                                }
+                                  // In remote-mode repos, skip adding files already present in tree
+                                  if let Some((ref head_commit, local_repository)) = head_commit_local_repo_maybe_clone {
+                                      if let Some(file_node) = repositories::tree::get_file_by_path(
+                                          local_repository,
+                                          head_commit,
+                                          &relative_path,
+                                      )? {
+                                          if !util::fs::is_modified_from_node(&path, &file_node)? {
+                                              log::debug!("Skipping add on unmodified path {path:?}");
+                                              return Ok(None);
+                                          }
+                                      }
+                                  }
 
-                                // When preserve_paths is set or in remote-mode repos, use the
-                                // full relative path. Otherwise use just the filename.
-                                let staging_path = if keep_relative_paths {
-                                    relative_path
-                                } else {
-                                    PathBuf::from(relative_path.file_name().unwrap())
-                                };
+                                  // When preserve_paths is set or in remote-mode repos, use the
+                                  // full relative path. Otherwise use just the filename.
+                                  let staging_path = if keep_relative_paths {
+                                      relative_path
+                                  } else {
+                                      PathBuf::from(relative_path.file_name().unwrap())
+                                  };
 
-                                let file = std::fs::read(&path).map_err(|e| {
-                                    OxenError::basic_str(format!(
-                                        "Failed to read file '{path:?}': {e}"
-                                    ))
-                                })?;
+                                  let file = std::fs::read(&path).map_err(|e| {
+                                      OxenError::basic_str(format!(
+                                          "Failed to read file '{path:?}': {e}"
+                                      ))
+                                  })?;
 
-                                let hash = hasher::hash_buffer(&file);
+                                  let hash = hasher::hash_buffer(&file);
 
-                                let compressed_bytes: Vec<u8> = {
-                                    let mut encoder =
-                                        GzEncoder::new(Vec::new(), Compression::default());
+                                  let compressed_bytes: Vec<u8> = {
+                                      let mut encoder =
+                                          GzEncoder::new(Vec::new(), Compression::default());
 
-                                    std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
-                                        |e| {
-                                            OxenError::basic_str(format!(
-                                                "Failed to copy file '{path:?}' to encoder: {e}"
-                                            ))
-                                        },
-                                    )?;
+                                      std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
+                                          |e| {
+                                              OxenError::basic_str(format!(
+                                                  "Failed to copy file '{path:?}' to encoder: {e}"
+                                              ))
+                                          },
+                                      )?;
 
-                                    match encoder.finish() {
-                                        Ok(bytes) => bytes,
-                                        Err(e) => {
-                                            // If compressing a file fails, cancel the operation
-                                            return Err(OxenError::basic_str(format!(
-                                                "Failed to finish gzip for file {}: {}",
-                                                &hash, e
-                                            )));
-                                        }
-                                    }
-                                };
+                                      match encoder.finish() {
+                                          Ok(bytes) => bytes,
+                                          Err(e) => {
+                                              // If compressing a file fails, cancel the operation
+                                              return Err(OxenError::basic_str(format!(
+                                                  "Failed to finish gzip for file {}: {}",
+                                                  &hash, e
+                                              )));
+                                          }
+                                      }
+                                  };
 
-                                let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
-                                    .file_name(hash.clone())
-                                    .mime_str("application/gzip")?;
+                                  let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
+                                      .file_name(hash.clone())
+                                      .mime_str("application/gzip")?;
 
-                                Ok(Some((file_part, hash, staging_path, size)))
-                            })
-                            .await??;
+                                  Ok(Some((file_part, hash, staging_path, size)))
+                              })
+                              .await??;
 
-                            let (file_part, file_hash, file_path, file_size) = match file_data_maybe
-                            {
-                                Some(data) => data,
-                                None => continue,
-                            };
+                              let (file_part, file_hash, file_path, file_size) = match file_data_maybe
+                              {
+                                  Some(data) => data,
+                                  None => continue,
+                              };
 
-                            batch_parts.push(file_part);
-                            files_to_stage.push(FileWithHash {
-                                hash: file_hash,
-                                path: file_path,
-                            });
+                              batch_parts.push(file_part);
+                              files_to_stage.push(FileWithHash {
+                                  hash: file_hash,
+                                  path: file_path,
+                              });
 
-                            batch_size += file_size;
-                        }
+                              batch_size += file_size;
+                          }
 
-                        // Once all the files in the batch are processed,
-                        // Send them to the receiver for upload
-                        let processed_batch: ProcessedBatch =
-                          (batch_parts, files_to_stage, batch_size);
-                        match tx_clone.send(processed_batch).await {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
-                        }
-                    }
-                    .await;
+                          // Once all the files in the batch are processed,
+                          // Send them to the receiver for upload
+                          let processed_batch: ProcessedBatch =
+                            (batch_parts, files_to_stage, batch_size);
+                          match tx_clone.send(processed_batch).await {
+                              Ok(_) => Ok(()),
+                              Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+                          }
+                      }
+                      .await;
 
-                    if let Err(e) = result {
-                        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
-                    }
-                }
+                      if let Err(e) = result {
+                          errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                      }
+                  }
+              }
             })
             .await;
     });
