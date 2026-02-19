@@ -125,9 +125,17 @@ pub struct AddResult {
 #[allow(clippy::needless_range_loop)]
 fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), OxenError> {
     for i in 0..paths.len() {
+
+        println!("\tinspecting (base_dir={}), path={}", base_dir.display(), paths[i].display());
+
         if !paths[i].is_absolute() {
             paths[i] = base_dir.join(&paths[i]);
         }
+
+        paths[i] = std::path::absolute(&(paths[i]))?;
+
+        println!("\t\tpath is now: {}", paths[i].display());
+
 
         if !paths[i].is_file() {
             return Err(OxenError::basic_str(format!(
@@ -159,7 +167,9 @@ pub async fn add_files(
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
-    let base_dir = std::fs::canonicalize(base_dir)?;
+    // let base_dir = std::fs::canonicalize(base_dir)?;
+    let base_dir = std::path::absolute(base_dir)?;
+
     if !base_dir.is_dir() {
         return Err(OxenError::basic_str(format!(
             "base_dir is not a directory: {}",
@@ -2464,20 +2474,28 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             // Create new (uncommitted) files at nested paths inside the local repo
-            let sub_dir = local_repo.path.join("data_being_added").join("nested");
-            std::fs::create_dir_all(&sub_dir)?;
-            let file_a = sub_dir.join("file_a.txt");
-            let file_b = sub_dir.join("file_b.txt");
+            // let base_dir_guard = tempfile::tempdir()?;
+            // let base_dir = base_dir_guard.path().to_path_buf();
+            let base_dir = local_repo.path.clone();
+            let sub_dir_1 = base_dir.join("data_being_added");
+            let sub_dir_2 = sub_dir_1.join("nested");
+            std::fs::create_dir_all(&sub_dir_2)?;
+
+            let file_a = sub_dir_2.join("file_a.txt");
+            let file_b = sub_dir_2.join("file_b.txt");
+            let file_c = sub_dir_1.join("file_c.txt");
             test::write_txt_file_to_path(&file_a, "content a")?;
             test::write_txt_file_to_path(&file_b, "content b")?;
+            test::write_txt_file_to_path(&file_c, "contents c")?;
 
             // Also create a file at the repo root
-            let file_root = local_repo.path.join("root_file.txt");
+            let file_root = base_dir.join("root_file.txt");
             test::write_txt_file_to_path(&file_root, "root content")?;
 
             // Build paths (mix of absolute and relative)
-            let paths = vec![file_a, file_b, file_root];
+            let paths = vec![file_a, file_b, file_c, file_root];
             println!("\n\n\n\n");
+            println!("base dir path:\n{}\n", base_dir.display());
             for p in paths.iter() {
               println!("ADDING: {}", p.display());
             }
@@ -2487,13 +2505,13 @@ mod tests {
             let result = api::client::workspaces::files::add_files(
                 &remote_repo,
                 &workspace_id,
-                local_repo.path.as_path(),
+                base_dir.as_path(),
                 paths,
             )
             .await;
             assert!(result.is_ok(), "add_files failed: {result:?}");
 
-            // Verify all 3 files were staged
+            // Verify all 4 files were staged
             let page_num = constants::DEFAULT_PAGE_NUM;
             let page_size = constants::DEFAULT_PAGE_SIZE;
             let entries = api::client::workspaces::changes::list(
@@ -2505,8 +2523,8 @@ mod tests {
             )
             .await?;
             assert_eq!(
-                entries.added_files.total_entries, 3,
-                "Expected 3 staged files, got {}",
+                entries.added_files.total_entries, 4,
+                "Expected 4 staged files, got {}",
                 entries.added_files.total_entries
             );
 
@@ -2520,12 +2538,16 @@ mod tests {
             staged_paths.sort();
 
             assert!(
-                staged_paths.contains(&"data/nested/file_a.txt".to_string()),
-                "Expected 'data/nested/file_a.txt' in staged paths, got: {staged_paths:?}"
+                staged_paths.contains(&"data_being_added/nested/file_a.txt".to_string()),
+                "Expected 'data_being_added/nested/file_a.txt' in staged paths, got: {staged_paths:?}"
             );
             assert!(
-                staged_paths.contains(&"data/nested/file_b.txt".to_string()),
-                "Expected 'data/nested/file_b.txt' in staged paths, got: {staged_paths:?}"
+                staged_paths.contains(&"data_being_added/nested/file_b.txt".to_string()),
+                "Expected 'data_being_added/nested/file_b.txt' in staged paths, got: {staged_paths:?}"
+            );
+            assert!(
+                staged_paths.contains(&"data_being_added/file_c.txt".to_string()),
+                "Expected 'data_being_added/file_c.txt' in staged paths, got: {staged_paths:?}"
             );
             assert!(
                 staged_paths.contains(&"root_file.txt".to_string()),
