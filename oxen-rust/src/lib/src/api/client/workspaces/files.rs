@@ -493,7 +493,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
             .for_each_concurrent(worker_count, {
               let local_or_base_clone = local_or_base_clone.clone();
               let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
-              |batch| {
+              async move |batch| {
                   let base_or_repo_path_clone = base_or_repo_path.clone();
                   let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
                   // let head_commit_maybe_clone = head_commit_maybe.clone();
