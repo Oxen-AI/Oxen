@@ -154,5 +154,5 @@ jobs:
           MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
         with:
           command: upload
-          args: --repository-url https://test.pypi.org/legacy/ --skip-existing wheels/*.whl
+          args: --repository-url=https://test.pypi.org/legacy/ --skip-existing wheels/*.whl
           maturin-version: v1.8.5

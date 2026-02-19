@@ -73,6 +73,9 @@ jobs:
     name: Build Python wheels
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    defaults:
+      run:
+        shell: powershell
 
     steps:
       - name: Checkout
@@ -81,7 +84,6 @@ jobs:
           ref: ${{ inputs.CHECKOUT_REF }}
 
       - name: Patch version in pyproject.toml and Cargo.toml
-        shell: pwsh
         run: |
           $pyprojectPath = "${{ github.workspace }}\oxen-python\pyproject.toml"
           $content = Get-Content "$pyprojectPath" -Raw
@@ -104,7 +106,6 @@ jobs:
           Set-Content "$cargoPath" $newLines
 
       - name: Install dependencies
-        shell: pwsh
         run: |
           choco install -y cmake llvm uv rustup.install
           # Install vcpkg for FFmpeg development libraries
@@ -122,7 +123,6 @@ jobs:
           workspaces: "oxen-python -> target"
 
       - name: Build Python wheels
-        shell: pwsh
         run: |
           refreshenv
           uv python install ${{ inputs.PYTHON_VERSIONS }}
@@ -131,9 +131,7 @@ jobs:
 
           $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
           foreach ($version in $versions) {
-              $interpDir = Get-ChildItem "C:\Users\Administrator\AppData\Roaming\uv\python" -Directory -Filter "cpython-$version.*" | Select-Object -First 1
-              if (-not $interpDir) { throw "No uv python found for cpython-$version.*" }
-              uvx maturin build --release --interpreter "$($interpDir.FullName)\python.exe"
+              uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
           }
 
       - name: Upload wheel artifact
