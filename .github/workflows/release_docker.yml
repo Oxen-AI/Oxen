@@ -4,10 +4,13 @@ on:
   workflow_call:
     inputs:
       ARCHITECTURE:
-        description: "The architecture to build for. Either 'x86_64' or 'arm64'"
+        description: "The architecture to build for. Either 'amd64' (for x86_64) or 'arm64'"
         required: true
-        default: "x86_64"
-        type: string
+        default: "amd64"
+        type: choice
+        options:
+          - arm64
+          - amd64
       AWS_ROLE:
         description: "AWS role to assume"
         required: true
@@ -103,7 +106,8 @@ jobs:
             --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
             --label "org.opencontainers.image.architecture=${{ inputs.ARCHITECTURE }}" \
             --label "org.opencontainers.image.title=oxen-server" \
-            -t oxen/oxen-server .
+            -t oxen/oxen-server \
+            --platform linux/${{ inputs.ARCHITECTURE }} .
 
       - name: Save Docker
         run: docker save oxen/oxen-server -o oxen-server-docker-${{ inputs.ARCHITECTURE }}.tar
