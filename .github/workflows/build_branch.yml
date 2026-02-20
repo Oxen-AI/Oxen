@@ -6,6 +6,14 @@ on:
       branch:
         description: "Branch to build"
         required: true
+      ARCHITECTURE:
+        description: "The architecture to build for"
+        required: true
+        default: "arm64"
+        type: choice
+        options:
+          - arm64
+          - x86_64
 
 env:
   AWS_REGION: us-west-1
@@ -51,7 +59,7 @@ jobs:
               {"Key": "Name", "Value": "ec2-github-runner"}
             ]
 
-  release_docker_arm64:
+  release_docker:
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
 
@@ -73,32 +81,32 @@ jobs:
           echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
-      - name: Build oxen-server Docker Image (arm64)
+      - name: Build oxen-server Docker Image (${{ inputs.ARCHITECTURE }})
         run: |
           cd oxen-rust
           docker build \
             --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
             --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
             --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
-            --label "org.opencontainers.image.architecture=arm64 \
+            --label "org.opencontainers.image.architecture=${{ inputs.ARCHITECTURE }}" \
             --label "org.opencontainers.image.title=oxen-server" \
-            -t oxen/oxen-server --platform linux/arm64 .
+            -t oxen/oxen-server --platform linux/${{ inputs.ARCHITECTURE }} .
 
       - name: Save Docker
-        run: docker save oxen/oxen-server -o oxen-server-docker-arm64-${{ env.RELEASE_VERSION }}.tar
+        run: docker save oxen/oxen-server -o oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oxen-server-docker-arm64-${{ env.RELEASE_VERSION }}.tar
-          path: oxen-server-docker-arm64-${{ env.RELEASE_VERSION }}.tar
+          name: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
+          path: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
           retention-days: 1
 
   stop-self-hosted-runner:
     name: Stop self-hosted EC2 runner
     needs:
       - start-self-hosted-runner
-      - release_docker_arm64
+      - release_docker
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
