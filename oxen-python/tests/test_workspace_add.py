@@ -1,3 +1,4 @@
+from pytest_datadir.plugin import shared_datadir
 import os
 from pathlib import Path
 
@@ -68,17 +69,31 @@ def test_workspace_add_many(celeba_remote_repo_one_image_pushed, shared_datadir)
         ]
     )
 
-
-def test_workspace_add_files_preserve_paths(celeba_remote_repo_one_image_pushed, shared_datadir):
+def test_workspace_add_files_preserve_paths_absolute(celeba_remote_repo_one_image_pushed, shared_datadir):
     _, remote_repo = celeba_remote_repo_one_image_pushed
-    workspace = Workspace(remote_repo, "main", "test-workspace")
+    workspace = Workspace(remote_repo, "main", "test-workspace-abs")
+    _assert_ws_add_files(
+        Workspace(remote_repo, "main", "test-workspace-abs"),
+        Path(shared_datadir),
+        [f"CelebA/images/{i}.jpg" for i in [1, 2, 3]],
+        use_relative_paths=False,
+    )
 
-    shared_datadir = Path(shared_datadir)
-    image_paths: list[Path] = [
-        shared_datadir / "CelebA" / "images" / f"{i}.jpg" for i in [1, 2, 3]
-    ]
+def test_workspace_add_files_preserve_paths_relative(celeba_remote_repo_one_image_pushed, shared_datadir):
+    _, remote_repo = celeba_remote_repo_one_image_pushed
+    _assert_ws_add_files(
+        Workspace(remote_repo, "main", "test-workspace-rel"),
+        Path(shared_datadir),
+        [f"CelebA/images/{i}.jpg" for i in [1, 2, 3]],
+        use_relative_paths=True
+    )
 
-    # force it to actually work on an Iterable[str]
+def _assert_ws_add_files(workspace: Workspace, shared_datadir: Path, relative_image_paths: list[str], *, use_relative_paths: bool):
+    if use_relative_paths:
+        image_paths = relative_image_paths
+    else:
+        image_paths = [str(shared_datadir / path) for path in relative_image_paths]
+
     workspace.add_files(shared_datadir, image_paths)
 
     status = workspace.status()
@@ -87,9 +102,19 @@ def test_workspace_add_files_preserve_paths(celeba_remote_repo_one_image_pushed,
     assert len(added_files) == 3
     assert sorted(added_files) == sorted(
         [
-            'CelebA/images/1.jpg', 'CelebA/images/2.jpg', 'CelebA/images/3.jpg'
+            'CelebA/images/1.jpg',
+            'CelebA/images/2.jpg',
+            'CelebA/images/3.jpg',
         ]
     )
+
+def test_workspace_add_files_rejects_bad_paths(celeba_remote_repo_one_image_pushed, shared_datadir):
+    _, remote_repo = celeba_remote_repo_one_image_pushed
+    workspace = Workspace(remote_repo, "main", "test-ws")
+
+    invalid_paths= ["not_real", "not_here/or/there/nor/over/where", "oh_this_will_be_fun/not"]
+    with raises(ValueError):
+        workspace.add_files(shared_datadir, invalid_paths)
 
 def test_workspace_add_invalid_path(tmp_path, celeba_remote_repo_one_image_pushed):
     _, remote_repo = celeba_remote_repo_one_image_pushed
@@ -97,11 +122,7 @@ def test_workspace_add_invalid_path(tmp_path, celeba_remote_repo_one_image_pushe
 
     invalid_paths = [
         tmp_path / invalid
-        for invalid in (
-            "not_real",
-            "not_here",
-            "oh_this_will_be_fun",
-        )
+        for invalid in ("not_real","not_here","oh_this_will_be_fun",)
     ]
 
     # force it to actually work on an Iterable[Path]

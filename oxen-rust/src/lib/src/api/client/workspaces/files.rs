@@ -12,6 +12,7 @@ use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibility
 use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
+use indicatif::ProgressBar;
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
@@ -76,7 +77,6 @@ pub async fn add(
                 workspace_id,
                 directory,
                 expanded_paths.clone(),
-                // local_repo,
                 Some(&local),
                 false,
             )
@@ -88,7 +88,6 @@ pub async fn add(
                 workspace_id,
                 directory,
                 expanded_paths.clone(),
-                // local_repo,
                 None,
                 false,
             )
@@ -161,7 +160,6 @@ pub async fn add_files(
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
-    // let base_dir = std::fs::canonicalize(base_dir)?;
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
@@ -193,8 +191,6 @@ pub async fn add_files(
         //    "placed" at the repo root since the server API expects to add files into a directory
         //    for a single API call.
         paths,
-        // &None, // Base dir isn't necessarily a local repository
-        // Some(base_dir),
         Some(&base_dir_enum),
         true,
     )
@@ -283,11 +279,11 @@ async fn upload_multiple_files(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
+<<<<<<< HEAD
     // local_repo: &Option<LocalRepository>,
     // preserve_paths: Option<&Path>,
     local_or_base: Option<&LocalOrBase>,
     strict_errors: bool,
-    // progress: Option<&Arc<PushProgress>>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -369,7 +365,6 @@ async fn upload_multiple_files(
             Some(workspace_id.to_string()),
             None,
             None,
-            // progress.clone(),
         )
         .await
         {
@@ -386,9 +381,6 @@ async fn upload_multiple_files(
         small_files,
         small_files_size,
         local_or_base,
-        // local_repo,
-        // preserve_paths,
-        // progress.clone(),
     )
     .await?;
 
@@ -401,24 +393,12 @@ pub(crate) async fn parallel_batched_small_file_upload(
     directory: impl AsRef<Path>,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
-    // local_repo: &Option<LocalRepository>,
-    // preserve_paths: Option<&Path>,
     local_or_base: Option<&LocalOrBase>,
-    // progress: Option<&Arc<PushProgress>>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
     }
 
-    // let base_or_repo_path = match (local_repo, preserve_paths) {
-    //   (Some(_), Some(_)) => {
-    //     return Err(OxenError::basic_str("Cannot supply a local repository and a preserve paths base directory."));
-    //   },
-    //   (Some(local_repository), None) => local_repository.path.clone(),
-    //   (None, Some(base_dir)) => base_dir.to_path_buf(),
-    //   (None, None) => PathBuf::new(),
-    // };
-    let (base_or_repo_path, head_commit_local_repo_maybe, keep_relative_paths) = match local_or_base
     {
         Some(LocalOrBase::Local(local_repository)) => {
             let head_commit_maybe = repositories::commits::head_commit_maybe(local_repository)?;
@@ -471,14 +451,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
 
-    // let head_commit_maybe = if let Some(ref local_repo) = local_repo {
-    //     repositories::commits::head_commit_maybe(local_repo)?
-    // } else {
-    //     None
-    // };
-
-    // let keep_relative_paths = preserve_paths.is_some() || head_commit_maybe.is_some();
-
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
 
@@ -494,7 +466,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     ));
 
     let producer_errors = Arc::clone(&errors);
-    // let maybe_local_repo = local_repo.clone();
 
     let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
 
@@ -507,8 +478,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                     let base_or_repo_path_clone = base_or_repo_path.clone();
                     let head_commit_local_repo_maybe_clone =
                         head_commit_local_repo_maybe_clone.clone();
-                    // let head_commit_maybe_clone = head_commit_maybe.clone();
-                    // let local_repo_clone = maybe_local_repo.clone();
                     let errors = Arc::clone(&producer_errors);
                     let tx_clone = tx.clone();
 
@@ -516,8 +485,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                         let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                         let head_commit_local_repo_maybe_clone =
                             head_commit_local_repo_maybe_clone.clone();
-                        // let local_repo_clone = local_repo_clone.clone();
-                        // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
 
                         let result: Result<(), OxenError> = async move {
                             let mut batch_size = 0;
@@ -530,9 +497,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 batch.len()
                             );
                             for (path, size) in batch {
-                                // let local_repo_clone = local_repo_clone.clone();
-                                // let base_or_repo_path_clone = base_or_repo_path_clone.clone();
-                                // let head_commit_maybe_clone = head_commit_maybe_clone.clone();
                                 let base_or_repo_path_clone = base_or_repo_path_clone.clone();
                                 let head_commit_local_repo_maybe_clone =
                                     head_commit_local_repo_maybe_clone.clone();
@@ -657,7 +621,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let workspace_id_clone = workspace_id.clone();
     let remote_repo_clone = remote_repo.clone();
     let directory_clone = directory.clone();
-    // let local_repo_clone = local_repo.clone();
     let local_or_base_clone = local_or_base.cloned();
 
     let consumer_err_files = Arc::clone(&err_files);
@@ -676,7 +639,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                     let remote_repo_clone = remote_repo_clone.clone();
                     let workspace_id_clone = workspace_id_clone.clone();
                     let directory_str = directory_clone.clone();
-                    // let local_repo_clone = local_repo_clone.clone();
                     let local_or_base_clone = local_or_base_clone.clone();
 
                     let err_files_clone = Arc::clone(&consumer_err_files);
@@ -700,7 +662,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 Arc::clone(&client_clone),
                                 form,
                                 &mut files_to_retry,
-                                // &local_repo_clone.clone(),
                                 local_or_base_clone.as_ref(),
                             )
                             .await
@@ -2531,8 +2492,6 @@ mod tests {
         test::write_txt_file_to_path(&file_root, "root content")?;
 
         // Build paths (mix of absolute and relative)
-        // let paths = vec![file_a, file_b, file_c, file_root];
-
         let paths: Vec<PathBuf> = {
             let paths = vec![file_a, file_b, file_c, file_root];
             if use_relative_paths {

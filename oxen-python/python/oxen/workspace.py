@@ -215,21 +215,6 @@ class Workspace:
         Raises:
             ValueError: If no valid file paths are provided.
         """
-        # base_dir = Path(base_dir)
-        # base_dir = base_dir.absolute()
-        # if not base_dir.is_dir():
-        #     raise ValueError(f"base_dir is not a valid directory: {base_dir}")
-
-        # resolved: list[str] = []
-        # for p in paths:
-        #     p = Path(p)
-        #     # _assert_file_in_base(base_dir, p)
-        #     resolved.append(str(p))
-
-        # if len(resolved) == 0:
-        #     raise ValueError(
-        #         "No valid file paths provided: adding nothing to a workspace is invalid."
-        #     )
         base_dir = Path(base_dir).absolute()
         resolved: list[str] = []
         for p in paths:
