@@ -84,9 +84,14 @@ jobs:
             ]
 
   build_wheels:
-    name: Build Python wheels
+    name: Python ${{ matrix.python_version }}
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        python_version: ${{ fromJSON(inputs.PYTHON_VERSIONS) }}
 
     steps:
       - name: Checkout
@@ -122,20 +127,29 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Build Python wheels
+      - name: Build Python wheel
         run: |
-          uv python install ${{ inputs.PYTHON_VERSIONS }}
+          uv python install ${{ matrix.python_version }}
 
           cd ${{ github.workspace }}/oxen-python
 
-          for version in ${{ inputs.PYTHON_VERSIONS }}; do
-            uvx --from 'maturin[patchelf]' maturin build --release --interpreter /root/.local/bin/python${version}
-          done
+          uvx --from 'maturin[patchelf]' maturin build --release -v \
+            --interpreter /root/.local/bin/python${{ matrix.python_version }} \
+            2>&1 | tee /tmp/build.log
+
+      - name: Verify liboxen cache reuse
+        if: strategy.job-index != 0
+        run: |
+          if grep -q "Compiling liboxen" /tmp/build.log; then
+            echo "::error::liboxen was recompiled! Rust cache reuse failed."
+            exit 1
+          fi
+          echo "liboxen correctly reused from cache."
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-${{ inputs.ARCHITECTURE }}
+          name: wheels-linux-${{ inputs.ARCHITECTURE }}-py${{ matrix.python_version }}
           path: ${{ github.workspace }}/oxen-python/target/wheels/*.whl
           retention-days: 1
 

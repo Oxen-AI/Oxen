@@ -19,7 +19,7 @@ permissions:
 env:
   AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
   AWS_REGION: us-west-1
-  PYTHON_VERSIONS: "3.13 3.12 3.11 3.10"
+  PYTHON_VERSIONS: '["3.13", "3.12", "3.11", "3.10"]'
 
 jobs:
   set_env:
