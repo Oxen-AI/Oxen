@@ -7,19 +7,15 @@
 language: "en-US"
 
 reviews:
-  # Disable the "release notes" summary that CodeRabbit injects into
-  # the PR description. This prevents CodeRabbit from ever editing
-  # the PR description body.
-  high_level_summary: false
+  # We want to generate a PR summary, but...
+  high_level_summary: true
 
-  # Instead, include the summary in CodeRabbit's own walkthrough
-  # comment on the PR.
+  # don't edit the PR description.
+  # Instead, put it in CodeRabbit's own walkthrough comment.
   high_level_summary_in_walkthrough: true
 
   # Clear the placeholder so that even if "@coderabbitai summary"
-  # appears in the PR description, CodeRabbit won't replace it.
-  # (When high_level_summary is false, the placeholder can still
-  # trigger a description edit — blanking it prevents that.)
+  # appears in the PR description, CodeRabbit won't inject into it.
   high_level_summary_placeholder: ""
 
   # Prevent CodeRabbit from auto-generating PR titles.
