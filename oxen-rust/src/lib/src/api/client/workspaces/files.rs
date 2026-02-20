@@ -12,6 +12,7 @@ use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibility
 use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
+use indicatif::ProgressBar;
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
@@ -76,7 +77,6 @@ pub async fn add(
                 workspace_id,
                 directory,
                 expanded_paths.clone(),
-                // local_repo,
                 Some(&local),
                 false,
             )
@@ -282,6 +282,7 @@ async fn upload_multiple_files(
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
     strict_errors: bool,
+    progress: Option<Arc<ProgressBar>>,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
