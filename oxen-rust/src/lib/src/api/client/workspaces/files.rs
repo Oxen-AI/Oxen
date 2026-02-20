@@ -279,9 +279,6 @@ async fn upload_multiple_files(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-<<<<<<< HEAD
-    // local_repo: &Option<LocalRepository>,
-    // preserve_paths: Option<&Path>,
     local_or_base: Option<&LocalOrBase>,
     strict_errors: bool,
 ) -> Result<(), OxenError> {
@@ -399,7 +396,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
         return Ok(());
     }
 
-    {
+    match local_or_base {
         Some(LocalOrBase::Local(local_repository)) => {
             let head_commit_maybe = repositories::commits::head_commit_maybe(local_repository)?;
             let head_commit_exists = head_commit_maybe.is_some();
