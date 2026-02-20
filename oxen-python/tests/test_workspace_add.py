@@ -1,4 +1,3 @@
-from pytest_datadir.plugin import shared_datadir
 import os
 from pathlib import Path
 
