@@ -1,0 +1,31 @@
+# Oxen Python bindings (PyO3 + maturin)
+
+# Install deps and compile Rust extension into venv
+build:
+    uv sync --no-install-project
+    maturin develop
+
+# Lint Python (ruff) and Rust (fmt + clippy); all run even if one fails
+lint:
+    #!/usr/bin/env bash
+    rc=0
+    ruff check . || rc=1
+    cargo fmt --all -- --check || rc=1
+    cargo clippy --no-deps -- -D warnings || rc=1
+    exit $rc
+
+# Type-check Python code with mypy
+check:
+    uv run mypy python/oxen
+
+# Run all Python tests
+test:
+    uv run pytest -s tests
+
+# Run a specific test by keyword
+test-only NAME:
+    uv run pytest -s tests -k "{{NAME}}"
+
+# Generate Python API docs with pdoc
+doc:
+    uv run pdoc python/oxen -o docs
