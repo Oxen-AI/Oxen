@@ -12,7 +12,7 @@ use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibility
 use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
-use indicatif::ProgressBar;
+
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
@@ -396,7 +396,8 @@ pub(crate) async fn parallel_batched_small_file_upload(
         return Ok(());
     }
 
-    match local_or_base {
+    let (base_or_repo_path, head_commit_local_repo_maybe, keep_relative_paths) = match local_or_base
+    {
         Some(LocalOrBase::Local(local_repository)) => {
             let head_commit_maybe = repositories::commits::head_commit_maybe(local_repository)?;
             let head_commit_exists = head_commit_maybe.is_some();
