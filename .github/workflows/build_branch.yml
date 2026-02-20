@@ -7,13 +7,13 @@ on:
         description: "Branch to build. Also accepts commit sha and tag name."
         required: true
       ARCHITECTURE:
-        description: "The architecture to build for"
+        description: "The architecture to build for. Either amd64 (for x86_64) or arm64."
         required: true
         default: "arm64"
         type: choice
         options:
           - arm64
-          - x86_64
+          - amd64
 
 env:
   AWS_REGION: us-west-1
@@ -90,7 +90,8 @@ jobs:
             --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
             --label "org.opencontainers.image.architecture=${{ inputs.ARCHITECTURE }}" \
             --label "org.opencontainers.image.title=oxen-server" \
-            -t oxen/oxen-server --platform linux/${{ inputs.ARCHITECTURE }} .
+            -t oxen/oxen-server \
+            --platform linux/${{ inputs.ARCHITECTURE }} .
 
       - name: Save Docker
         run: docker save oxen/oxen-server -o oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
