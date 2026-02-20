@@ -7,16 +7,22 @@ jobs:
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
             platform: linux
+            shell: bash -leo pipefail {0}
           - os: macos-latest
             platform: macos
+            shell: bash -leo pipefail {0}
           - os: windows-latest
             platform: windows
+            shell: powershell
       fail-fast: false
 
     env:
