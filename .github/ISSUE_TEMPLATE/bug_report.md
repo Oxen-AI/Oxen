@@ -19,7 +19,7 @@ assignees: ''
 **Environment (please complete the following information):**
 - Is this related to Oxen hub?: <yes/no>
 - OS: <linux: distribution & version, macos: version, windows: version>
-- Oxen version: <`oxen --version` or `python -c 'import oxen; print(oxen.__version__)'`)
+- Oxen version: <`oxen --version` or `python -c 'import oxen; print(oxen.__version__)'`>
 
 **Additional context**
 <Add any other context about the problem here.>
