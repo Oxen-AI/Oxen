@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch to build"
+        description: "Branch to build. Also accepts commit sha and tag name."
         required: true
       ARCHITECTURE:
         description: "The architecture to build for"
