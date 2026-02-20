@@ -89,6 +89,12 @@ impl RunCmd for ConfigCmd {
                     .help("Sets the default host used to check version numbers. If empty, the CLI will not do a version check.")
                     .action(clap::ArgAction::Set),
             )
+            .arg(
+                Arg::new("editor")
+                    .long("editor")
+                    .help("Set the default text editor for commit messages (e.g. vim, nano, code --wait).")
+                    .action(clap::ArgAction::Set),
+            )
             .arg_required_else_help(true)
     }
 
@@ -127,6 +133,15 @@ impl RunCmd for ConfigCmd {
 
         if let Some(default_host) = args.get_one::<String>("default-host") {
             match self.set_default_host(default_host) {
+                Ok(_) => {}
+                Err(err) => {
+                    eprintln!("{err}")
+                }
+            }
+        }
+
+        if let Some(editor) = args.get_one::<String>("editor") {
+            match self.set_editor(editor) {
                 Ok(_) => {}
                 Err(err) => {
                     eprintln!("{err}")
@@ -259,6 +274,13 @@ impl ConfigCmd {
     pub fn set_user_email(&self, email: &str) -> Result<(), OxenError> {
         let mut config = UserConfig::get_or_create()?;
         config.email = String::from(email);
+        config.save_default()?;
+        Ok(())
+    }
+
+    pub fn set_editor(&self, editor: &str) -> Result<(), OxenError> {
+        let mut config = UserConfig::get_or_create()?;
+        config.editor = Some(String::from(editor));
         config.save_default()?;
         Ok(())
     }
