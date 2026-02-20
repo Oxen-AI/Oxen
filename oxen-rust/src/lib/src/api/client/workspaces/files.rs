@@ -88,7 +88,6 @@ pub async fn add(
                 workspace_id,
                 directory,
                 expanded_paths.clone(),
-                // local_repo,
                 None,
                 false,
             )
@@ -363,7 +362,7 @@ async fn upload_multiple_files(
             Some(&dst_dir),
             Some(workspace_id.to_string()),
             None,
-            None,
+            progress,
         )
         .await
         {
