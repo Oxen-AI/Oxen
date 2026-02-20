@@ -12,6 +12,8 @@ pub const USER_CONFIG_FILENAME: &str = "user_config.toml";
 pub struct UserConfig {
     pub name: String,
     pub email: String,
+    #[serde(default)]
+    pub editor: Option<String>,
 }
 
 impl UserConfig {
@@ -24,6 +26,7 @@ impl UserConfig {
         UserConfig {
             name: user.name.to_owned(),
             email: user.email.to_owned(),
+            editor: None,
         }
     }
 
@@ -38,6 +41,7 @@ impl UserConfig {
         UserConfig {
             name: String::from(""),
             email: String::from(""),
+            editor: None,
         }
     }
 
