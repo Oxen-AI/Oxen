@@ -77,10 +77,11 @@ jobs:
         run: |
           cd oxen-rust
           docker build \
-            --label "COMMIT=${{ steps.metadata.outputs.COMMIT }}" \
-            --label "VERSION=${{ steps.metadata.outputs.VERSION }}" \
-            --label "BUILD_DATE_UTC=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
-            --label "ARCHITECTURE=arm64" \
+            --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
+            --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
+            --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
+            --label "org.opencontainers.image.architecture=arm64 \
+            --label "org.opencontainers.image.title=oxen-server" \
             -t oxen/oxen-server --platform linux/arm64 .
 
       - name: Save Docker
