@@ -215,21 +215,6 @@ class Workspace:
         Raises:
             ValueError: If no valid file paths are provided.
         """
-        # base_dir = Path(base_dir)
-        # base_dir = base_dir.absolute()
-        # if not base_dir.is_dir():
-        #     raise ValueError(f"base_dir is not a valid directory: {base_dir}")
-
-        # resolved: list[str] = []
-        # for p in paths:
-        #     p = Path(p)
-        #     # _assert_file_in_base(base_dir, p)
-        #     resolved.append(str(p))
-
-        # if len(resolved) == 0:
-        #     raise ValueError(
-        #         "No valid file paths provided: adding nothing to a workspace is invalid."
-        #     )
         base_dir = Path(base_dir).absolute()
         resolved: list[str] = []
         for p in paths:
@@ -301,18 +286,3 @@ def _filepaths_from(path: Path) -> Iterator[Path]:
         for something_under in path.rglob("*"):
             if something_under.is_file():
                 yield something_under
-
-
-# def _assert_file_in_base(base_dir: Path, p: Path):
-#     """ValueError if `p` doesn't have `base_dir` as an ancesor or isn't a file.
-
-#     Assumes that `base_dir` (1) is a directory and (2) is a resolved path.
-#     """
-#     if not p.is_absolute():
-#         p = base_dir / p
-#     else:
-#         p = p.resolve()
-#         if not p.is_relative_to(base_dir):
-#             raise ValueError(f"Absolute path is not under base_dir ({base_dir}): {p}")
-#     if not p.is_file():
-#         raise ValueError(f"Path is not a file: {p}")
