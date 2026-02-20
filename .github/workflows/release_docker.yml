@@ -88,6 +88,7 @@ jobs:
       - name: Get build metadata
         id: metadata
         run: |
+          # https://github.com/opencontainers/image-spec
           VERSION=$(grep -m1 '^version = ' ${{ github.workspace }}/oxen-rust/src/server/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
@@ -97,10 +98,11 @@ jobs:
         run: |
           cd ${{ github.workspace }}/oxen-rust
           docker build \
-            --label "COMMIT=${{ steps.metadata.outputs.COMMIT }}" \
-            --label "VERSION=${{ steps.metadata.outputs.VERSION }}" \
-            --label "BUILD_DATE_UTC=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
-            --label "ARCHITECTURE=${{ inputs.ARCHITECTURE }}" \
+            --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
+            --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
+            --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
+            --label "org.opencontainers.image.architecture=${{ inputs.ARCHITECTURE }}" \
+            --label "org.opencontainers.image.title=oxen-server" \
             -t oxen/oxen-server .
 
       - name: Save Docker
