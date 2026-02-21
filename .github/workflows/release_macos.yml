@@ -1,4 +1,4 @@
-name: 🚀 Release MacOS
+name: 🚀🍏 Release MacOS
 
 on:
   workflow_call:
@@ -10,6 +10,10 @@ on:
 
 env:
   MACOSX_DEPLOYMENT_TARGET: 10.13
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
 
 jobs:
   release_macos:

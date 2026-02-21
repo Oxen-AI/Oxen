@@ -1,4 +1,4 @@
-name: Bump Version
+name: ⬆️ Bump Version
 
 run-name: Bump Oxen version (${{ github.event.inputs.version }})
 
@@ -13,6 +13,10 @@ on:
         description: "Optional URL to notify when workflow completes (receives JSON with status)"
         required: false
         type: string
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
 
 jobs:
   bump-version:

@@ -1,7 +1,11 @@
-name: 🐂 Continuous integration - Lint
+name: 🐂🔎 Continuous integration - Lint
 
 on:
   workflow_call:
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
 
 jobs:
   check:

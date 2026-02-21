@@ -1,4 +1,4 @@
-name: 🐧 Build Linux Wheels
+name: 🧪🐧 Build Linux Wheels
 
 on:
   workflow_call:
