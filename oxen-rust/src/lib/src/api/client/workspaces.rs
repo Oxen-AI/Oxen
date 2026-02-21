@@ -2,6 +2,7 @@ pub mod changes;
 pub mod commits;
 pub mod data_frames;
 pub mod files;
+pub mod ls;
 
 use std::path::Path;
 
