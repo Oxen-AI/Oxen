@@ -2529,30 +2529,35 @@ mod tests {
         );
 
         // Collect the staged filenames and verify paths are preserved
-        let mut staged_paths: Vec<String> = entries
+        let staged: Vec<String> = entries
             .added_files
             .entries
             .iter()
             .map(|e| e.filename().to_string())
             .collect();
-        staged_paths.sort();
 
-        assert!(
-            staged_paths.contains(&"data_being_added/nested/file_a.txt".to_string()),
-            "Expected 'data_being_added/nested/file_a.txt' in staged paths, got: {staged_paths:?}"
-        );
-        assert!(
-            staged_paths.contains(&"data_being_added/nested/file_b.txt".to_string()),
-            "Expected 'data_being_added/nested/file_b.txt' in staged paths, got: {staged_paths:?}"
-        );
-        assert!(
-            staged_paths.contains(&"data_being_added/file_c.txt".to_string()),
-            "Expected 'data_being_added/file_c.txt' in staged paths, got: {staged_paths:?}"
-        );
-        assert!(
-            staged_paths.contains(&"root_file.txt".to_string()),
-            "Expected 'root_file.txt' in staged paths, got: {staged_paths:?}"
-        );
+        for p in [
+            format!(
+                "data_being_added{}nested{}file_a.txt",
+                std::path::MAIN_SEPARATOR_STR,
+                std::path::MAIN_SEPARATOR_STR
+            ),
+            format!(
+                "data_being_added{}nested{}file_b.txt",
+                std::path::MAIN_SEPARATOR_STR,
+                std::path::MAIN_SEPARATOR_STR
+            ),
+            format!(
+                "data_being_added{}file_c.txt",
+                std::path::MAIN_SEPARATOR_STR
+            ),
+            format!("root_file.txt"),
+        ] {
+            assert!(
+                staged.contains(&p),
+                "Expected '{p}' in staged paths, got: {staged:?}"
+            )
+        }
 
         Ok(())
     }
