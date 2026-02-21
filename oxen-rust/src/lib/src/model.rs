@@ -6,6 +6,7 @@ pub mod branch;
 pub mod commit;
 pub mod content_type;
 pub mod data_frame;
+pub mod db_import;
 pub mod diff;
 pub mod entry;
 pub mod file;

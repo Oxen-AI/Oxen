@@ -57,6 +57,7 @@ comfy-table = "7.0.1"
 libduckdb-sys = { version = "=1.1.1" }
 duckdb = { package = "duckdb", version = "=1.1.1", default-features = false, optional = true, features = [
     "serde_json",
+    "appender-arrow",
 ] }
 deadqueue = "0.2.4"
 derive_more = { version = "1.0.0", features = ["full"] }
@@ -133,6 +134,7 @@ serde_with = "3.13.0"
 sha2 = "0.10.8"
 simdutf8 = "0.1.4"
 sqlparser = "0.53.0"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "any", "postgres", "mysql", "sqlite"] }
 sql_query_builder = { version = "2.1.0", features = ["postgresql"] }
 sysinfo = "0.33.0"
 tar = "0.4.44"

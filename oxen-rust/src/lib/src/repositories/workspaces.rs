@@ -16,6 +16,7 @@ use crate::view::entries::EMetadataEntry;
 use crate::view::merge::Mergeable;
 
 pub mod data_frames;
+pub mod db_import;
 pub mod df;
 pub mod diff;
 pub mod files;

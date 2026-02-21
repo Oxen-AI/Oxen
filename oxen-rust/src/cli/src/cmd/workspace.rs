@@ -10,6 +10,9 @@ pub use create::WorkspaceCreateCmd;
 pub mod commit;
 pub use commit::WorkspaceCommitCmd;
 
+pub mod db_import;
+pub use db_import::WorkspaceDbImportCmd;
+
 pub mod diff;
 pub use diff::WorkspaceDiffCmd;
 
@@ -92,6 +95,7 @@ impl WorkspaceCmd {
             Box::new(WorkspaceClearCmd),
             Box::new(WorkspaceCommitCmd),
             Box::new(WorkspaceCreateCmd),
+            Box::new(WorkspaceDbImportCmd),
             Box::new(WorkspaceDfCmd),
             Box::new(WorkspaceDiffCmd),
             Box::new(WorkspaceDeleteCmd),
