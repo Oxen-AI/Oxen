@@ -7,6 +7,7 @@ use crate::opts::DFOpts;
 
 use std::path::Path;
 
+pub mod images;
 pub mod schemas;
 
 pub async fn get_slice(
