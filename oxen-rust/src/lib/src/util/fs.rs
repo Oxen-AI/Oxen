@@ -1943,7 +1943,7 @@ pub fn is_modified_from_node_with_metadata(
     metadata: Result<std::fs::Metadata, OxenError>,
 ) -> Result<bool, OxenError> {
     if !path.exists() {
-        log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
+        log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
         return Ok(false);
     }
 
@@ -2003,7 +2003,7 @@ pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenE
 pub fn is_modified_metadata_only(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
     // First, check if the file exists; return false if not
     if !path.exists() {
-        log::debug!("is_modified_from_node found non-existant path {path:?}. Returning false");
+        log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
         return Ok(false);
     }
 

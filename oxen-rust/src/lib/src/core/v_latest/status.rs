@@ -622,7 +622,7 @@ fn find_changes(
                     let dir_path = full_path.join(dir.name());
                     let relative_dir_path = search_node_path.join(dir.name());
                     if !dir_path.exists() {
-                        // Only call this for non-existant dirs, because existant dirs already trigger a find_changes call
+                        // Only call this for non-existent dirs, because existant dirs already trigger a find_changes call
 
                         let mut count: usize = 0;
                         count_removed_entries(
@@ -843,7 +843,7 @@ fn find_local_changes(
                             .paths
                             .contains_key(&relative_dir_path)
                     {
-                        // Only call this for non-existant dirs, because existant dirs already trigger a find_changes call
+                        // Only call this for non-existent dirs, because existant dirs already trigger a find_changes call
                         let mut count: usize = 0;
                         count_removed_entries(
                             repo,

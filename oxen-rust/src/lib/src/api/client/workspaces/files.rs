@@ -132,7 +132,7 @@ fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), 
 
         if !paths[i].is_file() {
             return Err(OxenError::basic_str(format!(
-                "Cannot upload non-existant file: {}",
+                "Cannot upload non-existent file: {}",
                 paths[i].display()
             )));
         } else if !paths[i].starts_with(base_dir) {

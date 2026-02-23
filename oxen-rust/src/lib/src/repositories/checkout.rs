@@ -216,7 +216,7 @@ mod tests {
     async fn test_command_checkout_non_existant_commit_id() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // This shouldn't work
-            let checkout_result = repositories::checkout(&repo, "non-existant").await;
+            let checkout_result = repositories::checkout(&repo, "non-existent").await;
             assert!(checkout_result.is_err());
 
             Ok(())
