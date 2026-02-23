@@ -1,8 +1,9 @@
 use crate::api::client;
+use crate::api::client::internal_types::LocalOrBase;
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
-use crate::model::{LocalRepository, RemoteRepository};
+use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
@@ -11,6 +12,7 @@ use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibility
 use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
+
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
 use std::collections::HashSet;
@@ -66,21 +68,136 @@ pub async fn add(
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
-    match upload_multiple_files(
-        remote_repo,
-        workspace_id,
-        directory,
-        expanded_paths.clone(),
-        local_repo,
-    )
-    .await
-    {
+
+    match match local_repo {
+        Some(local_repo) => {
+            let local = LocalOrBase::Local(local_repo.clone());
+            upload_multiple_files(
+                remote_repo,
+                workspace_id,
+                directory,
+                expanded_paths.clone(),
+                Some(&local),
+                false,
+            )
+            .await
+        }
+        None => {
+            upload_multiple_files(
+                remote_repo,
+                workspace_id,
+                directory,
+                expanded_paths.clone(),
+                None,
+                false,
+            )
+            .await
+        }
+    } {
         Ok(()) => {
             println!(
                 "🐂 oxen added {} entries to workspace {}",
                 expanded_paths.len(),
                 workspace_id
             );
+        }
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+pub struct AddResult {
+    pub added: Option<(Commit, Vec<PathBuf>)>,
+    pub not_in_base: Vec<PathBuf>,
+    pub not_file: Vec<PathBuf>,
+}
+
+// either:
+// 1) no commit => added is empty
+// 2) commit => added is non-empty
+//
+
+/// Resolve paths and error on entries that don't exist/aren't files in the base directory.
+#[allow(clippy::needless_range_loop)]
+fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), OxenError> {
+    for i in 0..paths.len() {
+        if !paths[i].is_absolute() {
+            paths[i] = base_dir.join(&paths[i]);
+        }
+
+        paths[i] = std::path::absolute(&(paths[i]))?;
+
+        if !paths[i].is_file() {
+            return Err(OxenError::basic_str(format!(
+                "Cannot upload non-existent file: {}",
+                paths[i].display()
+            )));
+        } else if !paths[i].starts_with(base_dir) {
+            return Err(OxenError::basic_str(format!(
+                "Cannot upload path that doesn't exist in base directory ({}): {}",
+                base_dir.display(),
+                paths[i].display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Add files to a remote workspace while preserving their relative paths within the repository.
+///
+/// Unlike `add`, which places files into a flat destination directory, this function uses each
+/// file's path relative to the supplied base directory as the staging path for the server's
+/// remote repository. Files are added into a temporary workspace which is then comitted.
+///
+/// The intended use case is to import a large pre-existing file-directory structure into a
+/// repository.
+pub async fn add_files(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    base_dir: impl AsRef<Path>,
+    paths: Vec<PathBuf>,
+) -> Result<(), OxenError> {
+    let base_dir = std::path::absolute(base_dir)?;
+
+    if !base_dir.is_dir() {
+        return Err(OxenError::basic_str(format!(
+            "base_dir is not a directory: {}",
+            base_dir.display()
+        )));
+    }
+
+    if paths.is_empty() {
+        return Err(OxenError::basic_str("No paths to add!"));
+    }
+
+    let workspace_id = workspace_id.as_ref();
+
+    let paths: Vec<PathBuf> = {
+        let mut paths = paths;
+        resolve_paths_in_place(&base_dir, &mut paths)?;
+        paths
+    };
+
+    let base_dir_enum = LocalOrBase::Base(base_dir);
+
+    let n_paths_uploaded = paths.len();
+    match upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        "", // Each path has the right relative directory components, so it's crucial that they're
+        //    "placed" at the repo root since the server API expects to add files into a directory
+        //    for a single API call.
+        paths,
+        Some(&base_dir_enum),
+        true,
+    )
+    .await
+    {
+        Ok(()) => {
+            println!("🐂 oxen added {n_paths_uploaded} entries to workspace {workspace_id}");
         }
         Err(e) => {
             return Err(e);
@@ -162,7 +279,8 @@ async fn upload_multiple_files(
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
+    local_or_base: Option<&LocalOrBase>,
+    strict_errors: bool,
 ) -> Result<(), OxenError> {
     if paths.is_empty() {
         return Ok(());
@@ -171,38 +289,42 @@ async fn upload_multiple_files(
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
+    let large_file_threshold = chunk_size();
+
     // Separate files by size, storing the file size with each path
     let mut large_files = Vec::new();
+    let mut large_files_size = 0;
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
-
-    let repo_path = if let Some(local_repo) = local_repo {
-        local_repo.path.clone()
-    } else {
-        PathBuf::new()
-    };
 
     // Group files by size
     for path in paths {
         // Adjustment for remote-mode repos
-        let path = if local_repo.is_some() {
-            let relative_path = util::fs::path_relative_to_dir(&path, &repo_path)?;
-            repo_path.join(&relative_path)
-        } else {
-            path
+        let path = match local_or_base {
+            Some(LocalOrBase::Local(local_repository)) => {
+                let repo_path = &local_repository.path;
+                let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+                repo_path.join(&relative_path)
+            }
+            Some(LocalOrBase::Base(_)) | None => path,
         };
 
         if !path.exists() {
-            log::warn!("File does not exist: {path:?}");
+            let msg = format!("File does not exist: {path:?}");
+            if strict_errors {
+                return Err(OxenError::basic_str(msg));
+            }
+            log::warn!("{msg}");
             continue;
         }
 
         match path.metadata() {
             Ok(metadata) => {
                 let file_size = metadata.len();
-                if file_size > chunk_size() {
+                if file_size > large_file_threshold {
                     // Large file goes directly to parallel upload
                     large_files.push((path, file_size));
+                    large_files_size += file_size;
                 } else {
                     // Small file goes to batch
                     small_files.push((path, file_size));
@@ -210,22 +332,33 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                log::warn!("Failed to get metadata for file {path:?}: {err}");
+                let msg = format!("Failed to get metadata for file {path:?}: {err}");
+                if strict_errors {
+                    return Err(OxenError::basic_str(msg));
+                }
+                log::warn!("{msg}");
                 continue;
             }
         }
     }
 
-    let large_files_size = large_files.iter().map(|(_, size)| size).sum::<u64>();
     let total_size = large_files_size + small_files_size;
-
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
+
     // Process large files individually with parallel upload
-    for (path, _size) in large_files {
+    for (path, _) in large_files {
+        let dst_dir = match local_or_base {
+            Some(LocalOrBase::Base(base_dir)) => {
+                let rel = util::fs::path_relative_to_dir(&path, base_dir)?;
+                rel.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+            }
+            Some(LocalOrBase::Local(_)) | None => directory.to_path_buf(),
+        };
+
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
-            Some(directory),
+            Some(&dst_dir),
             Some(workspace_id.to_string()),
             None,
             None,
@@ -244,24 +377,39 @@ async fn upload_multiple_files(
         directory,
         small_files,
         small_files_size,
-        local_repo,
+        local_or_base,
     )
     .await?;
 
     Ok(())
 }
 
-async fn parallel_batched_small_file_upload(
+pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
-    local_repo: &Option<LocalRepository>,
+    local_or_base: Option<&LocalOrBase>,
 ) -> Result<(), OxenError> {
     if small_files.is_empty() {
         return Ok(());
     }
+
+    let (base_or_repo_path, head_commit_local_repo_maybe, keep_relative_paths) = match local_or_base
+    {
+        Some(LocalOrBase::Local(local_repository)) => {
+            let head_commit_maybe = repositories::commits::head_commit_maybe(local_repository)?;
+            let head_commit_exists = head_commit_maybe.is_some();
+            (
+                local_repository.path.clone(),
+                head_commit_maybe.map(|head_commit| (head_commit, local_repository.clone())),
+                head_commit_exists,
+            )
+        }
+        Some(LocalOrBase::Base(base_dir)) => (base_dir.to_path_buf(), None, true),
+        None => (PathBuf::new(), None, false),
+    };
 
     // Batch small files in chunks of ~AVG_CHUNK_SIZE
     log::debug!(
@@ -281,7 +429,7 @@ async fn parallel_batched_small_file_upload(
 
     // Split files into batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
-    let mut current_batch: Vec<(PathBuf, u64)> = Vec::new();
+    let mut current_batch: PieceOfWork = Vec::new();
     let mut current_batch_size = 0;
     let mut total_size = 0;
 
@@ -300,17 +448,6 @@ async fn parallel_batched_small_file_upload(
 
     // Create a client for uploading batches
     let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
-    let repo_path = if let Some(ref local_repo) = local_repo {
-        local_repo.path.clone()
-    } else {
-        PathBuf::new()
-    };
-
-    let head_commit_maybe = if let Some(ref local_repo) = local_repo {
-        repositories::commits::head_commit_maybe(local_repo)?
-    } else {
-        None
-    };
 
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
@@ -327,130 +464,151 @@ async fn parallel_batched_small_file_upload(
     ));
 
     let producer_errors = Arc::clone(&errors);
-    let maybe_local_repo = local_repo.clone();
+
+    let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
 
     // Initiate the producer
     let producer_handle = tokio::spawn(async move {
         stream::iter(file_batches)
-            .for_each_concurrent(worker_count, |batch| {
-                let repo_path_clone = repo_path.clone();
-                let head_commit_maybe_clone = head_commit_maybe.clone();
-                let local_repo_clone = maybe_local_repo.clone();
-                let errors = Arc::clone(&producer_errors);
-                let tx_clone = tx.clone();
+            .for_each_concurrent(worker_count, {
+                let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
+                move |batch| {
+                    let base_or_repo_path_clone = base_or_repo_path.clone();
+                    let head_commit_local_repo_maybe_clone =
+                        head_commit_local_repo_maybe_clone.clone();
+                    let errors = Arc::clone(&producer_errors);
+                    let tx_clone = tx.clone();
 
-                async move {
-                    let repo_path_clone = repo_path_clone.clone();
-                    let local_repo_clone = local_repo_clone.clone();
-                    let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+                    async move {
+                        let base_or_repo_path_clone = base_or_repo_path_clone.clone();
+                        let head_commit_local_repo_maybe_clone =
+                            head_commit_local_repo_maybe_clone.clone();
 
-                    let result: Result<(), OxenError> = async move {
-                        let mut batch_size = 0;
-                        let mut batch_parts = Vec::new();
-                        let mut files_to_stage = Vec::new();
+                        let result: Result<(), OxenError> = async move {
+                            let mut batch_size = 0;
+                            let mut batch_parts = Vec::new();
+                            let mut files_to_stage = Vec::new();
 
-                        // Build the multiparts for each file
-                        log::debug!("Starting file processing loop with {:?} files", batch.len());
-                        for (path, size) in batch {
-                            let local_repo_clone = local_repo_clone.clone();
-                            let repo_path_clone = repo_path_clone.clone();
-                            let head_commit_maybe_clone = head_commit_maybe_clone.clone();
+                            // Build the multiparts for each file
+                            log::debug!(
+                                "Starting file processing loop with {:?} files",
+                                batch.len()
+                            );
+                            for (path, size) in batch {
+                                let base_or_repo_path_clone = base_or_repo_path_clone.clone();
+                                let head_commit_local_repo_maybe_clone =
+                                    head_commit_local_repo_maybe_clone.clone();
 
-                            let file_data_maybe: Option<(
-                                reqwest::multipart::Part,
-                                String,
-                                PathBuf,
-                                u64,
-                            )> = tokio::task::spawn_blocking(move || {
-                                let relative_path =
-                                    util::fs::path_relative_to_dir(&path, &repo_path_clone)?;
+                                let file_data_maybe: Option<(
+                                    reqwest::multipart::Part,
+                                    String,
+                                    PathBuf,
+                                    u64,
+                                )> = tokio::task::spawn_blocking(move || {
+                                    let relative_path = util::fs::path_relative_to_dir(
+                                        &path,
+                                        &base_or_repo_path_clone,
+                                    )?;
 
-                                // In remote-mode repos, skip adding files already present in tree
-                                if let Some(ref head_commit) = head_commit_maybe_clone {
-                                    if let Some(file_node) = repositories::tree::get_file_by_path(
-                                        &local_repo_clone.unwrap(),
-                                        head_commit,
-                                        &relative_path,
-                                    )? {
-                                        if !util::fs::is_modified_from_node(&path, &file_node)? {
-                                            log::debug!("Skipping add on unmodified path {path:?}");
-                                            return Ok(None);
+                                    // In remote-mode repos, skip adding files already present in tree
+                                    if let Some((ref head_commit, ref local_repository)) =
+                                        head_commit_local_repo_maybe_clone
+                                    {
+                                        if let Some(file_node) =
+                                            repositories::tree::get_file_by_path(
+                                                local_repository,
+                                                head_commit,
+                                                &relative_path,
+                                            )?
+                                        {
+                                            if !util::fs::is_modified_from_node(&path, &file_node)?
+                                            {
+                                                log::debug!(
+                                                    "Skipping add on unmodified path {path:?}"
+                                                );
+                                                return Ok(None);
+                                            }
                                         }
                                     }
-                                }
 
-                                // Note: Remote-mode repos expect the relative path in staging, while regular repos expect the file name
-                                let staging_path = if head_commit_maybe_clone.is_some() {
-                                    relative_path
-                                } else {
-                                    PathBuf::from(relative_path.file_name().unwrap())
-                                };
+                                    // When preserve_paths is set or in remote-mode repos, use the
+                                    // full relative path. Otherwise use just the filename.
+                                    let staging_path = if keep_relative_paths {
+                                        relative_path
+                                    } else {
+                                        PathBuf::from(relative_path.file_name().unwrap())
+                                    };
 
-                                let file = std::fs::read(&path).map_err(|e| {
-                                    OxenError::basic_str(format!(
-                                        "Failed to read file '{path:?}': {e}"
-                                    ))
-                                })?;
+                                    let file = std::fs::read(&path).map_err(|e| {
+                                        OxenError::basic_str(format!(
+                                            "Failed to read file '{path:?}': {e}"
+                                        ))
+                                    })?;
 
-                                let hash = hasher::hash_buffer(&file);
+                                    let hash = hasher::hash_buffer(&file);
 
-                                let mut encoder =
-                                    GzEncoder::new(Vec::new(), Compression::default());
-                                std::io::copy(&mut file.as_slice(), &mut encoder).map_err(|e| {
-                                    OxenError::basic_str(format!(
-                                        "Failed to copy file '{path:?}' to encoder: {e}"
-                                    ))
-                                })?;
+                                    let compressed_bytes: Vec<u8> = {
+                                        let mut encoder =
+                                            GzEncoder::new(Vec::new(), Compression::default());
 
-                                let file_part = {
-                                    let compressed_bytes = match encoder.finish() {
-                                        Ok(bytes) => bytes,
-                                        Err(e) => {
-                                            // If compressing a file fails, cancel the operation
-                                            return Err(OxenError::basic_str(format!(
-                                                "Failed to finish gzip for file {}: {}",
-                                                &hash, e
-                                            )));
+                                        std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
+                                            |e| {
+                                                OxenError::basic_str(format!(
+                                                  "Failed to copy file '{path:?}' to encoder: {e}"
+                                              ))
+                                            },
+                                        )?;
+
+                                        match encoder.finish() {
+                                            Ok(bytes) => bytes,
+                                            Err(e) => {
+                                                // If compressing a file fails, cancel the operation
+                                                return Err(OxenError::basic_str(format!(
+                                                    "Failed to finish gzip for file {}: {}",
+                                                    &hash, e
+                                                )));
+                                            }
                                         }
                                     };
 
-                                    reqwest::multipart::Part::bytes(compressed_bytes)
-                                        .file_name(hash.clone())
-                                        .mime_str("application/gzip")?
-                                };
+                                    let file_part =
+                                        reqwest::multipart::Part::bytes(compressed_bytes)
+                                            .file_name(hash.clone())
+                                            .mime_str("application/gzip")?;
 
-                                Ok(Some((file_part, hash, staging_path, size)))
-                            })
-                            .await??;
+                                    Ok(Some((file_part, hash, staging_path, size)))
+                                })
+                                .await??;
 
-                            let (file_part, file_hash, file_path, file_size) = match file_data_maybe
-                            {
-                                Some(data) => data,
-                                None => continue,
-                            };
+                                let (file_part, file_hash, file_path, file_size) =
+                                    match file_data_maybe {
+                                        Some(data) => data,
+                                        None => continue,
+                                    };
 
-                            batch_parts.push(file_part);
-                            files_to_stage.push(FileWithHash {
-                                hash: file_hash,
-                                path: file_path,
-                            });
+                                batch_parts.push(file_part);
+                                files_to_stage.push(FileWithHash {
+                                    hash: file_hash,
+                                    path: file_path,
+                                });
 
-                            batch_size += file_size;
+                                batch_size += file_size;
+                            }
+
+                            // Once all the files in the batch are processed,
+                            // Send them to the receiver for upload
+                            let processed_batch: ProcessedBatch =
+                                (batch_parts, files_to_stage, batch_size);
+                            match tx_clone.send(processed_batch).await {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+                            }
                         }
+                        .await;
 
-                        // Once all the files in the batch are processed,
-                        // Send them to the receiver for upload
-                        let processed_batch: ProcessedBatch =
-                            (batch_parts, files_to_stage, batch_size);
-                        match tx_clone.send(processed_batch).await {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+                        if let Err(e) = result {
+                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
                         }
-                    }
-                    .await;
-
-                    if let Err(e) = result {
-                        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
                     }
                 }
             })
@@ -461,7 +619,7 @@ async fn parallel_batched_small_file_upload(
     let workspace_id_clone = workspace_id.clone();
     let remote_repo_clone = remote_repo.clone();
     let directory_clone = directory.clone();
-    let local_repo_clone = local_repo.clone();
+    let local_or_base_clone = local_or_base.cloned();
 
     let consumer_err_files = Arc::clone(&err_files);
     let consumer_errors = Arc::clone(&errors);
@@ -479,7 +637,7 @@ async fn parallel_batched_small_file_upload(
                     let remote_repo_clone = remote_repo_clone.clone();
                     let workspace_id_clone = workspace_id_clone.clone();
                     let directory_str = directory_clone.clone();
-                    let local_repo_clone = local_repo_clone.clone();
+                    let local_or_base_clone = local_or_base_clone.clone();
 
                     let err_files_clone = Arc::clone(&consumer_err_files);
                     let errors = Arc::clone(&consumer_errors);
@@ -502,7 +660,7 @@ async fn parallel_batched_small_file_upload(
                                 Arc::clone(&client_clone),
                                 form,
                                 &mut files_to_retry,
-                                &local_repo_clone.clone(),
+                                local_or_base_clone.as_ref(),
                             )
                             .await
                             {
@@ -2249,5 +2407,158 @@ mod tests {
             Ok(remote_repo)
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_local_repo_relative_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            help_test_add_files_preserve_path(&remote_repo, &local_repo.path, true).await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_local_repo_absolute_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            help_test_add_files_preserve_path(
+                &remote_repo,
+                &std::path::absolute(local_repo.path).unwrap(),
+                false,
+            )
+            .await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_tempdir_relative_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+            let base_dir_guard = tempfile::tempdir()?;
+            let base_dir = base_dir_guard.path().to_path_buf();
+            help_test_add_files_preserve_path(&remote_repo, &base_dir, true).await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_files_preserves_paths_tempdir_absolute_paths() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+            let base_dir_guard = tempfile::tempdir()?;
+            let base_dir = base_dir_guard.path().to_path_buf();
+            help_test_add_files_preserve_path(&remote_repo, &base_dir, false).await?;
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    async fn help_test_add_files_preserve_path(
+        remote_repo: &RemoteRepository,
+        base_dir: &Path,
+        use_relative_paths: bool,
+    ) -> Result<(), OxenError> {
+        let branch_name = "add-files-preserve-paths";
+        let branch = api::client::branches::create_from_branch(
+            &remote_repo,
+            branch_name,
+            DEFAULT_BRANCH_NAME,
+        )
+        .await?;
+        assert_eq!(branch.name, branch_name);
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace =
+            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+        assert_eq!(workspace.id, workspace_id);
+
+        let sub_dir_1 = base_dir.join("data_being_added");
+        let sub_dir_2 = sub_dir_1.join("nested");
+        std::fs::create_dir_all(&sub_dir_2)?;
+
+        let file_a = sub_dir_2.join("file_a.txt");
+        let file_b = sub_dir_2.join("file_b.txt");
+        let file_c = sub_dir_1.join("file_c.txt");
+        let file_root = base_dir.join("root_file.txt");
+
+        test::write_txt_file_to_path(&file_a, "content a")?;
+        test::write_txt_file_to_path(&file_b, "content b")?;
+        test::write_txt_file_to_path(&file_c, "contents c")?;
+
+        // Also create a file at the repo root
+        test::write_txt_file_to_path(&file_root, "root content")?;
+
+        // Build paths (mix of absolute and relative)
+        let paths: Vec<PathBuf> = {
+            let paths = vec![file_a, file_b, file_c, file_root];
+            if use_relative_paths {
+                paths
+                    .into_iter()
+                    .map(|p| p.strip_prefix(&base_dir).unwrap().to_path_buf())
+                    .collect()
+            } else {
+                paths
+                    .into_iter()
+                    .map(|p| std::path::absolute(p).unwrap())
+                    .collect()
+            }
+        };
+
+        // Call add_files — should preserve relative paths
+        let result =
+            api::client::workspaces::files::add_files(&remote_repo, &workspace_id, base_dir, paths)
+                .await;
+        assert!(result.is_ok(), "add_files failed: {result:?}");
+
+        // Verify all 4 files were staged
+        let page_num = constants::DEFAULT_PAGE_NUM;
+        let page_size = constants::DEFAULT_PAGE_SIZE;
+        let entries = api::client::workspaces::changes::list(
+            &remote_repo,
+            &workspace_id,
+            Path::new(""),
+            page_num,
+            page_size,
+        )
+        .await?;
+        assert_eq!(
+            entries.added_files.total_entries, 4,
+            "Expected 4 staged files, got {}",
+            entries.added_files.total_entries
+        );
+
+        // Collect the staged filenames and verify paths are preserved
+        let staged: Vec<String> = entries
+            .added_files
+            .entries
+            .iter()
+            .map(|e| e.filename().to_string())
+            .collect();
+
+        for p in [
+            format!(
+                "data_being_added{}nested{}file_a.txt",
+                std::path::MAIN_SEPARATOR_STR,
+                std::path::MAIN_SEPARATOR_STR
+            ),
+            format!(
+                "data_being_added{}nested{}file_b.txt",
+                std::path::MAIN_SEPARATOR_STR,
+                std::path::MAIN_SEPARATOR_STR
+            ),
+            format!(
+                "data_being_added{}file_c.txt",
+                std::path::MAIN_SEPARATOR_STR
+            ),
+            format!("root_file.txt"),
+        ] {
+            assert!(
+                staged.contains(&p),
+                "Expected '{p}' in staged paths, got: {staged:?}"
+            )
+        }
+
+        Ok(())
     }
 }

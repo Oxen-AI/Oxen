@@ -160,6 +160,19 @@ impl PyWorkspace {
         Ok(())
     }
 
+    fn add_files(&self, base_dir: PathBuf, src: Vec<PathBuf>) -> Result<(), PyOxenError> {
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::workspaces::files::add_files(
+                &self.repo.repo,
+                &self.get_identifier(),
+                base_dir,
+                src,
+            )
+            .await
+        })?;
+        Ok(())
+    }
+
     fn rm(&self, path: PathBuf) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::rm(&self.repo.repo, &self.id, path).await

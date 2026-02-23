@@ -152,7 +152,7 @@ mod tests {
         test::run_empty_local_repo_test_async(|mut repo| async move {
             // This shouldn't work
             let checkout_result =
-                repositories::remote_mode::checkout(&mut repo, "non-existant").await;
+                repositories::remote_mode::checkout(&mut repo, "non-existent").await;
             assert!(checkout_result.is_err());
 
             Ok(())
