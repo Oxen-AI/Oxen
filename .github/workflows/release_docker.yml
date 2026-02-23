@@ -1,10 +1,10 @@
-name: 🚀 Release Docker
+name: 🚀🐳 Release Docker
 
 on:
   workflow_call:
     inputs:
       ARCHITECTURE:
-        description: "The architecture to build for"
+        description: "The architecture to build for. Either 'x86_64' or 'arm64'"
         required: true
         default: "x86_64"
         type: string
@@ -85,10 +85,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Get build metadata
+        id: metadata
+        run: |
+          # https://github.com/opencontainers/image-spec
+          VERSION=$(grep -m1 '^version = ' ${{ github.workspace }}/oxen-rust/src/server/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
       - name: Build Docker Image
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          docker build -t oxen/oxen-server .
+          docker build \
+            --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
+            --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
+            --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
+            --label "org.opencontainers.image.architecture=${{ inputs.ARCHITECTURE }}" \
+            --label "org.opencontainers.image.title=oxen-server" \
+            -t oxen/oxen-server .
 
       - name: Save Docker
         run: docker save oxen/oxen-server -o oxen-server-docker-${{ inputs.ARCHITECTURE }}.tar

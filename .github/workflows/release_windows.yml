@@ -1,4 +1,4 @@
-name: 🚀 Release Windows
+name: 🚀🪟 Release Windows
 
 on:
   workflow_call:
@@ -66,6 +66,9 @@ jobs:
     name: Build Oxen CLI, Server, and Python wheels
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    defaults:
+      run:
+        shell: powershell
 
     steps:
       - name: Checkout

@@ -95,6 +95,7 @@ pub fn commit_with_user(
     let cfg = UserConfig {
         name: user.name.clone(),
         email: user.email.clone(),
+        editor: None,
     };
     commit_with_cfg(repo, message, &cfg, None)
 }
