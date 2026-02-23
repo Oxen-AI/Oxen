@@ -576,7 +576,25 @@ fn r_restore_missing_or_modified_files(
             hashes.seen_hashes.insert(target_node.hash);
             hashes.seen_paths.insert(file_path.clone());
             if !full_path.exists() {
-                // File doesn't exist, restore it
+                // Before restoring, check if the user intentionally deleted this file
+                // If the file existed in the from tree (tracked in partial_nodes), it was
+                // deleted in the working directory without being committed
+                if let Some(from_node) = partial_nodes.get(&file_path) {
+                    if from_node.hash == target_node.hash {
+                        // Same content in both trees - preserve the user's deletion
+                        log::debug!("Preserving uncommitted deletion of file: {file_path:?}");
+                        return Ok(());
+                    } else {
+                        // Different content - this is a conflict
+                        log::debug!(
+                            "Conflict: uncommitted deletion of modified file: {file_path:?}"
+                        );
+                        results.cannot_overwrite_entries.push(file_path.clone());
+                        return Ok(());
+                    }
+                }
+
+                // File is new in the target commit, restore it
                 log::debug!("Restoring missing file: {file_path:?}");
                 results.files_to_restore.push(FileToRestore {
                     file_node: file_node.clone(),
