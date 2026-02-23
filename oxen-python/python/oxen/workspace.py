@@ -213,7 +213,7 @@ class Workspace:
                 base directory. Each path must point to an existing file.
 
         Raises:
-            ValueError: If no valid file paths are provided.
+            PyOxenError: If no valid file paths are provided.
         """
         base_dir = Path(base_dir).absolute()
         resolved: list[str] = []
