@@ -45,7 +45,7 @@ pub async fn fetch_remote_branch(
         log::debug!("Head commit: {head_commit}");
         log::debug!("Remote branch commit: {}", remote_branch.commit_id);
         if head_commit.id == remote_branch.commit_id {
-            if !fetch_opts.missing_files {
+            if !fetch_opts.missing_files && !fetch_opts.all {
                 // Already up to date, nothing to do
                 println!("Repository is up to date.");
                 with_ref_manager(repo, |manager| {
@@ -53,7 +53,14 @@ pub async fn fetch_remote_branch(
                 })?;
                 return Ok(remote_branch);
             }
+
+            if fetch_opts.all {
+                fetch_full_tree_and_hashes(repo, remote_repo, &remote_branch, &pull_progress)
+                    .await?;
+            }
             // missing_files: skip tree sync (trees are already local), fall through to entry scan
+        } else if fetch_opts.all {
+            fetch_full_tree_and_hashes(repo, remote_repo, &remote_branch, &pull_progress).await?;
         } else {
             // Download the nodes from the commits between the head and the remote head
             sync_from_head(
