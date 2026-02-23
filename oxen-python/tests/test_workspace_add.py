@@ -73,7 +73,7 @@ def test_workspace_add_files_preserve_paths_absolute(celeba_remote_repo_one_imag
     _assert_ws_add_files(
         Workspace(remote_repo, "main", "test-workspace-abs"),
         Path(shared_datadir),
-        [f"CelebA/images/{i}.jpg" for i in [1, 2, 3]],
+        [str(Path("CelebA") / "images" / f"{i}.jpg") for i in [1, 2, 3]],
         use_relative_paths=False,
     )
 
@@ -82,7 +82,7 @@ def test_workspace_add_files_preserve_paths_relative(celeba_remote_repo_one_imag
     _assert_ws_add_files(
         Workspace(remote_repo, "main", "test-workspace-rel"),
         Path(shared_datadir),
-        [f"CelebA/images/{i}.jpg" for i in [1, 2, 3]],
+        [str(Path("CelebA") / "images" / f"{i}.jpg") for i in [1, 2, 3]],
         use_relative_paths=True
     )
 
@@ -100,9 +100,9 @@ def _assert_ws_add_files(workspace: Workspace, shared_datadir: Path, relative_im
     assert len(added_files) == 3
     assert sorted(added_files) == sorted(
         [
-            'CelebA/images/1.jpg',
-            'CelebA/images/2.jpg',
-            'CelebA/images/3.jpg',
+            str(Path('CelebA') / 'images' / '1.jpg'),
+            str(Path('CelebA') / 'images' / '2.jpg'),
+            str(Path('CelebA') / 'images' / '3.jpg'),
         ]
     )
 
