@@ -97,8 +97,7 @@ pub fn get_by_dir(
 fn workspace_id_to_dir(repo: &LocalRepository, workspace_id: &str) -> std::path::PathBuf {
     let hash = util::hasher::hash_str_sha256(workspace_id);
     log::debug!("workspace::get workspace_id: {workspace_id:?} hash: {hash:?}");
-    let dir = Workspace::workspace_dir(repo, &hash);
-    dir
+    Workspace::workspace_dir(repo, &hash)
 }
 
 pub fn get_by_name(
@@ -112,22 +111,25 @@ pub fn get_by_name(
         with_workspace_name_manager(repo, |manager| manager.get_id_for_name(workspace_name))?;
     if let Some(workspace_id) = maybe_workspace_from_name_index {
         let ws_dir = workspace_id_to_dir(repo, &workspace_id);
-        return get_by_dir(repo, dir);
+        return get_by_dir(repo, ws_dir);
     }
 
     // Fallback: scan for backwards compatibility with pre-index repos.
-    // Self-heal by writing to the index if found. (O(# workspaces))
+    // Self-heal by writing every named workspace to the index. (O(# workspaces))
     let workspaces = list(repo)?;
+    let mut found: Option<Workspace> = None;
     for workspace in workspaces {
-        if workspace.name == Some(workspace_name.to_string()) {
-            // Populate index for future lookups
+        // Self-heal: populate index for every named workspace we find
+        if let Some(ref ws_name) = workspace.name {
             let _ = with_workspace_name_manager(repo, |manager| {
-                manager.set_name(workspace_name, &workspace.id)
-            })?;
-            return Ok(Some(workspace));
+                manager.set_name(ws_name, &workspace.id)
+            });
+        }
+        if found.is_none() && workspace.name.as_deref() == Some(workspace_name) {
+            found = Some(workspace);
         }
     }
-    Ok(None)
+    Ok(found)
 }
 
 /// Creates a new workspace and saves it to the filesystem
@@ -170,11 +172,16 @@ pub fn create_with_name(
             )));
         }
 
-        // CLAUDE: review comment => how can we do a better job of migrationg?
-
-        // Fallback: scan all workspaces to catch pre-index entries and check name == id conflicts
+        // Fallback: scan all workspaces to catch pre-index entries and check name == id conflicts.
+        // Self-heal: populate the index for every named workspace we encounter so that future
+        // lookups are O(1) and this scan is never repeated.
         let workspaces = list(base_repo)?;
         for workspace in &workspaces {
+            if let Some(ref ws_name) = workspace.name {
+                let _ = with_workspace_name_manager(base_repo, |manager| {
+                    manager.set_name(ws_name, &workspace.id)
+                });
+            }
             check_existing_workspace_name(workspace, name)?;
             if !is_editable {
                 check_non_editable_workspace(workspace, commit)?;
@@ -216,8 +223,7 @@ pub fn create_with_name(
 
     // Populate the name index for O(1) lookups
     if let Some(ref name) = workspace_name {
-        let _ =
-            with_workspace_name_manager(base_repo, |manager| manager.set_name(name, workspace_id))?;
+        with_workspace_name_manager(base_repo, |manager| manager.set_name(name, workspace_id))?;
     }
 
     Ok(Workspace {
@@ -349,8 +355,7 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
 
     // Clean up name index
     if let Some(ref name) = workspace.name {
-        let _ =
-            with_workspace_name_manager(&workspace.base_repo, |manager| manager.delete_name(name))?;
+        with_workspace_name_manager(&workspace.base_repo, |manager| manager.delete_name(name))?;
     }
 
     // Clean up caches before deleting the workspace
@@ -380,6 +385,20 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     }
 
     Ok(())
+}
+
+/// Scans all workspaces and populates the name→ID index.
+/// Idempotent — safe to call multiple times.
+pub fn populate_workspace_name_index(repo: &LocalRepository) -> Result<usize, OxenError> {
+    let workspaces = list(repo)?;
+    let mut count = 0usize;
+    for workspace in &workspaces {
+        if let Some(ref name) = workspace.name {
+            with_workspace_name_manager(repo, |manager| manager.set_name(name, &workspace.id))?;
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {
@@ -1022,14 +1041,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_by_name_returns_named_workspace() -> Result<(), OxenError> {
-        fn check(found: &Workspace, ws: &Workspace) {
+        fn check(found: &Workspace, ws: &Workspace, expected_name: &str) {
             assert_eq!(found.id, ws.id);
-
-            if let Some(found_name) = found.name {
-                assert_eq!(found_name, ws_name);
-            } else {
-                panic!("Expecting found.name to be non-None");
-            }
+            assert_eq!(
+                found.name.as_deref(),
+                Some(expected_name),
+                "Expecting found.name to be Some({expected_name})"
+            );
         }
 
         test::run_empty_local_repo_test_async(|repo| async move {
@@ -1041,17 +1059,15 @@ mod tests {
             let ws_name = "my-workspace";
             let ws = create_with_name(&repo, &commit, "ws-id-1", Some(ws_name.to_string()), true)?;
 
-            let Some(found_by_name) = get_by_name(&repo, ws_name)?.expect(&format!(
-                "Expected to find a named workspace (`get_by_name`): {ws_name}"
-            ));
-            check(&found_by_name, &ws);
+            let found_by_name = get_by_name(&repo, ws_name)?
+                .unwrap_or_else(|| panic!("Expected to find a named workspace (`get_by_name`): {ws_name}"));
+            check(&found_by_name, &ws, ws_name);
 
-            let Some(found_get) = get(&repo, ws_name)?.expect(&format!(
-                "Expected to find a named workspace (`get`): {ws_name}"
-            ));
-            check(&found_get, &ws);
+            let found_get = get(&repo, ws_name)?
+                .unwrap_or_else(|| panic!("Expected to find a named workspace (`get`): {ws_name}"));
+            check(&found_get, &ws, ws_name);
 
-            delete(&found)?;
+            delete(&ws)?;
 
             Ok(())
         })
@@ -1115,6 +1131,48 @@ mod tests {
             let found = get_by_name(&repo, ws_name)?;
             assert!(found.is_none(), "{:?}", found);
 
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_name_self_heals() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws_name = "heal-me";
+            let ws =
+                create_with_name(&repo, &commit, "ws-id-heal", Some(ws_name.to_string()), true)?;
+
+            // Simulate a pre-index repo: manually delete the index entry
+            with_workspace_name_manager(&repo, |manager| manager.delete_name(ws_name))?;
+
+            // Confirm the index no longer knows about the name
+            let has = with_workspace_name_manager(&repo, |manager| Ok(manager.has_name(ws_name)))?;
+            assert!(!has, "Index should be empty after manual delete");
+
+            // Attempt to create a second workspace with the same name.
+            // The fallback scan should find the existing workspace, self-heal the index,
+            // and return an error.
+            let result =
+                create_with_name(&repo, &commit, "ws-id-heal-2", Some(ws_name.to_string()), true);
+            assert!(result.is_err(), "Duplicate name should be rejected");
+
+            // The index should now be re-populated (self-healed)
+            let has_after =
+                with_workspace_name_manager(&repo, |manager| Ok(manager.has_name(ws_name)))?;
+            assert!(has_after, "Index should be re-populated after self-heal");
+
+            // Subsequent get_by_name should hit the O(1) path
+            let found = get_by_name(&repo, ws_name)?;
+            assert!(found.is_some(), "Should find workspace by name after heal");
+            assert_eq!(found.unwrap().id, ws.id);
+
+            delete(&ws)?;
             Ok(())
         })
         .await

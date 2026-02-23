@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use liboxen::command::migrate::AddChildCountsToNodesMigration;
+use liboxen::command::migrate::PopulateWorkspaceNameIndexMigration;
 
 pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
     let config = AuthConfig::get_or_create()?;
@@ -88,6 +89,10 @@ pub fn migrations() -> HashMap<String, Box<dyn Migrate>> {
     map.insert(
         AddChildCountsToNodesMigration.name().to_string(),
         Box::new(AddChildCountsToNodesMigration),
+    );
+    map.insert(
+        PopulateWorkspaceNameIndexMigration.name().to_string(),
+        Box::new(PopulateWorkspaceNameIndexMigration),
     );
     map
 }
