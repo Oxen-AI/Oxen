@@ -399,6 +399,9 @@ async fn main() -> std::io::Result<()> {
                         );
                     }
 
+                    // migration: configure workspace name -> ID mapping
+                    //
+
                     let enable_auth = sub_matches.get_flag("auth");
                     let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
 
