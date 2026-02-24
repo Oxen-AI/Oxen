@@ -7,10 +7,7 @@ on:
         description: "The architecture to build for. Either 'amd64' (for x86_64) or 'arm64'"
         required: true
         default: "amd64"
-        type: choice
-        options:
-          - arm64
-          - amd64
+        type: string
       AWS_ROLE:
         description: "AWS role to assume"
         required: true
@@ -39,7 +36,19 @@ env:
   EC2_INSTANCE_TYPE_ARM64: m7g.4xlarge
 
 jobs:
+  validate-inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate ARCHITECTURE
+        run: |
+          if [ "${{ inputs.ARCHITECTURE }}" != "amd64" ] && [ "${{ inputs.ARCHITECTURE }}" != "arm64" ]; then
+            echo "::error::ARCHITECTURE must be 'amd64' or 'arm64', got: '${{ inputs.ARCHITECTURE }}'"
+            exit 1
+          fi
+
   start-self-hosted-runner:
+    needs: validate-inputs
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
     outputs:
