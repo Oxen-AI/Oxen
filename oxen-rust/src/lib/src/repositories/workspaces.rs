@@ -390,6 +390,7 @@ pub fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), OxenEr
                         "Failed to populate workspace name index for {:?}: {e}",
                         repo.path
                     );
+                    return Err(e);
                 }
             }
         }
