@@ -399,8 +399,15 @@ async fn main() -> std::io::Result<()> {
                         );
                     }
 
-                    // migration: configure workspace name -> ID mapping
-                    //
+                    // Populate workspace name → ID index for all repos so that
+                    // name-based lookups are O(1). Idempotent — safe on every start.
+                    if let Err(e) =
+                        liboxen::repositories::workspaces::populate_all_workspace_name_indexes(
+                            Path::new(&sync_dir),
+                        )
+                    {
+                        log::error!("Failed to populate workspace name indexes: {e}");
+                    }
 
                     let enable_auth = sub_matches.get_flag("auth");
                     let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
