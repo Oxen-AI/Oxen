@@ -3,10 +3,6 @@ name: 🐂📝 Continuous integration - Test Suite
 on:
   workflow_call:
 
-defaults:
-  run:
-    shell: bash -leo pipefail {0}
-
 jobs:
   test:
     name: Test Suite
