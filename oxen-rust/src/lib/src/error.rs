@@ -116,6 +116,9 @@ pub enum OxenError {
     // File Import Error
     ImportFileError(StringError),
 
+    // Database Import Error
+    DbImportError(StringError),
+
     // External Library Errors
     IO(io::Error),
     Authentication(StringError),
@@ -197,6 +200,10 @@ impl OxenError {
 
     pub fn file_import_error(s: impl AsRef<str>) -> Self {
         OxenError::ImportFileError(StringError::from(s.as_ref()))
+    }
+
+    pub fn db_import_error(s: impl AsRef<str>) -> Self {
+        OxenError::DbImportError(StringError::from(s.as_ref()))
     }
 
     pub fn remote_not_set(name: impl AsRef<str>) -> Self {
