@@ -20,7 +20,7 @@ pip install -r requirements.txt
 Then use `maturin` to build the Rust native module and deploy it in the current virtualenv.
 
 ```bash
-maturin develop
+maturin develop   # or `just build` to also install deps
 ```
 
 For intel builds if it cannot find the c++ headers
@@ -32,7 +32,7 @@ env CPLUS_INCLUDE_PATH=/Library/Developer/CommandLineTools/usr/include/c++/v1/ m
 ## Run Tests
 
 ```bash
-pytest -s tests/
+pytest -s tests/   # or `just test`
 ```
 
 ## Code Quality
@@ -46,7 +46,7 @@ black .
 ### Linting
 
 ```bash
-ruff .
+ruff .   # or `just lint` to run ruff + cargo fmt + clippy
 ```
 
 ## Adding Modules 🦀 -> 🐍
