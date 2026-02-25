@@ -354,20 +354,6 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     Ok(())
 }
 
-/// Scans all workspaces and populates the name→ID index.
-/// Idempotent — safe to call multiple times.
-pub fn populate_workspace_name_index(repo: &LocalRepository) -> Result<usize, OxenError> {
-    let workspaces = list(repo)?;
-    let mut count = 0usize;
-    for workspace in &workspaces {
-        if let Some(ref name) = workspace.name {
-            with_workspace_name_manager(repo, |manager| manager.set_name(name, &workspace.id))?;
-            count += 1;
-        }
-    }
-    Ok(count)
-}
-
 /// Populates the workspace name→ID index for every repo under `sync_dir`.
 /// Intended for server startup. Idempotent.
 pub fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), OxenError> {
@@ -396,6 +382,32 @@ pub fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), OxenEr
         }
     }
     Ok(())
+}
+
+/// Scans all workspaces and populates the name→ID index. Returns the number of named workspaces that were updated.
+/// Idempotent — safe to call multiple times.
+pub fn populate_workspace_name_index(repo: &LocalRepository) -> Result<usize, OxenError> {
+    let workspaces = list(repo)?;
+
+    // (ID, name)
+    let ws_id_name: Vec<(String, String)> = workspaces
+        .into_iter()
+        .filter_map(|w| match w.name {
+            Some(name) => Some((w.id, name)),
+            None => None,
+        })
+        .collect();
+
+    let count = ws_id_name.len();
+
+    with_workspace_name_manager(repo, move |manager| {
+        for (id, name) in ws_id_name {
+            manager.set_name(&name, &id)?;
+        }
+        Ok(())
+    })?;
+
+    Ok(count)
 }
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {

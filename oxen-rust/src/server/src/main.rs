@@ -70,7 +70,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use clap::{Arg, Command};
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
 
