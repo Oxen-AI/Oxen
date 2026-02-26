@@ -236,6 +236,7 @@ pub async fn batch_update(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use serde_json::Value;
 
@@ -246,7 +247,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::view::json_data_frame_view::JsonDataFrameRowResponse;
     use polars::prelude::AnyValue;
 
@@ -289,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_should_not_stage_invalid_schema_for_dataframe() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -431,7 +432,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -730,7 +731,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let path = Path::new("annotations")
                 .join("train")
@@ -808,7 +809,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");

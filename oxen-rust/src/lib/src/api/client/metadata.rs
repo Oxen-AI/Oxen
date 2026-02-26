@@ -34,14 +34,15 @@ pub async fn get_file(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::{EntryDataType, StagedEntryStatus};
+    use crate::util;
     use crate::view::entries::EMetadataEntry;
     use crate::view::entry_metadata::EMetadataEntryResponseView;
     use crate::{api, repositories};
-    use crate::{test, util};
 
     use std::path::Path;
 

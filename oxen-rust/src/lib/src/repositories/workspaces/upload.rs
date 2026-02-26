@@ -19,6 +19,7 @@ pub async fn upload(repo: &RemoteRepository, opts: &UploadOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use super::*;
@@ -26,7 +27,7 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::model::EntryDataType;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use crate::constants;

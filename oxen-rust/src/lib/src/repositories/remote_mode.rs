@@ -22,6 +22,7 @@ pub use status::status;
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::PathBuf;
 
@@ -33,7 +34,7 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::opts::clone_opts::CloneOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     #[tokio::test]

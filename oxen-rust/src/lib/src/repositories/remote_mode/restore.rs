@@ -44,6 +44,7 @@ pub async fn restore(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::PathBuf;
 
@@ -51,7 +52,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
 
-    use crate::{repositories, test};
+    use crate::repositories;
 
     #[tokio::test]
     async fn test_remote_mode_restore_file() -> Result<(), OxenError> {

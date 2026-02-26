@@ -182,13 +182,14 @@ fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::time::Duration;
 
     use super::*;
     use crate::config::RepositoryConfig;
     use crate::constants::REPO_CONFIG_FILENAME;
     use crate::error::OxenError;
-    use crate::{repositories, test};
+    use crate::repositories;
 
     #[tokio::test]
     async fn test_fork_operations() -> Result<(), OxenError> {

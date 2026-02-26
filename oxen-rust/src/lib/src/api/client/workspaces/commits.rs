@@ -62,6 +62,7 @@ pub async fn commit(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 
@@ -70,12 +71,12 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
-    use crate::test;
+
     use crate::{api, util};
 
     #[tokio::test]
     async fn test_commit_staged_multiple_files() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-data";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -122,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mergeability_no_conflicts() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let directory_name = "data";
             let paths = vec![test::test_img_file()];
@@ -341,7 +342,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,

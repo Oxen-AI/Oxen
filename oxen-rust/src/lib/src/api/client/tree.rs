@@ -494,6 +494,7 @@ mod tests {
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
+
     use std::fs;
 
     use std::collections::HashSet;

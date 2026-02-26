@@ -13,14 +13,14 @@ use crate::opts::PushOpts;
 ///
 /// ```
 /// # use liboxen::api;
-/// # use liboxen::test;
+/// #
 /// use liboxen::command;
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_push");
 /// let mut repo = repositories::init(base_dir)?;
@@ -79,6 +79,7 @@ mod tests {
     use crate::opts::{CloneOpts, PushOpts};
     use crate::repositories;
     use crate::test;
+
     use crate::util;
     use crate::view::entries::EMetadataEntry;
     use futures::future;

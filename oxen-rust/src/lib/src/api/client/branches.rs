@@ -244,6 +244,7 @@ pub async fn list_entry_versions(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 
@@ -255,7 +256,7 @@ mod tests {
     use crate::opts::PaginateOpts;
     use crate::opts::PushOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     #[tokio::test]

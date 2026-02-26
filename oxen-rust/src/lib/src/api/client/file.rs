@@ -206,13 +206,14 @@ pub async fn delete_file(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use actix_web::web::Bytes;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
-    use crate::{api, repositories, test, util};
+    use crate::{api, repositories, util};
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -289,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "main";
             let file_path = test::test_bounding_box_csv();
             let bytes = api::client::file::get_file(&remote_repo, branch_name, file_path).await;

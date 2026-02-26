@@ -53,12 +53,13 @@ pub async fn load(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;
     use crate::model::LocalRepository;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     #[tokio::test]

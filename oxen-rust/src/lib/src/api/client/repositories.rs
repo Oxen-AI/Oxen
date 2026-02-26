@@ -567,6 +567,7 @@ async fn action_hook(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use crate::api;
@@ -578,7 +579,7 @@ mod tests {
     use crate::model::file::FileNew;
     use crate::model::RepoNew;
     use crate::repositories;
-    use crate::test;
+
     use crate::view::entries::EMetadataEntry;
 
     #[tokio::test]

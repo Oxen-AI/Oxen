@@ -14,12 +14,12 @@ use crate::opts::RestoreOpts;
 /// ```
 /// use liboxen::command;
 /// use liboxen::util;
-/// # use liboxen::test;
+/// #
 /// # use liboxen::error::OxenError;
 /// # use liboxen::opts::RestoreOpts;
 /// # use std::path::Path;
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");
@@ -55,6 +55,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;
@@ -65,9 +66,9 @@ mod tests {
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
-    use crate::test::append_line_txt_file;
+
     use crate::util;
+    use test::append_line_txt_file;
 
     #[tokio::test]
     async fn test_command_restore_removed_file_from_head() -> Result<(), OxenError> {

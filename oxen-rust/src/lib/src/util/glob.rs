@@ -433,11 +433,12 @@ pub fn r_collect_removed_paths(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::error::OxenError;
     use crate::opts::GlobOpts;
+    use crate::repositories;
     use crate::util::glob::parse_glob_paths;
-    use crate::{repositories, test};
 
     use std::collections::HashSet;
     use std::path::PathBuf;

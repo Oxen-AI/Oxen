@@ -1572,6 +1572,7 @@ pub fn get_diff_dir(repo: &LocalRepository, compare_id: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -1580,7 +1581,7 @@ mod tests {
     use crate::opts::DiffOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use polars::lazy::dsl::{col, lit};

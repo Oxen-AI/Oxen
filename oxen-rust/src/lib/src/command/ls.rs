@@ -34,7 +34,7 @@ mod tests {
     use crate::constants;
     use crate::error::OxenError;
     use crate::opts::PaginateOpts;
-    use crate::test;
+
     use crate::util;
     use crate::view::DataTypeCount;
 

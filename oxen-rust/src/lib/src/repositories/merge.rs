@@ -205,6 +205,7 @@ pub fn lowest_common_ancestor_from_commits(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 
@@ -215,7 +216,7 @@ mod tests {
     use crate::model::{Commit, LocalRepository};
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     async fn populate_threeway_merge_repo(

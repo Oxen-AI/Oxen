@@ -1439,6 +1439,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
+
     use crate::util;
 
     use std::path::PathBuf;

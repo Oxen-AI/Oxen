@@ -69,11 +69,12 @@ pub async fn rm(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::config::UserConfig;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::test;
+
     use crate::{api, command, constants, repositories};
 
     use std::path::Path;
@@ -122,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_empty_changes_all_data_pushed() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,

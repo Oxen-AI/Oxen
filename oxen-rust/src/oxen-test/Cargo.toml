@@ -1,0 +1,15 @@
+[package]
+name = "oxen-test"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+liboxen = { path = "../lib" }
+log = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+aws-sdk-s3 = { workspace = true }
+tokio = { workspace = true }

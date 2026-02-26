@@ -86,6 +86,7 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::api;
     use crate::command;
@@ -93,7 +94,7 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use std::path::PathBuf;

@@ -139,7 +139,8 @@ pub async fn create_checkout_branch(
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
-    use crate::{api, repositories, test, util};
+    use crate::test;
+    use crate::{api, repositories, util};
 
     use crate::model::NewCommitBody;
     use crate::repositories::remote_mode;
@@ -194,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_changes_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -241,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_updates_branch() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -282,7 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_added_file_and_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -364,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_added_file_keep_untracked() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -447,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_modified_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
