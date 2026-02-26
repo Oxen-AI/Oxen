@@ -81,7 +81,7 @@ Files to be committed:
 
 ## Delete Remotely Added File
 
-If you accidentally add file from the remote staging area and want to remove it, no worries, you can unstage it with `oxen remote rm`.
+If you accidentally add a file to the remote staging area and want to remove it, no worries—you can unstage it with `oxen remote rm`.
 
 (TODO: right now the functionality only operates on staging area regardless of the --staged flag, we might want to allow remote removing of files and directories).
 

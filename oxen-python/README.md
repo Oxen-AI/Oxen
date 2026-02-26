@@ -43,7 +43,7 @@ If you don't want to download the data locally, you can use the `RemoteRepo` cla
 ```python
 import oxen
 
-repo = RemoteRepo("https://hub.oxen.ai/ox/CatDogBBox")
+repo = oxen.RemoteRepo("https://hub.oxen.ai/ox/CatDogBBox")
 ```
 
 To stage and commit files to a specific version of the data, you can `checkout` an existing branch or create a new one.

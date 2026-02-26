@@ -159,7 +159,7 @@ curl --LsSf https://astral.sh/uv/install.sh | sh
 
 ### Pre-Commit Hooks
 
-We use [pre-commit-hooks](https://pre-commit.com/) to check for commit consistency. Install with Homebrew (MacOS, Linux) as:
+We use [pre-commit-hooks](https://pre-commit.com/) to check for commit consistency. Install with Homebrew (macOS, Linux) as:
 
 ```bash
 brew install pre-commit
