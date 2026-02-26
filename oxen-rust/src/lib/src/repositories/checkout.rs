@@ -1056,4 +1056,88 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_checkout_preserves_uncommitted_file_deletion() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write and commit two files
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&world_file, "World")?;
+
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding files")?;
+
+            // Get the original branch name
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create a feature branch with modifications to world.txt and a new file
+            let branch_name = "feature/new-stuff";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            let world_file = test::modify_txt_file(world_file, "World modified")?;
+            let new_file = repo.path.join("new.txt");
+            util::fs::write_to_path(&new_file, "New")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Modified world.txt and added new.txt")?;
+
+            // Go back to main
+            repositories::checkout(&repo, &orig_branch.name).await?;
+
+            // Delete hello.txt without committing
+            std::fs::remove_file(&hello_file)?;
+            assert!(!hello_file.exists());
+
+            // Checkout the feature branch
+            repositories::checkout(&repo, branch_name).await?;
+
+            // hello.txt should still be deleted (uncommitted deletion preserved)
+            assert!(!hello_file.exists());
+            // world.txt should have the feature branch content
+            assert!(world_file.exists());
+            // new.txt should be restored from the feature branch
+            assert!(new_file.exists());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_checkout_conflicts_on_uncommitted_deletion_of_modified_file(
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Write and commit a file
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Adding hello.txt")?;
+
+            // Get the original branch name
+            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create a feature branch that modifies hello.txt
+            let branch_name = "feature/modify-hello";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            test::modify_txt_file(hello_file.clone(), "Hello from feature")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "Modified hello.txt")?;
+
+            // Go back to main
+            repositories::checkout(&repo, &orig_branch.name).await?;
+
+            // Delete hello.txt without committing
+            std::fs::remove_file(&hello_file)?;
+            assert!(!hello_file.exists());
+
+            // Checkout the feature branch should fail because hello.txt was deleted
+            // locally but modified on the target branch
+            let result = repositories::checkout(&repo, branch_name).await;
+            assert!(result.is_err());
+
+            Ok(())
+        })
+        .await
+    }
 }
