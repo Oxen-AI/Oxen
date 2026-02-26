@@ -24,7 +24,7 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
 
 ## Install Dependencies
 
-Oxen is purely written in Rust 🦀. Refer to the [shared Rust toolchain installation instructions](../README.md#build-). 
+Oxen is purely written in Rust 🦀. Refer to the [shared Rust toolchain installation instructions](../README.md#build-).
 
 If you are a developer and want to learn more about adding code or the overall architecture [start here](docs/dev/AddLibraryCode.md). Otherwise, a quick start to make sure everything is working follows.
 

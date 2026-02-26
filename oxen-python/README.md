@@ -65,18 +65,34 @@ Note that no "push" command is required here, since the above code creates a com
 
 ## Build 🔨
 
-If you're developing the Python interface, you'll need to: 
+### Pre-Requistes
+
+If you're developing the Python interface, you'll need to:
 1. [Install the Rust toolchain](../README.md#build-)
 2. [Install `uv`](https://docs.astral.sh/uv/getting-started/installation/)
 3. Install the [pre-commit hooks](../README.md#pre-commit-hooks) to ensure your code is consistent
 
-# Run maturin
-$ cd oxen
-$ maturin develop
+### Development Cycle
+
+To get and build dependencies, run:
+```bash
+uv sync
+```
+
+To build the PyO3 oxen wrappers, use `maturin`:
+```bash
+uv run maturin develop
 ```
 
 ## Test
 
+Run `pytest`:
+
 ```bash
-$ pytest -s tests/
+uv run pytest -s tests/
+```
+
+Format and lint code with:
+```bash
+uvx ruff check .
 ```
