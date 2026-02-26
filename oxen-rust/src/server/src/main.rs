@@ -2,11 +2,12 @@ use dotenv::dotenv;
 use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
+use liboxen::error::OxenError;
 use liboxen::model::merkle_tree::merkle_tree_node_cache;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::User;
 use liboxen::repositories::workspaces::{
-    populate_all_workspace_commit_indexes, populate_all_workspace_name_indexes,
+    populate, populate_workspace_commit_index, populate_workspace_name_index,
 };
 use liboxen::util;
 
@@ -284,7 +285,7 @@ impl Modify for SecurityAddon {
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), OxenError> {
     dotenv().ok();
 
     match from_filename("src/server/.env.local") {
@@ -406,14 +407,38 @@ async fn main() -> std::io::Result<()> {
 
                     // Populate workspace name → ID index for all repos so that
                     // name-based lookups are O(1). Idempotent — safe on every start.
-                    if let Err(e) = populate_all_workspace_name_indexes(&sync_dir).await {
-                        log::error!("Failed to populate workspace name indexes: {e}");
+                    match populate(
+                        &sync_dir,
+                        populate_workspace_name_index,
+                        "[Workspace Name Index]",
+                    )
+                    .await
+                    {
+                        Ok(()) => log::debug!("Workspace name indexes populated successfully"),
+                        Err(e) => {
+                            log::error!("Failed to populate workspace name indexes: {e}");
+                            return Err(e);
+                        }
                     }
 
                     // Populate workspace commit → ID index for non-editable workspaces
                     // so that commit-based lookups are O(1). Idempotent — safe on every start.
-                    if let Err(e) = populate_all_workspace_commit_indexes(&sync_dir).await {
-                        log::error!("Failed to populate workspace commit indexes: {e}");
+                    match populate(
+                        &sync_dir,
+                        populate_workspace_commit_index,
+                        "[Non-Editable Workspace Index]",
+                    )
+                    .await
+                    {
+                        Ok(()) => log::debug!(
+                            "Non-editable workspace commit indexes populated successfully"
+                        ),
+                        Err(e) => {
+                            log::error!(
+                                "Failed to populate non-editable workspace commit indexes: {e}"
+                            );
+                            return Err(e);
+                        }
                     }
 
                     let enable_auth = sub_matches.get_flag("auth");
@@ -468,11 +493,10 @@ async fn main() -> std::io::Result<()> {
                     ))
                     .bind((host.to_owned(), port))?
                     .run()
-                    .await
+                    .await?
                 }
                 _ => {
                     eprintln!("{START_SERVER_USAGE}");
-                    Ok(())
                 }
             }
         }
@@ -522,9 +546,8 @@ async fn main() -> std::io::Result<()> {
                     eprintln!("Err: {error:?}");
                 }
             }
-
-            Ok(())
         }
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachabe!()
     }
+    Ok(())
 }

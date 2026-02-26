@@ -383,9 +383,19 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     Ok(())
 }
 
-/// Populates the workspace name→ID index for every repo under `sync_dir`.
-/// Intended for server startup. Idempotent.
-pub async fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), OxenError> {
+/// Executes the `populate_per_repo` function on each local repository in the `sync_dir`.
+///
+/// Intended for server startup with a populate function such as:
+///   - `populate_workspace_name_index`
+///   - `populate_workspace_commit_index`
+pub async fn populate<F>(
+    sync_dir: &Path,
+    populate_per_repo: F,
+    message: &str,
+) -> Result<(), OxenError>
+where
+    F: Fn(&LocalRepository) -> Result<usize, OxenError> + Send + Sync + Copy + 'static,
+{
     let futures_setup_repos = repositories::list_namespaces(sync_dir)?
         .into_iter()
         .flat_map(|namespace| {
@@ -393,7 +403,7 @@ pub async fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), 
             repositories::list_repos_in_namespace(&namespace_path)
         })
         .fold(tokio::task::JoinSet::new(), |mut join_set, repo| {
-            join_set.spawn(async { (populate_workspace_name_index(&repo), repo.path) });
+            join_set.spawn(async move { (populate_per_repo(&repo), repo.path) });
             join_set
         });
 
@@ -405,12 +415,12 @@ pub async fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), 
             |(maybe_count_updated_ws, repo_path)| match maybe_count_updated_ws {
                 Ok(count) => {
                     if count > 0 {
-                        log::info!("Indexed {count} named workspace(s) for repo {repo_path:?}");
+                        log::info!("{message} Indexed {count} for repo {repo_path:?}");
                     }
                     None
                 }
                 Err(e) => {
-                    log::error!("Failed to populate workspace name index for {repo_path:?}: {e}");
+                    log::error!("{message} Failed to populate for {repo_path:?}: {e}");
                     Some(e)
                 }
             },
@@ -449,51 +459,6 @@ pub fn populate_workspace_name_index(repo: &LocalRepository) -> Result<usize, Ox
         }
         Ok(count)
     })
-}
-
-/// Populates the commit→workspace ID index for non-editable workspaces
-/// across every repo under `sync_dir`.
-/// Intended for server startup. Idempotent.
-pub async fn populate_all_workspace_commit_indexes(sync_dir: &Path) -> Result<(), OxenError> {
-    let futures_setup_repos = repositories::list_namespaces(sync_dir)?
-        .into_iter()
-        .flat_map(|namespace| {
-            let namespace_path = sync_dir.join(namespace);
-            repositories::list_repos_in_namespace(&namespace_path)
-        })
-        .fold(tokio::task::JoinSet::new(), |mut join_set, repo| {
-            join_set.spawn(async { (populate_workspace_commit_index(&repo), repo.path) });
-            join_set
-        });
-
-    let results_setup_repos = futures_setup_repos.join_all().await;
-
-    let errors_for_failed_updates = results_setup_repos
-        .into_iter()
-        .filter_map(
-            |(maybe_count_updated_ws, repo_path)| match maybe_count_updated_ws {
-                Ok(count) => {
-                    if count > 0 {
-                        log::info!(
-                            "Indexed {count} non-editable workspace(s) by commit for repo {repo_path:?}"
-                        );
-                    }
-                    None
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to populate workspace commit index for {repo_path:?}: {e}"
-                    );
-                    Some(e)
-                }
-            },
-        )
-        .collect::<Vec<_>>();
-
-    match OxenError::compound(errors_for_failed_updates) {
-        Some(e) => Err(e),
-        None => Ok(()),
-    }
 }
 
 /// Scans all workspaces and populates the commit→workspace ID index for non-editable workspaces.
