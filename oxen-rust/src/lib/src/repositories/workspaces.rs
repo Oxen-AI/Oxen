@@ -1,9 +1,11 @@
 use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACE_NAMES_DIR};
+use crate::constants::{
+    OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACE_COMMITS_DIR, WORKSPACE_NAMES_DIR,
+};
 use crate::core;
 use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
-use crate::core::workspaces::with_workspace_name_manager;
+use crate::core::workspaces::{with_workspace_commit_manager, with_workspace_name_manager};
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
@@ -167,10 +169,15 @@ pub fn create_with_name(
         }
     }
 
+    // O(1) check: at most one non-editable workspace per commit
     if !is_editable {
-        let workspaces = list(base_repo)?;
-        for workspace in &workspaces {
-            check_non_editable_workspace(workspace, commit)?;
+        let has_non_editable =
+            with_workspace_commit_manager(base_repo, |manager| Ok(manager.has_commit(&commit.id)))?;
+        if has_non_editable {
+            return Err(OxenError::basic_str(format!(
+                "A non-editable workspace already exists for commit {}",
+                commit.id
+            )));
         }
     }
 
@@ -203,6 +210,13 @@ pub fn create_with_name(
     // Populate the name index for O(1) lookups
     if let Some(ref name) = workspace_name {
         with_workspace_name_manager(base_repo, |manager| manager.set_name(name, workspace_id))?;
+    }
+
+    // Populate the commit index for O(1) non-editable workspace lookups
+    if !is_editable {
+        with_workspace_commit_manager(base_repo, |manager| {
+            manager.set_commit(&commit.id, workspace_id)
+        })?;
     }
 
     Ok(Workspace {
@@ -254,16 +268,6 @@ pub fn create_temporary(
     Ok(TemporaryWorkspace { workspace })
 }
 
-fn check_non_editable_workspace(workspace: &Workspace, commit: &Commit) -> Result<(), OxenError> {
-    if workspace.commit.id == commit.id && !workspace.is_editable {
-        return Err(OxenError::basic_str(format!(
-            "A non-editable workspace already exists for commit {}",
-            commit.id
-        )));
-    }
-    Ok(())
-}
-
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
     let workspaces_dir = Workspace::workspaces_dir(repo);
     log::debug!("workspace::list got workspaces_dir: {workspaces_dir:?}");
@@ -300,15 +304,26 @@ pub fn get_non_editable_by_commit_id(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
 ) -> Result<Workspace, OxenError> {
-    let workspaces = list(repo)?;
-    for workspace in workspaces {
-        if workspace.commit.id == commit_id.as_ref() && !workspace.is_editable {
-            return Ok(workspace);
+    let commit_id = commit_id.as_ref();
+
+    // O(1) lookup via the commit index
+    let maybe_workspace_id =
+        with_workspace_commit_manager(repo, |manager| manager.get_id_for_commit(commit_id))?;
+
+    match maybe_workspace_id {
+        Some(workspace_id) => {
+            let ws_dir = workspace_id_to_dir(repo, &workspace_id);
+            match get_by_dir(repo, ws_dir)? {
+                Some(ws) => Ok(ws),
+                None => Err(OxenError::basic_str(
+                    "Non-editable workspace index entry exists but workspace not found on disk",
+                )),
+            }
         }
+        None => Err(OxenError::basic_str(
+            "No non-editable workspace found for the given commit ID",
+        )),
     }
-    Err(OxenError::basic_str(
-        "No non-editable workspace found for the given commit ID",
-    ))
 }
 
 pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
@@ -323,6 +338,13 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     // Clean up name index
     if let Some(ref name) = workspace.name {
         with_workspace_name_manager(&workspace.base_repo, |manager| manager.delete_name(name))?;
+    }
+
+    // Clean up commit index for non-editable workspaces
+    if !workspace.is_editable {
+        with_workspace_commit_manager(&workspace.base_repo, |manager| {
+            manager.delete_commit(&workspace.commit.id)
+        })?;
     }
 
     // Clean up caches before deleting the workspace
@@ -349,6 +371,13 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     let names_dir = util::fs::oxen_hidden_dir(&repo.path).join(WORKSPACE_NAMES_DIR);
     if names_dir.exists() {
         util::fs::remove_dir_all(&names_dir)?;
+    }
+
+    // Clear the workspace commits index
+    core::workspaces::remove_commit_cache(&repo.path)?;
+    let commits_dir = util::fs::oxen_hidden_dir(&repo.path).join(WORKSPACE_COMMITS_DIR);
+    if commits_dir.exists() {
+        util::fs::remove_dir_all(&commits_dir)?;
     }
 
     Ok(())
@@ -416,6 +445,78 @@ pub fn populate_workspace_name_index(repo: &LocalRepository) -> Result<usize, Ox
         let mut count = 0;
         for (id, name) in unindexed_workspaces {
             manager.set_name(name, id)?;
+            count += 1;
+        }
+        Ok(count)
+    })
+}
+
+/// Populates the commit→workspace ID index for non-editable workspaces
+/// across every repo under `sync_dir`.
+/// Intended for server startup. Idempotent.
+pub async fn populate_all_workspace_commit_indexes(sync_dir: &Path) -> Result<(), OxenError> {
+    let futures_setup_repos = repositories::list_namespaces(sync_dir)?
+        .into_iter()
+        .flat_map(|namespace| {
+            let namespace_path = sync_dir.join(namespace);
+            repositories::list_repos_in_namespace(&namespace_path)
+        })
+        .fold(tokio::task::JoinSet::new(), |mut join_set, repo| {
+            join_set.spawn(async { (populate_workspace_commit_index(&repo), repo.path) });
+            join_set
+        });
+
+    let results_setup_repos = futures_setup_repos.join_all().await;
+
+    let errors_for_failed_updates = results_setup_repos
+        .into_iter()
+        .filter_map(
+            |(maybe_count_updated_ws, repo_path)| match maybe_count_updated_ws {
+                Ok(count) => {
+                    if count > 0 {
+                        log::info!(
+                            "Indexed {count} non-editable workspace(s) by commit for repo {repo_path:?}"
+                        );
+                    }
+                    None
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to populate workspace commit index for {repo_path:?}: {e}"
+                    );
+                    Some(e)
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    match OxenError::compound(errors_for_failed_updates) {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Scans all workspaces and populates the commit→workspace ID index for non-editable workspaces.
+/// Returns the number of non-editable workspaces that were indexed.
+/// Idempotent — safe to call multiple times.
+pub fn populate_workspace_commit_index(repo: &LocalRepository) -> Result<usize, OxenError> {
+    let workspaces = list(repo)?;
+
+    // (commit_id, workspace_id) for non-editable workspaces
+    let ws_commit_id: Vec<(String, String)> = workspaces
+        .into_iter()
+        .filter(|w| !w.is_editable)
+        .map(|w| (w.commit.id, w.id))
+        .collect();
+
+    with_workspace_commit_manager(repo, move |manager| {
+        let unindexed = ws_commit_id
+            .iter()
+            .filter(|(commit_id, _)| !manager.has_commit(commit_id));
+
+        let mut count = 0;
+        for (commit_id, workspace_id) in unindexed {
+            manager.set_commit(commit_id, workspace_id)?;
             count += 1;
         }
         Ok(count)
@@ -1193,6 +1294,136 @@ mod tests {
                 "Should find workspace after index populated"
             );
             assert_eq!(found.unwrap().id, ws.id);
+
+            delete(&ws)?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_non_editable_by_commit_id_o1() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            // Create a non-editable workspace
+            let ws = create_with_name(
+                &repo,
+                &commit,
+                "ws-non-edit",
+                Some("non-edit-ws".to_string()),
+                false,
+            )?;
+
+            // O(1) lookup should find it
+            let found = get_non_editable_by_commit_id(&repo, &commit.id)?;
+            assert_eq!(found.id, ws.id);
+            assert!(!found.is_editable);
+
+            delete(&ws)?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_non_editable_workspace_fails() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws = create_with_name(&repo, &commit, "ws-ne-1", None, false)?;
+
+            // Creating a second non-editable workspace for the same commit should fail
+            let result = create_with_name(&repo, &commit, "ws-ne-2", None, false);
+            assert!(result.is_err(), "{:?}", result);
+
+            delete(&ws)?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_delete_removes_commit_index() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws = create_with_name(&repo, &commit, "ws-ne-del", None, false)?;
+
+            // Confirm it's indexed
+            let has =
+                with_workspace_commit_manager(&repo, |manager| Ok(manager.has_commit(&commit.id)))?;
+            assert!(has, "Commit index should have entry after create");
+
+            delete(&ws)?;
+
+            // After delete, the commit index entry should be gone
+            let has =
+                with_workspace_commit_manager(&repo, |manager| Ok(manager.has_commit(&commit.id)))?;
+            assert!(!has, "Commit index should be empty after delete");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_clear_removes_commit_index() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            create_with_name(&repo, &commit, "ws-ne-clear", None, false)?;
+
+            clear(&repo)?;
+
+            // After clear, get_non_editable_by_commit_id should fail
+            let result = get_non_editable_by_commit_id(&repo, &commit.id);
+            assert!(result.is_err());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_populate_workspace_commit_index() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let ws = create_with_name(&repo, &commit, "ws-ne-pop", None, false)?;
+
+            // Simulate a pre-index repo: manually delete the index entry
+            with_workspace_commit_manager(&repo, |manager| manager.delete_commit(&commit.id))?;
+            let has =
+                with_workspace_commit_manager(&repo, |manager| Ok(manager.has_commit(&commit.id)))?;
+            assert!(!has, "Index should be empty after manual delete");
+
+            // Without the index, get_non_editable_by_commit_id should fail
+            let result = get_non_editable_by_commit_id(&repo, &commit.id);
+            assert!(result.is_err(), "Should not find workspace without index");
+
+            // Run the startup population to repopulate the index
+            let count = populate_workspace_commit_index(&repo)?;
+            assert_eq!(count, 1);
+
+            // Now get_non_editable_by_commit_id should find the workspace
+            let found = get_non_editable_by_commit_id(&repo, &commit.id)?;
+            assert_eq!(found.id, ws.id);
 
             delete(&ws)?;
             Ok(())

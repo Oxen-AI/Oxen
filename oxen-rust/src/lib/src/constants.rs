@@ -126,6 +126,8 @@ pub const WORKSPACES_DIR: &str = "workspaces";
 pub const WORKSPACE_CONFIG: &str = "WORKSPACE_CONFIG";
 /// workspace names index directory (maps workspace name → workspace ID)
 pub const WORKSPACE_NAMES_DIR: &str = "workspace_names";
+/// workspace commits index directory (maps commit ID → workspace ID for non-editable workspaces)
+pub const WORKSPACE_COMMITS_DIR: &str = "workspace_commits";
 /// data.arrow
 pub const DATA_ARROW_FILE: &str = "data.arrow";
 
