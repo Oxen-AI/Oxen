@@ -30,10 +30,10 @@ def load_data(
             host=HTTP_HOST,
             scheme=HTTP_SCHEME
         )
-    
+
     df = pd.read_parquet(questions_file)
     return df
-    
+
 
 def fetch_results(documents_df: DataFrame, embedding: List[float]):
     results = documents_df.query(

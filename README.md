@@ -115,37 +115,63 @@ This repository contains the Python library that wraps the core Rust codebase. W
 
 Code bases to contribute to:
 
-* 🦀 [Core Rust Library](https://github.com/Oxen-AI/Oxen)
-* 🐍 [Python Interface](https://github.com/Oxen-AI/oxen-release/tree/main/oxen)
+* 🦀 [Core Rust Library](https://github.com/Oxen-AI/Oxen/tree/main/oxen-rust)
+* 🐍 [Python Interface](https://github.com/Oxen-AI/Oxen/tree/main/oxen-python)
 * 📚 [Documentation](https://github.com/Oxen-AI/docs)
 
 If you are building anything with Oxen.ai or have any questions we would love to hear from you in our [discord](https://discord.gg/s3tBEn7Ptg).
 
 ## Build 🔨
 
-Set up virtual environment:
+Each codebase has its own build instructions, please refer to [`oxen-rust`'s build instructions](./oxen-rust/README.md#-build--run)
+and [`oxen-python`'s build instructions](./oxen-python/README.md#build) for specifics.
+
+However, each codebase shares the same pre-requisites and pre-commit hooks.
+
+### Pre-Requisites
+Oxen is purely written in Rust 🦀. You should install the Rust toolchain with [`rustup`](https://www.rust-lang.org/tools/install).
 
 ```bash
-# Set up your python virtual environment
-$ python -m venv ~/.venv_oxen # could be python3
-$ source ~/.venv_oxen/bin/activate
-$ pip install -r requirements.txt
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+Once you have rust, install the following developer tools:
+- [`bacon`](https://crates.io/crates/bacon): run the server with reload-on-changes
+- [`cargo-machete`](https://github.com/bnjbvr/cargo-machete): identify and remove unused dependencies
+- [`cargo-llvm-cov`](https://crates.io/crates/cargo-llvm-cov): calculate test code coverage
+- [`cargo-sort`](https://crates.io/crates/cargo-sort): ensure `Cargo.toml` files are organized
+- [`cargo-nextest`](https://crates.io/crates/cargo-nextest): run unit tests
+
+You can install all of these at once with the following commands:
 
 ```bash
-# Install rust
-$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Run maturin
-$ cd oxen
-$ maturin develop
+cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
+cargo install --locked cargo-nextest
 ```
 
-## Test
+The [Python interface](./oxen-python/README.md) uses [`liboxen`](./oxen-rust/src/lib/) bindings provided by PyO3.
+
+The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
-$ pytest -s tests/
+curl --LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+### Pre-Commit Hooks
+
+We use [pre-commit-hooks](https://pre-commit.com/) to check for commit consistency.
+
+Install with `uv` as a tool:
+
+```bash
+uv tool install pre-commit
+```
+
+Install `Oxen`'s pre-commit hooks locally using:
+```bash
+pre-commit install
+```
+
 
 ## Why build Oxen?
 

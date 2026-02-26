@@ -22,7 +22,7 @@ else
     ABSOLUTE_REPO_PATH="$(pwd)/$REPO_PATH"
 fi
 
-# 1. Save the repo to a tarball 
+# 1. Save the repo to a tarball
 oxen save "$REPO_PATH" -o $ABSOLUTE_REPO_PATH.tar.gz
 
 # Exit if save issues
@@ -40,7 +40,7 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-# Step 3: Verify that the tarball has been uploaded to s3 
+# Step 3: Verify that the tarball has been uploaded to s3
 aws s3 ls "s3://$BUCKET_NAME/$FILEPATH.tar.gz"
 if [ $? -ne 0 ]; then
   echo "Verification failed, tarball not found in S3"
