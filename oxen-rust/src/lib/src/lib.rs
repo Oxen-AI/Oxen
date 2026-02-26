@@ -70,6 +70,7 @@ pub mod constants;
 pub mod core;
 pub mod error;
 pub mod io;
+pub mod lfs;
 pub mod migrations;
 pub mod model;
 pub mod namespaces;
