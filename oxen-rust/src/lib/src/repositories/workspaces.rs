@@ -391,7 +391,7 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
 pub async fn populate<F>(
     sync_dir: &Path,
     populate_per_repo: F,
-    message: &str,
+    log_message: &str,
 ) -> Result<(), OxenError>
 where
     F: Fn(&LocalRepository) -> Result<usize, OxenError> + Send + Sync + Copy + 'static,
@@ -415,12 +415,12 @@ where
             |(maybe_count_updated_ws, repo_path)| match maybe_count_updated_ws {
                 Ok(count) => {
                     if count > 0 {
-                        log::info!("{message} Indexed {count} for repo {repo_path:?}");
+                        log::info!("{log_message} Indexed {count} for repo {repo_path:?}");
                     }
                     None
                 }
                 Err(e) => {
-                    log::error!("{message} Failed to populate for {repo_path:?}: {e}");
+                    log::error!("{log_message} Failed to populate for {repo_path:?}: {e}");
                     Some(e)
                 }
             },
