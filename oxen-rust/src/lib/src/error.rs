@@ -5,6 +5,7 @@
 
 use derive_more::{Debug, Error};
 use duckdb::arrow::error::ArrowError;
+use itertools::Itertools;
 use std::fmt;
 use std::io;
 use std::num::ParseIntError;
@@ -141,6 +142,9 @@ pub enum OxenError {
     ParseIntError(ParseIntError),
     RmpDecodeError(rmp_serde::decode::Error),
 
+    /// When there are multiple errors that occurred concurrently
+    Compound(Vec<OxenError>),
+
     // Fallback
     Basic(StringError),
 }
@@ -155,6 +159,7 @@ impl fmt::Display for OxenError {
                 f,
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
             ),
+            Self::Compound(many) => write!(f, "{} errors occurred:\n{}", many.len(), many.iter().map(|e| format!("{e}")).join("\n")),
             _ => {
                 write!(f, "{self:?}")
             }
@@ -165,6 +170,15 @@ impl fmt::Display for OxenError {
 impl OxenError {
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
+    }
+
+    /// Produces an `Some(OxenError::Compound)` with the provided errors if non-empty, `None` otherwise.
+    pub fn compound(errors: Vec<Self>) -> Option<Self> {
+        if errors.is_empty() {
+            None
+        } else {
+            Some(Self::Compound(errors))
+        }
     }
 
     pub fn thumbnailing_not_enabled(s: impl AsRef<str>) -> Self {

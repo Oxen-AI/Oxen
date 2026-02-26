@@ -356,32 +356,42 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
 
 /// Populates the workspace name→ID index for every repo under `sync_dir`.
 /// Intended for server startup. Idempotent.
-pub fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), OxenError> {
-    let namespaces = repositories::list_namespaces(sync_dir)?;
-    for namespace in namespaces {
-        let namespace_path = sync_dir.join(namespace);
-        let repos = repositories::list_repos_in_namespace(&namespace_path);
-        for repo in repos {
-            match populate_workspace_name_index(&repo) {
+pub async fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), OxenError> {
+    let futures_setup_repos = repositories::list_namespaces(sync_dir)?
+        .into_iter()
+        .flat_map(|namespace| {
+            let namespace_path = sync_dir.join(namespace);
+            repositories::list_repos_in_namespace(&namespace_path)
+        })
+        .fold(tokio::task::JoinSet::new(), |mut join_set, repo| {
+            join_set.spawn({ async { (populate_workspace_name_index(&repo), repo.path) } });
+            join_set
+        });
+
+    let results_setup_repos = futures_setup_repos.join_all().await;
+
+    let errors_for_failed_updates = results_setup_repos
+        .into_iter()
+        .filter_map(
+            |(maybe_count_updated_ws, repo_path)| match maybe_count_updated_ws {
                 Ok(count) => {
                     if count > 0 {
-                        log::info!(
-                            "Indexed {count} named workspace(s) for repo {:?}",
-                            repo.path
-                        );
+                        log::info!("Indexed {count} named workspace(s) for repo {repo_path:?}");
                     }
+                    None
                 }
                 Err(e) => {
-                    log::error!(
-                        "Failed to populate workspace name index for {:?}: {e}",
-                        repo.path
-                    );
-                    return Err(e);
+                    log::error!("Failed to populate workspace name index for {repo_path:?}: {e}");
+                    Some(e)
                 }
-            }
-        }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    match OxenError::compound(errors_for_failed_updates) {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// Scans all workspaces and populates the name→ID index. Returns the number of named workspaces that were updated.
@@ -398,16 +408,18 @@ pub fn populate_workspace_name_index(repo: &LocalRepository) -> Result<usize, Ox
         })
         .collect();
 
-    let count = ws_id_name.len();
-
     with_workspace_name_manager(repo, move |manager| {
-        for (id, name) in ws_id_name {
-            manager.set_name(&name, &id)?;
-        }
-        Ok(())
-    })?;
+        let unindexed_workspaces = ws_id_name
+            .iter()
+            .filter(|(_, name)| !manager.has_name(name));
 
-    Ok(count)
+        let mut count = 0;
+        for (id, name) in unindexed_workspaces {
+            manager.set_name(name, id)?;
+            count += 1;
+        }
+        Ok(count)
+    })
 }
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {
