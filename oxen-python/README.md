@@ -74,14 +74,14 @@ If you're developing the Python interface, you'll need to:
 
 ### Development Cycle
 
-To get and build dependencies, run:
+To get and build dependencies, as well as the `oxen-python` code, run:
 ```bash
-uv sync
+uv sync --verbose
 ```
 
-To build the PyO3 oxen wrappers, use `maturin`:
+To build the PyO3 oxen wrappers only, use [`maturin`](https://github.com/PyO3/maturin) and `--no-sync`:
 ```bash
-uv run maturin develop
+uv run --no-sync maturin develop
 ```
 
 ## Test
@@ -89,7 +89,14 @@ uv run maturin develop
 Run `pytest`:
 
 ```bash
-uv run pytest -s tests/
+uv run --verbose pytest -s tests/
+```
+
+If you have already installed all dependencies, and you're not making any changes to
+[`liboxen`](../oxen-rust/src/lib), then you may use `--no-sync`:
+
+```bash
+uv run --no-sync pytest -s tests/
 ```
 
 Format and lint code with:
