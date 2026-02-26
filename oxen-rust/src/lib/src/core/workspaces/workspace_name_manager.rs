@@ -20,7 +20,7 @@ static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
 /// Removes a repository's workspace names DB instance from the cache.
-pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
+pub(crate) fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
     let names_dir = util::fs::oxen_hidden_dir(repository_path).join(WORKSPACE_NAMES_DIR);
     let mut instances = DB_INSTANCES.lock();
     let _ = instances.pop(&names_dir);
@@ -28,12 +28,12 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 }
 
 /// Manages the RocksDB workspace ID -> name mapping.
-pub struct WorkspaceNameManager {
+pub(crate) struct WorkspaceNameManager {
     db: Arc<DB>,
 }
 
 /// Manages access to the workspace ID -> name mapping.
-pub fn with_workspace_name_manager<F, T>(
+pub(crate) fn with_workspace_name_manager<F, T>(
     repository: &LocalRepository,
     operation: F,
 ) -> Result<T, OxenError>
@@ -87,16 +87,16 @@ impl WorkspaceNameManager {
         }
     }
 
-    pub fn set_name(&self, name: &str, workspace_id: &str) -> Result<(), OxenError> {
+    pub(crate) fn set_name(&self, name: &str, workspace_id: &str) -> Result<(), OxenError> {
         self.db.put(name.as_bytes(), workspace_id.as_bytes())?;
         Ok(())
     }
 
-    pub fn has_name(&self, name: &str) -> bool {
+    pub(crate) fn has_name(&self, name: &str) -> bool {
         matches!(self.db.get(name.as_bytes()), Ok(Some(_)))
     }
 
-    pub fn delete_name(&self, name: &str) -> Result<(), OxenError> {
+    pub(crate) fn delete_name(&self, name: &str) -> Result<(), OxenError> {
         self.db.delete(name.as_bytes())?;
         Ok(())
     }
