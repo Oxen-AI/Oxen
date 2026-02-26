@@ -1,25 +1,36 @@
 [package]
 name = "oxen-cli"
-version = "0.44.2"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license-file = { workspace = true }
+description = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
 
 [[bin]]
 name = "oxen"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1.80"
-bytesize = "1.3.0"
-chrono = "0.4.30"
-clap = { version = "4.2.7", features = ["cargo", "derive"] }
-colored = "2.0.0"
-dialoguer = "0.11.0"
-glob = "0.3.1"
+async-trait = { workspace = true }
+bytesize = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+dialoguer = { workspace = true }
+glob = { workspace = true }
 liboxen = { path = "../lib" }
-log = "0.4.20"
-minus = { version = "5.3.1", features = ["static_output", "search"] }
-serde_json = "1.0.78"
-time = { version = "0.3.20", features = ["serde"] }
-tokio = { version = "1", features = ["full"] }
-url = "2.4.1"
-uuid = { version = "1.4.1", features = ["serde", "v4"] }
+log = { workspace = true }
+minus = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+oxen-test = { path = "../oxen-test" }

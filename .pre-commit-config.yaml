@@ -8,7 +8,7 @@ repos:
     hooks:
       - id: cargo-fmt-oxen-rust
         name: cargo fmt (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo fmt'
+        entry: bash -c 'cd oxen-rust && cargo fmt --all'
         language: system
         files: ^oxen-rust/.*\.rs$
         pass_filenames: false
@@ -22,7 +22,7 @@ repos:
 
       - id: cargo-clippy-oxen-rust
         name: cargo clippy (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo clippy --no-deps -- -D warnings'
+        entry: bash -c 'cd oxen-rust && cargo clippy --workspace --no-deps -- -D warnings'
         language: system
         files: ^oxen-rust/.*\.rs$
         pass_filenames: false
