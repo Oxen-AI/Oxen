@@ -95,4 +95,5 @@ uv run pytest -s tests/
 Format and lint code with:
 ```bash
 uvx ruff check .
+uvx ruff format .
 ```
