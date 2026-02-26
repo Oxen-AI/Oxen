@@ -364,7 +364,7 @@ pub async fn populate_all_workspace_name_indexes(sync_dir: &Path) -> Result<(), 
             repositories::list_repos_in_namespace(&namespace_path)
         })
         .fold(tokio::task::JoinSet::new(), |mut join_set, repo| {
-            join_set.spawn({ async { (populate_workspace_name_index(&repo), repo.path) } });
+            join_set.spawn(async { (populate_workspace_name_index(&repo), repo.path) });
             join_set
         });
 

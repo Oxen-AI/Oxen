@@ -143,6 +143,7 @@ pub enum OxenError {
     RmpDecodeError(rmp_serde::decode::Error),
 
     /// When there are multiple errors that occurred concurrently
+    #[error(ignore)]
     Compound(Vec<OxenError>),
 
     // Fallback

@@ -404,7 +404,7 @@ async fn main() -> std::io::Result<()> {
 
                     // Populate workspace name → ID index for all repos so that
                     // name-based lookups are O(1). Idempotent — safe on every start.
-                    if let Err(e) = populate_all_workspace_name_indexes(&sync_dir) {
+                    if let Err(e) = populate_all_workspace_name_indexes(&sync_dir).await {
                         log::error!("Failed to populate workspace name indexes: {e}");
                     }
 
