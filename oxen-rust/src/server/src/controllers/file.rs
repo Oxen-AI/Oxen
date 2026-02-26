@@ -684,15 +684,14 @@ mod tests {
 
     use crate::app_data::OxenAppData;
     use crate::controllers;
-    use crate::test;
 
     #[actix_web::test]
     async fn test_controllers_file_put() -> Result<(), OxenError> {
-        test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
+        liboxen::test::init_test_env();
+        let sync_dir = crate::test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -749,7 +748,7 @@ mod tests {
         );
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        crate::test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }

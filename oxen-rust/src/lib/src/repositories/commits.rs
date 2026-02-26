@@ -22,11 +22,11 @@ pub mod commit_writer;
 /// ```
 /// use liboxen::command;
 /// use liboxen::util;
-/// # use liboxen::test;
+/// #
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # crate::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");
@@ -416,14 +416,14 @@ mod tests {
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use super::*;
 
     #[tokio::test]
     async fn test_command_commit_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -451,7 +451,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_removed_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -486,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_train_data_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Track the file
             let train_dir = repo.path.join("train");
             repositories::add(&repo, train_dir).await?;
@@ -516,7 +516,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_dir_recursive() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Track the annotations dir, which has sub dirs
             let annotations_dir = repo.path.join("annotations");
             repositories::add(&repo, annotations_dir).await?;
@@ -540,7 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_second_level_dir_then_revert() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Track & commit (dir already created in helper)
             let new_dir_path = repo.path.join("annotations").join("train");
             repositories::add(&repo, &new_dir_path).await?;
@@ -576,7 +576,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_removed_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // (dir already created in helper)
             let dir_to_remove = repo.path.join("train");
             let og_file_count = util::fs::rcount_files_in_dir(&dir_to_remove);
@@ -610,7 +610,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_after_merge_conflict() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
@@ -621,14 +621,14 @@ mod tests {
             let branch_name = "change-labels";
             repositories::branches::create_checkout(&repo, branch_name)?;
 
-            test::modify_txt_file(&labels_path, "cat\ndog\nnone")?;
+            crate::test::modify_txt_file(&labels_path, "cat\ndog\nnone")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
             repositories::checkout(&repo, og_branch.name).await?;
 
-            test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
+            crate::test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding person category")?;
 
@@ -662,7 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_with_no_staged_changes() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Add a text file
             let text_path = repo.path.join("text.txt");
             util::fs::write_to_path(&text_path, "Hello World")?;
@@ -694,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_hash_on_modified_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Add a text file
             let text_path = repo.path.join("text.txt");
             util::fs::write_to_path(&text_path, "Hello World")?;
@@ -742,20 +742,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_file_and_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Create committer with no commits
             let repo_path = &repo.path;
             let train_dir = repo_path.join("training_data");
             util::fs::create_dir_all(&train_dir)?;
-            let _ = test::add_txt_file_to_dir(&train_dir, "Train Ex 1")?;
-            let _ = test::add_txt_file_to_dir(&train_dir, "Train Ex 2")?;
-            let _ = test::add_txt_file_to_dir(&train_dir, "Train Ex 3")?;
-            let annotation_file = test::add_txt_file_to_dir(repo_path, "some annotations...")?;
+            let _ = crate::test::add_txt_file_to_dir(&train_dir, "Train Ex 1")?;
+            let _ = crate::test::add_txt_file_to_dir(&train_dir, "Train Ex 2")?;
+            let _ = crate::test::add_txt_file_to_dir(&train_dir, "Train Ex 3")?;
+            let annotation_file =
+                crate::test::add_txt_file_to_dir(repo_path, "some annotations...")?;
 
             let test_dir = repo_path.join("test_data");
             util::fs::create_dir_all(&test_dir)?;
-            let _ = test::add_txt_file_to_dir(&test_dir, "Test Ex 1")?;
-            let _ = test::add_txt_file_to_dir(&test_dir, "Test Ex 2")?;
+            let _ = crate::test::add_txt_file_to_dir(&test_dir, "Test Ex 1")?;
+            let _ = crate::test::add_txt_file_to_dir(&test_dir, "Test Ex 2")?;
 
             // Add a file and a directory
             repositories::add(&repo, &annotation_file).await?;
@@ -782,11 +783,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_history_is_complete() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
             // Clone with the --all flag
-            test::run_empty_dir_test_async(|new_repo_dir| async move {
+            crate::test::run_empty_dir_test_async(|new_repo_dir| async move {
                 let new_repo_dir = new_repo_dir.join("repoo");
                 let deep_clone =
                     repositories::deep_clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
@@ -804,11 +805,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_history_is_not_complete_standard_repo() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
             // Clone with the --all flag
-            test::run_empty_dir_test_async(|new_repo_dir| async move {
+            crate::test::run_empty_dir_test_async(|new_repo_dir| async move {
                 let clone = repositories::clone_url(
                     &remote_repo.remote.url,
                     &new_repo_dir.join("new_repo"),
@@ -828,7 +829,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_history_order() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let train_dir = repo.path.join("train");
             repositories::add(&repo, train_dir).await?;
             let initial_commit_message = "adding train dir";
@@ -858,24 +859,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_commit_history_list_between() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let new_file = repo.path.join("new_1.txt");
-            test::write_txt_file_to_path(&new_file, "new 1")?;
+            crate::test::write_txt_file_to_path(&new_file, "new 1")?;
             repositories::add(&repo, new_file).await?;
             let base_commit = repositories::commit(&repo, "commit 1")?;
 
             let new_file = repo.path.join("new_2.txt");
-            test::write_txt_file_to_path(&new_file, "new 2")?;
+            crate::test::write_txt_file_to_path(&new_file, "new 2")?;
             repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "commit 2")?;
 
             let new_file = repo.path.join("new_3.txt");
-            test::write_txt_file_to_path(&new_file, "new 3")?;
+            crate::test::write_txt_file_to_path(&new_file, "new 3")?;
             repositories::add(&repo, new_file).await?;
             let head_commit = repositories::commit(&repo, "commit 3")?;
 
             let new_file = repo.path.join("new_4.txt");
-            test::write_txt_file_to_path(&new_file, "new 4")?;
+            crate::test::write_txt_file_to_path(&new_file, "new 4")?;
             repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "commit 4")?;
 
@@ -892,7 +893,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_subdir_then_root_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
@@ -936,7 +937,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_allow_empty() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Create and commit an initial file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -978,7 +979,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_allow_empty_with_changes() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Create and commit an initial file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -1006,7 +1007,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_10k_files_vnode_size_10k() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
@@ -1039,7 +1040,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_and_rm_empty_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // Make an empty dir
             let empty_dir = repo.path.join("empty_dir");
             util::fs::create_dir_all(&empty_dir)?;
@@ -1081,8 +1082,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_invalid_parquet_file() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            let invalid_parquet_file = test::test_invalid_parquet_file();
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+            let invalid_parquet_file = crate::test::test_invalid_parquet_file();
             let full_path = repo.path.join("invalid.parquet");
             util::fs::copy(&invalid_parquet_file, &full_path)?;
 
@@ -1104,9 +1105,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_clone_annotations_test_subtree_commit_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths =
                     Some(vec![PathBuf::from("annotations").join("test")]);
@@ -1140,9 +1141,9 @@ A: Oxen.ai
     // The file size should be updated in the index
     #[tokio::test]
     async fn test_clone_subtree_commit_file_update_size() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from(".")]);
                 let local_repo = repositories::clone::clone(&opts).await?;
@@ -1189,7 +1190,7 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_list_by_path_from_paginated() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             let target_file_path = PathBuf::from("target_file.txt");
             let other_file_path_1 = PathBuf::from("other_file_1.txt");
             let dummy_dir_path = PathBuf::from("dummy_dir");
@@ -1252,7 +1253,7 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_create_initial_commit_on_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Verify repo is empty (no commits)
             assert!(head_commit_maybe(&repo)?.is_none());
             assert!(repositories::branches::list(&repo)?.is_empty());
@@ -1288,7 +1289,7 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_create_initial_commit_fails_on_non_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        crate::test::run_empty_local_repo_test_async(|repo| async move {
             // First create a file and commit it to make the repo non-empty
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -1313,7 +1314,7 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_create_initial_commit_with_custom_branch_name() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Create initial commit on a custom branch name
             let user = crate::model::User {
                 name: "Test User".to_string(),
@@ -1339,7 +1340,7 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_create_initial_commit_then_second_commit() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Create initial commit on empty repo
             let user = crate::model::User {
                 name: "Test User".to_string(),

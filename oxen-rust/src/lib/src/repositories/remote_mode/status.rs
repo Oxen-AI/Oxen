@@ -86,7 +86,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
 
-    use crate::{api, repositories, test};
+    use crate::{api, repositories};
 
     // For reference, the fully synced repo structure is as follows:
     // nlp/
@@ -121,49 +121,51 @@ mod tests {
     #[tokio::test]
     async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone(
     ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
+        crate::test::run_training_data_fully_sync_remote(
+            |mut _local_repo, remote_repo| async move {
+                let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                opts.is_remote = true;
-                let cloned_repo = repositories::clone(&opts).await?;
+                crate::test::run_empty_dir_test_async(|dir| async move {
+                    let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                    opts.is_remote = true;
+                    let cloned_repo = repositories::clone(&opts).await?;
 
-                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
-                let status = repositories::remote_mode::status(
-                    &cloned_repo,
-                    &remote_repo,
-                    &workspace_identifier,
-                    &directory,
-                    &status_opts,
-                )
+                    let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                    let directory = ".".to_string();
+                    let status_opts =
+                        StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                    let status = repositories::remote_mode::status(
+                        &cloned_repo,
+                        &remote_repo,
+                        &workspace_identifier,
+                        &directory,
+                        &status_opts,
+                    )
+                    .await?;
+                    status.print();
+                    // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
+                    assert_eq!(status.unsynced_dirs.len(), 4);
+                    assert_eq!(status.unsynced_files.len(), 4);
+
+                    // The repo is clean
+                    assert!(status.is_clean());
+
+                    Ok(())
+                })
                 .await?;
-                status.print();
-                // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
-                assert_eq!(status.unsynced_dirs.len(), 4);
-                assert_eq!(status.unsynced_files.len(), 4);
 
-                // The repo is clean
-                assert!(status.is_clean());
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
+                Ok(remote_repo_copy)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_remote_mode_subdirectory_status() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
@@ -216,11 +218,11 @@ mod tests {
 
                 // Modify one_shot.csv
                 let new_content = "new content coming in hot";
-                test::modify_txt_file(cloned_repo.path.join(&one_shot_path), new_content)?;
+                crate::test::modify_txt_file(cloned_repo.path.join(&one_shot_path), new_content)?;
 
                 // Modify and add two_shot.csv
                 let new_content = "new content coming in even hotter!";
-                test::modify_txt_file(cloned_repo.path.join(&two_shot_path), new_content)?;
+                crate::test::modify_txt_file(cloned_repo.path.join(&two_shot_path), new_content)?;
                 api::client::workspaces::files::add(
                     &remote_repo,
                     &workspace_identifier,
@@ -307,10 +309,10 @@ mod tests {
     /*
     #[tokio::test]
     async fn test_remote_mode_status_move_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;

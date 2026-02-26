@@ -45,29 +45,29 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     // NOTE: Keep this test to ensure we compute sizes on the backend
     #[tokio::test]
     async fn test_remote_get_stats() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        crate::test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("csvs");
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
-            let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
+            let from_file = crate::test::test_csv_file_with_name("mixed_data_types.csv");
             util::fs::copy(from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;

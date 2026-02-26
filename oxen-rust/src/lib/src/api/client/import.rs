@@ -63,13 +63,13 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
 
-    use crate::{api, test};
+    use crate::api;
 
     use std::io::Write;
 
     #[tokio::test]
     async fn test_upload_zip_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "upload-zip-test";
             api::client::branches::create_from_branch(
                 &remote_repo,
@@ -125,22 +125,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_zip_file_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
+        crate::test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "upload-zip-test";
 
             // Create a test ZIP file
             let temp_dir = tempfile::tempdir()?;
             let zip_path = temp_dir.path().join("test.zip");
-            let zip_file = std::fs::File::create(&zip_path)?;
-            let mut zip = zip::ZipWriter::new(&zip_file);
 
-            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default();
-            zip.start_file("image1.png", options).unwrap();
-            zip.write_all(b"fake png data 1")?;
-            zip.start_file("image2.png", options).unwrap();
-            zip.write_all(b"fake png data 2")?;
-            zip.finish().unwrap();
-            drop(zip_file);
+            {
+                let zip_file = std::fs::File::create(&zip_path)?;
+                let mut zip = zip::ZipWriter::new(&zip_file);
+
+                let options: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+                zip.start_file("image1.png", options).unwrap();
+                zip.write_all(b"fake png data 1")?;
+                zip.start_file("image2.png", options).unwrap();
+                zip.write_all(b"fake png data 2")?;
+                zip.finish().unwrap();
+            }
 
             // Upload the ZIP
             let result = api::client::import::upload_zip(
@@ -154,7 +156,7 @@ mod tests {
             )
             .await;
 
-            assert!(result.is_ok());
+            assert!(result.is_ok(), "{result:?}");
             let commit = result.unwrap();
             assert!(commit.message.contains("Upload test ZIP in empty repo"));
 

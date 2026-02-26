@@ -1,9 +1,20 @@
-[package]
-name = "Oxen"
-version = "0.44.2"
+[workspace]
+resolver = "2"
+members = [
+    "src/benches",
+    "src/cli",
+    "src/lib",
+    "src/oxen-test",
+    # ^^ test-only crate: never publish!
+    "src/server",
+]
+exclude = ["experiments/*"]
+
+[workspace.package]
+version = "0.43.1"
 edition = "2021"
 license-file = "LICENSE"
-description = "Oxen is a fast, unstructured data version control, to help version large machine learning datasets written in Rust."
+description = "Oxen is a fast, unstructured data version control, to help version datasets, written in Rust."
 homepage = "https://oxen.ai"
 repository = "https://github.com/Oxen-AI/Oxen"
 readme = "README.md"
@@ -15,56 +26,21 @@ categories = [
     "database",
     "computer-vision",
 ]
-
-[package.metadata.docs.rs]
-default-target = "x86_64-unknown-linux-gnu"
-features = ["duckdb"]                       # this is without "duckdb/bundled"
-no-default-features = true
-
-[package.metadata.cargo-machete]
-ignored = ["astral-tokio-tar", "libduckdb-sys"]
-
-[workspace]
-members = ["src/cli", "src/lib", "src/server"]
-
-[lib]
-name = "liboxen"
-path = "src/lib/src/lib.rs"
-doctest = false
-bench = false
-
-[[bin]]
-name = "oxen"
-path = "src/cli/src/main.rs"
-bench = false
-
-[[bin]]
-name = "oxen-server"
-path = "src/server/src/main.rs"
-bench = false
-
-[features]
-default = ["duckdb/bundled"]
-docs = ["duckdb"]
-ffmpeg = ["thumbnails"]
-perf-logging = []
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
+[workspace.dependencies]
 actix-files = "0.6.2"
 actix-http = "3.4.0"
 actix-multipart = "0.7.2"
+actix-multipart-test = "0.0.3"
 actix-web = { version = "4.9.0", features = ["rustls"] }
 actix-web-httpauth = "0.8.0"
 approx = "0.5.1"
 arrow = "=53.4.0"
 astral-tokio-tar = "0.5.2"
-async-compression = { version = "0.4.2", features = [
-    "futures-io",
-    "gzip",
-    "tokio",
-] }
+async-compression = { version = "0.4.2", features = ["tokio", "gzip", "futures-io"] }
 async-recursion = "1.1.1"
 async-std = { version = "1.12.0", features = ["unstable"] }
 async-tar = "0.5.0"
@@ -82,13 +58,16 @@ clap = { version = "4.4.2", features = ["cargo", "derive"] }
 colored = "2.0.4"
 comfy-table = "7.0.1"
 console-subscriber = "0.4.1"
+criterion = { version = "2.10.1", package = "codspeed-criterion-compat", features = [
+    "async_tokio",
+] }
 deadqueue = "0.2.4"
 derive_more = { version = "1.0.0", features = ["full"] }
 dialoguer = "0.11.0"
 difference = "2.0.0"
 dirs = "5.0.1"
 dotenv = "0.15.0"
-duckdb = { package = "duckdb", version = "=1.1.1", default-features = false, optional = true, features = [
+duckdb = { package = "duckdb", version = "=1.1.1", default-features = false, features = [
     "serde_json",
 ] }
 dunce = "1.0.4"
@@ -159,6 +138,7 @@ serde_derive = "1.0.188"
 serde_json = "1.0.106"
 serde_url_params = "0.2.1"
 serde_with = "3.13.0"
+serial_test = "3.2.0"
 sha2 = "0.10.8"
 simdutf8 = "0.1.4"
 sql_query_builder = { version = "2.1.0", features = ["postgresql"] }
@@ -167,7 +147,7 @@ sysinfo = "0.33.0"
 tar = "0.4.44"
 tempfile = "3.8.0"
 thiserror = "2.0.18"
-thumbnails = { version = "0.2.1", optional = true }
+thumbnails = "0.2.1"
 time = { version = "0.3.28", features = ["serde"] }
 tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-console = "0.1.13"
@@ -183,13 +163,6 @@ walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
 
-[dev-dependencies]
-actix-multipart-test = "0.0.3"
-criterion = { version = "2.10.1", package = "codspeed-criterion-compat", features = [
-    "async_tokio",
-] }
-serial_test = "3.2.0"
-
 [profile.release]
 codegen-units = 1
 lto = true
@@ -197,8 +170,3 @@ lto = true
 [profile.profiling]
 inherits = "release"
 debug = true
-
-[[bench]]
-name = "benchmark"
-path = "src/benches/benchmark.rs"
-harness = false

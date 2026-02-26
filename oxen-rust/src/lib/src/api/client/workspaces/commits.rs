@@ -70,12 +70,12 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
-    use crate::test;
+
     use crate::{api, util};
 
     #[tokio::test]
     async fn test_commit_staged_multiple_files() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-data";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -88,8 +88,8 @@ mod tests {
             let workspace_id = UserConfig::identifier()?;
             let directory_name = "data";
             let paths = vec![
-                test::test_img_file(),
-                test::test_img_file_with_name("cole_anthony.jpeg"),
+                crate::test::test_img_file(),
+                crate::test::test_img_file_with_name("cole_anthony.jpeg"),
             ];
             api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
             let result = api::client::workspaces::files::add(
@@ -122,10 +122,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_mergeability_no_conflicts() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let directory_name = "data";
-            let paths = vec![test::test_img_file()];
+            let paths = vec![crate::test::test_img_file()];
             api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                 .await?;
             let result = api::client::workspaces::files::add(
@@ -155,7 +155,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_mergeability_with_no_conflicts_different_files() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        #[rustfmt::skip]
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let workspace_1_id = "workspace_1";
             let directory_name = Path::new("annotations").join("train");
             api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_1_id)
@@ -167,7 +168,7 @@ mod tests {
                 .await?;
 
             // add an image file to workspace 1
-            let paths = vec![test::test_img_file()];
+            let paths = vec![crate::test::test_img_file()];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_1_id,
@@ -243,7 +244,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_mergeability_with_conflicts() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        #[rustfmt::skip]
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let workspace_1_id = "workspace_1";
             let directory_name = Path::new("annotations").join("train");
             api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_1_id)
@@ -341,7 +343,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -412,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_same_data_frame_file_twice() -> Result<(), OxenError> {
-        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+        crate::test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
             let branch_name = "main";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -428,7 +430,7 @@ mod tests {
             assert_eq!(ws.id, workspace_id);
 
             let directory_name = "";
-            let paths = vec![test::test_100_parquet()];
+            let paths = vec![crate::test::test_100_parquet()];
 
             let result = api::client::workspaces::files::add(
                 &remote_repo,
@@ -473,7 +475,7 @@ mod tests {
                 api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
             assert_eq!(ws.id, workspace_id);
 
-            let paths = vec![test::test_100_parquet()];
+            let paths = vec![crate::test::test_100_parquet()];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,

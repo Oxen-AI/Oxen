@@ -196,7 +196,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 let name = format!("{branch_name}: {workspace_id}");
 
                 let workspace = rt
-                    .block_on(api::client::workspaces::create_with_new_branch(
+                    .block_on(api::client::workspaces::create_with_path(
                         &remote_repo,
                         &branch_name,
                         &workspace_id,

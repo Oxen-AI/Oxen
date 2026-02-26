@@ -294,6 +294,7 @@ mod tests {
 
     use std::path::Path;
 
+    use crate::command;
     use crate::config::UserConfig;
     use crate::constants::{
         DEFAULT_BRANCH_NAME, DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE, DEFAULT_REMOTE_NAME,
@@ -303,11 +304,10 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
     use crate::{api, repositories, util};
-    use crate::{command, test};
 
     #[tokio::test]
     async fn test_get_by_resource() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations/train/bounding_box.csv");
 
             let workspace_id = "some_workspace";
@@ -341,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_workspace_data_frames() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations")
                 .join(Path::new("train"))
                 .join(Path::new("bounding_box.csv"));
@@ -374,7 +374,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -451,7 +451,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -556,7 +556,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -656,7 +656,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_workspace_data_frames_with_sql() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let path = Path::new("annotations")
                 .join(Path::new("train"))
@@ -669,7 +669,7 @@ mod tests {
 
             api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
 
-            test::run_empty_dir_test_async(|sync_dir| async move {
+            crate::test::run_empty_dir_test_async(|sync_dir| async move {
                 let output_path = sync_dir.join("test_download.csv");
                 let mut opts = DFOpts::empty();
                 opts.sql = Some("SELECT * FROM df WHERE label = 'dog'".to_string());
@@ -737,94 +737,107 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_workspace_data_frames() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            let path = Path::new("annotations")
-                .join(Path::new("train"))
-                .join(Path::new("bounding_box.csv"));
-            let workspace_id = "some_workspace";
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
-                    .await;
-            assert!(workspace.is_ok());
-
-            api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
-
-            test::run_empty_dir_test_async(|sync_dir| async move {
-                let output_path = sync_dir.join("test_download.csv");
-                let mut opts = DFOpts::empty();
-                opts.output = Some(output_path.clone());
-                api::client::workspaces::data_frames::download(
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(
+            |local_repo, remote_repo| async move {
+                let remote_repo_copy = remote_repo.clone();
+                let path = Path::new("annotations")
+                    .join(Path::new("train"))
+                    .join(Path::new("bounding_box.csv"));
+                let workspace_id = "some_workspace";
+                let workspace = api::client::workspaces::create(
                     &remote_repo,
+                    DEFAULT_BRANCH_NAME,
                     workspace_id,
-                    &path,
-                    &opts,
                 )
+                .await;
+                assert!(workspace.is_ok());
+
+                api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path)
+                    .await?;
+
+                crate::test::run_empty_dir_test_async(|sync_dir| async move {
+                    let output_path = sync_dir.join("test_download.csv");
+                    let mut opts = DFOpts::empty();
+                    opts.output = Some(output_path.clone());
+                    api::client::workspaces::data_frames::download(
+                        &remote_repo,
+                        workspace_id,
+                        &path,
+                        &opts,
+                    )
+                    .await?;
+
+                    assert!(output_path.exists());
+
+                    // Check the file contents are the same
+                    let file_contents = std::fs::read_to_string(output_path)?;
+                    let expected_contents = std::fs::read_to_string(local_repo.path.join(path))?;
+                    assert_eq!(file_contents, expected_contents);
+
+                    Ok(())
+                })
                 .await?;
 
-                assert!(output_path.exists());
-
-                // Check the file contents are the same
-                let file_contents = std::fs::read_to_string(output_path)?;
-                let expected_contents = std::fs::read_to_string(local_repo.path.join(path))?;
-                assert_eq!(file_contents, expected_contents);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
+                Ok(remote_repo_copy)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_download_workspace_data_frames_to_different_format() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            let path = Path::new("annotations")
-                .join(Path::new("train"))
-                .join(Path::new("bounding_box.csv"));
-            let workspace_id = "some_workspace";
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
-                    .await;
-            assert!(workspace.is_ok());
-
-            api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
-
-            test::run_empty_dir_test_async(|sync_dir| async move {
-                let output_path = sync_dir.join("test_download.jsonl");
-                let mut opts = DFOpts::empty();
-                opts.output = Some(output_path.clone());
-                api::client::workspaces::data_frames::download(
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(
+            |local_repo, remote_repo| async move {
+                let remote_repo_copy = remote_repo.clone();
+                let path = Path::new("annotations")
+                    .join(Path::new("train"))
+                    .join(Path::new("bounding_box.csv"));
+                let workspace_id = "some_workspace";
+                let workspace = api::client::workspaces::create(
                     &remote_repo,
+                    DEFAULT_BRANCH_NAME,
                     workspace_id,
-                    &path,
-                    &opts,
                 )
+                .await;
+                assert!(workspace.is_ok());
+
+                api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path)
+                    .await?;
+
+                crate::test::run_empty_dir_test_async(|sync_dir| async move {
+                    let output_path = sync_dir.join("test_download.jsonl");
+                    let mut opts = DFOpts::empty();
+                    opts.output = Some(output_path.clone());
+                    api::client::workspaces::data_frames::download(
+                        &remote_repo,
+                        workspace_id,
+                        &path,
+                        &opts,
+                    )
+                    .await?;
+
+                    assert!(output_path.exists());
+
+                    // Check the file contents are the same
+                    let og_df =
+                        tabular::read_df(local_repo.path.join(path), DFOpts::empty()).await?;
+                    let download_df = tabular::read_df(&output_path, DFOpts::empty()).await?;
+                    assert_eq!(og_df.height(), download_df.height());
+                    assert_eq!(og_df.width(), download_df.width());
+
+                    Ok(())
+                })
                 .await?;
 
-                assert!(output_path.exists());
-
-                // Check the file contents are the same
-                let og_df = tabular::read_df(local_repo.path.join(path), DFOpts::empty()).await?;
-                let download_df = tabular::read_df(&output_path, DFOpts::empty()).await?;
-                assert_eq!(og_df.height(), download_df.height());
-                assert_eq!(og_df.width(), download_df.width());
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
+                Ok(remote_repo_copy)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_download_workspace_data_frames_with_sql() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let path = Path::new("annotations")
                 .join(Path::new("train"))
@@ -837,7 +850,7 @@ mod tests {
 
             api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
 
-            test::run_empty_dir_test_async(|sync_dir| async move {
+            crate::test::run_empty_dir_test_async(|sync_dir| async move {
                 let output_path = sync_dir.join("test_download.csv");
                 let mut opts = DFOpts::empty();
                 opts.sql = Some("SELECT * FROM df WHERE label = 'dog'".to_string());
@@ -868,7 +881,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_workspace_data_frames_with_aggregation_sql() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let path = Path::new("annotations")
                 .join(Path::new("train"))
@@ -881,7 +894,7 @@ mod tests {
 
             api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
 
-            test::run_empty_dir_test_async(|sync_dir| async move {
+            crate::test::run_empty_dir_test_async(|sync_dir| async move {
                 let output_path = sync_dir.join("test_download.csv");
                 let mut opts = DFOpts::empty();
                 opts.sql = Some("SELECT label, COUNT(*) FROM df GROUP BY label".to_string());
@@ -913,7 +926,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_workspace_data_frames() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations/train/bounding_box.csv");
             let workspace_id = "some_workspace";
             let workspace =
@@ -939,8 +952,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_workspace_data_frame_with_binary_column() -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
-            let path = test::test_binary_column_parquet_file();
+        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+            let path = crate::test::test_binary_column_parquet_file();
 
             let file_name = "binary_col.parquet";
             let dst_path = local_repo.path.join(file_name);
@@ -979,7 +992,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = "some_workspace";
             let path = Path::new("annotations/train/bounding_box.csv");
 
@@ -1016,7 +1029,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -1093,7 +1106,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -1143,7 +1156,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -1229,10 +1242,10 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|empty_dir| async move {
+            crate::test::run_empty_dir_test_async(|empty_dir| async move {
                 let cloned_repo_dir = empty_dir.join("repo_b");
                 let cloned_repo =
                     repositories::clone_url(&remote_repo.remote.url, &cloned_repo_dir).await?;
@@ -1325,10 +1338,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_root_df_on_server_fast_forward_pull() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|empty_dir| async move {
+            crate::test::run_empty_dir_test_async(|empty_dir| async move {
                 let cloned_repo_dir = empty_dir.join("repo_b");
                 let cloned_repo =
                     repositories::clone_url(&remote_repo.remote.url, &cloned_repo_dir).await?;

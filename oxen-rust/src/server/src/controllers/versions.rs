@@ -615,7 +615,6 @@ fn record_error_file(
 mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
-    use crate::test;
     use actix_multipart::test::create_form_data_payload_and_headers;
     use actix_web::{web, web::Bytes, App};
     use flate2::write::GzEncoder;
@@ -629,11 +628,11 @@ mod tests {
 
     #[actix_web::test]
     async fn test_controllers_versions_download() -> Result<(), OxenError> {
-        test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
+        liboxen::test::init_test_env();
+        let sync_dir = crate::test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         // create test file and commit
         util::fs::create_dir_all(repo.path.join("data"))?;
@@ -667,7 +666,7 @@ mod tests {
         assert_eq!(bytes, "Hello");
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        crate::test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 
@@ -715,11 +714,11 @@ mod tests {
 
     #[actix_web::test]
     async fn test_controllers_versions_batch_upload() -> Result<(), OxenError> {
-        test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
+        liboxen::test::init_test_env();
+        let sync_dir = crate::test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
         repositories::add(&repo, path).await?;
@@ -775,7 +774,7 @@ mod tests {
         assert_eq!(stored_data, file_content.as_bytes());
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        crate::test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 }

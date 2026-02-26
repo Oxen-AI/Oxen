@@ -609,12 +609,12 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::MerkleTreeNodeType;
     use crate::repositories;
-    use crate::test;
+
     use crate::test::add_n_files_m_dirs;
 
     #[tokio::test]
     async fn test_load_dir_nodes_v0_19_0() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+        crate::test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version(dir, MinOxenVersion::V0_19_0)?;
 

@@ -63,7 +63,17 @@ pub fn set_remote(name: &str, url: &str) -> Result<(), OxenError> {
 }
 ```
 
-You can build with `cargo build` and run the CLI with `./target/debug/oxen config --set-remote <REMOTE> <URL>`.
+You can build with `cargo build --workspace` and run the CLI with:
+
+```shell
+cargo run -p oxen-cli -- config --set-remote <REMOTE> <URL>
+```
+
+Or run the compiled binary directly:
+
+```shell
+./target/debug/oxen config --set-remote <REMOTE> <URL>
+```
 
 Tip: For developing it is nice to just have this debug oxen binary in your path so you can use it from anywhere. You can just make a symbolic link to wherever your system looks for binaries in your path.
 

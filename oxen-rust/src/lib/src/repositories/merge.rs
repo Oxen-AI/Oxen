@@ -215,7 +215,7 @@ mod tests {
     use crate::model::{Commit, LocalRepository};
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     async fn populate_threeway_merge_repo(
@@ -271,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_one_commit_add_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // Write and commit hello file to main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
@@ -315,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_one_commit_remove_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // Write and add hello file
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
@@ -364,7 +364,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_merge_one_commit_modified_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // Write and add hello file
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
@@ -386,7 +386,7 @@ mod tests {
 
             // Modify the file
             let new_contents = "Around the world";
-            let world_file = test::modify_txt_file(world_file, new_contents)?;
+            let world_file = crate::test::modify_txt_file(world_file, new_contents)?;
 
             // Commit the removal
             repositories::add(&repo, &world_file).await?;
@@ -415,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_is_three_way_merge() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             let merge_branch_name = "B"; // see populate function
             populate_threeway_merge_repo(&repo, merge_branch_name).await?;
 
@@ -431,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_get_lowest_common_ancestor() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             let merge_branch_name = "B"; // see populate function
             let lca = populate_threeway_merge_repo(&repo, merge_branch_name).await?;
 
@@ -448,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_no_conflict_three_way_merge() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             let merge_branch_name = "B";
             // this will checkout main again so we can try to merge
 
@@ -487,7 +487,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_conflict_three_way_merge() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // This test has a conflict where user on the main line, and user on the branch, both modify a.txt
 
             // Ex) We want to merge E into D to create F
@@ -512,7 +512,7 @@ mod tests {
             repositories::add(&repo, &b_path).await?;
 
             // Modify the text file a.txt
-            test::modify_txt_file(&a_path, "a modified from branch")?;
+            crate::test::modify_txt_file(&a_path, "a modified from branch")?;
             repositories::add(&repo, &a_path).await?;
 
             // Commit changes
@@ -527,7 +527,7 @@ mod tests {
             repositories::add(&repo, &c_path).await?;
 
             // Modify a.txt from main branch
-            test::modify_txt_file(&a_path, "a modified from main line")?;
+            crate::test::modify_txt_file(&a_path, "a modified from main line")?;
             repositories::add(&repo, &a_path).await?;
 
             // Commit changes to main branch
@@ -570,7 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_conflict_three_way_merge_post_merge_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
             // should have a conflict from the LCA
 
@@ -584,7 +584,7 @@ mod tests {
             // Add a fish label to the file on a branch
             let fish_branch_name = "add-fish-label";
             repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -592,7 +592,7 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
             let human_branch_name = "add-human-label";
             repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
             repositories::add(&repo, labels_path).await?;
             repositories::commit(&repo, "Adding human to labels.txt file")?;
 
@@ -620,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merger_has_merge_conflicts_without_merging() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
             // should have a conflict from the LCA
 
@@ -634,7 +634,7 @@ mod tests {
             // Add a fish label to the file on a branch
             let fish_branch_name = "add-fish-label";
             repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -642,7 +642,7 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
             let human_branch_name = "add-human-label";
             repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
             repositories::add(&repo, labels_path).await?;
             repositories::commit(&repo, "Adding human to labels.txt file")?;
 
@@ -671,7 +671,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_merge_conflicts_without_merging() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
             // should have a conflict from the LCA
 
@@ -685,7 +685,7 @@ mod tests {
             // Add a fish label to the file on a branch
             let fish_branch_name = "add-fish-label";
             repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -693,7 +693,7 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
             let human_branch_name = "add-human-label";
             repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
             repositories::add(&repo, labels_path).await?;
             let human_commit = repositories::commit(&repo, "Adding human to labels.txt file")?;
 
@@ -723,7 +723,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs(
     ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Add a more rows on this branch
@@ -734,8 +734,10 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(&bbox_filename);
-            let bbox_file =
-                test::append_line_txt_file(bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
+            let bbox_file = crate::test::append_line_txt_file(
+                bbox_file,
+                "train/cat_3.jpg,cat,41.0,31.5,410,427",
+            )?;
             let their_branch_contents = util::fs::read_from_path(&bbox_file)?;
 
             repositories::add(&repo, &bbox_file).await?;
@@ -744,8 +746,10 @@ mod tests {
             // Add a more rows on the main branch
             repositories::checkout(&repo, og_branch.name).await?;
 
-            let bbox_file =
-                test::append_line_txt_file(bbox_file, "train/dog_4.jpg,dog,52.0,62.5,256,429")?;
+            let bbox_file = crate::test::append_line_txt_file(
+                bbox_file,
+                "train/dog_4.jpg,dog,52.0,62.5,256,429",
+            )?;
 
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation on main branch")?;
@@ -773,7 +777,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq(
     ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -787,7 +791,7 @@ mod tests {
 
             // Add in a line in this branch
             let row_from_branch = "train/cat_3.jpg,cat,41.0,31.5,410,427";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_branch)?;
+            let bbox_file = crate::test::append_line_txt_file(bbox_file, row_from_branch)?;
 
             // Add the changes
             repositories::add(&repo, &bbox_file).await?;
@@ -797,7 +801,7 @@ mod tests {
             repositories::checkout(&repo, og_branch.name).await?;
 
             let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
+            let bbox_file = crate::test::append_line_txt_file(bbox_file, row_from_main)?;
 
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation on main branch")?;
@@ -823,7 +827,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_merge_dataframe_conflict_error_added_col() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -850,7 +854,7 @@ mod tests {
             repositories::checkout(&repo, og_branch.name).await?;
 
             let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
+            let bbox_file = crate::test::append_line_txt_file(bbox_file, row_from_main)?;
 
             repositories::add(&repo, bbox_file).await?;
             repositories::commit(&repo, "Adding new row on main branch")?;
@@ -887,14 +891,14 @@ mod tests {
     */
     #[tokio::test]
     async fn test_command_merge_fast_forward_pull() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
-            test::run_empty_dir_test_async(|repo_dir_a| async move {
+            crate::test::run_empty_dir_test_async(|repo_dir_a| async move {
                 let repo_dir_a = repo_dir_a.join("repo_a");
                 let cloned_repo_a =
                     repositories::clone_url(&remote_repo.remote.url, &repo_dir_a).await?;
 
-                test::run_empty_dir_test_async(|repo_dir_b| async move {
+                crate::test::run_empty_dir_test_async(|repo_dir_b| async move {
                     let repo_dir_b = repo_dir_b.join("repo_b");
                     let cloned_repo_b =
                         repositories::clone_url(&remote_repo.remote.url, &repo_dir_b).await?;
@@ -905,7 +909,7 @@ mod tests {
                         .join("bounding_box.csv");
                     let bbox_file = cloned_repo_a.path.join(&bbox_filename);
                     let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
-                    let bbox_file = test::append_line_txt_file(
+                    let bbox_file = crate::test::append_line_txt_file(
                         bbox_file,
                         "train/cat_3.jpg,cat,41.0,31.5,410,427",
                     )?;
@@ -928,7 +932,7 @@ mod tests {
                         .join("train")
                         .join("bounding_box.csv");
                     let bbox_file = cloned_repo_a.path.join(&bbox_filename);
-                    let bbox_file = test::append_line_txt_file(
+                    let bbox_file = crate::test::append_line_txt_file(
                         bbox_file,
                         "train/cat_13.jpg,cat,41.0,31.5,410,427",
                     )?;
@@ -961,7 +965,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_no_commit_needed() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // 1. Commit something in main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let labels_path = repo.path.join("labels.txt");
@@ -974,7 +978,7 @@ mod tests {
             let new_branch = repositories::branches::create_checkout(&repo, new_branch_name)?;
 
             // 3. Commit something in new branch
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = crate::test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -995,7 +999,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_diverged_branches_then_merge_again() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // 1. Commit something in main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let file1_path = repo.path.join("file1.txt");
@@ -1067,7 +1071,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_immediately_after_checkout() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
             // Need to have main branch get ahead of branch so that you can traverse to directory to it, but they
             // have a common ancestor
             // 1. Commit something in main branch

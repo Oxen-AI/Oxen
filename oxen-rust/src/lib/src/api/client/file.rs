@@ -212,51 +212,53 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
-    use crate::{api, repositories, test, util};
+    use crate::{api, repositories, util};
     use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_update_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let branch_name = "main";
-            let directory_name = "test_data";
-            let file_path = test::test_img_file();
-            let commit_body = NewCommitBody {
-                author: "Test Author".to_string(),
-                email: "test@example.com".to_string(),
-                message: "Update file test".to_string(),
-            };
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(
+            |local_repo, remote_repo| async move {
+                let branch_name = "main";
+                let directory_name = "test_data";
+                let file_path = crate::test::test_img_file();
+                let commit_body = NewCommitBody {
+                    author: "Test Author".to_string(),
+                    email: "test@example.com".to_string(),
+                    message: "Update file test".to_string(),
+                };
 
-            let response = api::client::file::put_file(
-                &remote_repo,
-                branch_name,
-                directory_name,
-                &file_path,
-                Some("test.jpeg"),
-                Some(commit_body),
-            )
-            .await?;
+                let response = api::client::file::put_file(
+                    &remote_repo,
+                    branch_name,
+                    directory_name,
+                    &file_path,
+                    Some("test.jpeg"),
+                    Some(commit_body),
+                )
+                .await?;
 
-            assert_eq!(response.status.status_message, "resource_created");
+                assert_eq!(response.status.status_message, "resource_created");
 
-            // Pull changes from remote to local repo
-            repositories::pull(&local_repo).await?;
+                // Pull changes from remote to local repo
+                repositories::pull(&local_repo).await?;
 
-            // Check that the file exists in the local repo after pulling
-            let file_path_in_repo = local_repo.path.join(directory_name).join("test.jpeg");
-            assert!(file_path_in_repo.exists());
+                // Check that the file exists in the local repo after pulling
+                let file_path_in_repo = local_repo.path.join(directory_name).join("test.jpeg");
+                assert!(file_path_in_repo.exists());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_update_file_on_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_configured_remote_repo_test(|local_repo, remote_repo| async move {
+        crate::test::run_empty_configured_remote_repo_test(|local_repo, remote_repo| async move {
             let branch_name = "main";
             let directory_name = "test_data";
-            let file_path = test::test_img_file();
+            let file_path = crate::test::test_img_file();
             let commit_body = NewCommitBody {
                 author: "Test Author".to_string(),
                 email: "test@example.com".to_string(),
@@ -289,9 +291,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "main";
-            let file_path = test::test_bounding_box_csv();
+            let file_path = crate::test::test_bounding_box_csv();
             let bytes = api::client::file::get_file(&remote_repo, branch_name, file_path).await;
 
             assert!(bytes.is_ok());
@@ -304,51 +306,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let prev_commits = repositories::commits::list_all(&local_repo)?;
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(
+            |local_repo, remote_repo| async move {
+                let prev_commits = repositories::commits::list_all(&local_repo)?;
 
-            let branch_name = "main";
-            let file_path = test::test_bounding_box_csv();
+                let branch_name = "main";
+                let file_path = crate::test::test_bounding_box_csv();
 
-            let commit_body = NewCommitBody {
-                author: "Test Author".to_string(),
-                email: "test@example.com".to_string(),
-                message: "remove file".to_string(),
-            };
+                let commit_body = NewCommitBody {
+                    author: "Test Author".to_string(),
+                    email: "test@example.com".to_string(),
+                    message: "remove file".to_string(),
+                };
 
-            // Delete the file on the remote repo
-            let _commit_response = api::client::file::delete_file(
-                &remote_repo,
-                &branch_name,
-                &file_path,
-                Some(commit_body),
-            )
-            .await?;
+                // Delete the file on the remote repo
+                let _commit_response = api::client::file::delete_file(
+                    &remote_repo,
+                    &branch_name,
+                    &file_path,
+                    Some(commit_body),
+                )
+                .await?;
 
-            // Pull the change
-            repositories::pull(&local_repo).await?;
+                // Pull the change
+                repositories::pull(&local_repo).await?;
 
-            // Assert the commit was made and the file is removed
-            assert!(!local_repo.path.join(&file_path).exists());
+                // Assert the commit was made and the file is removed
+                assert!(!local_repo.path.join(&file_path).exists());
 
-            /*
-            let commit = commit_response.commit;
-            let deleted_file_node =
-                repositories::tree::get_node_by_path(&local_repo, &commit, &file_path)?;
-            assert!(deleted_file_node.is_none());
-            */
+                /*
+                let commit = commit_response.commit;
+                let deleted_file_node =
+                    repositories::tree::get_node_by_path(&local_repo, &commit, &file_path)?;
+                assert!(deleted_file_node.is_none());
+                */
 
-            let new_commits = repositories::commits::list_all(&local_repo)?;
-            assert_eq!(new_commits.len(), prev_commits.len() + 1);
+                let new_commits = repositories::commits::list_all(&local_repo)?;
+                assert_eq!(new_commits.len(), prev_commits.len() + 1);
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     async fn test_delete_file_after_upload() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let branch_name = "main";
 
             // Find a file (not a directory) to delete
@@ -393,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mv_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let branch_name = "main";
 
             // File to move
@@ -449,58 +453,64 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_file_with_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let base_dir = "annotations";
-            let data_set = "train";
-            let file_name = "file.txt";
-            let workspace_id = "test_workspace_id";
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(
+            |local_repo, remote_repo| async move {
+                let base_dir = "annotations";
+                let data_set = "train";
+                let file_name = "file.txt";
+                let workspace_id = "test_workspace_id";
 
-            let file_path = PathBuf::from(base_dir)
-                .join(data_set)
-                .join(file_name)
-                .to_string_lossy()
-                .into_owned();
+                let file_path = PathBuf::from(base_dir)
+                    .join(data_set)
+                    .join(file_name)
+                    .to_string_lossy()
+                    .into_owned();
 
-            let directory_name = PathBuf::from(base_dir)
-                .join(data_set)
-                .to_string_lossy()
-                .into_owned();
+                let directory_name = PathBuf::from(base_dir)
+                    .join(data_set)
+                    .to_string_lossy()
+                    .into_owned();
 
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
-                    .await?;
-            assert_eq!(workspace.id, workspace_id);
+                let workspace = api::client::workspaces::create(
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    &workspace_id,
+                )
+                .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            let full_path = local_repo.path.join(&file_path);
-            util::fs::file_create(&full_path)?;
-            util::fs::write(&full_path, b"test content")?;
+                let full_path = local_repo.path.join(&file_path);
+                util::fs::file_create(&full_path)?;
+                util::fs::write(&full_path, b"test content")?;
 
-            let _result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace.id,
-                directory_name,
-                &full_path,
-            )
-            .await;
+                let _result = api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &workspace.id,
+                    directory_name,
+                    &full_path,
+                )
+                .await;
 
-            let bytes = api::client::file::get_file(&remote_repo, workspace_id, file_path).await;
+                let bytes =
+                    api::client::file::get_file(&remote_repo, workspace_id, file_path).await;
 
-            assert!(bytes.is_ok());
-            assert!(!bytes.as_ref().unwrap().is_empty());
-            assert_eq!(bytes.unwrap(), Bytes::from_static(b"test content"));
+                assert!(bytes.is_ok());
+                assert!(!bytes.as_ref().unwrap().is_empty());
+                assert_eq!(bytes.unwrap(), Bytes::from_static(b"test content"));
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
     #[tokio::test]
     #[cfg(feature = "ffmpeg")]
     async fn test_upload_video_and_get_thumbnail() -> Result<(), OxenError> {
-        test::run_empty_configured_remote_repo_test(|_local_repo, remote_repo| async move {
+        crate::test::run_empty_configured_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let directory_name = "videos";
-            let video_file = test::test_video_file_with_name("basketball.mp4");
+            let video_file = crate::test::test_video_file_with_name("basketball.mp4");
 
             // Verify the test video file exists
             assert!(

@@ -60,7 +60,7 @@ mod tests {
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     /// Should be able to use `oxen rm -r` then restore to get files back
@@ -70,7 +70,7 @@ mod tests {
     /// $ oxen restore train/
     #[tokio::test]
     async fn test_rm_directory_restore_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let rm_dir = PathBuf::from("train");
             let full_path = repo.path.join(&rm_dir);
             let num_files = util::fs::rcount_files_in_dir(&full_path);
@@ -147,7 +147,7 @@ mod tests {
     */
     #[tokio::test]
     async fn test_rm_r_dir_at_root() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the directory structure
             let gemma_dir = repo.path.join("gemma-3");
             util::fs::create_dir_all(&gemma_dir)?;
@@ -188,10 +188,10 @@ mod tests {
             repositories::commit(&repo, "Adding initial files")?;
 
             // Create a remote repo
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote)?;
 
             // Push it to the remote
@@ -209,7 +209,7 @@ mod tests {
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
-            let file_to_post = test::test_csv_file_with_name("emojis.csv");
+            let file_to_post = crate::test::test_csv_file_with_name("emojis.csv");
             let directory_name = "phi-4";
             let result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
@@ -235,7 +235,7 @@ mod tests {
             assert_eq!(root_entries.entries.len(), 5);
 
             let cloned_remote_repo = remote_repo.clone();
-            test::run_empty_dir_test_async(|new_repo_dir| async move {
+            crate::test::run_empty_dir_test_async(|new_repo_dir| async move {
                 let new_repo_dir = new_repo_dir.join("new_repo");
                 let cloned_repo =
                     repositories::clone_url(&cloned_remote_repo.remote.url, &new_repo_dir).await?;
@@ -266,14 +266,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_sub_directory() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -318,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_multi_level_directory() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
@@ -347,14 +347,14 @@ mod tests {
 
             // Add and commit the cats to every subdirectory
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
             for j in 1..=3 {
                 for i in 1..=3 {
-                    let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                    let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                     let repo_filepath = images_dir
                         .join(format!("subdir{j}_level_1"))
                         .join(test_file.file_name().unwrap());
@@ -364,7 +364,7 @@ mod tests {
 
             for j in 1..=2 {
                 for i in 1..=3 {
-                    let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                    let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                     let repo_filepath = images_dir
                         .join(format!("subdir{j}_level_1"))
                         .join(format!("subdir{j}_level_2"))
@@ -375,7 +375,7 @@ mod tests {
 
             for j in 1..=1 {
                 for i in 1..=3 {
-                    let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                    let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                     let repo_filepath = images_dir
                         .join(format!("subdir{j}_level_1"))
                         .join(format!("subdir{j}_level_2"))
@@ -464,14 +464,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_one_file_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -481,7 +481,7 @@ mod tests {
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -512,7 +512,7 @@ mod tests {
             let _commit = repositories::commit(&repo, "Removing dog")?;
 
             // Add dwight howard and vince carter
-            let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
+            let test_file = crate::test::test_img_file_with_name("dwight_vince.jpeg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, repo_filepath)?;
             repositories::add(&repo, &images_dir).await?;
@@ -540,7 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wildcard_remove_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -596,14 +596,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_wildcard_rm_deleted_and_present() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -613,7 +613,7 @@ mod tests {
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
+                let test_file = crate::test::test_img_file_with_name(&format!("dog_{i}.jpg"));
                 let repo_filepath = images_dir.join(test_file.file_name().unwrap());
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
@@ -669,7 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_and_rm_file_in_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
             // add a new file in a directory
             let path = Path::new("dir").join("new_file.txt");
 
@@ -693,7 +693,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_staged_file() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
             // Stage a file in a directory
             let path = Path::new("README.md");
             repositories::add(&repo, repo.path.join(path)).await?;
@@ -715,7 +715,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_staged_dir_without_recursive_flag_should_be_error() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train");
             repositories::add(&repo, repo.path.join(path)).await?;
@@ -740,7 +740,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_staged_annotations_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Stage the data
             let path = Path::new("annotations").join("train");
             repositories::add(&repo, repo.path.join(&path)).await?;
@@ -770,7 +770,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_staged_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train");
             repositories::add(&repo, repo.path.join(path)).await?;
@@ -800,7 +800,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_staged_dir_with_slash() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train/");
             repositories::add(&repo, repo.path.join(path)).await?;
@@ -830,7 +830,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_staged_rm_file() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("README", |repo| async move {
+        crate::test::run_select_data_repo_test_committed_async("README", |repo| async move {
             // Remove the readme
             let path = Path::new("README.md");
 
@@ -853,7 +853,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_dir_without_recursive_flag_should_be_error() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Remove the train dir
             let path = Path::new("train");
 
@@ -873,7 +873,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_dir_that_is_not_committed_should_throw_error() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // The train dir is not committed, so should get an error trying to remove
             let train_dir = Path::new("train");
 
@@ -898,7 +898,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_select_data_repo_test_committed_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_committed_async("train", |repo| async move {
             // Remove the train dir
             let train_dir = Path::new("train");
 
@@ -910,7 +910,8 @@ mod tests {
 
             // copy a cat into the dog image
             util::fs::copy(
-                Path::new("data")
+                crate::test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("images")
                     .join("cat_1.jpg"),
@@ -920,10 +921,15 @@ mod tests {
             // There should be one modified file
             let status = repositories::status(&repo)?;
             status.print();
-            assert_eq!(status.modified_files.len(), 1);
+            assert_eq!(
+                status.modified_files.len(),
+                1,
+                "Expected 1 modified file but found: {:?}",
+                status.modified_files
+            );
 
             let result = repositories::rm(&repo, &opts);
-            assert!(result.is_err());
+            assert!(result.is_err(), "{result:?}");
 
             Ok(())
         })
@@ -932,7 +938,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_committed_async("train", |repo| async move {
             // Remove the train dir
             let path = Path::new("train");
 
@@ -967,7 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_dir_with_slash() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("train", |repo| async move {
+        crate::test::run_select_data_repo_test_committed_async("train", |repo| async move {
             // Remove the train dir
             let path = Path::new("train/");
 
@@ -995,7 +1001,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_subdir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("annotations", |repo| async move {
+        crate::test::run_select_data_repo_test_committed_async("annotations", |repo| async move {
             // Remove the annotations/train subdir
             let path = Path::new("annotations").join("train");
             let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(&path));
@@ -1022,7 +1028,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_dot_excludes_oxen_hidden_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+        crate::test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Create some test files in the repo root
             let test_file1 = repo.path.join("test1.txt");
             let test_file2 = repo.path.join("test2.txt");
@@ -1104,7 +1110,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_wildcard_multi_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Data from populate_annotations_dir:
             // annotations/train/annotations.txt
             // annotations/train/bounding_box.csv

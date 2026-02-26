@@ -11,7 +11,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::model::NewCommitBody;
     use crate::opts::clone_opts::CloneOpts;
-    use crate::{api, repositories, test, util};
+    use crate::{api, repositories, util};
 
     // TODO: Actual bugs unconvered:
     // 1: Err_files
@@ -19,10 +19,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_file_with_full_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -30,7 +30,8 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 // Create new file in repo
-                let file_path = test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
+                let file_path =
+                    crate::test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
 
                 // Get status, should show untracked file
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
@@ -83,10 +84,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_file_with_relative_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -94,7 +95,8 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 // Create new file in repo
-                let file_path = test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
+                let file_path =
+                    crate::test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
 
                 // Get relative path
                 let relative_path =
@@ -138,10 +140,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_file_with_canon_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -149,7 +151,8 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 // Create new file in repo
-                let file_path = test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
+                let file_path =
+                    crate::test::add_txt_file_to_dir(&cloned_repo.path, "new file contents")?;
 
                 // Get canon path
                 let canon_path = util::fs::canonicalize(&file_path)?;
@@ -192,10 +195,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_and_modify_file_in_new_subdir() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -266,7 +269,7 @@ mod tests {
 
                 // Modify the file
                 let file_contents = "file,label\ntrain/cat_1.jpg,1000";
-                test::modify_txt_file(&full_path, file_contents)?;
+                crate::test::modify_txt_file(&full_path, file_contents)?;
 
                 // Add the modified file
                 api::client::workspaces::files::add(
@@ -342,10 +345,10 @@ mod tests {
     // This means we're looking for untracked dirs, as opposed to files, in the test below
     #[tokio::test]
     async fn test_remote_mode_add_multiple_files_in_sub_dir() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -360,9 +363,9 @@ mod tests {
                 let sub_dir = cloned_repo.path.join(&training_data_dir);
                 util::fs::create_dir_all(&sub_dir)?;
 
-                let sub_file_1 = test::add_txt_file_to_dir(&sub_dir, "Hello")?;
-                let sub_file_2 = test::add_txt_file_to_dir(&sub_dir, "World")?;
-                let sub_file_3 = test::add_txt_file_to_dir(&sub_dir, "!")?;
+                let sub_file_1 = crate::test::add_txt_file_to_dir(&sub_dir, "Hello")?;
+                let sub_file_2 = crate::test::add_txt_file_to_dir(&sub_dir, "World")?;
+                let sub_file_3 = crate::test::add_txt_file_to_dir(&sub_dir, "!")?;
 
                 // Get status, should show untracked files
                 let status_opts =
@@ -413,10 +416,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_files_with_glob_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -428,18 +431,18 @@ mod tests {
 
                 // Write three files to the root dir
                 let repo_dir = cloned_repo.path.clone();
-                let _file_1 = test::add_txt_file_to_dir(&repo_dir, "Hello")?;
-                let _file_2 = test::add_txt_file_to_dir(&repo_dir, "World")?;
-                let _file_3 = test::add_txt_file_to_dir(&repo_dir, "!")?;
+                let _file_1 = crate::test::add_txt_file_to_dir(&repo_dir, "Hello")?;
+                let _file_2 = crate::test::add_txt_file_to_dir(&repo_dir, "World")?;
+                let _file_3 = crate::test::add_txt_file_to_dir(&repo_dir, "!")?;
 
                 // Write three files to a subdirectory
                 let training_data_dir = PathBuf::from("training_data");
                 let sub_dir = cloned_repo.path.join(&training_data_dir);
                 util::fs::create_dir_all(&sub_dir)?;
 
-                let _sub_file_1 = test::add_txt_file_to_dir(&sub_dir, "Hello")?;
-                let _sub_file_2 = test::add_txt_file_to_dir(&sub_dir, "World")?;
-                let _sub_file_3 = test::add_txt_file_to_dir(&sub_dir, "!")?;
+                let _sub_file_1 = crate::test::add_txt_file_to_dir(&sub_dir, "Hello")?;
+                let _sub_file_2 = crate::test::add_txt_file_to_dir(&sub_dir, "World")?;
+                let _sub_file_3 = crate::test::add_txt_file_to_dir(&sub_dir, "!")?;
 
                 // Add all files with glob path
                 let glob_path = PathBuf::from("*");
@@ -476,12 +479,12 @@ mod tests {
                 let file_path = PathBuf::from("new_file.txt");
                 let full_path = cloned_repo.path.join(&file_path);
                 let file_content = "new file".to_string();
-                test::write_txt_file_to_path(&full_path, &file_content)?;
+                crate::test::write_txt_file_to_path(&full_path, &file_content)?;
 
                 let excluded_path = PathBuf::from("excluded.txt");
                 let excluded_full_path = cloned_repo.path.join(&excluded_path);
                 let excluded_content = "excluded".to_string();
-                test::write_txt_file_to_path(&excluded_full_path, &excluded_content)?;
+                crate::test::write_txt_file_to_path(&excluded_full_path, &excluded_content)?;
 
                 let dir_path = PathBuf::from("new_dir");
                 let full_dir_path = cloned_repo.path.join(&dir_path);
@@ -490,7 +493,7 @@ mod tests {
                 let embedded_file = PathBuf::from("embedded.txt");
                 let embedded_full_path = full_dir_path.join(embedded_file);
                 let embedded_content = "embedded file".to_string();
-                test::write_txt_file_to_path(&embedded_full_path, &embedded_content)?;
+                crate::test::write_txt_file_to_path(&embedded_full_path, &embedded_content)?;
 
                 // Adding `n*` should add both the new file and new dir
                 let glob_path2 = PathBuf::from("n*");
@@ -534,10 +537,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_dir_recursive() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -555,10 +558,10 @@ mod tests {
                 util::fs::create_dir_all(&train_dir)?;
                 util::fs::create_dir_all(&test_dir)?;
 
-                let _ = test::add_txt_file_to_dir(&new_dir, "text 1")?;
-                let _ = test::add_txt_file_to_dir(&train_dir, "text 2")?;
-                let _ = test::add_txt_file_to_dir(&train_dir, "text 3")?;
-                let _ = test::add_txt_file_to_dir(&test_dir, "text 4")?;
+                let _ = crate::test::add_txt_file_to_dir(&new_dir, "text 1")?;
+                let _ = crate::test::add_txt_file_to_dir(&train_dir, "text 2")?;
+                let _ = crate::test::add_txt_file_to_dir(&train_dir, "text 3")?;
+                let _ = crate::test::add_txt_file_to_dir(&test_dir, "text 4")?;
 
                 // Add the top-level directory
                 // TODO: Check how many files were added
@@ -597,10 +600,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_cannot_add_if_not_modified() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            test::run_empty_dir_test_async(|dir| async move {
+            crate::test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
@@ -613,7 +616,7 @@ mod tests {
                 // Create a file, add it, and commit it
                 let dir_path = cloned_repo.path.join("dir");
                 util::fs::create_dir_all(&dir_path)?;
-                let hello_file_path = test::add_txt_file_to_dir(&dir_path, "hello.txt")?;
+                let hello_file_path = crate::test::add_txt_file_to_dir(&dir_path, "hello.txt")?;
 
                 api::client::workspaces::files::add(
                     &remote_repo,

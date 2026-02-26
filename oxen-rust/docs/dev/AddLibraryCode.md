@@ -44,7 +44,7 @@ Here is a unit an example unit test for testing the `list_branches` functionaili
 ```rust
 #[test]
 fn test_ref_reader_list_branches() -> Result<(), OxenError> {
-    test::run_empty_local_repo_test(|repo| {
+    crate::test::run_empty_local_repo_test(|repo| {
         command::create_branch(&repo, "feature/add-something")?;
         command::create_branch(&repo, "bug/something-is-broken")?;
 
@@ -70,7 +70,7 @@ We could also test it with an [integration test](https://github.com/Oxen-AI/Oxen
 ```rust
 #[test]
 fn test_ref_reader_list_branches() -> Result<(), OxenError> {
-    test::run_empty_local_repo_test(|repo| {
+    crate::test::run_empty_local_repo_test(|repo| {
         command::create_branch(&repo, "feature/add-something")?;
         command::create_branch(&repo, "bug/something-is-broken")?;
 
@@ -95,19 +95,19 @@ Feel free to browse the rest of the RefReader class to see the implementation, b
 To run this specific unit test use the command
 
 ```shell
-cargo test test_ref_reader_list_branches
+cargo test -p liboxen test_ref_reader_list_branches
 ```
 
 To run all unit tests to make sure you haven't broken anything in the process just run
 
 ```shell
-cargo test
+cargo test --workspace
 ```
 
 If you want to see all the debug output for the commands you must set the `RUST_LOG` environment variable. In fish shell the an example command might look like
 
 ```shell
-env RUST_LOG=liboxen=debug cargo test -- --nocapture test_respository_create
+env RUST_LOG=liboxen=debug cargo test -p liboxen -- --nocapture test_respository_create
 ```
 
 Once your code is tested with unit tests, or integration tests, you can integrate it into the command line or server binaries. An example of hooking into the cli is [here](IntegrateCLICode.md) and an example of hooking into the server is [here](IntegrateServerCode.md).

@@ -4,19 +4,24 @@ This directory contains the Python test suite for the Oxen CLI.
 
 ## Setup
 
-1. Install dependencies using uv:
+1. Build the oxen workspace:
+```bash
+cargo build --workspace
+```
+
+2. Install dependencies using uv:
 ```bash
 uv sync
 ```
 
-2. Ensure oxen CLI is in your PATH:
+3. Ensure oxen CLI is in your PATH:
 ```bash
 export PATH="$PATH:/path/to/oxen-rust/target/debug"
 ```
 
-3. Start a local Oxen server (required for remote operations):
+4. Start a local Oxen server (required for remote operations):
 ```bash
-oxen-server start
+cargo run -p oxen-server -- start
 ```
 
 ## Running Tests

@@ -1044,22 +1044,21 @@ mod tests {
     use crate::error::OxenError;
 
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_list_remote_commits_all() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
             let mut local_repo = local_repo;
             let commit_history = repositories::commits::list(&local_repo)?;
             let num_local_commits = commit_history.len();
 
             // Set the proper remote
             let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
+            let remote = crate::test::repo_remote_url_from(&name);
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
 
             // Push it
             repositories::push(&local_repo).await?;
@@ -1080,15 +1079,15 @@ mod tests {
     /* Commented out because it's expensive to find the initial commit id
     #[tokio::test]
     async fn test_list_commit_history_for_path() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
             let mut local_repo = local_repo;
             // Set the proper remote
             let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
+            let remote = crate::test::repo_remote_url_from(&name);
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
 
             // Write, add, and commit file_1
             let file_1 = local_repo.path.join("file_1.txt");
@@ -1141,15 +1140,15 @@ mod tests {
     /* Commented out because it's expensive to find the initial commit id
     #[tokio::test]
     async fn test_list_commit_history_for_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
+        crate::test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
             let mut local_repo = local_repo;
             // Set the proper remote
             let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
+            let remote = crate::test::repo_remote_url_from(&name);
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
 
             // Write, add, and commit file_1
             // create the file within a subdirectory
@@ -1210,7 +1209,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_remote_commits_base_head() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        crate::test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             // There should be >= 6 commits here
             let commit_history = repositories::commits::list(&local_repo)?;
             assert!(commit_history.len() >= 6);
@@ -1241,7 +1240,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_unsynced_commit_hashes() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
+        crate::test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let missing_commit_hashes =
                 api::client::commits::list_missing_hashes(&remote_repo, vec![commit]).await?;
@@ -1254,7 +1253,8 @@ mod tests {
 
             // Add and commit a new file
             let file_path = local_repo.path.join("test.txt");
-            let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
+            let file_path =
+                crate::test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
             let missing_commit_nodes =

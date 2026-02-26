@@ -26,14 +26,14 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::model::EntryDataType;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use crate::constants;
 
     #[tokio::test]
     async fn test_remote_upload_file_to_root_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+        crate::test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -46,11 +46,11 @@ mod tests {
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -92,7 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_upload_file_to_sub_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+        crate::test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -105,11 +105,11 @@ mod tests {
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -154,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_upload_file_to_new_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+        crate::test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -167,11 +167,11 @@ mod tests {
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
+            let remote = crate::test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote_repo = crate::test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
