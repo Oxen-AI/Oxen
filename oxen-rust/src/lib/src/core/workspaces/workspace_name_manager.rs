@@ -20,7 +20,9 @@ static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
 /// Removes a repository's workspace names DB instance from the cache.
-pub(crate) fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
+pub(crate) fn remove_from_cache(
+    repository_path: impl AsRef<std::path::Path>,
+) -> Result<(), OxenError> {
     let names_dir = util::fs::oxen_hidden_dir(repository_path).join(WORKSPACE_NAMES_DIR);
     let mut instances = DB_INSTANCES.lock();
     let _ = instances.pop(&names_dir);
@@ -75,7 +77,7 @@ where
 }
 
 impl WorkspaceNameManager {
-    pub fn get_id_for_name(&self, name: &str) -> Result<Option<String>, OxenError> {
+    pub(crate) fn get_id_for_name(&self, name: &str) -> Result<Option<String>, OxenError> {
         let bytes = name.as_bytes();
         match self.db.get(bytes) {
             Ok(Some(value)) => Ok(Some(String::from(str::from_utf8(&value)?))),
