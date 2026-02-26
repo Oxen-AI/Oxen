@@ -1,4 +1,4 @@
-# 🐂 🐍 Oxen Python Interface 
+# 🐂 🐍 Oxen Python Interface
 
 The Oxen python interface makes it easy to integrate Oxen datasets directly into machine learning dataloaders or other data pipelines.
 
@@ -41,9 +41,9 @@ repo.checkout()
 If you don't want to download the data locally, you can use the `RemoteRepo` class to interact with a remote repository on OxenHub.
 
 ```python
-import oxen 
+import oxen
 
-repo = RemoteRepo("https://hub.oxen.ai/ox/CatDogBBox")
+repo = oxen.RemoteRepo("https://hub.oxen.ai/ox/CatDogBBox")
 ```
 
 To stage and commit files to a specific version of the data, you can `checkout` an existing branch or create a new one.
@@ -62,3 +62,45 @@ repo.commit("Adding another training image")
 
 Note that no "push" command is required here, since the above code creates a commit directly on the remote branch.
 
+
+## Build 🔨
+
+### Pre-Requistes
+
+If you're developing the Python interface, you'll need to:
+1. [Install the Rust toolchain](../README.md#build-)
+2. [Install `uv`](https://docs.astral.sh/uv/getting-started/installation/)
+3. Install the [pre-commit hooks](../README.md#pre-commit-hooks) to ensure your code is consistent
+
+### Development Cycle
+
+To get and build dependencies, as well as the `oxen-python` code, run:
+```bash
+uv sync --verbose
+```
+
+To build the PyO3 oxen wrappers only, use [`maturin`](https://github.com/PyO3/maturin) and `--no-sync`:
+```bash
+uv run --no-sync maturin develop
+```
+
+## Test
+
+Run `pytest`:
+
+```bash
+uv run --verbose pytest -s tests/
+```
+
+If you have already installed all dependencies, and you're not making any changes to
+[`liboxen`](../oxen-rust/src/lib), then you may use `--no-sync`:
+
+```bash
+uv run --no-sync pytest -s tests/
+```
+
+Format and lint code with:
+```bash
+uvx ruff check .
+uvx ruff format .
+```

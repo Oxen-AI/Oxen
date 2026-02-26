@@ -2,7 +2,7 @@ ALGORITHM = fixed-size
 CHUNK_SIZE = 8192
 FILE = large_filler.csv
 CARGO_RUN = cargo run
-CARGO = cargo 
+CARGO = cargo
 DEDUP_BUILD = "../../Oxen/target/debug/dedup"
 
 

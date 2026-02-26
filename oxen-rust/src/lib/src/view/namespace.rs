@@ -12,8 +12,8 @@ pub struct NamespaceView {
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
 #[schema(
     example = json!({
-    "status": "success", 
-    "status_message": "resource_found", 
+    "status": "success",
+    "status_message": "resource_found",
     "namespaces": [
         { "name": "my_namespace" },
         { "name": "oxen" }
@@ -25,7 +25,7 @@ pub struct ListNamespacesResponse {
         value_type = StatusMessage,
         example = json!({
             "status": "success",
-            "status_message": "resource_found" 
+            "status_message": "resource_found"
         })
     )]
     pub status: StatusMessage,

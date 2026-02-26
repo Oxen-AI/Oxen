@@ -156,7 +156,7 @@ Updating c245849a-92c4-4f4c-850a-4ca12f552de6 -> 894ccc6b-58bf-4593-a458-dd34f88
 Automatic merge failed; fix conflicts and then commit the result.
 ```
 
-We can now see that there were merge conflicts and the merge failed. If we look at the status we can see which files could not automatically be merged. 
+We can now see that there were merge conflicts and the merge failed. If we look at the status we can see which files could not automatically be merged.
 
 TODO: How do we want to display/diff these changes? There is [this library](https://docs.rs/diffy/latest/diffy/index.html) for text files.
 

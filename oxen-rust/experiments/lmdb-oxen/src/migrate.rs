@@ -15,7 +15,7 @@ use std::io::ErrorKind;
 
 pub fn migrate() -> FrameworkResult<()> {
     let lmdb_path = PathBuf::from(LMDB_PATH);
-    
+
     let repo = LocalRepository::from_current_dir().map_err(|e| {
         Error::new(
             ErrorKind::NotFound,
@@ -29,7 +29,7 @@ pub fn migrate() -> FrameworkResult<()> {
     .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
 
     let commits = commits::list(&repo)
-    .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?; 
+    .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
 
     let mut list_hashes = HashSet::new();
     for commit in commits {

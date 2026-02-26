@@ -16,7 +16,7 @@ then
 fi
 
 while read repo; do
-  if [ -d $repo ] 
+  if [ -d $repo ]
   then
     echo "Repo $repo already exists."
   else

@@ -26,7 +26,7 @@ for namespace in "$ABSOLUTE_ROOT_PATH"/*; do
 
         # Check if the .oxen directory exists in the repository
         if [ -d "$repository/.oxen" ]; then
-          
+
           # Make the script exectuable
           chmod +x "$DIR/backup_and_migrate_repo.sh"
           "$DIR/backup_and_migrate_repo.sh" "$repository" "$namespace_name/$repository_name" "$MIGRATION_NAME"

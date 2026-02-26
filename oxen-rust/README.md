@@ -24,23 +24,19 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
 
 ## Install Dependencies
 
-Oxen is purely written in Rust 🦀. You should install the Rust toolchain with rustup: https://www.rust-lang.org/tools/install.
-
-```
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+Oxen is purely written in Rust 🦀. Refer to the [shared Rust toolchain installation instructions](../README.md#build-).
 
 If you are a developer and want to learn more about adding code or the overall architecture [start here](docs/dev/AddLibraryCode.md). Otherwise, a quick start to make sure everything is working follows.
 
 ## Build
 
-```
+```bash
 cargo build
 ```
 
 If on intel mac, you may need to build with the following
 
-```
+```bash
 $ rustup target install x86_64-apple-darwin
 $ cargo build --target x86_64-apple-darwin
 ```
@@ -63,7 +59,7 @@ You can use the [mold](https://github.com/rui314/mold) linker to speed up builds
 Use the following instructions to
 install sold and configure cargo to use it for building Oxen:
 
-```
+```bash
 git clone --depth=1 --single-branch https://github.com/bluewhalesystems/sold.git
 
 mkdir sold/build
@@ -76,7 +72,7 @@ sudo cmake --install .
 Then create `.cargo/config.toml` in your Oxen repo root with the following
 content:
 
-```
+```toml
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/ld64.mold"]
 
@@ -87,16 +83,15 @@ rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/ld64.mold"]
 
 **For macOS with Apple Silicon**, you can use the [lld](https://lld.llvm.org/) linker.
 
-```
+```bash
 brew install llvm
 ```
 
 Then create `.cargo/config.toml` in your Oxen repo root with the following:
 
-```
+```toml
 [target.aarch64-apple-darwin]
-rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld", ]
-
+rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]
 ```
 
 # Run
@@ -105,7 +100,7 @@ rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld", ]
 
 To run Oxen from the command line, add the `Oxen/target/debug` directory to the 'PATH' environment variable
 
-```
+```bash
 export PATH="$PATH:/path/to/Oxen/target/debug"
 ```
 
@@ -117,14 +112,14 @@ $env:PATH += ";/path/to/Oxen/target/debug"
 
 Initialize a new repository or clone an existing one
 
-```
+```bash
 oxen init
 oxen clone https://hub.oxen.ai/namespace/repository
 ```
 
 This will create the `.oxen` dir in your current directory and allow you to run Oxen CLI commands
 
-```
+```bash
 oxen status
 oxen add images/
 oxen commit -m "added images"
@@ -136,27 +131,27 @@ oxen push origin main
 
 To run a local Oxen Server, generate a config file and token to authenticate the user
 
-```
+```bash
 ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
 ```
 
 Copy the config to the default locations
 
-```
+```bash
 mkdir ~/.oxen
 ```
 
-```
+```bash
 mv user_config.toml ~/.oxen/user_config.toml
 ```
 
-```
+```bash
 cp ~/.oxen/user_config.toml data/test/config/user_config.toml
 ```
 
-Set where you want the data to be synced to. The default sync directory is `./data/` to change it set the SYNC_DIR environment variable to a path.
+Set where you want the data to be synced to. The default sync directory is `./data/` to change it set the `SYNC_DIR` environment variable to a path.
 
-```
+```bash
 export SYNC_DIR=/path/to/sync/dir
 ```
 
@@ -164,19 +159,13 @@ You can also create a .env.local file in the /src/server directory which can con
 
 Run the server
 
-```
+```bash
 ./target/debug/oxen-server start
 ```
 
-To run the server with live reload, first install bacon
+To run the server with live reload, use `bacon`:
 
-```
-cargo install --locked bacon
-```
-
-Then run the server like this
-
-```
+```bash
 bacon server
 ```
 
@@ -187,20 +176,20 @@ If you have [Nix installed](https://github.com/DeterminateSystems/nix-installer)
 you can use the flake to build and run the server. This will automatically
 install and configure the required build toolchain dependencies for Linux & macOS.
 
-```
+```bash
 nix build .#oxen-server
 nix build .#oxen-cli
 nix build .#liboxen
 ```
 
-```
+```bash
 nix run .#oxen-server -- start
 nix run .#oxen-cli -- init
 ```
 
 To develop with the standard rust toolchain in a Nix dev shell:
 
-```
+```bash
 nix develop -c $SHELL
 cargo build
 cargo run --bin oxen-server start
@@ -210,14 +199,14 @@ cargo run --bin oxen start
 The flake also provides derviations to build OCI (Docker) images with the minimal
 set of dependencies required to build and run `oxen` & `oxen-server`.
 
-```
+```bash
 nix build .#oci-oxen-server
 nix build .#oci-oxen-cli
 ```
 
 This will export the OCI image and can be loaded with:
 
-```
+```bash
 docker load -i result
 ```
 
@@ -238,53 +227,43 @@ cp user_config.toml data/test/config/user_config.toml
 
 You an also increase the number of open files your system allows ulimit before running tests:
 
-```
+```bash
 ulimit -n 10240
 ```
 
 Run tests with nextest (preferred):
-```
+```bash
 cargo nextest run
 ```
 
 Run with vanilla cargo:
-```
+```bash
 cargo test -- --test-threads=$(nproc)
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
-```
+```bash
 cargo nextest run --lib test_get_metadata_text_readme
 ```
 
 To run the catchall (integration) tests
 
-```
+```bash
 cargo nextest run --test test
 ```
 
 To run with all debug output and run a specific test
 
-```
+```bash
 env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo nextest run --no-capture
 test_command_push_clone_pull_push
-
 ```
 
 To set a different test host you can set the `OXEN_TEST_HOST` environment variable
 
-```
+```bash
 env OXEN_TEST_HOST=0.0.0.0:4000 cargo nextest run
-```
-
-## Pre-Commit Hook
-
-We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
-make sure to install [`pre-commit-hooks`](https://pre-commit.com/) library
-and then install the precommits locally using
-```
-pre-commit install
 ```
 
 # Oxen Server
@@ -297,25 +276,25 @@ Remote repositories have the same internal structure as local ones, with the cav
 
 Server defaults to localhost 3000
 
-```
+```bash
 set SERVER 0.0.0.0:3000
 ```
 
 You can grab your auth token from the config file above (~/.oxen/user_config.toml)
 
-```
+```bash
 set TOKEN <YOUR_TOKEN>
 ```
 
 ## List Repositories
 
-```
+```bash
 curl -H "Authorization: Bearer $TOKEN" "http://$SERVER/api/repos"
 ```
 
 ## Create Repository
 
-```
+```bash
 curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$SERVER/api/repos"
 ```
 
@@ -323,23 +302,23 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 
 Create the docker image
 
-```
+```bash
 docker build -t oxen/server:0.6.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
 
-```
+```bash
 docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.6.0
 ```
 
 Or use docker compose
 
-```
+```bash
 docker-compose up -d reverse-proxy
 ```
 
-```
+```bash
 docker-compose up -d --scale oxen=4 --no-recreate
 ```
 
@@ -347,13 +326,13 @@ docker-compose up -d --scale oxen=4 --no-recreate
 
 we use criterion to handle benchmarks.
 
-```
+```bash
 cargo bench
 ```
 
 To save baseline you can run
 
-```
+```bash
 cargo bench -- --save-baseline bench
 ```
 
@@ -363,7 +342,7 @@ Which would then store the benchmark under `target/criterion/add`
 
 To enable thumbnailing for videos, you will have to build with ffmpeg enabled
 
-```
+```bash
 brew install ffmpeg@7
 cargo build --features ffmpeg
 ```
