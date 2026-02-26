@@ -1,0 +1,49 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt-oxen-rust
+        name: cargo fmt (oxen-rust)
+        entry: bash -c 'cd oxen-rust && cargo fmt -- --check'
+        language: system
+        files: ^oxen-rust/.*\.rs$
+        pass_filenames: false
+
+      - id: cargo-fmt-oxen-python
+        name: cargo fmt (oxen-python)
+        entry: bash -c 'cd oxen-python && cargo fmt -- --check'
+        language: system
+        files: ^oxen-python/.*\.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy-oxen-rust
+        name: cargo clippy (oxen-rust)
+        entry: bash -c 'cd oxen-rust && cargo clippy --no-deps -- -D warnings'
+        language: system
+        files: ^oxen-rust/.*\.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy-oxen-python
+        name: cargo clippy (oxen-python)
+        entry: bash -c 'cd oxen-python && cargo clippy --no-deps -- -D warnings'
+        language: system
+        files: ^oxen-python/.*\.rs$
+        pass_filenames: false
+
+      - id: cargo-sort
+        name: cargo sort
+        entry: bash -c 'for f in "$@"; do cargo sort --check "$(dirname "$f")" || exit 1; done' --
+        language: system
+        files: Cargo\.toml$
+        pass_filenames: true
+
+      - id: ruff-check
+        name: ruff check (oxen-python)
+        entry: bash -c 'uvx ruff check oxen-python/'
+        language: system
+        files: ^oxen-python/.*\.py$
+        pass_filenames: false

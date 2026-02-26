@@ -1,4 +1,4 @@
-# 🐂 🐍 Oxen Python Interface 
+# 🐂 🐍 Oxen Python Interface
 
 The Oxen python interface makes it easy to integrate Oxen datasets directly into machine learning dataloaders or other data pipelines.
 
@@ -41,7 +41,7 @@ repo.checkout()
 If you don't want to download the data locally, you can use the `RemoteRepo` class to interact with a remote repository on OxenHub.
 
 ```python
-import oxen 
+import oxen
 
 repo = RemoteRepo("https://hub.oxen.ai/ox/CatDogBBox")
 ```
@@ -62,3 +62,21 @@ repo.commit("Adding another training image")
 
 Note that no "push" command is required here, since the above code creates a commit directly on the remote branch.
 
+
+## Build 🔨
+
+If you're developing the Python interface, you'll need to: 
+1. [Install the Rust toolchain](../README.md#build-)
+2. [Install `uv`](https://docs.astral.sh/uv/getting-started/installation/)
+3. Install the [pre-commit hooks](../README.md#pre-commit-hooks) to ensure your code is consistent
+
+# Run maturin
+$ cd oxen
+$ maturin develop
+```
+
+## Test
+
+```bash
+$ pytest -s tests/
+```

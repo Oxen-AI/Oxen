@@ -56,9 +56,9 @@
 ## Features
 * Remote staging area
   * `oxen remote status`
-  * `oxen remote add file.png` 
+  * `oxen remote add file.png`
   * `oxen remote commit -m "committing without cloning data"`
-  * `oxen remote diff path/to/file.png` 
+  * `oxen remote diff path/to/file.png`
 * Remote DataFrame CLI interface
   * `oxen remote df annotations/train.csv`
   * `oxen remote df annotations/train.csv --add-row 'file.png,label'`

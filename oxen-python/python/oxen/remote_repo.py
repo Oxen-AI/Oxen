@@ -246,7 +246,7 @@ class RemoteRepo:
             self._repo.download(src, dst, self.revision)
         else:
             self._repo.download(src, dst, revision)
-        
+
     def download_zip(
         self, src: str, dst: Optional[str] = None, revision: Optional[str] = None
     ):

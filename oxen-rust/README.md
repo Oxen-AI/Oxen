@@ -24,25 +24,7 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
 
 ## Install Dependencies
 
-Oxen is purely written in Rust 🦀. You should install the Rust toolchain with [`rustup`](https://www.rust-lang.org/tools/install).
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-Once you have rust, install the following developer tools:
-- [`bacon`](https://crates.io/crates/bacon): run the server with reload-on-changes
-- [`cargo-machete`](https://github.com/bnjbvr/cargo-machete): identify and remove unused dependencies
-- [`cargo-llvm-cov`](https://crates.io/crates/cargo-llvm-cov): calculate test code coverage
-- [`cargo-sort`](https://crates.io/crates/cargo-sort): ensure `Cargo.toml` files are organized
-- [`cargo-nextest`](https://crates.io/crates/cargo-nextest): run unit tests
-
-You can install all of these at once with the following commands:
-
-```bash
-cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
-cargo install --locked cargo-nextest
-```
+Oxen is purely written in Rust 🦀. Refer to the [shared Rust toolchain installation instructions](../README.md#build-). 
 
 If you are a developer and want to learn more about adding code or the overall architecture [start here](docs/dev/AddLibraryCode.md). Otherwise, a quick start to make sure everything is working follows.
 
@@ -282,15 +264,6 @@ To set a different test host you can set the `OXEN_TEST_HOST` environment variab
 
 ```bash
 env OXEN_TEST_HOST=0.0.0.0:4000 cargo nextest run
-```
-
-## Pre-Commit Hook
-
-We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
-make sure to install [`pre-commit-hooks`](https://pre-commit.com/) library
-and then install the precommits locally using
-```bash
-pre-commit install
 ```
 
 # Oxen Server

@@ -86,7 +86,7 @@ impl FixedSizeMultiChunker {
         let results: Vec<Result<(usize, String), io::Error>> = tasks
             .into_par_iter()
             .map(|(chunk_index, start_offset, chunk_data_size)| -> Result<(usize, String), io::Error> {
-                if chunk_data_size == 0 { 
+                if chunk_data_size == 0 {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "Chunk size is zero"));
                 }
 

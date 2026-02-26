@@ -2,7 +2,7 @@
 
 Oxen mirrors the commands from `git` that you know and love. This tutorial can serve as a refresher or a clean start if you have never used version control before.
 
-We will be working with an example dataset that you can download [here](https://github.com/Oxen-AI/Oxen/raw/main/data/datasets/SmallCatDog.zip). It is a smaller dataset created from the kaggle dataset found [here](https://www.kaggle.com/datasets/shaunthesheep/microsoft-catsvsdogs-dataset). It consists of 20 images of cats and dogs, along with some annotation files. 
+We will be working with an example dataset that you can download [here](https://github.com/Oxen-AI/Oxen/raw/main/data/datasets/SmallCatDog.zip). It is a smaller dataset created from the kaggle dataset found [here](https://www.kaggle.com/datasets/shaunthesheep/microsoft-catsvsdogs-dataset). It consists of 20 images of cats and dogs, along with some annotation files.
 
 The goal of this tutorial is to show you how to stage and commit data so that you can have an auditable trail of where the data came from, as well as revert back to the data in different points of time.
 
@@ -169,4 +169,4 @@ Date:   2022-06-12 07:50:30 UTC
 
 ```
 
-Another reason we use version control is for collaboration as well. For this we will have to sync the data to a remote server, which we will go over in the [next tutorial](2_CollabAdd.md). 
+Another reason we use version control is for collaboration as well. For this we will have to sync the data to a remote server, which we will go over in the [next tutorial](2_CollabAdd.md).

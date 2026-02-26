@@ -129,7 +129,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ) -> Result<Vec<u8>, OxenError>;
 
     /// Get a chunk of a version file as a stream of bytes
-    ///    
+    ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     /// * `offset` - The starting byte position of the chunk
@@ -169,7 +169,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
 
     /// Get a version file as a stream of bytes
-    ///    
+    ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     async fn get_version_stream(

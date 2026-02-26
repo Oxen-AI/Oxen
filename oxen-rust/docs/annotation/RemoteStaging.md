@@ -29,7 +29,7 @@ Note: When you do a shallow clone, your local commands will not work until you `
 
 After you have a shallow clone, then you can create a local branch, and push it to the remote. Every remote branch has a remote staging area that is tied to the branch.
 
-```bash 
+```bash
 $ oxen checkout -b $BRANCH_NAME
 $ oxen push origin $BRANCH_NAME
 ```
@@ -81,7 +81,7 @@ Files to be committed:
 
 ## Delete Remotely Added File
 
-If you accidentally add file from the remote staging area and want to remove it, no worries, you can unstage it with `oxen remote rm`. 
+If you accidentally add file from the remote staging area and want to remove it, no worries, you can unstage it with `oxen remote rm`.
 
 (TODO: right now the functionality only operates on staging area regardless of the --staged flag, we might want to allow remote removing of files and directories).
 
