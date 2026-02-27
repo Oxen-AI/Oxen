@@ -27,12 +27,12 @@ pub struct StartUploadResult {
     pub job_id: String,
 }
 
-const MAX_BATCH_SIZE: usize = 50;
-const MIN_PROGRESS_UPDATES: usize = 20;
+const MAX_BATCH_SIZE: usize = 100;
+const MIN_PROGRESS_UPDATES: usize = 10;
 const BATCH_BYTES: u64 = 100 * 1024 * 1024; // 100MB
 
 /// Pick a batch size that yields ~MIN_PROGRESS_UPDATES updates.
-/// For 5 files → 1 (per-file), for 100 files → 5, caps at MAX_BATCH_SIZE.
+/// For 5 files → 1 (per-file), for 100 files → 10, caps at MAX_BATCH_SIZE.
 fn batch_size_for(total_files: usize) -> usize {
     (total_files / MIN_PROGRESS_UPDATES).clamp(1, MAX_BATCH_SIZE)
 }
