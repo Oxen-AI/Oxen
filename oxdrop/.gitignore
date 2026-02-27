@@ -1,0 +1,14 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Vite
+*.local
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~

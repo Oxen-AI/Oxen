@@ -1,0 +1,28 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for OxDrop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-set-focus",
+    "dialog:default",
+    "dialog:allow-open",
+    "shell:default",
+    "shell:allow-open",
+    {
+      "identifier": "core:event:default",
+      "allow": [
+        { "event": "upload-progress" },
+        { "event": "tauri://drag-drop" },
+        { "event": "tauri://drag-enter" },
+        { "event": "tauri://drag-leave" },
+        { "event": "tauri://drag-over" }
+      ]
+    }
+  ]
+}

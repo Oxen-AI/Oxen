@@ -1,0 +1,27 @@
+[package]
+name = "oxdrop"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+jwalk = "0.8"
+infer = "0.16"
+toml = "0.8"
+dirs = "5.0"
+reqwest = { version = "0.12", features = ["json"] }
+
+liboxen = { path = "../../oxen-rust/src/lib" }
+duckdb = { version = "=1.1.1", default-features = false, features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"

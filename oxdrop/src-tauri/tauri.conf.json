@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/json-schemas/main/tauri/2.x/schema.json",
+  "productName": "OxDrop",
+  "version": "0.1.0",
+  "identifier": "ai.oxen.oxdrop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "OxDrop",
+        "width": 480,
+        "height": 640,
+        "resizable": true,
+        "decorations": false,
+        "transparent": false,
+        "minWidth": 420,
+        "minHeight": 520
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/**", "$DOWNLOADS/**", "/tmp/**", "/Volumes/**"]
+      }
+    }
+  }
+}
