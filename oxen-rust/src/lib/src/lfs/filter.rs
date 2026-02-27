@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
+use crate::api;
 use crate::error::OxenError;
 use crate::lfs::config::LfsConfig;
 use crate::lfs::pointer::PointerFile;
@@ -32,11 +34,12 @@ pub async fn clean(versions_dir: &Path, content: &[u8]) -> Result<Vec<u8>, OxenE
 /// Strategy:
 /// 1. Local `.oxen/versions/` store.
 /// 2. Origin's `.oxen/versions/` (for local clones — discovered via `git config remote.origin.url`).
-/// 3. Fallback: return pointer bytes unchanged with a warning.
+/// 3. Configured Oxen remote (with 30 s timeout).
+/// 4. Fallback: return pointer bytes unchanged with a warning.
 pub async fn smudge(
     versions_dir: &Path,
     repo_root: &Path,
-    _lfs_config: &LfsConfig,
+    lfs_config: &LfsConfig,
     pointer_data: &[u8],
 ) -> Result<Vec<u8>, OxenError> {
     // Not a pointer — return data as-is.
@@ -67,7 +70,35 @@ pub async fn smudge(
         }
     }
 
-    // 3. TODO (Phase 3): fetch from Oxen remote with timeout.
+    // 3. Try the configured Oxen remote with a 30 s timeout.
+    if lfs_config.remote_url.is_some() {
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            try_fetch_from_remote(lfs_config, &pointer.oid, &store),
+        )
+        .await
+        {
+            Ok(Ok(true)) => {
+                // Successfully downloaded — read from local store.
+                return store.get_version(&pointer.oid).await;
+            }
+            Ok(Ok(false)) => {
+                log::debug!("oxen lfs smudge: remote configured but fetch returned nothing");
+            }
+            Ok(Err(e)) => {
+                log::warn!(
+                    "oxen lfs smudge: remote fetch failed for {}: {e}",
+                    pointer.oid
+                );
+            }
+            Err(_) => {
+                log::warn!(
+                    "oxen lfs smudge: remote fetch timed out for {}",
+                    pointer.oid
+                );
+            }
+        }
+    }
 
     // 4. Fallback — return pointer bytes and warn.
     log::warn!(
@@ -75,6 +106,22 @@ pub async fn smudge(
         pointer.oid,
     );
     Ok(pointer_data.to_vec())
+}
+
+/// Attempt to download a single version from the configured remote.
+/// Returns `Ok(true)` if the hash was successfully stored locally.
+async fn try_fetch_from_remote(
+    lfs_config: &LfsConfig,
+    oid: &str,
+    store: &LocalVersionStore,
+) -> Result<bool, OxenError> {
+    let remote_repo = match lfs_config.resolve_remote().await? {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+    let hashes = vec![oid.to_string()];
+    api::client::versions::download_versions_to_store(&remote_repo, &hashes, store).await?;
+    store.version_exists(oid).await
 }
 
 /// Discover the origin's `.oxen/versions/` directory for local clones.
@@ -247,5 +294,26 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path_str = tmp.path().to_string_lossy().to_string();
         assert_eq!(as_local_path(&path_str), Some(tmp.path().to_path_buf()));
+    }
+
+    #[tokio::test]
+    async fn test_smudge_remote_fallback_on_no_server() {
+        // When remote_url is set to an unreachable server, smudge should
+        // fall back gracefully to returning the pointer bytes.
+        let tmp = TempDir::new().unwrap();
+        let repo_root = tmp.path();
+        let versions_dir = tmp.path().join("versions");
+        let config = LfsConfig {
+            remote_url: Some("http://127.0.0.1:19999/nonexistent/repo".to_string()),
+        };
+
+        let ptr = PointerFile::new("deadbeefdeadbeefdeadbeefdeadbeef", 42);
+        let pointer_bytes = ptr.encode();
+
+        let result = smudge(&versions_dir, repo_root, &config, &pointer_bytes)
+            .await
+            .unwrap();
+        // Should fall back to returning the pointer unchanged.
+        assert_eq!(result, pointer_bytes);
     }
 }

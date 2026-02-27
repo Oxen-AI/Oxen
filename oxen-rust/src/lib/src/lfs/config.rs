@@ -2,7 +2,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::api;
 use crate::error::OxenError;
+use crate::model::RemoteRepository;
 
 const LFS_CONFIG_FILENAME: &str = "lfs.toml";
 
@@ -23,6 +25,23 @@ impl LfsConfig {
         let text = std::fs::read_to_string(&path)?;
         let config: LfsConfig = toml::from_str(&text).map_err(OxenError::TomlDe)?;
         Ok(config)
+    }
+
+    /// Resolve `remote_url` to a [`RemoteRepository`].
+    ///
+    /// Returns `Ok(None)` when no remote is configured. Returns an error if
+    /// the URL is set but the repository cannot be found on the server.
+    pub async fn resolve_remote(&self) -> Result<Option<RemoteRepository>, OxenError> {
+        let url = match &self.remote_url {
+            Some(u) if !u.is_empty() => u,
+            _ => return Ok(None),
+        };
+        match api::client::repositories::get_by_url(url).await? {
+            Some(repo) => Ok(Some(repo)),
+            None => Err(OxenError::basic_str(format!(
+                "oxen lfs: remote repository not found at {url}"
+            ))),
+        }
     }
 
     /// Persist to `<oxen_dir>/lfs.toml`.

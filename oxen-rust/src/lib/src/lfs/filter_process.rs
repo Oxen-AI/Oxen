@@ -139,7 +139,11 @@ pub fn run_filter_process(versions_dir: &Path) -> Result<(), OxenError> {
     pkt_line::write_flush(&mut writer)?;
     writer.flush()?;
 
-    // Phase 2: Git sends capabilities in one flush group.
+    // Phase 2: Git sends its capabilities (e.g. capability=clean,
+    // capability=smudge) in one flush group. We read and discard them
+    // because the protocol requires consuming this flush group before
+    // we can advertise our own capabilities. We unconditionally
+    // advertise both clean and smudge regardless of what Git offers.
     let _caps = pkt_line::read_text_pairs_until_flush(&mut reader)?;
 
     // Respond with the capabilities we support.

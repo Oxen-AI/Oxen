@@ -5,6 +5,7 @@ use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
+use crate::storage::version_store::VersionStore;
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
     CleanCorruptedVersionsResponse, CompleteVersionUploadRequest, CompletedFileUpload,
@@ -227,14 +228,55 @@ pub async fn try_download_data_from_version_paths(
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
+    let version_store = local_repo.version_store()?;
+    try_download_versions_to_store(remote_repo, hashes, version_store.as_ref()).await
+}
+
+/// Generic batch download of version blobs into any [`VersionStore`].
+///
+/// Sends the requested hashes to the server, receives a gzip+tar archive,
+/// and streams each entry into `version_store` via `store_version_from_reader`.
+pub async fn download_versions_to_store(
+    remote_repo: &RemoteRepository,
+    hashes: &[String],
+    version_store: &dyn VersionStore,
+) -> Result<u64, OxenError> {
+    let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
+    let mut num_retries = 0;
+
+    while num_retries < total_retries {
+        match try_download_versions_to_store(remote_repo, hashes, version_store).await {
+            Ok(val) => return Ok(val),
+            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
+            Err(err) => {
+                num_retries += 1;
+                let sleep_time = num_retries * num_retries;
+                log::warn!("Could not download content {err:?} sleeping {sleep_time}");
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
+            }
+        }
+    }
+
+    let err = format!(
+        "Err: Failed to download {} files after {} retries",
+        hashes.len(),
+        total_retries
+    );
+    Err(OxenError::basic_str(err))
+}
+
+async fn try_download_versions_to_store(
+    remote_repo: &RemoteRepository,
+    hashes: &[String],
+    version_store: &dyn VersionStore,
+) -> Result<u64, OxenError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     for hash in hashes.iter() {
         let line = format!("{hash}\n");
-        // log::debug!("download_data_from_version_paths encoding line: {} path: {:?}", line, path);
         encoder.write_all(line.as_bytes())?;
     }
     let body = encoder.finish()?;
-    log::debug!("download_data_from_version_paths body len: {}", body.len());
+    log::debug!("download_versions_to_store body len: {}", body.len());
 
     let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
     let client = client::new_for_url(&url)?;
@@ -254,7 +296,6 @@ pub async fn try_download_data_from_version_paths(
         let decoder = GzipDecoder::new(buf_reader);
         let mut archive = Archive::new(decoder);
 
-        let version_store = local_repo.version_store()?;
         let mut size: u64 = 0;
 
         // Iterate over archive entries and stream them to version store
@@ -298,8 +339,7 @@ pub async fn try_download_data_from_version_paths(
 
         Ok(size)
     } else {
-        let err =
-            format!("api::entries::download_data_from_version_paths Err request failed: {url}");
+        let err = format!("api::versions::download_versions_to_store Err request failed: {url}");
         Err(OxenError::basic_str(err))
     }
 }
