@@ -61,6 +61,16 @@ impl RunCmd for LfsInitCmd {
         ensure_gitignore(&repo_root)?;
 
         println!("Oxen LFS initialized in {}", repo_root.display());
+
+        // If .gitattributes already has tracked patterns (e.g. after clone),
+        // hint that the user should pull to restore large files.
+        let patterns = lfs::gitattributes::list_tracked_patterns(&repo_root)?;
+        if !patterns.is_empty() {
+            println!(
+                "Tracked patterns found — run `oxen lfs pull` or `oxen lfs fetch-all` to restore large files."
+            );
+        }
+
         Ok(())
     }
 }

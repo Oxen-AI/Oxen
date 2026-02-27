@@ -111,7 +111,14 @@ pub fn run_filter_process(versions_dir: &Path) -> Result<(), OxenError> {
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = BufWriter::new(stdout.lock());
 
-    let lfs_config = LfsConfig::load(versions_dir.parent().unwrap_or(Path::new(".")))?;
+    // Ensure versions dir exists (may be missing on a fresh clone).
+    std::fs::create_dir_all(versions_dir).ok();
+
+    // Derive repo_root: versions_dir is .oxen/versions, so two parents up.
+    let oxen_dir = versions_dir.parent().unwrap_or(Path::new("."));
+    let repo_root = oxen_dir.parent().unwrap_or(Path::new("."));
+
+    let lfs_config = LfsConfig::load(oxen_dir)?;
 
     // --- Handshake ---
     // Phase 1: Git sends welcome + version(s) in one flush group.
@@ -170,7 +177,12 @@ pub fn run_filter_process(versions_dir: &Path) -> Result<(), OxenError> {
                 handle.block_on(filter::clean(versions_dir, &content))
             })?,
             "smudge" => tokio::task::block_in_place(|| {
-                handle.block_on(filter::smudge(versions_dir, &lfs_config, &content))
+                handle.block_on(filter::smudge(
+                    versions_dir,
+                    repo_root,
+                    &lfs_config,
+                    &content,
+                ))
             })?,
             other => {
                 log::warn!("oxen lfs filter-process: unknown command '{other}', passing through");

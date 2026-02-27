@@ -41,7 +41,7 @@ impl RunCmd for LfsSmudgeCmd {
             buf
         };
 
-        let result = lfs::filter::smudge(&versions_dir, &config, &pointer_data).await?;
+        let result = lfs::filter::smudge(&versions_dir, &repo_root, &config, &pointer_data).await?;
 
         // Write result to stdout.
         {

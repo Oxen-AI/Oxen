@@ -4,6 +4,9 @@ pub use clean::LfsCleanCmd;
 pub mod env;
 pub use env::LfsEnvCmd;
 
+pub mod fetch_all;
+pub use fetch_all::LfsFetchAllCmd;
+
 pub mod filter_process;
 pub use filter_process::LfsFilterProcessCmd;
 
@@ -84,6 +87,7 @@ impl LfsCmd {
         let commands: Vec<Box<dyn RunCmd>> = vec![
             Box::new(LfsCleanCmd),
             Box::new(LfsEnvCmd),
+            Box::new(LfsFetchAllCmd),
             Box::new(LfsFilterProcessCmd),
             Box::new(LfsInitCmd),
             Box::new(LfsInstallCmd),
