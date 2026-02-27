@@ -190,6 +190,8 @@ mod tests {
 
     use super::*;
 
+    use std::path::Path;
+
     use crate::api;
     use crate::command;
     use crate::constants;
@@ -618,6 +620,63 @@ mod tests {
             let workspace = api::client::workspaces::get(&remote_repo, &workspace_name).await?;
             assert!(workspace.is_some());
             assert_eq!(workspace.as_ref().unwrap().id, workspace_id);
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_workspaces_with_file_changes() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = DEFAULT_BRANCH_NAME;
+
+            // Create two workspaces - one clean, one with changes
+            let workspace_clean_id = "workspace_clean";
+            let workspace_with_changes_id = "workspace_with_changes";
+
+            create(&remote_repo, branch_name, workspace_clean_id).await?;
+            create(&remote_repo, branch_name, workspace_with_changes_id).await?;
+
+            // Add a file to workspace_with_changes
+            let test_file = test::test_img_file();
+            api::client::workspaces::files::upload_single_file(
+                &remote_repo,
+                workspace_with_changes_id,
+                "",
+                &test_file,
+            )
+            .await?;
+
+            // List all workspaces
+            let workspaces = list(&remote_repo).await?;
+            assert_eq!(workspaces.len(), 2);
+
+            // Verify the clean workspace has no changes
+            let clean_status = api::client::workspaces::changes::list(
+                &remote_repo,
+                workspace_clean_id,
+                Path::new(""),
+                constants::DEFAULT_PAGE_NUM,
+                constants::DEFAULT_PAGE_SIZE,
+            )
+            .await?;
+            assert_eq!(clean_status.added_files.total_entries, 0);
+            assert_eq!(clean_status.modified_files.total_entries, 0);
+            assert_eq!(clean_status.removed_files.total_entries, 0);
+
+            // Verify the workspace with changes has 1 added file
+            let changes_status = api::client::workspaces::changes::list(
+                &remote_repo,
+                workspace_with_changes_id,
+                Path::new(""),
+                constants::DEFAULT_PAGE_NUM,
+                constants::DEFAULT_PAGE_SIZE,
+            )
+            .await?;
+            assert_eq!(changes_status.added_files.total_entries, 1);
+            assert_eq!(changes_status.modified_files.total_entries, 0);
+            assert_eq!(changes_status.removed_files.total_entries, 0);
+
             Ok(remote_repo)
         })
         .await
