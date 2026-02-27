@@ -141,11 +141,10 @@ pub fn run_filter_process(versions_dir: &Path) -> Result<(), OxenError> {
     pkt_line::write_flush(&mut writer)?;
     writer.flush()?;
 
-    // Build a tokio runtime for async version-store operations.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| OxenError::basic_str(format!("failed to build tokio runtime: {e}")))?;
+    // Get a handle to the current tokio runtime. The CLI's main() already
+    // starts one, so we must not create a second. We use block_in_place +
+    // block_on to run async version-store ops from this synchronous context.
+    let handle = tokio::runtime::Handle::current();
 
     // --- Per-file loop ---
     loop {
@@ -167,8 +166,12 @@ pub fn run_filter_process(versions_dir: &Path) -> Result<(), OxenError> {
         let content = pkt_line::read_until_flush(&mut reader)?;
 
         let result = match command {
-            "clean" => rt.block_on(filter::clean(versions_dir, &content))?,
-            "smudge" => rt.block_on(filter::smudge(versions_dir, &lfs_config, &content))?,
+            "clean" => tokio::task::block_in_place(|| {
+                handle.block_on(filter::clean(versions_dir, &content))
+            })?,
+            "smudge" => tokio::task::block_in_place(|| {
+                handle.block_on(filter::smudge(versions_dir, &lfs_config, &content))
+            })?,
             other => {
                 log::warn!("oxen lfs filter-process: unknown command '{other}', passing through");
                 content

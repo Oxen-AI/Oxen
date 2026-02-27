@@ -5,8 +5,9 @@ use crate::error::OxenError;
 
 /// Resolve the canonical absolute path of the running `oxen` binary.
 pub fn current_exe_path() -> Result<String, OxenError> {
-    let exe = std::env::current_exe()
-        .map_err(|e| OxenError::basic_str(format!("failed to determine current executable: {e}")))?;
+    let exe = std::env::current_exe().map_err(|e| {
+        OxenError::basic_str(format!("failed to determine current executable: {e}"))
+    })?;
     let canonical = exe.canonicalize().map_err(|e| {
         OxenError::basic_str(format!(
             "failed to canonicalize executable path {}: {e}",

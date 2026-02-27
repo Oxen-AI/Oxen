@@ -190,8 +190,7 @@ mod tests {
         let bin = PathBuf::from("/path with spaces/oxen");
         install_hooks(&git_dir, &bin).unwrap();
 
-        let pre_push =
-            std::fs::read_to_string(git_dir.join("hooks/pre-push")).unwrap();
+        let pre_push = std::fs::read_to_string(git_dir.join("hooks/pre-push")).unwrap();
         assert!(
             pre_push.contains("'/path with spaces/oxen' lfs push"),
             "should quote path with spaces"
