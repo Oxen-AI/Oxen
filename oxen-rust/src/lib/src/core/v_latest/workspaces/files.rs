@@ -76,24 +76,56 @@ pub fn list(
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
 
     // Step 3: Build status maps from staged files
-    let mut additions_map: HashMap<String, StagedEntryStatus> = HashMap::new();
-    let mut other_changes_map: HashMap<String, StagedEntryStatus> = HashMap::new();
+    let (additions, removed, modified) = {
+      workspace_changes.staged_files.iter().fold(
+        (HashMap::new(), HashMap::new(), HashMap::new()),
+        |(mut additions, mut removed, mut modified), (file_path, entry)| {
 
-    for (file_path, entry) in workspace_changes.staged_files.iter() {
-        let status = entry.status.clone();
-        if status == StagedEntryStatus::Added {
-            // For added files, use the full path as key (relative to repo root)
-            let key = file_path.to_str().unwrap().to_string();
-            additions_map.insert(key, status);
-        } else {
-            // For modified or removed files, use the filename as key
-            let key = file_path.file_name().unwrap().to_string_lossy().to_string();
-            other_changes_map.insert(key, status);
+          if let Some(maybe_map_to_be_modified) = match entry.status {
+            StagedEntryStatus::Added => Some(&mut additions),
+            StagedEntryStatus::Modified => Some(&mut modified),
+            StagedEntryStatus::Removed => Some(&mut removed),
+            StagedEntryStatus::Unmodified => None,
+          } {
+            let Some(key) = file_path.file_name() {
+              map_to_be_modified.insert(key, status);
+            } else {
+              log::warn!("[skip] Could not retrieve file name for: '{file_path:?}' in workspace: {}", workspace.id)
+            }
+          }
+
+          (additions, removed, modified
         }
-    }
+      )
+    };
 
     // Step 4: Apply workspace changes to commit entries
     let mut merged_entries: Vec<EMetadataEntry> = Vec::new();
+
+    let merged_entries = commit_entries.into_iter()
+      .filter_map(|entry| {
+
+        let filename = &entry.filename;
+        if let Some(status) = other_changes_map.get(filename) {
+            match status {
+                // Don't show removed files
+                StagedEntryStatus::Removed => None,
+                _ => {
+                    // Still present => must be modified (either modified or unmodified)
+                    let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
+                    ws_entry.changes = Some(WorkspaceChanges {
+                        status: status.clone(),
+                    });
+                    Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
+                }
+            }
+        } else {
+            // Unmodified commit entry
+            let ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
+            merged_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
+        }
+
+      });
 
     for entry in commit_entries {
         let filename = &entry.filename;
@@ -171,11 +203,12 @@ pub fn list(
 
     // Step 8: Build dir metadata entry for the directory itself
     let dir_entry = if let Some(ref dir) = maybe_dir {
-        let dir_metadata = core::v_latest::entries::dir_node_to_metadata_entry_public(
+        let dir_metadata = core::v_latest::entries::dir_node_to_metadata_entry(
             base_repo,
             dir,
             &parsed_resource,
             &mut found_commits,
+            false,
         )?;
         dir_metadata.map(|e| {
             EMetadataEntry::WorkspaceMetadataEntry(WorkspaceMetadataEntry::from_metadata_entry(e))

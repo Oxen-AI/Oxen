@@ -285,17 +285,8 @@ pub fn dir_entries_with_depth(
     Ok(entries)
 }
 
-/// Public wrapper for getting a directory's own metadata entry (without appending resource).
-pub fn dir_node_to_metadata_entry_public(
-    repo: &LocalRepository,
-    node: &MerkleTreeNode,
-    parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
-) -> Result<Option<MetadataEntry>, OxenError> {
-    dir_node_to_metadata_entry(repo, node, parsed_resource, found_commits, false)
-}
-
-fn dir_node_to_metadata_entry(
+/// Getting a directory's own metadata entry.
+pub(crate) fn dir_node_to_metadata_entry(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
     parsed_resource: &ParsedResource,
@@ -310,29 +301,33 @@ fn dir_node_to_metadata_entry(
         return Ok(None);
     };
 
-    if let std::collections::hash_map::Entry::Vacant(e) =
-        found_commits.entry(*dir_node.last_commit_id())
-    {
+    let commit = match found_commits.entry(*dir_node.last_commit_id()) {
+      std::collections::hash_map::Entry::Vacant(e) => {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
         let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?.ok_or(
             OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string()),
         )?;
-        e.insert(commit);
-    }
+        let v = e.insert(commit);
+        v.as_ref()
+      },
+      std::collections::hash_map::Entry::Occupied(e) => e.get(),
+    };
 
-    let commit = found_commits.get(dir_node.last_commit_id()).unwrap();
-    let mut parsed_resource = parsed_resource.clone();
-    if should_append_resource {
-        parsed_resource.resource = parsed_resource.resource.join(dir_node.name());
-        parsed_resource.path = parsed_resource.path.join(dir_node.name());
-    }
+    let parsed_resource = {
+      let mut parsed_resource = parsed_resource.clone();
+      if should_append_resource {
+          parsed_resource.resource = parsed_resource.resource.join(dir_node.name());
+          parsed_resource.path = parsed_resource.path.join(dir_node.name());
+      }
+      parsed_resource
+    };
 
     Ok(Some(MetadataEntry {
         filename: dir_node.name().to_string(),
         hash: dir_node.hash().to_string(),
         is_dir: true,
         latest_commit: Some(commit.clone()),
-        resource: Some(parsed_resource.clone()),
+        resource: Some(parsed_resource),
         size: dir_node.num_bytes(),
         data_type: EntryDataType::Dir,
         mime_type: "inode/directory".to_string(),
