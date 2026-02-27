@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::error::OxenError;
 use crate::lfs::config::LfsConfig;
@@ -54,7 +55,7 @@ pub async fn pull_from_remote(
 
     let store = LocalVersionStore::new(&versions_dir);
     let lfs_config = LfsConfig::load(oxen_dir)?;
-    let mut restored = 0u64;
+    let mut restored_paths: Vec<PathBuf> = Vec::new();
 
     for file_status in &statuses {
         if file_status.local {
@@ -63,7 +64,7 @@ pub async fn pull_from_remote(
             store
                 .copy_version_to_path(&file_status.pointer.oid, &dest)
                 .await?;
-            restored += 1;
+            restored_paths.push(file_status.path.clone());
         } else {
             // Try smudge (which checks origin for local clones).
             let pointer_data = file_status.pointer.encode();
@@ -73,7 +74,7 @@ pub async fn pull_from_remote(
                 // Smudge resolved it — write to working tree.
                 let dest = repo_root.join(&file_status.path);
                 std::fs::write(&dest, &result)?;
-                restored += 1;
+                restored_paths.push(file_status.path.clone());
             } else if !local_only {
                 // TODO (Phase 3): Fetch from remote, then restore.
                 log::warn!(
@@ -84,8 +85,12 @@ pub async fn pull_from_remote(
         }
     }
 
-    if restored > 0 {
-        println!("oxen lfs pull: restored {restored} file(s)");
+    if !restored_paths.is_empty() {
+        // Re-add restored files so Git's index stat cache reflects the new
+        // on-disk content. The clean filter produces the same pointer blob,
+        // so no actual index change occurs — only the stat cache is updated.
+        git_add(repo_root, &restored_paths);
+        println!("oxen lfs pull: restored {} file(s)", restored_paths.len());
     }
 
     Ok(())
@@ -113,7 +118,7 @@ pub async fn fetch_all(repo_root: &Path, oxen_dir: &Path) -> Result<(), OxenErro
     }
 
     let store = LocalVersionStore::new(&versions_dir);
-    let mut restored = 0u64;
+    let mut restored_paths: Vec<PathBuf> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
     for file_status in &statuses {
@@ -124,7 +129,7 @@ pub async fn fetch_all(repo_root: &Path, oxen_dir: &Path) -> Result<(), OxenErro
             store
                 .copy_version_to_path(&file_status.pointer.oid, &dest)
                 .await?;
-            restored += 1;
+            restored_paths.push(file_status.path.clone());
             println!("  restored: {}", file_status.path.display());
             continue;
         }
@@ -142,7 +147,7 @@ pub async fn fetch_all(repo_root: &Path, oxen_dir: &Path) -> Result<(), OxenErro
             ));
         } else {
             std::fs::write(&dest, &result)?;
-            restored += 1;
+            restored_paths.push(file_status.path.clone());
             println!("  restored: {}", file_status.path.display());
         }
     }
@@ -156,8 +161,40 @@ pub async fn fetch_all(repo_root: &Path, oxen_dir: &Path) -> Result<(), OxenErro
         return Err(OxenError::basic_str(msg));
     }
 
-    println!("oxen lfs fetch-all: all {restored} file(s) restored successfully");
+    // Re-add restored files so Git's index stat cache reflects the new
+    // on-disk content. The clean filter produces the same pointer blob,
+    // so no actual index change occurs — only the stat cache is updated.
+    git_add(repo_root, &restored_paths);
+
+    println!(
+        "oxen lfs fetch-all: all {} file(s) restored successfully",
+        restored_paths.len()
+    );
     Ok(())
+}
+
+/// Run `git add` on a list of paths so Git's index stat cache is updated.
+///
+/// After we replace a pointer file with real content, the on-disk size and
+/// mtime change. Without re-adding, `git status` shows the files as modified
+/// even though the clean filter produces the identical blob. Re-adding lets
+/// Git refresh its stat cache.
+fn git_add(repo_root: &Path, paths: &[PathBuf]) {
+    if paths.is_empty() {
+        return;
+    }
+
+    let path_args: Vec<&str> = paths.iter().filter_map(|p| p.to_str()).collect();
+    if path_args.is_empty() {
+        return;
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("add").args(&path_args).current_dir(repo_root);
+
+    if let Err(e) = cmd.output() {
+        log::warn!("oxen lfs: failed to run git add to refresh index: {e}");
+    }
 }
 
 /// Scan working tree for pointer files and return the list of OIDs
