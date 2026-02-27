@@ -52,8 +52,10 @@ impl RunCmd for LfsInitCmd {
         let config = lfs::config::LfsConfig { remote_url };
         config.save(&oxen_dir)?;
 
-        // Install hooks.
-        lfs::hooks::install_hooks(&git_dir)?;
+        // Install hooks using the full path to the current oxen binary.
+        let oxen_bin = lfs::install::current_exe_path()?;
+        let oxen_path = std::path::Path::new(&oxen_bin);
+        lfs::hooks::install_hooks(&git_dir, oxen_path)?;
 
         // Add .oxen/ to .gitignore.
         ensure_gitignore(&repo_root)?;

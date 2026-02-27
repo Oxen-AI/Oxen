@@ -31,8 +31,10 @@ impl RunCmd for LfsInstallCmd {
             lfs::install::uninstall_global_filter()?;
             println!("Oxen LFS global filter uninstalled.");
         } else {
-            lfs::install::install_global_filter()?;
-            println!("Oxen LFS global filter installed.");
+            let oxen_bin = lfs::install::current_exe_path()?;
+            let oxen_path = std::path::Path::new(&oxen_bin);
+            lfs::install::install_global_filter(oxen_path)?;
+            println!("Oxen LFS global filter installed (using {oxen_bin}).");
         }
         Ok(())
     }
