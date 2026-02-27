@@ -6,13 +6,13 @@
 
 language: "en-US"
 
+# If you don't want coderabbit to edit the PR description, then set
+#     high_level_summary_in_walkthrough: true
+# If you don't want it to generate at all, then set
+#     high_level_summary: false
 reviews:
-  # We want to generate a PR summary, but...
   high_level_summary: true
-
-  # don't edit the PR description.
-  # Instead, put it in CodeRabbit's own walkthrough comment.
-  high_level_summary_in_walkthrough: true
+  high_level_summary_in_walkthrough: false
 
   # Clear the placeholder so that even if "@coderabbitai summary"
   # appears in the PR description, CodeRabbit won't inject into it.
