@@ -77,22 +77,24 @@ pub fn list(
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
 
     // Step 3: Build status maps from staged files
-    let status_map = workspace_changes.staged_files.into_iter().fold(
-      HashMap::new(),
-      |mut status_map, (file_path, entry)| {
-        if let Some(key) = file_path.file_name() {
-          status_map.insert(key.to_string_lossy().to_string(), entry.status);
-        } else {
+    let status_map = workspace_changes
+      .staged_files
+      .into_iter()
+      .filter_map(|(file_path, entry)| {
+        let res = file_path.file_name().map(|name| (name.to_string_lossy().to_string(), entry));
+        if res.is_none() {
           log::warn!("[skip] Could not retrieve file name for: '{file_path:?}' in workspace: {}", workspace.id)
         }
-        status_map
-      });
+        res
+      })
+      .collect::<HashMap<_,_>>();
 
     // Step 4: Apply workspace changes to commit entries
     let merged_entries = commit_entries.into_iter()
       .filter_map(|entry| {
         let filename = &entry.filename;
-        match status_map.get(filename) {
+        match status_map.get(filename).map(|staged_entry| staged_entry.status) {
+
           Some(status @ (StagedEntryStatus::Added | StagedEntryStatus::Modified)) => {
             let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
             ws_entry.changes = Some(WorkspaceChanges {
@@ -100,11 +102,13 @@ pub fn list(
             });
             Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
           },
+
           Some(StagedEntryStatus::Unmodified) | None => {
-            // treat no status (shouldn't happen!) as an unmodified file
+            // treat no status (shouldn't happen!) as
             let ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
             Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
           },
+
           // Don't show removed files
           Some(StagedEntryStatus::Removed) => None,
         }
