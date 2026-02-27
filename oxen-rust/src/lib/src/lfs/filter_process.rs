@@ -77,16 +77,26 @@ pub mod pkt_line {
         Ok(result)
     }
 
-    /// Read text key=value pairs until flush.
-    pub fn read_text_pairs_until_flush(r: &mut impl BufRead) -> io::Result<Vec<(String, String)>> {
-        let mut pairs = Vec::new();
+    /// Read all text lines until flush. Returns each line trimmed of trailing newline.
+    pub fn read_lines_until_flush(r: &mut impl BufRead) -> io::Result<Vec<String>> {
+        let mut lines = Vec::new();
         while let Some(pkt) = read_packet(r)? {
             let text = String::from_utf8_lossy(&pkt);
-            let text = text.trim_end_matches('\n');
-            if let Some((key, value)) = text.split_once('=') {
-                pairs.push((key.to_string(), value.to_string()));
-            }
+            lines.push(text.trim_end_matches('\n').to_string());
         }
+        Ok(lines)
+    }
+
+    /// Read text key=value pairs until flush (lines without `=` are skipped).
+    pub fn read_text_pairs_until_flush(r: &mut impl BufRead) -> io::Result<Vec<(String, String)>> {
+        let lines = read_lines_until_flush(r)?;
+        let pairs = lines
+            .into_iter()
+            .filter_map(|line| {
+                line.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+            })
+            .collect();
         Ok(pairs)
     }
 }
@@ -104,27 +114,28 @@ pub fn run_filter_process(versions_dir: &Path) -> Result<(), OxenError> {
     let lfs_config = LfsConfig::load(versions_dir.parent().unwrap_or(Path::new(".")))?;
 
     // --- Handshake ---
-    // Read welcome message.
-    let welcome = pkt_line::read_until_flush(&mut reader)?;
-    let welcome_str = String::from_utf8_lossy(&welcome);
-    if !welcome_str.contains("git-filter-client") {
-        return Err(OxenError::basic_str("expected git-filter-client handshake"));
+    // Phase 1: Git sends welcome + version(s) in one flush group.
+    //   packet: git-filter-client\n
+    //   packet: version=2\n
+    //   packet: 0000
+    let welcome_lines = pkt_line::read_lines_until_flush(&mut reader)?;
+
+    if !welcome_lines.iter().any(|l| l == "git-filter-client") {
+        return Err(OxenError::basic_str(
+            "expected git-filter-client in handshake",
+        ));
     }
 
-    // Read version.
-    let _version = pkt_line::read_until_flush(&mut reader)?;
-
-    // Send our welcome + version.
+    // Respond with welcome + chosen version in one flush group.
     pkt_line::write_text(&mut writer, "git-filter-server")?;
-    pkt_line::write_flush(&mut writer)?;
     pkt_line::write_text(&mut writer, "version=2")?;
     pkt_line::write_flush(&mut writer)?;
     writer.flush()?;
 
-    // Read capabilities.
+    // Phase 2: Git sends capabilities in one flush group.
     let _caps = pkt_line::read_text_pairs_until_flush(&mut reader)?;
 
-    // Advertise our capabilities.
+    // Respond with the capabilities we support.
     pkt_line::write_text(&mut writer, "capability=clean")?;
     pkt_line::write_text(&mut writer, "capability=smudge")?;
     pkt_line::write_flush(&mut writer)?;
@@ -220,5 +231,20 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs[0], ("command".to_string(), "clean".to_string()));
         assert_eq!(pairs[1], ("pathname".to_string(), "test.bin".to_string()));
+    }
+
+    #[test]
+    fn test_read_lines_includes_non_pairs() {
+        // Git sends "git-filter-client" (no =) plus "version=2" in one group.
+        let mut buf = Vec::new();
+        write_text(&mut buf, "git-filter-client").unwrap();
+        write_text(&mut buf, "version=2").unwrap();
+        write_flush(&mut buf).unwrap();
+
+        let mut reader = Cursor::new(buf);
+        let lines = read_lines_until_flush(&mut reader).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "git-filter-client");
+        assert_eq!(lines[1], "version=2");
     }
 }
