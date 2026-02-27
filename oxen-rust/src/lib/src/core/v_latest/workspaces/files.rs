@@ -77,71 +77,36 @@ pub fn list(
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
 
     // Step 3: Build status maps from staged files
-
-    let status_map =
-    let (additions, removed, modified, unmodified) = {
-      workspace_changes.staged_files.iter().fold(
-        (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new()),
-        |(mut additions, mut removed, mut modified, mut unmodified), (file_path, entry)| {
-
-          let map_to_be_modified = match entry.status {
-            StagedEntryStatus::Added => &mut additions,
-            StagedEntryStatus::Modified => &mut modified,
-            StagedEntryStatus::Removed => &mut removed,
-            StagedEntryStatus::Unmodified => &mut unmodified,
-          };
-
-          if let Some(key) = file_path.file_name() {
-            map_to_be_modified.insert(key, entry.status);
-          } else {
-            log::warn!("[skip] Could not retrieve file name for: '{file_path:?}' in workspace: {}", workspace.id)
-          }
-
-          (additions, removed, modified, unmodified)
+    let status_map = workspace_changes.staged_files.into_iter().fold(
+      HashMap::new(),
+      |mut status_map, (file_path, entry)| {
+        if let Some(key) = file_path.file_name() {
+          status_map.insert(key.to_string_lossy().to_string(), entry.status);
+        } else {
+          log::warn!("[skip] Could not retrieve file name for: '{file_path:?}' in workspace: {}", workspace.id)
         }
-      )
-    };
+        status_map
+      });
 
     // Step 4: Apply workspace changes to commit entries
     let merged_entries = commit_entries.into_iter()
       .filter_map(|entry| {
-
         let filename = &entry.filename;
-
-        if removed.contains_key(filename) {
-          // Don't show removed files
-          None
-
-        } else if unmodified.contains_key(filename) {
-          let ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
-          Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
-
-        } else if modified.contains_key(filename) {
-          let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
-          ws_entry.changes = Some(WorkspaceChanges {
-              status: status.clone(),
-          });
-          Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
-        }
-
-
-        if let Some(status) = other_changes_map.get(filename) {
-            match status {
-                // Don't show removed files
-                StagedEntryStatus::Removed => None,
-                _ => {
-                    // Still present => must be modified (either modified or unmodified)
-                    let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
-                    ws_entry.changes = Some(WorkspaceChanges {
-                        status: status.clone(),
-                    });
-                    Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
-                }
-            }
-        } else {
-            // Unmodified commit entry
+        match status_map.get(filename) {
+          Some(status @ (StagedEntryStatus::Added | StagedEntryStatus::Modified)) => {
+            let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
+            ws_entry.changes = Some(WorkspaceChanges {
+                status: status.clone(),
+            });
+            Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
+          },
+          Some(StagedEntryStatus::Unmodified) | None => {
+            // treat no status (shouldn't happen!) as an unmodified file
             let ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry);
             Some(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
+          },
+          // Don't show removed files
+          Some(StagedEntryStatus::Removed) => None,
         }
       });
 
