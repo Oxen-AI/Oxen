@@ -25,8 +25,12 @@ defaults:
 
 jobs:
   build_wheels:
-    name: Build Python wheels
+    name: Python ${{ matrix.python_version }}
     runs-on: macos-15-xlarge
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ${{ fromJSON(inputs.PYTHON_VERSIONS) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,21 +56,19 @@ jobs:
 
       - name: Build Python wheels
         run: |
-          uv python install ${{ inputs.PYTHON_VERSIONS }}
+          uv python install ${{ matrix.python_version }}
 
           cd ${{ github.workspace }}/oxen-python
 
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-apple-darwin
 
-          for version in ${{ inputs.PYTHON_VERSIONS }}; do
-            uvx maturin build --release --interpreter /Users/runner/.local/bin/python${version} --target aarch64-apple-darwin
-            uvx maturin build --release --interpreter /Users/runner/.local/bin/python${version} --target x86_64-apple-darwin
-          done
+          uvx maturin build --release --interpreter /Users/runner/.local/bin/python${{ matrix.python_version }} --target aarch64-apple-darwin
+          uvx maturin build --release --interpreter /Users/runner/.local/bin/python${{ matrix.python_version }} --target x86_64-apple-darwin
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-macos
+          name: wheels-macos-py${{ matrix.python_version }}
           path: ${{ github.workspace }}/oxen-python/target/wheels/*.whl
           retention-days: 1
