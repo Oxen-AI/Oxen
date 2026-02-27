@@ -93,8 +93,8 @@ pub fn commit_allow_empty(
 
         let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
 
-        // Use the existing create_empty_commit function
-        let result = create_empty_commit(repo, &branch.name, &new_commit)?;
+        // Tree source defaults to first parent, which is head_commit.id set above
+        let result = create_empty_commit(repo, &branch.name, &new_commit, None)?;
 
         println!("🐂 commit {result} (empty)");
 
@@ -254,25 +254,39 @@ pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     new_commit: &Commit,
+    tree_source_commit_id: Option<&str>, // If present, preserve tree from this commit; else use first parent
 ) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
-    let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
-        return Err(OxenError::revision_not_found(branch_name.into()));
+
+    let tree_source_id_str = match tree_source_commit_id {
+        Some(id) => id.to_string(),
+        None => new_commit.parent_ids.first().cloned().ok_or_else(|| {
+            OxenError::basic_str(
+                "Cannot create empty commit: no tree source provided and no parent commits",
+            )
+        })?,
     };
-    let existing_commit_id = existing_commit.id.parse()?;
-    let existing_node =
-        repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
-            OxenError::basic_str(format!(
-                "Merkle tree node not found for commit: '{}'",
-                existing_commit.id
-            )),
-        )?;
+
+    let tree_source_commit = repositories::commits::get_by_id(repo, &tree_source_id_str)?
+        .ok_or_else(|| OxenError::basic_str(format!("Commit not found: {tree_source_id_str}")))?;
+    let tree_source_id: MerkleHash = tree_source_id_str.parse()?;
+
+    let existing_node = repositories::tree::get_node_by_id_with_children(repo, &tree_source_id)?
+        .ok_or(OxenError::basic_str(format!(
+            "Merkle tree node not found for commit: '{}'",
+            tree_source_commit.id
+        )))?;
     let timestamp = OffsetDateTime::now_utc();
+    let parent_ids: Vec<MerkleHash> = new_commit
+        .parent_ids
+        .iter()
+        .map(|id| id.parse())
+        .collect::<Result<Vec<_>, _>>()?;
     let commit_node = CommitNode::new(
         repo,
         CommitNodeOpts {
             hash: new_commit.id.parse()?,
-            parent_ids: vec![existing_commit_id],
+            parent_ids,
             email: new_commit.email.clone(),
             author: new_commit.author.clone(),
             message: new_commit.message.clone(),
@@ -287,7 +301,7 @@ pub fn create_empty_commit(
     commit_db.add_child(&dir_node)?;
 
     // Copy the dir hashes db to the new commit
-    repositories::tree::cp_dir_hashes_to(repo, &existing_commit_id, commit_node.hash())?;
+    repositories::tree::cp_dir_hashes_to(repo, &tree_source_id, commit_node.hash())?;
 
     // Update the ref
     with_ref_manager(repo, |manager| {

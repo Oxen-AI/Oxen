@@ -27,6 +27,14 @@ pub fn commits() -> Scope {
             "/mark_commits_as_synced",
             web::post().to(controllers::commits::mark_commits_as_synced),
         )
+        .route(
+            "/squash/analyze",
+            web::get().to(controllers::commits::analyze_squashable),
+        )
+        .route(
+            "/squash/execute",
+            web::post().to(controllers::commits::execute_squash),
+        )
         .route("/{commit_id}", web::get().to(controllers::commits::show))
         .route(
             "/{commit_id}/complete",
