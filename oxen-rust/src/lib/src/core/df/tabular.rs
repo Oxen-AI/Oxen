@@ -1477,17 +1477,27 @@ pub fn write_df(df: &mut DataFrame, path: impl AsRef<Path>) -> Result<(), OxenEr
     let err = format!("Unknown file type write_df {path:?} {extension:?}");
 
     match extension {
-        Some(extension) => match extension {
-            "ndjson" => write_df_jsonl(df, path),
-            "jsonl" => write_df_jsonl(df, path),
-            "json" => write_df_json(df, path),
-            "tsv" => write_df_csv(df, path, b'\t'),
-            "csv" => write_df_csv(df, path, b','),
-            "parquet" => write_df_parquet(df, path),
-            "arrow" => write_df_arrow(df, path),
-            _ => Err(OxenError::basic_str(err)),
-        },
+        Some(ext) => write_df_with_ext(df, path, ext),
         None => Err(OxenError::basic_str(err)),
+    }
+}
+
+pub fn write_df_with_ext(
+    df: &mut DataFrame,
+    path: impl AsRef<Path>,
+    ext: &str,
+) -> Result<(), OxenError> {
+    let path = path.as_ref();
+    match ext {
+        "ndjson" | "jsonl" => write_df_jsonl(df, path),
+        "json" => write_df_json(df, path),
+        "tsv" => write_df_csv(df, path, b'\t'),
+        "csv" => write_df_csv(df, path, b','),
+        "parquet" => write_df_parquet(df, path),
+        "arrow" => write_df_arrow(df, path),
+        _ => Err(OxenError::basic_str(format!(
+            "Unknown file type write_df_with_ext {path:?} {ext:?}"
+        ))),
     }
 }
 
