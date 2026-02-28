@@ -51,6 +51,9 @@ pub use info::InfoCmd;
 pub mod init;
 pub use init::InitCmd;
 
+pub mod lfs;
+pub use lfs::LfsCmd;
+
 pub mod load;
 pub use load::LoadCmd;
 
