@@ -155,7 +155,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mergeability_with_no_conflicts_different_files() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let workspace_1_id = "workspace_1";
             let directory_name = Path::new("annotations").join("train");
@@ -244,7 +243,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mergeability_with_conflicts() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let workspace_1_id = "workspace_1";
             let directory_name = Path::new("annotations").join("train");

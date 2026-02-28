@@ -1000,7 +1000,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_file_large() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
             let remote_path = Path::new("large_files").join("test.csv");
             let local_path = local_repo.path.join("data.csv");
@@ -1017,7 +1016,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_file_large_to_dir() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
             let remote_path = Path::new("large_files").join("test.csv");
             let local_path = local_repo.path.join("train_data");
@@ -1036,7 +1034,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_file_large_to_dir_does_not_exist() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
             let remote_path = Path::new("large_files").join("test.csv");
             let local_path = local_repo.path.join("I_DO_NOT_EXIST").join("put_it_here");

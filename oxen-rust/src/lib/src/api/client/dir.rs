@@ -415,7 +415,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_dir_with_workspace() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let file_path = PathBuf::from("annotations")
                 .join("train")

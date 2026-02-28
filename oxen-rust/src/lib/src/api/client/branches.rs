@@ -661,7 +661,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_entry_versions() -> Result<(), OxenError> {
-        #[rustfmt::skip]
         test::run_select_data_repo_test_committed_async("annotations", |mut repo| async move {
             // Set up remote
             let remote = test::repo_remote_url_from(&repo.dirname());
