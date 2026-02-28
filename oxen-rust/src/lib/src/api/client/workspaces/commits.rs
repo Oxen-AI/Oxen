@@ -62,6 +62,7 @@ pub async fn commit(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 

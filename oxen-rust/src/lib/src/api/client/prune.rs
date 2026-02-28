@@ -85,6 +85,7 @@ mod tests {
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::repositories;
+    use crate::test;
     use crate::util;
 
     #[tokio::test]

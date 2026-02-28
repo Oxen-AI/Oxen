@@ -69,6 +69,7 @@ pub async fn rm(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::config::UserConfig;
     use crate::constants::DEFAULT_BRANCH_NAME;

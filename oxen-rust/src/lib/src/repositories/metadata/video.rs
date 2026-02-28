@@ -58,6 +58,7 @@ mod tests {
     use crate::model::metadata::MetadataVideo;
     use crate::model::EntryDataType;
     use crate::repositories;
+    use crate::test;
 
     use approx::assert_relative_eq;
 

@@ -53,6 +53,7 @@ pub async fn load(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;

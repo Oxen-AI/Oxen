@@ -84,6 +84,7 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use actix_web::{web, App};
     use std::path::Path;
 

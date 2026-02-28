@@ -1228,6 +1228,7 @@ fn jitter() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;

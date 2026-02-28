@@ -102,6 +102,7 @@ mod tests {
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
 

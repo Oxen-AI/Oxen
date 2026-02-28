@@ -57,6 +57,7 @@ pub async fn diff_entries(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
     use std::path::PathBuf;

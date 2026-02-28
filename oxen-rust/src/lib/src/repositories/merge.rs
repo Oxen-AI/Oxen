@@ -205,6 +205,7 @@ pub fn lowest_common_ancestor_from_commits(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 

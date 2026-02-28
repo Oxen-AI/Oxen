@@ -1572,6 +1572,7 @@ pub fn get_diff_dir(repo: &LocalRepository, compare_id: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
     use std::path::PathBuf;
 

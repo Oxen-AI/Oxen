@@ -300,6 +300,7 @@ pub async fn set_working_repo_to_commit(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::constants::DEFAULT_BRANCH_NAME;

@@ -31,6 +31,7 @@ mod tests {
     use crate::model::metadata::MetadataTabular;
     use crate::model::EntryDataType;
     use crate::repositories;
+    use crate::test;
 
     #[test]
     fn test_get_metadata_tabular() {

@@ -201,6 +201,7 @@ pub fn get_file_metadata(
 mod tests {
     use crate::model::EntryDataType;
     use crate::repositories;
+    use crate::test;
 
     #[tokio::test]
     async fn test_get_metadata_audio_flac() {

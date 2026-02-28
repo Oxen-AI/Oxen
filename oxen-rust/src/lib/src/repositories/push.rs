@@ -78,6 +78,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::opts::{CloneOpts, PushOpts};
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
     use crate::view::entries::EMetadataEntry;

@@ -65,6 +65,7 @@ pub async fn init_with_version_and_storage_opts(
 mod tests {
     use crate::error::OxenError;
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
 

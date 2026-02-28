@@ -313,6 +313,7 @@ async fn prune_versions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test;
 
     #[tokio::test]
     async fn test_prune_empty_repo() -> Result<(), OxenError> {

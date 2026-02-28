@@ -139,6 +139,7 @@ pub async fn create_checkout_branch(
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
+    use crate::test;
     use crate::{api, repositories, util};
 
     use crate::model::NewCommitBody;

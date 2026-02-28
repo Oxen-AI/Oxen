@@ -244,6 +244,7 @@ pub async fn list_entry_versions(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 

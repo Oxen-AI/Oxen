@@ -125,6 +125,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::fetch_opts::FetchOpts;
     use crate::repositories;
+    use crate::test;
 
     #[tokio::test]
     async fn test_fetch_branches() -> Result<(), OxenError> {

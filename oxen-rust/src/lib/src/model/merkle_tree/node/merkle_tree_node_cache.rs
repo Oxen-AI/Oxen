@@ -255,6 +255,7 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 mod tests {
     use super::*;
     use crate::repositories;
+    use crate::test;
 
     #[test]
     fn test_cache_disable_with_closure() -> Result<(), OxenError> {

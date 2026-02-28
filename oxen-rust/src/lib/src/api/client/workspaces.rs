@@ -187,6 +187,7 @@ pub async fn clear(remote_repo: &RemoteRepository) -> Result<(), OxenError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use super::*;
 

@@ -383,6 +383,7 @@ mod tests {
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoNew};
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
     use std::path::{Path, PathBuf};

@@ -535,6 +535,7 @@ impl MerkleNodeDB {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test;
 
     #[test]
     fn test_merkle_node_db() -> Result<(), OxenError> {

@@ -348,6 +348,7 @@ impl RefManager {
 mod tests {
     use super::*;
     use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::test;
 
     use crate::util;
     use std::thread;

@@ -450,6 +450,7 @@ async fn parse_multipart_fields_for_upload_zip(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::app_data::OxenAppData;
     use crate::controllers;

@@ -1438,6 +1438,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::RmOpts;
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
 

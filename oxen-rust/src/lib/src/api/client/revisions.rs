@@ -34,6 +34,7 @@ pub async fn get(
 mod tests {
     use crate::api;
     use crate::error::OxenError;
+    use crate::test;
 
     use crate::repositories;
 

@@ -97,6 +97,7 @@ mod tests {
     use crate::api;
     use crate::command;
     use crate::constants;
+    use crate::test;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;

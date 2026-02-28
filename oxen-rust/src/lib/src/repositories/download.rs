@@ -76,6 +76,7 @@ pub async fn download_dir_to_repo(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use super::*;

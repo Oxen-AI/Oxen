@@ -291,6 +291,7 @@ pub async fn rename_data_frame(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 

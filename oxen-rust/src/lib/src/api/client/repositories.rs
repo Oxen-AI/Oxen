@@ -567,6 +567,7 @@ async fn action_hook(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use crate::api;

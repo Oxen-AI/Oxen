@@ -580,6 +580,7 @@ mod tests {
     use crate::api;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
 

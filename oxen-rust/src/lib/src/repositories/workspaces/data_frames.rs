@@ -563,6 +563,7 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use serde_json::json;

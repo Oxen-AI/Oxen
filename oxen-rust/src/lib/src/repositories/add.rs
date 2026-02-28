@@ -60,6 +60,7 @@ pub async fn add_all_with_version<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
     use std::path::PathBuf;

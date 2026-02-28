@@ -146,6 +146,7 @@ impl AuthConfig {
 mod tests {
     use crate::config::AuthConfig;
     use crate::error::OxenError;
+    use crate::test;
 
     #[test]
     fn test_second_auth_should_overwrite_first() -> Result<(), OxenError> {

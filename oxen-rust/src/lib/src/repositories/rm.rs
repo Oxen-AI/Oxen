@@ -46,6 +46,7 @@ fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
     use std::path::PathBuf;
 

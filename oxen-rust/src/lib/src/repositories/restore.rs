@@ -55,6 +55,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;

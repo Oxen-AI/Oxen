@@ -1234,6 +1234,7 @@ pub fn has_different_modification_time(node: &FileNode, time: &FileTime) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test;
 
     #[tokio::test]
     async fn test_add_respects_oxenignore() -> Result<(), OxenError> {

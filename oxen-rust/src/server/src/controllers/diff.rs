@@ -988,6 +988,7 @@ fn group_dir_diffs_by_dir(dir_diffs: Vec<(PathBuf, DiffEntryStatus)>) -> Vec<Dir
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use liboxen::{error::OxenError, repositories};
 
     #[actix_web::test]

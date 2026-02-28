@@ -53,6 +53,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::repositories::LocalRepository;
+    use crate::test;
 
     use crate::util;
     use std::path::Path;

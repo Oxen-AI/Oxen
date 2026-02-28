@@ -433,6 +433,7 @@ pub fn r_collect_removed_paths(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::error::OxenError;
     use crate::opts::GlobOpts;

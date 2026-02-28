@@ -1684,6 +1684,7 @@ pub async fn show_node(
 #[cfg(test)]
 mod tests {
     use crate::core::df::{filter, tabular};
+    use crate::test;
     use crate::view::JsonDataFrameView;
     use crate::{error::OxenError, opts::DFOpts};
     use itertools::Itertools;

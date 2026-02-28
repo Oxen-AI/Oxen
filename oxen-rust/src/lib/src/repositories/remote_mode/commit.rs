@@ -46,6 +46,7 @@ pub async fn commit(
 // 1: The same add one with the untracked files is happenieng here
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::error::OxenError;
     use crate::model::NewCommitBody;

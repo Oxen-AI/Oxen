@@ -1242,6 +1242,7 @@ fn create_commit_data(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::collections::HashSet;
     use std::path::Path;
 

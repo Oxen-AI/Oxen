@@ -236,6 +236,7 @@ pub async fn batch_update(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use serde_json::Value;
 

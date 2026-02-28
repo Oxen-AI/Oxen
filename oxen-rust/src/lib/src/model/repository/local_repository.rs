@@ -515,6 +515,7 @@ impl LocalRepository {
 mod tests {
     use crate::error::OxenError;
     use crate::model::{LocalRepository, RepoNew};
+    use crate::test;
 
     use tempfile::TempDir;
 

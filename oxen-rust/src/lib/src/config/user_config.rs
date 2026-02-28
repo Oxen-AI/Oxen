@@ -121,6 +121,7 @@ impl UserConfig {
 mod tests {
     use crate::config::UserConfig;
     use crate::error::OxenError;
+    use crate::test;
 
     use std::path::Path;
 

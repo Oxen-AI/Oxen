@@ -408,6 +408,7 @@ pub fn commit_history_is_complete(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;

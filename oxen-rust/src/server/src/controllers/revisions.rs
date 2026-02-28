@@ -44,6 +44,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use actix_web::http::{self};
 

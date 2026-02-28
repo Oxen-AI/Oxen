@@ -182,6 +182,7 @@ fn count_items(path: &Path, status_repo: &Path, current_count: &mut u32) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::time::Duration;
 
     use super::*;

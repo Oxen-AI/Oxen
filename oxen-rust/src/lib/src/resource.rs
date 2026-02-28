@@ -62,6 +62,7 @@ pub fn get_commit_or_head<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;

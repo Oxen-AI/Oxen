@@ -27,6 +27,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataImage, OxenError> 
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::model::entry::entry_data_type::EntryDataType;
     use crate::model::metadata::generic_metadata::GenericMetadata;

@@ -615,6 +615,7 @@ fn record_error_file(
 mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
+    use crate::test;
     use actix_multipart::test::create_form_data_payload_and_headers;
     use actix_web::{web, web::Bytes, App};
     use flate2::write::GzEncoder;

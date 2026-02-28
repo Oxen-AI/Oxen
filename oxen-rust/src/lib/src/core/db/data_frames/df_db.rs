@@ -764,6 +764,7 @@ pub fn record_batches_to_polars_df(records: Vec<RecordBatch>) -> Result<DataFram
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use super::*;
 

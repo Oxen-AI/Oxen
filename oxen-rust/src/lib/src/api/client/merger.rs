@@ -44,6 +44,7 @@ pub async fn merge(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::api;
     use crate::constants::DEFAULT_REMOTE_NAME;

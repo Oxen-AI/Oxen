@@ -2092,6 +2092,7 @@ mod tests {
     use crate::constants::{self, VERSION_FILE_NAME};
     use crate::error::OxenError;
     use crate::model::{CommitEntry, EntryDataType};
+    use crate::test;
     use crate::util;
 
     use std::path::{Path, PathBuf};

@@ -101,6 +101,7 @@ pub async fn index(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use serde_json::json;
 
     use crate::config::embedding_config::EmbeddingStatus;

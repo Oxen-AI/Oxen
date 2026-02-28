@@ -391,6 +391,7 @@ pub fn list_tabular_files_in_repo(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
     use std::path::PathBuf;
 

@@ -86,6 +86,7 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::api;
     use crate::command;

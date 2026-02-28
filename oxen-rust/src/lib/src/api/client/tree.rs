@@ -493,6 +493,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::FetchOpts;
     use crate::repositories;
+    use crate::test;
 
     use std::fs;
 

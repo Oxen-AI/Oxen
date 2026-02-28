@@ -203,6 +203,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::diff::diff_entry_status::DiffEntryStatus;
     use crate::repositories;
+    use crate::test;
 
     use crate::util;
     use crate::view::compare::{TabularCompareFieldBody, TabularCompareTargetBody};

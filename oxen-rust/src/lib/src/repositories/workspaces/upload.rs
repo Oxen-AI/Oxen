@@ -19,6 +19,7 @@ pub async fn upload(repo: &RemoteRepository, opts: &UploadOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use super::*;

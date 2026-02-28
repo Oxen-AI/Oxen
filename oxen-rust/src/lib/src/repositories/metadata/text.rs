@@ -25,6 +25,7 @@ mod tests {
     use crate::model::metadata::MetadataText;
     use crate::model::EntryDataType;
     use crate::repositories;
+    use crate::test;
 
     #[test]
     fn test_get_metadata_text_readme() {

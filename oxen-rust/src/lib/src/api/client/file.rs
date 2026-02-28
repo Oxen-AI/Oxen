@@ -206,6 +206,7 @@ pub async fn delete_file(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use actix_web::web::Bytes;
 

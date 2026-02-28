@@ -672,6 +672,7 @@ async fn process_and_add_files(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use actix_multipart_test::MultiPartFormDataBuilder;

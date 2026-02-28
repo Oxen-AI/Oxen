@@ -171,6 +171,7 @@ pub fn add_column_metadata(
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
+    use crate::test;
 
     use crate::util;
     use crate::{command, repositories};

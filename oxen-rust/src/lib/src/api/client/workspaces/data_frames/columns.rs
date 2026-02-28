@@ -179,6 +179,7 @@ pub async fn add_column_metadata(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use serde_json::json;
 

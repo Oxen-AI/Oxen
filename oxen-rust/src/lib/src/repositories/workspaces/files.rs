@@ -92,6 +92,7 @@ pub fn mv(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::config::UserConfig;

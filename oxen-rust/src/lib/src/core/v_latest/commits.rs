@@ -964,6 +964,7 @@ pub fn list_by_path_from_paginated(
 mod tests {
     use super::*;
     use crate::repositories;
+    use crate::test;
 
     #[tokio::test]
     async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {
