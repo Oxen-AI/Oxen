@@ -2,9 +2,11 @@ use dotenv::dotenv;
 use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
+use liboxen::error::OxenError;
 use liboxen::model::merkle_tree::merkle_tree_node_cache;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::User;
+
 use liboxen::util;
 
 pub mod app_data;
@@ -25,6 +27,7 @@ use actix_web::http::KeepAlive;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::middleware::HttpAuthentication;
+use thiserror::Error;
 
 use middleware::RequestIdMiddleware;
 
@@ -66,19 +69,13 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 
-use clap::{Arg, Command};
+use clap::{Parser, Subcommand};
 
 use std::env;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
-
-const ADD_USER_USAGE: &str =
-    "Usage: `oxen-server add-user -e <email> -n <name> -o user_config.toml`";
-
-const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`";
-
-const INVALID_PORT_MSG: &str = "Port must a valid number between 0-65535";
 
 const ABOUT: &str = "Oxen Server is the storage backend for Oxen, the AI and machine learning data management toolchain";
 
@@ -89,6 +86,12 @@ const SUPPORT: &str = "
     💬 For more support, or to chat with the Oxen team, join our Discord:
             https://discord.gg/s3tBEn7Ptg
 ";
+
+const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`";
+
+const DEFAULT_OXEN_KEEP_ALIVE_SECS: u64 = 600;
+
+const DEFAULT_OXEN_CLIENT_REQUEST_TIMEOUT_SECS: u64 = 600;
 
 // Exports for the utoipa docs
 // To add new endpoints to the docs, register their respective controller modules and schemas below
@@ -280,11 +283,95 @@ impl Modify for SecurityAddon {
     }
 }
 
+#[derive(Parser)]
+#[command(version=VERSION, about=ABOUT, long_about=format!("{ABOUT}\n{SUPPORT}"), subcommand_required=true, arg_required_else_help=true, allow_external_subcommands=true)]
+struct ServerCli {
+    #[command(subcommand)]
+    command: ServerCommand,
+}
+
+/// All server CLI subcommands.
+#[derive(Subcommand)]
+enum ServerCommand {
+    /// Starts the server on the given host and port
+    #[command(name = "start", override_usage=START_SERVER_USAGE)]
+    Start {
+        /// The server's IP address.
+        #[arg(
+            short = 'i',
+            long = "ip",
+            default_value = "0.0.0.0",
+            help = "What host to bind the server to"
+        )]
+        ip: String,
+
+        /// The port to serve from.
+        #[arg(
+            short = 'p',
+            long = "port",
+            default_value = "3000",
+            help = "What port to bind the server to"
+        )]
+        port: u16,
+
+        /// Whether or not to use auth on the routes. Defaults to off.
+        #[arg(
+            short = 'a',
+            long = "auth",
+            help = "Start the server with token-based authentication enforced"
+        )]
+        auth: bool,
+    },
+
+    /// Create a new user in the server and output the config file for that user
+    #[command(name = "add-user")]
+    AddUser {
+        #[arg(
+            short = 'e',
+            long = "email",
+            required = true,
+            help = "User's email address"
+        )]
+        email: String,
+
+        #[arg(
+            short = 'n',
+            long = "name",
+            required = true,
+            help = "User's name that will show up in the commits"
+        )]
+        name: String,
+
+        #[arg(
+            short = 'o',
+            long = "output",
+            default_value = "user_config.toml",
+            help = "Where to write the output config file to give to the user"
+        )]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Error)]
+enum ServerError {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Oxen(#[from] OxenError),
+}
+
+fn get_from_env_or_default<T: FromStr>(env_var_name: &str, default: T) -> T {
+    env::var(env_var_name)
+        .ok()
+        .and_then(|v| v.parse::<T>().ok())
+        .unwrap_or(default)
+}
+
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), ServerError> {
     dotenv().ok();
 
-    match from_filename("src/server/.env.local") {
+    match from_filename(Path::new("src").join("server").join("env.local")) {
         Ok(_) => log::debug!("Loaded .env file from current directory"),
         Err(e) => log::debug!("Failed to load .env file: {e}"),
     }
@@ -293,221 +380,148 @@ async fn main() -> std::io::Result<()> {
     util::perf::init_perf_logging();
 
     let sync_dir = match env::var("SYNC_DIR") {
-        Ok(dir) => dir,
-        Err(_) => String::from("data"),
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => PathBuf::from("data"),
     };
 
-    let keep_alive_secs = env::var("OXEN_KEEP_ALIVE_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(600);
+    let keep_alive_secs =
+        get_from_env_or_default("OXEN_KEEP_ALIVE_SECS", DEFAULT_OXEN_KEEP_ALIVE_SECS);
 
-    let client_request_timeout_secs = env::var("OXEN_CLIENT_REQUEST_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(600);
+    let client_request_timeout_secs = get_from_env_or_default(
+        "OXEN_CLIENT_REQUEST_TIMEOUT_SECS",
+        DEFAULT_OXEN_CLIENT_REQUEST_TIMEOUT_SECS,
+    );
 
-    let command = Command::new("oxen-server")
-        .version(VERSION)
-        .about(ABOUT)
-        .long_about(format!("{ABOUT}\n{SUPPORT}"))
-        .subcommand_required(true)
-        .arg_required_else_help(true)
-        .allow_external_subcommands(true)
-        .subcommand(
-            Command::new("start")
-                .about("Starts the server on the given host and port")
-                .arg(
-                    Arg::new("ip")
-                        .long("ip")
-                        .short('i')
-                        .default_value("0.0.0.0")
-                        .default_missing_value("always")
-                        .help("What host to bind the server to")
-                        .action(clap::ArgAction::Set),
-                )
-                .arg(
-                    Arg::new("port")
-                        .long("port")
-                        .short('p')
-                        .default_value("3000")
-                        .default_missing_value("always")
-                        .help("What port to bind the server to")
-                        .action(clap::ArgAction::Set),
-                )
-                .arg(
-                    Arg::new("auth")
-                        .long("auth")
-                        .short('a')
-                        .help("Start the server with token-based authentication enforced")
-                        .action(clap::ArgAction::SetTrue),
-                ),
-        )
-        .subcommand(
-            Command::new("add-user")
-                .about("Create a new user in the server and output the config file for that user")
-                .arg(
-                    Arg::new("email")
-                        .long("email")
-                        .short('e')
-                        .help("User's email address")
-                        .required(true)
-                        .action(clap::ArgAction::Set),
-                )
-                .arg(
-                    Arg::new("name")
-                        .long("name")
-                        .short('n')
-                        .help("User's name that will show up in the commits")
-                        .required(true)
-                        .action(clap::ArgAction::Set),
-                )
-                .arg(
-                    Arg::new("output")
-                        .long("output")
-                        .short('o')
-                        .default_value("user_config.toml")
-                        .default_missing_value("always")
-                        .help("Where to write the output config file to give to the user")
-                        .action(clap::ArgAction::Set),
-                ),
-        );
-    let matches = command.get_matches();
+    match ServerCli::parse().command {
+        ServerCommand::Start { ip, port, auth } => {
+            println!("🐂 v{VERSION}");
+            println!("{SUPPORT}");
 
-    match matches.subcommand() {
-        Some(("start", sub_matches)) => {
-            match (
-                sub_matches.get_one::<String>("ip"),
-                sub_matches.get_one::<String>("port"),
-            ) {
-                (Some(host), Some(port)) => {
-                    let port: u16 = port.parse::<u16>().expect(INVALID_PORT_MSG);
-                    println!("🐂 v{VERSION}");
-                    println!("{SUPPORT}");
-                    println!("Running on {host}:{port}");
-                    println!("Syncing to directory: {sync_dir}");
-
-                    // Configure merkle tree node caching
-                    if env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok() {
-                        log::info!("Merkle tree node caching disabled");
-                    } else {
-                        log::info!("Merkle tree node caching enabled");
-                        merkle_tree_node_cache::enable();
-                        log::info!(
-                            "Merkle tree node cache size: {}",
-                            merkle_tree_node_cache::CACHE_SIZE.get()
-                        );
-                    }
-
-                    let enable_auth = sub_matches.get_flag("auth");
-                    let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
-
-                    let openapi = ApiDoc::openapi();
-
-                    HttpServer::new(move || {
-                        App::new()
-                            .app_data(data.clone())
-                            .wrap(RequestIdMiddleware)
-                            .route(
-                                "/api/version",
-                                web::get().to(controllers::oxen_version::index),
-                            )
-                            .route(
-                                "/api/min_version",
-                                web::get().to(controllers::oxen_version::min_version),
-                            )
-                            .route("/api/health", web::get().to(controllers::health::index))
-                            .route(
-                                "/api/namespaces",
-                                web::get().to(controllers::namespaces::index),
-                            )
-                            .route(
-                                "/api/namespaces/{namespace}",
-                                web::get().to(controllers::namespaces::show),
-                            )
-                            .route(
-                                "/api/migrations/{migration_tstamp}",
-                                web::get().to(controllers::migrations::list_unmigrated),
-                            )
-                            .wrap(Condition::new(
-                                enable_auth,
-                                HttpAuthentication::bearer(auth::validator::validate),
-                            ))
-                            .service(
-                                SwaggerUi::new("/swagger-ui/{_:.*}")
-                                    .url("/api/_spec/oxen_server_openapi.json", openapi.clone()),
-                            )
-                            .service(web::scope("/api/repos").configure(routes::config))
-                            .default_service(web::route().to(controllers::not_found::index))
-                            .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
-                            .wrap(Logger::default())
-                            .wrap(Logger::new("user agent is %a %{User-Agent}i"))
-                    })
-                    .keep_alive(KeepAlive::Timeout(std::time::Duration::from_secs(
-                        keep_alive_secs,
-                    )))
-                    .client_request_timeout(std::time::Duration::from_secs(
+            start(
+                &ip,
+                port,
+                &ServerConfig {
+                    // TODO: why is this not checking the value of the env var?
+                    disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
+                    enable_auth: auth,
+                    keep_alive: std::time::Duration::from_secs(keep_alive_secs),
+                    client_request_timeout: std::time::Duration::from_secs(
                         client_request_timeout_secs,
-                    ))
-                    .bind((host.to_owned(), port))?
-                    .run()
-                    .await
-                }
-                _ => {
-                    eprintln!("{START_SERVER_USAGE}");
-                    Ok(())
-                }
-            }
-        }
-        Some(("add-user", sub_matches)) => {
-            let (email, name, output) = match (
-                sub_matches.get_one::<String>("email"),
-                sub_matches.get_one::<String>("name"),
-                sub_matches.get_one::<String>("output"),
-            ) {
-                (Some(email), Some(name), Some(output)) => (email, name, output),
-                _ => {
-                    eprintln!("{ADD_USER_USAGE}");
-                    return Ok(());
-                }
-            };
-
-            let path = Path::new(&sync_dir);
-            log::debug!("Saving to sync dir: {path:?}");
-
-            let keygen = match auth::access_keys::AccessKeyManager::new(path) {
-                Ok(keygen) => keygen,
-                Err(err) => {
-                    eprintln!("Failed to create config file: {err}");
-                    return Ok(());
-                }
-            };
-
-            let new_user = User {
-                name: name.to_string(),
-                email: email.to_string(),
-            };
-
-            let (user, token) = match keygen.create(&new_user) {
-                Ok(result) => result,
-                Err(err) => {
-                    eprintln!("Err: {err}");
-                    return Ok(());
-                }
-            };
-
-            let cfg = UserConfig::from_user(&user);
-            match cfg.save(Path::new(output)) {
-                Ok(_) => {
-                    println!("User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`")
-                }
-                Err(error) => {
-                    eprintln!("Err: {error:?}");
-                }
-            }
-
+                    ),
+                },
+                &sync_dir,
+            )
+            .await?;
             Ok(())
         }
-        _ => unreachable!(), // If all subcommands are defined above, anything else is unreachabe!()
+
+        ServerCommand::AddUser {
+            email,
+            name,
+            output,
+        } => {
+            log::debug!("Saving to sync dir: {sync_dir:?}");
+            let token = add_user(&email, &name, output.as_path(), &sync_dir)?;
+            println!("User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`");
+            Ok(())
+        }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ServerConfig {
+    disable_merkle_cache: bool,
+    enable_auth: bool,
+    keep_alive: std::time::Duration,
+    client_request_timeout: std::time::Duration,
+}
+
+async fn start(
+    host: &str,
+    port: u16,
+    config: &ServerConfig,
+    sync_dir: &Path,
+) -> Result<(), std::io::Error> {
+    let ServerConfig {
+        disable_merkle_cache,
+        enable_auth,
+        keep_alive,
+        client_request_timeout,
+    } = *config;
+
+    // Configure merkle tree node caching
+    if disable_merkle_cache {
+        log::info!("Merkle tree node caching disabled");
+    } else {
+        log::info!("Merkle tree node caching enabled");
+        merkle_tree_node_cache::enable();
+        log::info!(
+            "Merkle tree node cache size: {}",
+            merkle_tree_node_cache::CACHE_SIZE.get()
+        );
+    }
+
+    let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
+
+    println!("Running on {host}:{port}");
+    println!("Syncing to directory: {}", sync_dir.display());
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(data.clone())
+            .wrap(RequestIdMiddleware)
+            .route(
+                "/api/version",
+                web::get().to(controllers::oxen_version::index),
+            )
+            .route(
+                "/api/min_version",
+                web::get().to(controllers::oxen_version::min_version),
+            )
+            .route("/api/health", web::get().to(controllers::health::index))
+            .route(
+                "/api/namespaces",
+                web::get().to(controllers::namespaces::index),
+            )
+            .route(
+                "/api/namespaces/{namespace}",
+                web::get().to(controllers::namespaces::show),
+            )
+            .route(
+                "/api/migrations/{migration_tstamp}",
+                web::get().to(controllers::migrations::list_unmigrated),
+            )
+            .wrap(Condition::new(
+                enable_auth,
+                HttpAuthentication::bearer(auth::validator::validate),
+            ))
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api/_spec/oxen_server_openapi.json", ApiDoc::openapi()),
+            )
+            .service(web::scope("/api/repos").configure(routes::config))
+            .default_service(web::route().to(controllers::not_found::index))
+            .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
+            .wrap(Logger::default())
+            .wrap(Logger::new("user agent is %a %{User-Agent}i"))
+    })
+    .keep_alive(KeepAlive::Timeout(keep_alive))
+    .client_request_timeout(client_request_timeout)
+    .bind((host.to_owned(), port))?
+    .run()
+    .await
+}
+
+/// Creates the user and returns their auth token.
+fn add_user(email: &str, name: &str, output: &Path, sync_dir: &Path) -> Result<String, OxenError> {
+    let keygen = auth::access_keys::AccessKeyManager::new(sync_dir)?;
+    let (user, token) = keygen.create(&User {
+        name: name.to_string(),
+        email: email.to_string(),
+    })?;
+
+    let cfg = UserConfig::from_user(&user);
+    cfg.save(output)?;
+
+    Ok(token)
 }

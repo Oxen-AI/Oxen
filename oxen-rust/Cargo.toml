@@ -167,6 +167,7 @@ sqlparser = "0.53.0"
 sysinfo = "0.33.0"
 tar = "0.4.44"
 tempfile = "3.8.0"
+thiserror = "2.0.18"
 thumbnails = { version = "0.2.1", optional = true }
 time = { version = "0.3.28", features = ["serde"] }
 tokio = { version = "1.32.0", features = ["full", "tracing"] }
