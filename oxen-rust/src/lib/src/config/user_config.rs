@@ -4,7 +4,7 @@ use crate::model::User;
 use crate::util;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const USER_CONFIG_FILENAME: &str = "user_config.toml";
 
@@ -47,10 +47,27 @@ impl UserConfig {
 
     pub fn get() -> Result<UserConfig, OxenError> {
         let config_dir = util::fs::oxen_config_dir()?;
-        let mut config_file = config_dir.join(Path::new(USER_CONFIG_FILENAME));
-        if std::env::var("TEST").is_ok() {
-            config_file = PathBuf::from("data/test/config/user_config.toml");
-        }
+
+        // TODO: remove use of `TEST` env var and instead use `#[cfg(test)]` and `not(test)`
+        //       to gate test-specific code.
+        // TODO: refactor get() into impl Default {} and make a new function to create a config from a &path.
+        let config_file = match std::env::var("TEST") {
+            Ok(_) => {
+                #[cfg(test)]
+                {
+                    test::REPO_ROOT.join("data/test/config/user_config.toml")
+                }
+
+                #[cfg(not(test))]
+                {
+                    return Err(OxenError::basic_str(
+                        "TEST env var set but not in test mode",
+                    ));
+                }
+            }
+            Err(_) => config_dir.join(Path::new(USER_CONFIG_FILENAME)),
+        };
+
         log::debug!("looking for config file in...{config_file:?}");
         if config_file.exists() {
             Ok(UserConfig::new(&config_file))
@@ -105,6 +122,7 @@ mod tests {
     use crate::config::UserConfig;
     use crate::error::OxenError;
     use crate::test;
+
     use std::path::Path;
 
     #[test]

@@ -101,6 +101,7 @@ pub async fn from_directory(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::PathBuf;
 
@@ -112,7 +113,6 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
     use crate::util;
     use crate::view::data_frames::columns::NewColumn;
     use crate::view::data_frames::FromDirectoryRequest;

@@ -17,7 +17,7 @@ use crate::opts::StorageOpts;
 /// # use liboxen::command;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 /// # fn main() -> Result<(), OxenError> {
 /// # test::init_test_env();
 /// let base_dir = Path::new("repo_dir_init");
@@ -66,6 +66,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
+
     use crate::util;
 
     #[tokio::test]

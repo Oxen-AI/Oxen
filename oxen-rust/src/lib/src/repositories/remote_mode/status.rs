@@ -79,6 +79,7 @@ pub async fn status(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::PathBuf;
 
@@ -86,7 +87,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
 
-    use crate::{api, repositories, test};
+    use crate::{api, repositories};
 
     // For reference, the fully synced repo structure is as follows:
     // nlp/

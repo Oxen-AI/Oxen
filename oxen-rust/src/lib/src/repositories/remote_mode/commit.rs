@@ -46,11 +46,12 @@ pub async fn commit(
 // 1: The same add one with the untracked files is happenieng here
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::opts::CloneOpts;
-    use crate::{api, repositories, test, util};
+    use crate::{api, repositories, util};
 
     use crate::config::UserConfig;
     use crate::model::staged_data::StagedDataOpts;
@@ -59,7 +60,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -123,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_several_times() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -225,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_and_commit_downloaded_dir() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -363,7 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_removed_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -431,7 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_removed_dir() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -515,7 +516,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_invalid_parquet_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {

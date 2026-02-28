@@ -12,6 +12,8 @@ crate-type = ["cdylib"]
 liboxen = { path = "../oxen-rust/src/lib", features = ["perf-logging"] }
 log = "0.4.17"
 pyo3 = { version = "0.25" }
+# pyo3-asyncio = { version = "0.22.0", features = ["attributes", "tokio-runtime"] }
+# pyo3-asyncio = { git = "https://github.com/kcking/pyo3-asyncio.git", rev = "ab8ad9a1dbd3a81d39c8133c415b3396772c1d37", features = ["attributes", "tokio-runtime"] }
 pyo3-async-runtimes = { version = "0.25", features = [
     "attributes",
     "async-std-runtime",

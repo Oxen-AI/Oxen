@@ -12,17 +12,12 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-pub fn init_test_env() {
-    util::logging::init_logging();
-
-    unsafe {
-        std::env::set_var("TEST", "true");
-    }
-}
+use liboxen::test::init_test_env;
 
 pub fn get_sync_dir() -> Result<PathBuf, OxenError> {
     init_test_env();
-    let sync_dir = PathBuf::from(format!("data/test/runs/{}", uuid::Uuid::new_v4()));
+    let sync_dir =
+        liboxen::test::REPO_ROOT.join(format!("data/test/runs/{}", uuid::Uuid::new_v4()));
     util::fs::create_dir_all(&sync_dir)?;
     Ok(sync_dir)
 }
@@ -71,12 +66,14 @@ where
     Ok(())
 }
 
+#[allow(unused)]
 pub fn request(sync_dir: &Path, uri: &str) -> actix_web::HttpRequest {
     actix_web::test::TestRequest::with_uri(uri)
         .app_data(OxenAppData::new(sync_dir.to_path_buf()))
         .to_http_request()
 }
 
+#[allow(unused)]
 pub fn namespace_request(
     sync_dir: &Path,
     uri: &str,
@@ -88,6 +85,7 @@ pub fn namespace_request(
         .to_http_request()
 }
 
+#[allow(unused)]
 pub fn repo_request(
     sync_dir: &Path,
     uri: &str,
@@ -117,6 +115,7 @@ pub fn repo_request_with_param(
         .to_http_request()
 }
 
+#[allow(unused)]
 pub fn request_with_param(
     sync_dir: &Path,
     uri: &str,
@@ -129,6 +128,7 @@ pub fn request_with_param(
         .to_http_request()
 }
 
+#[allow(unused)]
 pub fn request_with_json(
     sync_dir: &Path,
     uri: &str,
@@ -140,6 +140,7 @@ pub fn request_with_json(
         .to_http_request()
 }
 
+#[allow(unused)]
 pub fn request_with_payload_and_entry(
     sync_dir: &Path,
     uri: &str,

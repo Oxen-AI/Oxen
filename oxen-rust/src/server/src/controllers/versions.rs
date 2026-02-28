@@ -629,7 +629,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_controllers_versions_download() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -715,7 +715,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_controllers_versions_batch_upload() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";

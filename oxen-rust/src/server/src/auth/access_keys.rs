@@ -162,9 +162,11 @@ impl AccessKeyManager {
 mod tests {
 
     use crate::auth::access_keys::AccessKeyManager;
-    use crate::test;
+
     use liboxen::error::OxenError;
     use liboxen::model::User;
+
+    use crate::test;
 
     #[test]
     fn test_constructor() -> Result<(), OxenError> {

@@ -391,6 +391,7 @@ pub fn list_tabular_files_in_repo(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -399,7 +400,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::PaginateOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     #[tokio::test]

@@ -39,13 +39,14 @@ pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, 
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::api;
     use crate::command;
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     // NOTE: Keep this test to ensure we compute sizes on the backend

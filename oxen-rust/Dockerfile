@@ -50,7 +50,7 @@ RUN apt-get update \
 
 WORKDIR /usr/src/oxen-server
 COPY . .
-RUN cargo build --release --features ffmpeg
+RUN cargo build --workspace --release --features ffmpeg
 
 # Minimal image to run the binary (without Rust toolchain)
 FROM debian:bookworm-slim AS runtime

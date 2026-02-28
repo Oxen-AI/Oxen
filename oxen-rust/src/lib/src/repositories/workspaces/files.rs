@@ -92,13 +92,13 @@ pub fn mv(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::config::UserConfig;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::repositories::{self, workspaces};
-    use crate::test;
 
     #[tokio::test]
     async fn test_mv_file_in_workspace() -> Result<(), OxenError> {
@@ -126,7 +126,7 @@ mod tests {
 
             // Check status - should show the original as removed and new as added
             let status = workspaces::status::status(&workspace)?;
-            println!("Status after mv: {:?}", status);
+            println!("Status after mv: {status:?}");
 
             // The original path should be staged as removed in staged_files
             let removed_entry = status.staged_files.get(&original_path);

@@ -210,6 +210,7 @@ mod tests {
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
+
     use crate::util;
 
     #[tokio::test]

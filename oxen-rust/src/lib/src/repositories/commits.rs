@@ -22,7 +22,7 @@ pub mod commit_writer;
 /// ```
 /// use liboxen::command;
 /// use liboxen::util;
-/// # use liboxen::test;
+/// #
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
 /// # fn main() -> Result<(), OxenError> {
@@ -408,6 +408,7 @@ pub fn commit_history_is_complete(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;
@@ -416,7 +417,7 @@ mod tests {
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use super::*;

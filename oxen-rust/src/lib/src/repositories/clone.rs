@@ -138,6 +138,7 @@ async fn clone_repo_remote_mode(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use crate::api;
@@ -149,7 +150,7 @@ mod tests {
     use crate::model::RepoNew;
     use crate::opts::PushOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use super::*;

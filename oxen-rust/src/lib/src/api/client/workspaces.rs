@@ -187,6 +187,7 @@ pub async fn clear(remote_repo: &RemoteRepository) -> Result<(), OxenError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use super::*;
 
@@ -198,7 +199,6 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_create_workspace() -> Result<(), OxenError> {
@@ -457,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_commit_staging_behind_main() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             // Create branch behind-main off main
             let new_branch = "behind-main";
             let main_branch = "main";
@@ -551,7 +551,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_not_named_workspaces_closing_after_commit() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = "test_workspace_id";
             api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                 .await?;
@@ -583,7 +583,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_named_workspaces_not_closing_after_commit() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_name = "test_workspace_name";
             let workspace_id = "test_workspace_id";
             api::client::workspaces::create_with_name(

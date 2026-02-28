@@ -66,8 +66,8 @@ mod tests {
     use crate::api;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-
     use crate::test;
+
     use crate::util;
 
     use std::io::Read;

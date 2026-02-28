@@ -44,6 +44,7 @@ pub async fn merge(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::api;
     use crate::constants::DEFAULT_REMOTE_NAME;
@@ -51,7 +52,6 @@ mod tests {
     use crate::opts::FetchOpts;
     use crate::opts::PushOpts;
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_remote_merger_no_commits() -> Result<(), OxenError> {

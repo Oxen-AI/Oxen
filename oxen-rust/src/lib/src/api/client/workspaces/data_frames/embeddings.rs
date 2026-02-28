@@ -101,6 +101,7 @@ pub async fn index(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use serde_json::json;
 
     use crate::config::embedding_config::EmbeddingStatus;
@@ -109,7 +110,7 @@ mod tests {
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::opts::{DFOpts, PaginateOpts};
-    use crate::test;
+
     use crate::{api, repositories};
 
     use std::path::Path;
@@ -121,7 +122,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,

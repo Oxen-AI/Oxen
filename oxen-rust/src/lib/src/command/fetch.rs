@@ -65,7 +65,7 @@ mod tests {
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::test;
+
 
     #[tokio::test]
     async fn test_fetch_branches() -> Result<(), OxenError> {

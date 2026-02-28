@@ -23,7 +23,7 @@ use crate::model::{LocalRepository, StagedData};
 /// use liboxen::command;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
 /// # test::init_test_env();
@@ -46,7 +46,7 @@ use crate::model::{LocalRepository, StagedData};
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
 /// # test::init_test_env();
@@ -103,6 +103,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
+
     use crate::util;
 
     use std::collections::HashSet;
@@ -740,19 +741,40 @@ mod tests {
             let repo_path = &repo.path;
             let train_dir = repo_path.join("train");
             util::fs::create_dir_all(&train_dir)?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/cat_1.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/dog_1.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/cat_2.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/dog_2.jpg"))?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/cat_1.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/dog_1.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/cat_2.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/dog_2.jpg").as_path(),
+            )?;
 
             let test_dir = repo_path.join("test");
             util::fs::create_dir_all(&test_dir)?;
-            let _ = test::add_img_file_to_dir(&test_dir, Path::new("data/test/images/cat_3.jpg"))?;
-            let _ = test::add_img_file_to_dir(&test_dir, Path::new("data/test/images/dog_3.jpg"))?;
+            let _ = test::add_img_file_to_dir(
+                &test_dir,
+                test::REPO_ROOT.join("data/test/images/cat_3.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &test_dir,
+                test::REPO_ROOT.join("data/test/images/dog_3.jpg").as_path(),
+            )?;
 
             let valid_dir = repo_path.join("valid");
             util::fs::create_dir_all(&valid_dir)?;
-            let _ = test::add_img_file_to_dir(&valid_dir, Path::new("data/test/images/dog_4.jpg"))?;
+            let _ = test::add_img_file_to_dir(
+                &valid_dir,
+                test::REPO_ROOT.join("data/test/images/dog_4.jpg").as_path(),
+            )?;
 
             let base_file_1 = test::add_txt_file_to_dir(repo_path, "Hello 1")?;
             let _base_file_2 = test::add_txt_file_to_dir(repo_path, "Hello 2")?;

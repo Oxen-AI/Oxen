@@ -34,9 +34,9 @@ pub async fn get(
 mod tests {
     use crate::api;
     use crate::error::OxenError;
+    use crate::test;
 
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_get_revision_from_commit() -> Result<(), OxenError> {

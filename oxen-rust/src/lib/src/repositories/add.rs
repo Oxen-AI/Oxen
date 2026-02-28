@@ -16,7 +16,7 @@ use std::path::Path;
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
 /// # test::init_test_env();
@@ -60,6 +60,7 @@ pub async fn add_all_with_version<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
     use std::path::PathBuf;
@@ -67,7 +68,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::opts::clone_opts::CloneOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     #[tokio::test]

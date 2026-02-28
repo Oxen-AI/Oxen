@@ -1036,6 +1036,7 @@ async fn upload_data_chunk_to_server(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::api;
     use crate::command;
@@ -1044,7 +1045,6 @@ mod tests {
     use crate::error::OxenError;
 
     use crate::repositories;
-    use crate::test;
 
     #[tokio::test]
     async fn test_list_remote_commits_all() -> Result<(), OxenError> {

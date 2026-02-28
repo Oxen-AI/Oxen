@@ -809,15 +809,15 @@ fn jitter() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use crate::api;
     use crate::error::OxenError;
-    use crate::test;
 
     #[tokio::test]
     async fn test_upload_large_file_in_chunks() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = test::test_30k_parquet();
 
             // Get original file size

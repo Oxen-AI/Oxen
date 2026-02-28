@@ -291,9 +291,11 @@ pub async fn rename_data_frame(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::Path;
 
+    use crate::command;
     use crate::config::UserConfig;
     use crate::constants::{
         DEFAULT_BRANCH_NAME, DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE, DEFAULT_REMOTE_NAME,
@@ -303,11 +305,10 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
     use crate::{api, repositories, util};
-    use crate::{command, test};
 
     #[tokio::test]
     async fn test_get_by_resource() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations/train/bounding_box.csv");
 
             let workspace_id = "some_workspace";
@@ -341,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_workspace_data_frames() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations")
                 .join(Path::new("train"))
                 .join(Path::new("bounding_box.csv"));
@@ -374,7 +375,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -913,7 +914,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_workspace_data_frames() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations/train/bounding_box.csv");
             let workspace_id = "some_workspace";
             let workspace =
@@ -979,7 +980,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = "some_workspace";
             let path = Path::new("annotations/train/bounding_box.csv");
 

@@ -62,6 +62,7 @@ pub fn get_commit_or_head<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;
@@ -70,7 +71,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_for_commit() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let commit = history.first().unwrap();
             let path_str = format!("{}/annotations/train/one_shot.csv", commit.id);
@@ -93,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_for_branch() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "my-branch";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -118,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_for_long_branch_name() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "my/crazy/branch/name";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -143,7 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_for_branch_base_dir() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "my_branch";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -168,7 +169,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_from_path_root_dir() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "main";
             // let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -191,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_from_path_root_dir_complicated_branch() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "super/complex/branch-name/slashes";
             let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -217,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_from_path_nonroot_complicated_branch() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "super/complex/branch-name/slashes";
             let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -242,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_resource_from_path_with_file() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "super/complex/branch-name/slashes";
             let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
 

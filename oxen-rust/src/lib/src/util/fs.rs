@@ -2275,14 +2275,16 @@ def add(a, b):
             let test_id_file = repo.path.join("test_id.txt");
             let test_id_file_no_ext = repo.path.join("test_id");
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("text")
                     .join("test_id.txt"),
                 &test_id_file,
             )?;
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("text")
                     .join("test_id.txt"),
@@ -2309,10 +2311,12 @@ def add(a, b):
             assert_eq!(
                 EntryDataType::Tabular,
                 util::fs::file_data_type(
-                    &Path::new("data")
+                    test::REPO_ROOT
+                        .join("data")
                         .join("test")
                         .join("json")
                         .join("tabular.json")
+                        .as_path()
                 )
             );
 

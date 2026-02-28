@@ -84,6 +84,7 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use actix_web::{web, App};
     use std::path::Path;
 
@@ -94,11 +95,10 @@ mod tests {
 
     use crate::app_data::OxenAppData;
     use crate::controllers;
-    use crate::test;
 
     #[actix_web::test]
     async fn test_controllers_dir_list_directory() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
 
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";

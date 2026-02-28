@@ -300,12 +300,13 @@ pub async fn set_working_repo_to_commit(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::refs::with_ref_manager;
     use crate::error::OxenError;
-    use crate::{repositories, test, util};
+    use crate::{repositories, util};
 
     #[tokio::test]
     async fn test_list_branch_versions_main() -> Result<(), OxenError> {

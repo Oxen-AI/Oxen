@@ -13,7 +13,7 @@ use crate::opts::PushOpts;
 ///
 /// ```
 /// # use liboxen::api;
-/// # use liboxen::test;
+/// #
 /// use liboxen::command;
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
@@ -79,6 +79,7 @@ mod tests {
     use crate::opts::{CloneOpts, PushOpts};
     use crate::repositories;
     use crate::test;
+
     use crate::util;
     use crate::view::entries::EMetadataEntry;
     use futures::future;

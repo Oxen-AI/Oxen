@@ -384,6 +384,7 @@ mod tests {
     use crate::model::{Commit, LocalRepository, RepoNew};
     use crate::repositories;
     use crate::test;
+
     use crate::util;
     use std::path::{Path, PathBuf};
     use time::OffsetDateTime;
