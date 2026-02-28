@@ -307,14 +307,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_child_counts_to_nodes_migration() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test_async(|dir| async move {
+        test::run_empty_dir_test_async(|dir| async move {
             // Instantiate an older repository
             let repo = repositories::init::init_with_version(dir, MinOxenVersion::V0_19_0)?;
 
             // Populate the repo with some files
-            crate::test::populate_dir_with_training_data(&repo.path)?;
+            test::populate_dir_with_training_data(&repo.path)?;
             // Make a variety of commits
-            crate::test::make_many_commits(&repo).await?;
+            test::make_many_commits(&repo).await?;
 
             // Test that the root commit
             let latest_commit = repositories::commits::latest_commit(&repo)?;
@@ -404,16 +404,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_child_counts_migration_with_many_vnodes() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test_async(|dir| async move {
+        test::run_empty_dir_test_async(|dir| async move {
             // Instantiate an older repository
             let mut repo = repositories::init::init_with_version(dir, MinOxenVersion::V0_19_0)?;
             // Set the vnode size to 3
             repo.set_vnode_size(3);
 
             // Populate the repo with some files
-            crate::test::populate_dir_with_training_data(&repo.path)?;
+            test::populate_dir_with_training_data(&repo.path)?;
             // Make a variety of commits
-            crate::test::make_many_commits(&repo).await?;
+            test::make_many_commits(&repo).await?;
 
             // Test that the root commit
             let latest_commit = repositories::commits::latest_commit(&repo)?;

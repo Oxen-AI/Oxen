@@ -121,7 +121,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -163,7 +163,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
@@ -222,7 +222,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
@@ -285,7 +285,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_embeddings_by_embedding() -> Result<(), OxenError> {
-        crate::test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
 
             // Write a small embeddings.json file
@@ -361,7 +361,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
@@ -405,7 +405,7 @@ mod tests {
             }
             assert_eq!(indexing_status, EmbeddingStatus::Complete);
 
-            crate::test::run_empty_dir_test_async(|sync_dir| async move {
+            test::run_empty_dir_test_async(|sync_dir| async move {
                 let output_path = sync_dir.join("test_download.parquet");
 
                 // Download the data frame sorted by embeddings
@@ -445,7 +445,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =

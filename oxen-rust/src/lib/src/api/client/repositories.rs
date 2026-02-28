@@ -583,14 +583,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_repo_pre_and_post_clone() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let mut server = mockito::Server::new_async().await;
             let server_url = server.url();
 
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
 
-            let mut remote_repo = crate::test::create_remote_repo(&local_repo).await?;
+            let mut remote_repo = test::create_remote_repo(&local_repo).await?;
             let original_remote_url = remote_repo.remote.url;
             remote_repo.remote.url = format!("{server_url}/{namespace}/{name}");
 
@@ -617,14 +617,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_repo_pre_and_post_push() -> Result<(), OxenError> {
-        crate::test::run_one_commit_local_repo_test_async(|local_repo| async move {
+        test::run_one_commit_local_repo_test_async(|local_repo| async move {
             let mut server = mockito::Server::new_async().await;
             let server_url = server.url();
 
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
 
-            let mut remote_repo = crate::test::create_remote_repo(&local_repo).await?;
+            let mut remote_repo = test::create_remote_repo(&local_repo).await?;
             let original_remote_url = remote_repo.remote.url;
             remote_repo.remote.url = format!("{server_url}/{namespace}/{name}");
 
@@ -656,11 +656,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_remote_repository() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
             let repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, crate::test::test_host(), None);
+                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
             let repository =
                 api::client::repositories::create_from_local(&local_repo, repo_new).await?;
             println!("got repository: {repository:?}");
@@ -675,7 +675,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_remote_repository_with_readme() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
 
@@ -687,7 +687,7 @@ mod tests {
                 user,
             }];
             let mut repo_new = RepoNew::from_files(namespace, &name, files, None);
-            repo_new.host = Some(crate::test::test_host());
+            repo_new.host = Some(test::test_host());
             repo_new.scheme = Some("http".to_string());
             let repository = api::client::repositories::create(repo_new).await?;
             println!("got repository: {repository:?}");
@@ -710,7 +710,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_remote_repository_with_multipart() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
 
@@ -735,7 +735,7 @@ mod tests {
             };
 
             let mut repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, crate::test::test_host(), None);
+                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
             repo_new.scheme = Some("http".to_string());
 
             let repository = api::client::repositories::create_repo_with_files(
@@ -774,8 +774,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_by_name() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
-            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
             let url_repo = api::client::repositories::get_by_remote_repo(&remote_repo)
                 .await?
                 .unwrap();
@@ -793,9 +793,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_repository() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             // Create a remote repo
-            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
 
             // Delete it
             api::client::repositories::delete(&remote_repo).await?;
@@ -814,8 +814,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_transfer_remote_repository() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
-            let remote_repo = crate::test::create_remote_repo(&local_repo).await?;
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
 
             let new_namespace = "new-namespace";
             let new_repository =

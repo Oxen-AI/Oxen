@@ -816,8 +816,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_large_file_in_chunks() -> Result<(), OxenError> {
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
-            let path = crate::test::test_30k_parquet();
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+            let path = test::test_30k_parquet();
 
             // Get original file size
             let metadata = path.metadata().unwrap();

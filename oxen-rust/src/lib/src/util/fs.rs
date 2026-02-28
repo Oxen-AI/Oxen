@@ -2191,7 +2191,7 @@ mod tests {
 
     #[test]
     fn version_path() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test(|repo| {
+        test::run_empty_local_repo_test(|repo| {
             let entry = CommitEntry {
                 commit_id: String::from("1234"),
                 path: PathBuf::from("hello_world.txt"),
@@ -2217,11 +2217,11 @@ mod tests {
 
     #[test]
     fn detect_file_type() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits(|repo| {
+        test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";
 
-            crate::test::write_txt_file_to_path(
+            test::write_txt_file_to_path(
                 repo.path.join(python_file),
                 r"import os
 
@@ -2230,7 +2230,7 @@ def add(a, b):
     return a + b",
             )?;
 
-            crate::test::write_txt_file_to_path(
+            test::write_txt_file_to_path(
                 repo.path.join(python_with_interpreter_file),
                 r"#!/usr/bin/env python3
 import os
@@ -2274,7 +2274,7 @@ def add(a, b):
             let test_id_file = repo.path.join("test_id.txt");
             let test_id_file_no_ext = repo.path.join("test_id");
             util::fs::copy(
-                crate::test::REPO_ROOT
+                test::REPO_ROOT
                     .join("data")
                     .join("test")
                     .join("text")
@@ -2282,7 +2282,7 @@ def add(a, b):
                 &test_id_file,
             )?;
             util::fs::copy(
-                crate::test::REPO_ROOT
+                test::REPO_ROOT
                     .join("data")
                     .join("test")
                     .join("text")
@@ -2306,11 +2306,11 @@ def add(a, b):
 
     #[test]
     fn detect_file_type_json_array() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test(|_| {
+        test::run_empty_dir_test(|_| {
             assert_eq!(
                 EntryDataType::Tabular,
                 util::fs::file_data_type(
-                    crate::test::REPO_ROOT
+                    test::REPO_ROOT
                         .join("data")
                         .join("test")
                         .join("json")

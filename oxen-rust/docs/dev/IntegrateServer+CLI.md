@@ -64,7 +64,7 @@ Assuming you have a server running on the default host and port, the test for li
 ```rust
 #[test]
 fn test_list_remote_branches() -> Result<(), OxenError> {
-    crate::test::run_empty_remote_repo_test(|remote_repo| {
+    test::run_empty_remote_repo_test(|remote_repo| {
         api::client::branches::create(remote_repo, "branch-1", "main")?;
         api::client::branches::create(remote_repo, "branch-2", "main")?;
 

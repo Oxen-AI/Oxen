@@ -66,7 +66,7 @@ impl AuthConfig {
             Ok(_) => {
                 #[cfg(test)]
                 {
-                    crate::test::REPO_ROOT.join("data/test/config/auth_config.toml")
+                    test::REPO_ROOT.join("data/test/config/auth_config.toml")
                 }
                 #[cfg(not(test))]
                 {
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_second_auth_should_overwrite_first() -> Result<(), OxenError> {
-        let mut auth_config = AuthConfig::new(&crate::test::auth_cfg_file());
+        let mut auth_config = AuthConfig::new(&test::auth_cfg_file());
         let og_num_configs = auth_config.host_configs.len();
 
         let host = "hub.oxen.ai";

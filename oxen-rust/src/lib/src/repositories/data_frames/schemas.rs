@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_schema_list() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
             assert_eq!(schemas.len(), 8);
@@ -212,7 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_and_commit_schema() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_schemas.len(), 0);
@@ -266,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_schemas_from_parent() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_schemas.len(), 0);
@@ -323,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_add_staged() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -396,7 +396,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_schema_rm_staged() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -435,7 +435,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_add_schema_metadata() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -466,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_add_schema_metadata_and_col_metadata() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -513,7 +513,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_add_column_metadata() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_file = Path::new("annotations")
                 .join("train")
@@ -548,7 +548,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_add_column_to_committed_schema2() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_file = Path::new("annotations")
                 .join("train")
@@ -606,7 +606,7 @@ mod tests {
     #[tokio::test]
     async fn test_schemas_add_column_to_committed_schema_after_changing_data(
     ) -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -657,7 +657,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_persist_schema_types_across_commits() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -791,14 +791,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_schemas_merge_fast_forward_pull() -> Result<(), OxenError> {
-        crate::test::run_select_data_sync_remote("README.md", |_local_repo, remote_repo| async move {
+        test::run_select_data_sync_remote("README.md", |_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
-            crate::test::run_empty_dir_test_async(|repo_dir_a| async move {
+            test::run_empty_dir_test_async(|repo_dir_a| async move {
                 let repo_dir_a = repo_dir_a.join("repo_a");
                 let cloned_repo_a =
                     repositories::clone_url(&remote_repo.remote.url, &repo_dir_a).await?;
 
-                crate::test::run_empty_dir_test_async(|repo_dir_b| async move {
+                test::run_empty_dir_test_async(|repo_dir_b| async move {
                     println!("=== Starting test: Two users pushing to remote ===");
                     println!("User A: Will add schema metadata to dataframe");
                     println!("User B: Will edit README");

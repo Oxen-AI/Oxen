@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_cache_disable_with_closure() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test(|dir| {
+        test::run_empty_dir_test(|dir| {
             // Enable cache for this test
             enable();
 
@@ -304,7 +304,7 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        crate::test::run_empty_dir_test(|dir| {
+        test::run_empty_dir_test(|dir| {
             // Enable cache for this test
             enable();
 
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_cache_disabled_by_default() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test(|dir| {
+        test::run_empty_dir_test(|dir| {
             let repo = repositories::init(dir)?;
             let hash = MerkleHash::new(44444);
             let node = MerkleTreeNode::default();

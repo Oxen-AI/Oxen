@@ -309,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_branch_versions_main() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
@@ -382,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_branch_versions_branch_off_main() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir_path = Path::new("test_dir");
             util::fs::create_dir_all(repo.path.join(dir_path))?;
 
@@ -471,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_delete_branch() -> Result<(), OxenError> {
-        crate::test::run_one_commit_local_repo_test_async(|repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Get the original branches
             let og_branches = repositories::branches::list(&repo)?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();

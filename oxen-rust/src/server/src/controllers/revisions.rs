@@ -56,12 +56,12 @@ mod tests {
 
     #[actix_web::test]
     async fn test_get() -> Result<(), OxenError> {
-        let sync_dir = crate::test::get_sync_dir()?;
+        let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Repo";
         let resource_str = "main/to/resource";
 
-        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, resource_str)?;
         repositories::add(&repo, path).await?;
         repositories::commit(&repo, "first commit")?;
@@ -70,7 +70,7 @@ mod tests {
             "/oxen/{namespace}/{repo_name}/branches/resolve_resource_attributes/{resource_str}"
         );
 
-        let req = crate::test::repo_request_with_param(
+        let req = test::repo_request_with_param(
             &sync_dir,
             &uri,
             namespace,
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(path, "to/resource");
 
         // cleanup
-        crate::test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }

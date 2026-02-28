@@ -1445,7 +1445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_tabular_files_in_repo() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create a deeply nested directory
             let dir_path = repo
                 .path
@@ -1519,7 +1519,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merkle_two_files_same_hash() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let p1 = "hi.txt";
             let p2 = "bye.txt";
             let path_1 = local_repo.path.join(p1);
@@ -1527,8 +1527,8 @@ mod tests {
 
             let common_contents = "the same file";
 
-            crate::test::write_txt_file_to_path(&path_1, common_contents)?;
-            crate::test::write_txt_file_to_path(&path_2, common_contents)?;
+            test::write_txt_file_to_path(&path_1, common_contents)?;
+            test::write_txt_file_to_path(&path_2, common_contents)?;
 
             repositories::add(&local_repo, &path_1).await?;
             repositories::add(&local_repo, &path_2).await?;
@@ -1562,7 +1562,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_node_hashes_between_commits() -> Result<(), OxenError> {
-        crate::test::run_local_repo_training_data_committed_async(|repo| async move {
+        test::run_local_repo_training_data_committed_async(|repo| async move {
             // Get the initial commit from training data to use as baseline
             let starting_commit = repositories::commits::head_commit(&repo)?;
             println!("Starting commit: {}", starting_commit.id);

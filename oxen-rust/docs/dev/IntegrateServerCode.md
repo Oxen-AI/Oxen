@@ -92,14 +92,14 @@ Next up we need a unit test to make sure the functionality works. Actix
 #[actix_web::test]
 async fn test_branches_index_multiple_branches() -> Result<(), OxenError> {
     // Create unique name for sync directory so tests can run in parallel
-    let sync_dir = crate::test::get_sync_dir()?;
+    let sync_dir = test::get_sync_dir()?;
 
     // Repository Name
     let namespace = "Testing-Namespace";
     let name = "Testing-Branches-1";
 
     // Create a local repository in the sync dir
-    let repo = crate::test::create_local_repo(&sync_dir, namespace, name)?;
+    let repo = test::create_local_repo(&sync_dir, namespace, name)?;
     api::local::branches::create(&repo, "branch-1")?;
     api::local::branches::create(&repo, "branch-2")?;
 

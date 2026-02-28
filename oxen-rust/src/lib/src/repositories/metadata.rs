@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_metadata_audio_flac() {
-        let file = crate::test::test_audio_file_with_name("121-121726-0005.flac");
+        let file = test::test_audio_file_with_name("121-121726-0005.flac");
         let metadata = repositories::metadata::get(file).unwrap();
 
         println!("metadata: {metadata:?}");

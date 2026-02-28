@@ -199,7 +199,7 @@ pub async fn add_n_files_m_dirs(
 /// and take care of cleaning it up afterwards
 ///
 /// ```
-/// crate::test::run_empty_dir_test(|repo_dir| {
+/// test::run_empty_dir_test(|repo_dir| {
 ///   // do your fancy testing here
 ///   assert!(true);
 ///   Ok(())

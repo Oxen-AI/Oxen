@@ -444,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_parse_working_dir() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let repo_path = repo.clone().path;
 
             // Test glob in root
@@ -503,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_parse_working_dir_walk_dirs() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let repo_path = repo.clone().path;
 
             // Test glob path with walk
@@ -559,7 +559,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_parse_staged_db() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Stage some specific files and a directory
             repositories::add(&repo, "train/dog_1.jpg").await?;
             repositories::add(&repo, "annotations/train/*").await?;
@@ -618,7 +618,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_glob_parse_merkle_tree() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Test glob in sub-directory
             let opts = GlobOpts {
                 paths: vec![PathBuf::from("nlp/classification/annotations/*")],

@@ -1855,7 +1855,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_json() -> Result<(), OxenError> {
-        let df = tabular::read_df_json(crate::test::test_text_json())?.collect()?;
+        let df = tabular::read_df_json(test::test_text_json())?.collect()?;
 
         println!("{df}");
 
@@ -1878,7 +1878,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_jsonl() -> Result<(), OxenError> {
         let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-            tabular::read_df_jsonl(crate::test::test_text_jsonl())?
+            tabular::read_df_jsonl(test::test_text_jsonl())?
                 .collect()
                 .map_err(OxenError::from)
         })
@@ -1909,7 +1909,7 @@ mod tests {
     #[tokio::test]
     async fn test_sniff_empty_rows_carriage_return_csv() -> Result<(), OxenError> {
         let opts = DFOpts::empty();
-        let df = tabular::read_df(crate::test::test_csv_empty_rows_carriage_return(), opts).await?;
+        let df = tabular::read_df(test::test_csv_empty_rows_carriage_return(), opts).await?;
         assert_eq!(df.width(), 4);
         Ok(())
     }
@@ -1917,7 +1917,7 @@ mod tests {
     #[tokio::test]
     async fn test_sniff_delimiter_tabs() -> Result<(), OxenError> {
         let opts = DFOpts::empty();
-        let df = tabular::read_df(crate::test::test_tabs_csv(), opts).await?;
+        let df = tabular::read_df(test::test_tabs_csv(), opts).await?;
         assert_eq!(df.width(), 4);
         Ok(())
     }
@@ -1925,7 +1925,7 @@ mod tests {
     #[tokio::test]
     async fn test_sniff_emoji_csv() -> Result<(), OxenError> {
         let opts = DFOpts::empty();
-        let df = tabular::read_df(crate::test::test_emojis(), opts).await?;
+        let df = tabular::read_df(test::test_emojis(), opts).await?;
         assert_eq!(df.width(), 2);
         Ok(())
     }
@@ -1934,7 +1934,7 @@ mod tests {
     async fn test_slice_parquet_lazy() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
         opts.slice = Some("329..333".to_string());
-        let df = tabular::scan_df_parquet(crate::test::test_1k_parquet(), 333)?;
+        let df = tabular::scan_df_parquet(test::test_1k_parquet(), 333)?;
         let df = tabular::transform_lazy(df, opts.clone()).await?;
 
         let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
@@ -1969,7 +1969,7 @@ mod tests {
     async fn test_slice_parquet_full_read() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
         opts.slice = Some("329..333".to_string());
-        let mut df = tabular::read_df(crate::test::test_1k_parquet(), opts).await?;
+        let mut df = tabular::read_df(test::test_1k_parquet(), opts).await?;
         println!("{df:?}");
 
         assert_eq!(df.width(), 3);
@@ -1990,7 +1990,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_file_with_unmatched_quotes() -> Result<(), OxenError> {
-        let df = tabular::read_df(crate::test::test_spam_ham(), DFOpts::empty()).await?;
+        let df = tabular::read_df(test::test_spam_ham(), DFOpts::empty()).await?;
         assert_eq!(df.width(), 2);
         assert_eq!(df.height(), 100);
         Ok(())

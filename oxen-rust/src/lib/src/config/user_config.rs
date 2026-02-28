@@ -55,7 +55,7 @@ impl UserConfig {
             Ok(_) => {
                 #[cfg(test)]
                 {
-                    crate::test::REPO_ROOT.join("data/test/config/user_config.toml")
+                    test::REPO_ROOT.join("data/test/config/user_config.toml")
                 }
 
                 #[cfg(not(test))]
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_read() {
-        let config = UserConfig::new(&crate::test::user_cfg_file());
+        let config = UserConfig::new(&test::user_cfg_file());
         assert!(!config.name.is_empty());
         assert!(!config.email.is_empty());
     }
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_save() -> Result<(), OxenError> {
         let final_path = Path::new("test_save_config.toml");
-        let orig_config = UserConfig::new(&crate::test::user_cfg_file());
+        let orig_config = UserConfig::new(&test::user_cfg_file());
 
         orig_config.save(final_path)?;
 

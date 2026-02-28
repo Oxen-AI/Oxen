@@ -192,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fork_operations() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test_async(|test_dir| {
+        test::run_empty_dir_test_async(|test_dir| {
             async move {
                 let original_repo_path = test_dir.join("original");
                 let _original_repo = repositories::init(&original_repo_path)?;

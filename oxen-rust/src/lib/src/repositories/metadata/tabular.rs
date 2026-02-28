@@ -34,7 +34,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_tabular() {
-        let file = crate::test::test_text_file_with_name("celeb_a_200k.csv");
+        let file = test::test_text_file_with_name("celeb_a_200k.csv");
         let metadata = repositories::metadata::get(file).unwrap();
 
         assert!(metadata.size >= 9604701); // not sure why different on windows

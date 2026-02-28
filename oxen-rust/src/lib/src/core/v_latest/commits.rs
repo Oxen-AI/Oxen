@@ -967,14 +967,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create 15 commits to trigger the slow path (skip + limit > 10)
             let mut commit_ids = Vec::new();
 
             for i in 0..15 {
                 let filename = format!("file_{i}.txt");
                 let file_path = repo.path.join(&filename);
-                crate::test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
+                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
 
                 repositories::add(&repo, &file_path).await?;
                 let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
@@ -1027,14 +1027,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_pagination_with_forward_path() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create exactly 10 commits - this should use forward pagination (fast path)
             let mut commit_ids = Vec::new();
 
             for i in 0..10 {
                 let filename = format!("file_{i}.txt");
                 let file_path = repo.path.join(&filename);
-                crate::test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
+                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
 
                 repositories::add(&repo, &file_path).await?;
                 let commit = repositories::commit(&repo, &format!("Commit {i}"))?;

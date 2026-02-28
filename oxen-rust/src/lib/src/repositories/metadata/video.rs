@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_video_mp4() {
-        let file = crate::test::test_video_file_with_name("basketball.mp4");
+        let file = test::test_video_file_with_name("basketball.mp4");
         let metadata = repositories::metadata::get(file).unwrap();
         println!("metadata: {metadata:?}");
 
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_video_mov() {
-        let file = crate::test::test_video_file_with_name("dog_skatez.mov");
+        let file = test::test_video_file_with_name("dog_skatez.mov");
         let metadata = repositories::metadata::get(file).unwrap();
         println!("metadata: {metadata:?}");
 

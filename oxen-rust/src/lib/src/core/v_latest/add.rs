@@ -1237,19 +1237,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_respects_oxenignore() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let ignored_file = "ignored.txt";
             let normal_file = "normal.txt";
 
             let ignored_path = repo.path.join(ignored_file);
             let normal_path = repo.path.join(normal_file);
 
-            crate::test::write_txt_file_to_path(&ignored_path, "This should be ignored")?;
-            crate::test::write_txt_file_to_path(&normal_path, "This should be added")?;
+            test::write_txt_file_to_path(&ignored_path, "This should be ignored")?;
+            test::write_txt_file_to_path(&normal_path, "This should be added")?;
 
             // Create .oxenignore file with the ignored file pattern
             let oxenignore_path = repo.path.join(".oxenignore");
-            crate::test::write_txt_file_to_path(&oxenignore_path, ignored_file)?;
+            test::write_txt_file_to_path(&oxenignore_path, ignored_file)?;
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 
@@ -1280,7 +1280,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_dot_on_committed_repo() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir1 = repo.path.join("dir1");
             let dir2 = repo.path.join("dir2");
             std::fs::create_dir_all(&dir1)?;
@@ -1291,10 +1291,10 @@ mod tests {
             let file2_1 = dir2.join("file2_1.txt");
             let file_root = repo.path.join("file_root.txt");
 
-            crate::test::write_txt_file_to_path(&file1_1, "dir1/file1_1")?;
-            crate::test::write_txt_file_to_path(&file1_2, "dir1/file1_2")?;
-            crate::test::write_txt_file_to_path(&file2_1, "dir2/file2_1")?;
-            crate::test::write_txt_file_to_path(&file_root, "file_root")?;
+            test::write_txt_file_to_path(&file1_1, "dir1/file1_1")?;
+            test::write_txt_file_to_path(&file1_2, "dir1/file1_2")?;
+            test::write_txt_file_to_path(&file2_1, "dir2/file2_1")?;
+            test::write_txt_file_to_path(&file_root, "file_root")?;
 
             add(&repo, vec![&repo.path]).await?;
 
@@ -1335,7 +1335,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_respects_dir_ignore_patterns() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir_to_ignore = "ignored_dir";
             let normal_dir = "normal_dir";
 
@@ -1346,25 +1346,25 @@ mod tests {
             std::fs::create_dir(&normal_dir_path)?;
 
             // Add files to both directories
-            crate::test::write_txt_file_to_path(
+            test::write_txt_file_to_path(
                 ignored_dir_path.join("file1.txt"),
                 "This should be ignored",
             )?;
-            crate::test::write_txt_file_to_path(
+            test::write_txt_file_to_path(
                 ignored_dir_path.join("file2.txt"),
                 "This should also be ignored",
             )?;
-            crate::test::write_txt_file_to_path(
+            test::write_txt_file_to_path(
                 normal_dir_path.join("file1.txt"),
                 "This should be added",
             )?;
-            crate::test::write_txt_file_to_path(
+            test::write_txt_file_to_path(
                 normal_dir_path.join("file2.txt"),
                 "This should also be added",
             )?;
 
             let oxenignore_path = repo.path.join(".oxenignore");
-            crate::test::write_txt_file_to_path(&oxenignore_path, format!("{dir_to_ignore}/"))?;
+            test::write_txt_file_to_path(&oxenignore_path, format!("{dir_to_ignore}/"))?;
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 

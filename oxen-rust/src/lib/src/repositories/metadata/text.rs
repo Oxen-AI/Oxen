@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_text_readme() {
-        let file = crate::test::test_text_file_with_name("README");
+        let file = test::test_text_file_with_name("README");
         let metadata = repositories::metadata::get(file).unwrap();
 
         assert!(metadata.size >= 44); // not sure why 46 on windows
@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_text_readme_md() {
-        let file = crate::test::test_text_file_with_name("README.md");
+        let file = test::test_text_file_with_name("README.md");
         let metadata = repositories::metadata::get(file).unwrap();
 
         assert!(metadata.size >= 50); // not sure why 53 on windows

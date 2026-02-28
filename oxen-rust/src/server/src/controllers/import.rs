@@ -470,12 +470,12 @@ mod tests {
         }
 
         liboxen::test::init_test_env();
-        let sync_dir = crate::test::get_sync_dir()?;
+        let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
         let author = "test_user";
         let email = "ox@oxen.ai";
-        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -520,7 +520,7 @@ mod tests {
         assert!(version_path.exists());
 
         // cleanup
-        crate::test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }
@@ -528,12 +528,12 @@ mod tests {
     #[actix_web::test]
     async fn test_controllers_file_import_text_file() -> Result<(), OxenError> {
         liboxen::test::init_test_env();
-        let sync_dir = crate::test::get_sync_dir()?;
+        let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
         let author = "test_user";
         let email = "ox@oxen.ai";
-        let repo = crate::test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -582,7 +582,7 @@ mod tests {
         assert!(version_path.exists());
 
         // cleanup
-        crate::test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }

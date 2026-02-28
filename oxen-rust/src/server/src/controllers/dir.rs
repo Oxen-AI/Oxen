@@ -99,10 +99,10 @@ mod tests {
     async fn test_controllers_dir_list_directory() -> Result<(), OxenError> {
         liboxen::test::init_test_env();
 
-        let sync_dir = crate::test::get_sync_dir()?;
+        let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let name = "Testing-Name";
-        let repo = crate::test::create_local_repo(&sync_dir, namespace, name)?;
+        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
 
         // write files to dir
         liboxen::test::populate_dir_with_training_data(&repo.path)?;
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(entries_resp.total_entries, num_entries);
 
         // cleanup
-        crate::test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_sync_dir(&sync_dir)?;
 
         Ok(())
     }

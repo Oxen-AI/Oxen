@@ -44,7 +44,7 @@ Here is a unit an example unit test for testing the `list_branches` functionaili
 ```rust
 #[test]
 fn test_ref_reader_list_branches() -> Result<(), OxenError> {
-    crate::test::run_empty_local_repo_test(|repo| {
+    test::run_empty_local_repo_test(|repo| {
         command::create_branch(&repo, "feature/add-something")?;
         command::create_branch(&repo, "bug/something-is-broken")?;
 
@@ -70,7 +70,7 @@ We could also test it with an [integration test](https://github.com/Oxen-AI/Oxen
 ```rust
 #[test]
 fn test_ref_reader_list_branches() -> Result<(), OxenError> {
-    crate::test::run_empty_local_repo_test(|repo| {
+    test::run_empty_local_repo_test(|repo| {
         command::create_branch(&repo, "feature/add-something")?;
         command::create_branch(&repo, "bug/something-is-broken")?;
 

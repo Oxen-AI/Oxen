@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_merkle_node_db() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test(|_dir| {
+        test::run_empty_dir_test(|_dir| {
             /*
             let vnode = VNode {
                 id: 1234,

@@ -55,10 +55,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_file() -> Result<(), OxenError> {
-        crate::test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            crate::test::run_empty_dir_test_async(|dir| async move {
+            test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
@@ -103,10 +103,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_file_with_full_path() -> Result<(), OxenError> {
-        crate::test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            crate::test::run_empty_dir_test_async(|dir| async move {
+            test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
@@ -151,11 +151,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_subdirectory_file() -> Result<(), OxenError> {
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(
+        test::run_remote_repo_test_bounding_box_csv_pushed(
             |mut _local_repo, remote_repo| async move {
                 let remote_repo_copy = remote_repo.clone();
 
-                crate::test::run_empty_dir_test_async(|dir| async move {
+                test::run_empty_dir_test_async(|dir| async move {
                     let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                     opts.is_remote = true;
                     let cloned_repo = repositories::clone(&opts).await?;
@@ -213,76 +213,74 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_restore_dir() -> Result<(), OxenError> {
-        crate::test::run_training_data_fully_sync_remote(
-            |mut _local_repo, remote_repo| async move {
-                let remote_repo_copy = remote_repo.clone();
+        test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
 
-                crate::test::run_empty_dir_test_async(|dir| async move {
-                    let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                    opts.is_remote = true;
-                    let cloned_repo = repositories::clone(&opts).await?;
-                    let repo_path = cloned_repo.path.clone();
+            test::run_empty_dir_test_async(|dir| async move {
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+                let repo_path = cloned_repo.path.clone();
 
-                    let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                    let directory = ".".to_string();
-                    let status_opts =
-                        StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
-                    let status = repositories::remote_mode::status(
-                        &cloned_repo,
-                        &remote_repo,
-                        &workspace_identifier,
-                        &directory,
-                        &status_opts,
-                    )
-                    .await?;
-                    status.print();
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
+                status.print();
 
-                    let annotations_path = PathBuf::from("annotations");
-                    let head_commit = repositories::commits::head_commit(&cloned_repo)?;
-                    repositories::remote_mode::restore(
-                        &cloned_repo,
-                        &[annotations_path.clone()],
-                        &head_commit.id,
-                    )
-                    .await?;
-
-                    let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
-                    let status = repositories::remote_mode::status(
-                        &cloned_repo,
-                        &remote_repo,
-                        &workspace_identifier,
-                        &directory,
-                        &status_opts,
-                    )
-                    .await?;
-                    status.print();
-
-                    let bounding_box_path = cloned_repo
-                        .path
-                        .join("annotations")
-                        .join("train")
-                        .join("bounding_box.csv");
-                    let two_shot_path = cloned_repo
-                        .path
-                        .join("annotations")
-                        .join("train")
-                        .join("two_shot.csv");
-                    let one_shot_path = cloned_repo
-                        .path
-                        .join("annotations")
-                        .join("train")
-                        .join("one_shot.csv");
-                    assert!(bounding_box_path.exists());
-                    assert!(one_shot_path.exists());
-                    assert!(two_shot_path.exists());
-
-                    Ok(())
-                })
+                let annotations_path = PathBuf::from("annotations");
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                repositories::remote_mode::restore(
+                    &cloned_repo,
+                    &[annotations_path.clone()],
+                    &head_commit.id,
+                )
                 .await?;
 
-                Ok(remote_repo_copy)
-            },
-        )
+                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
+                status.print();
+
+                let bounding_box_path = cloned_repo
+                    .path
+                    .join("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                let two_shot_path = cloned_repo
+                    .path
+                    .join("annotations")
+                    .join("train")
+                    .join("two_shot.csv");
+                let one_shot_path = cloned_repo
+                    .path
+                    .join("annotations")
+                    .join("train")
+                    .join("one_shot.csv");
+                assert!(bounding_box_path.exists());
+                assert!(one_shot_path.exists());
+                assert!(two_shot_path.exists());
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
         .await
     }
 }

@@ -769,11 +769,11 @@ mod tests {
 
     #[test]
     fn test_df_db_create() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test(|data_dir| {
+        test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let conn = get_connection(db_file)?;
             // bounding_box -> min_x, min_y, width, height
-            let schema = crate::test::schema_bounding_box();
+            let schema = test::schema_bounding_box();
             let table_name = "bounding_box";
             create_table_if_not_exists(&conn, table_name, &schema)?;
 
@@ -786,11 +786,11 @@ mod tests {
 
     #[test]
     fn test_df_db_get_schema() -> Result<(), OxenError> {
-        crate::test::run_empty_dir_test(|data_dir| {
+        test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let conn = get_connection(db_file)?;
             // bounding_box -> min_x, min_y, width, height
-            let schema = crate::test::schema_bounding_box();
+            let schema = test::schema_bounding_box();
             let table_name = "bounding_box";
             create_table_if_not_exists(&conn, table_name, &schema)?;
 

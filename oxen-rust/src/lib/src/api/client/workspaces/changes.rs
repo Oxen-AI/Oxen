@@ -80,10 +80,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_empty_changes_none_pushed() -> Result<(), OxenError> {
-        crate::test::run_readme_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|mut local_repo, remote_repo| async move {
             let branch_name = "add-images";
             repositories::branches::create_checkout(&local_repo, branch_name)?;
-            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
             repositories::push(&local_repo).await?;
 
@@ -122,7 +122,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_empty_changes_all_data_pushed() -> Result<(), OxenError> {
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,

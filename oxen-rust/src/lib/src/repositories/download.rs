@@ -90,7 +90,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_download_directory() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|mut repo| async move {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -103,11 +103,11 @@ mod tests {
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
-            let remote = crate::test::repo_remote_url_from(&repo.dirname());
+            let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = crate::test::create_remote_repo(&repo).await?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -134,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_download_directory_with_large_file() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|mut repo| async move {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let large_file_dir = PathBuf::from("train").join("large_file");
             let dir = repo.path.join(&large_file_dir);
@@ -150,11 +150,11 @@ mod tests {
             repositories::commit(&repo, "adding text files and large file")?;
 
             // Set the proper remote
-            let remote = crate::test::repo_remote_url_from(&repo.dirname());
+            let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = crate::test::create_remote_repo(&repo).await?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -183,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_download_directory_local_path() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|mut repo| async move {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -196,11 +196,11 @@ mod tests {
             repositories::commit(&repo, "adding text files")?;
 
             // Set the proper remote
-            let remote = crate::test::repo_remote_url_from(&repo.dirname());
+            let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = crate::test::create_remote_repo(&repo).await?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -228,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_one_file() -> Result<(), OxenError> {
-        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             let file_path = "hello.txt";
             let local_path = &local_repo.path.join(file_path);
@@ -241,7 +241,7 @@ mod tests {
             command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, cloned_remote.url())?;
             repositories::push(&local_repo).await?;
 
-            crate::test::run_empty_dir_test_async(|repo_dir| async move {
+            test::run_empty_dir_test_async(|repo_dir| async move {
                 let local_path = repo_dir.join("new_name.txt");
                 let revision = DEFAULT_BRANCH_NAME;
 
@@ -263,13 +263,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_dir() -> Result<(), OxenError> {
-        crate::test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             let src_path = "train";
             // Count files in local repo
             let og_count = util::fs::rcount_files_in_dir(&local_repo.path.join(src_path));
 
-            crate::test::run_empty_dir_test_async(|repo_dir| async move {
+            test::run_empty_dir_test_async(|repo_dir| async move {
                 let dst_path = repo_dir.join("images");
                 let revision = DEFAULT_BRANCH_NAME;
 

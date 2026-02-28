@@ -260,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_remote_branch() -> Result<(), OxenError> {
-        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -268,7 +268,7 @@ mod tests {
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
-            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // push it
@@ -286,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_remote_branch_from_existing() -> Result<(), OxenError> {
-        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -294,7 +294,7 @@ mod tests {
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
-            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // push it
@@ -315,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_branch_by_name() -> Result<(), OxenError> {
-        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -323,7 +323,7 @@ mod tests {
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
-            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // push it
@@ -343,7 +343,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_remote_branches() -> Result<(), OxenError> {
-        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Create and push the main branch
             // add a file
             let new_file = local_repo.path.join("new_file.txt");
@@ -352,7 +352,7 @@ mod tests {
             repositories::commit(&local_repo, "Added a new file")?;
 
             // Set proper remote
-            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Push it
@@ -385,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_branch() -> Result<(), OxenError> {
-        crate::test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -393,7 +393,7 @@ mod tests {
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
-            let remote = crate::test::repo_remote_url_from(&local_repo.dirname());
+            let remote = test::repo_remote_url_from(&local_repo.dirname());
             command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // push it
@@ -425,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rename_current_branch() -> Result<(), OxenError> {
-        crate::test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -458,13 +458,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_remote_branch() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
             // Set the proper remote
-            let remote = crate::test::repo_remote_url_from(&repo.dirname());
+            let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = crate::test::create_remote_repo(&repo).await?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -497,13 +497,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_should_not_push_branch_that_does_not_exist() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
             // Set the proper remote
-            let remote = crate::test::repo_remote_url_from(&repo.dirname());
+            let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Create Remote
-            let remote_repo = crate::test::create_remote_repo(&repo).await?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: "main".to_string(),
@@ -543,7 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_delete_branch_you_are_on() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -565,7 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_force_delete_branch_you_are_on() -> Result<(), OxenError> {
-        crate::test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -587,7 +587,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_delete_branch_that_is_ahead_of_current() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -626,7 +626,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_force_delete_branch_that_is_ahead_of_current() -> Result<(), OxenError> {
-        crate::test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -662,11 +662,11 @@ mod tests {
     #[tokio::test]
     async fn test_list_entry_versions() -> Result<(), OxenError> {
         #[rustfmt::skip]
-        crate::test::run_select_data_repo_test_committed_async("annotations", |mut repo| async move {
+        test::run_select_data_repo_test_committed_async("annotations", |mut repo| async move {
             // Set up remote
-            let remote = crate::test::repo_remote_url_from(&repo.dirname());
+            let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = crate::test::create_remote_repo(&repo).await?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
 
             // Get path to existing annotations file
             let file_path = Path::new("annotations")
@@ -678,7 +678,7 @@ mod tests {
             let commit_1 = repositories::commits::head_commit(&repo)?;
 
             // Modify annotations file with new line
-            crate::test::append_line_txt_file(&file_repo_path, "test/new_image.jpg,unknown,1.0,1.0,1,1")?;
+            test::append_line_txt_file(&file_repo_path, "test/new_image.jpg,unknown,1.0,1.0,1,1")?;
             repositories::add(&repo, &file_repo_path).await?;
             let commit_2 = repositories::commit(&repo, "adding new annotation")?;
 

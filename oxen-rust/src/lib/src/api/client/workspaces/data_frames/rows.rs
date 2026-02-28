@@ -259,7 +259,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -289,7 +289,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_should_not_stage_invalid_schema_for_dataframe() -> Result<(), OxenError> {
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -327,7 +327,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -376,7 +376,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -431,7 +431,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -513,7 +513,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -601,17 +601,17 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         };
-        crate::test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
-            crate::test::run_empty_dir_test_async(|repo_dir| async move {
+            test::run_empty_dir_test_async(|repo_dir| async move {
                 let repo_dir = repo_dir.join("new_repo");
 
                 let cloned_repo =
                     repositories::clone_url(&remote_repo.remote.url, &repo_dir).await?;
 
                 // Remote add row
-                let path = crate::test::test_nlp_classification_csv();
+                let path = test::test_nlp_classification_csv();
 
                 // Index dataset
                 let workspace_id = "my_workspace";
@@ -677,7 +677,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let path = Path::new("annotations").join("train").join("bounding_box.csv");
 
             let workspace_id = "my_workspace";
@@ -730,7 +730,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let path = Path::new("annotations")
                 .join("train")
@@ -808,7 +808,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_lr, remote_repo| async move {
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -918,7 +918,7 @@ mod tests {
             return Ok(());
         }
 
-        crate::test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
