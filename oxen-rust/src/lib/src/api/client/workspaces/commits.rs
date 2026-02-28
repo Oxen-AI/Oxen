@@ -438,7 +438,7 @@ mod tests {
                 &None,
             )
             .await;
-            assert!(result.is_ok(), "{:?}", result);
+            assert!(result.is_ok(), "{result:?}");
 
             let commit = api::client::workspaces::commit(
                 &remote_repo,
@@ -482,7 +482,7 @@ mod tests {
                 &None,
             )
             .await;
-            assert!(result.is_ok(), "{:?}", result);
+            assert!(result.is_ok(), "{result:?}");
 
             println!("RESULT FROM 2nd ADD: {:?}", result.unwrap());
 
@@ -498,7 +498,7 @@ mod tests {
                 },
             )
             .await;
-            assert!(result.is_err(), "{:?}", result);
+            assert!(result.is_err(), "{result:?}");
 
             // List the files on main
             let entries =

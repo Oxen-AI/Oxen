@@ -423,7 +423,7 @@ fn unique_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError
 
 fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError> {
     log::debug!("Got unique_count: {columns:?}");
-    let group_by_cols: Vec<Expr> = columns.iter().map(|c| col(c)).collect();
+    let group_by_cols: Vec<Expr> = columns.iter().map(col).collect();
     Ok(df.group_by(group_by_cols).agg([len().alias("count")]))
 }
 
