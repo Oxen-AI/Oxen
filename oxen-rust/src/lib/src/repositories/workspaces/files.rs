@@ -126,7 +126,7 @@ mod tests {
 
             // Check status - should show the original as removed and new as added
             let status = workspaces::status::status(&workspace)?;
-            println!("Status after mv: {:?}", status);
+            println!("Status after mv: {status:?}");
 
             // The original path should be staged as removed in staged_files
             let removed_entry = status.staged_files.get(&original_path);

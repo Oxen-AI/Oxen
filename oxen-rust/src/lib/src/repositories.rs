@@ -507,7 +507,7 @@ mod tests {
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
             let result = repositories::create(&sync_dir, repo_new).await;
 
-            assert!(result.is_err(), "Expected error but got: {:?}", result);
+            assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
                 OxenError::InvalidRepoName(invalid_name) => {
                     assert_eq!(invalid_name.to_string(), name);
@@ -528,7 +528,7 @@ mod tests {
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
             let result = repositories::create(&sync_dir, repo_new).await;
 
-            assert!(result.is_err(), "Expected error but got: {:?}", result);
+            assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
                 OxenError::InvalidRepoName(invalid_name) => {
                     assert_eq!(invalid_name.to_string(), namespace);

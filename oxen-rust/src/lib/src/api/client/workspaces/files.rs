@@ -2461,7 +2461,7 @@ mod tests {
     ) -> Result<(), OxenError> {
         let branch_name = "add-files-preserve-paths";
         let branch = api::client::branches::create_from_branch(
-            &remote_repo,
+            remote_repo,
             branch_name,
             DEFAULT_BRANCH_NAME,
         )
@@ -2470,7 +2470,7 @@ mod tests {
 
         let workspace_id = uuid::Uuid::new_v4().to_string();
         let workspace =
-            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+            api::client::workspaces::create(remote_repo, branch_name, &workspace_id).await?;
         assert_eq!(workspace.id, workspace_id);
 
         let sub_dir_1 = base_dir.join("data_being_added");
@@ -2495,7 +2495,7 @@ mod tests {
             if use_relative_paths {
                 paths
                     .into_iter()
-                    .map(|p| p.strip_prefix(&base_dir).unwrap().to_path_buf())
+                    .map(|p| p.strip_prefix(base_dir).unwrap().to_path_buf())
                     .collect()
             } else {
                 paths
@@ -2507,7 +2507,7 @@ mod tests {
 
         // Call add_files — should preserve relative paths
         let result =
-            api::client::workspaces::files::add_files(&remote_repo, &workspace_id, base_dir, paths)
+            api::client::workspaces::files::add_files(remote_repo, &workspace_id, base_dir, paths)
                 .await;
         assert!(result.is_ok(), "add_files failed: {result:?}");
 
@@ -2515,7 +2515,7 @@ mod tests {
         let page_num = constants::DEFAULT_PAGE_NUM;
         let page_size = constants::DEFAULT_PAGE_SIZE;
         let entries = api::client::workspaces::changes::list(
-            &remote_repo,
+            remote_repo,
             &workspace_id,
             Path::new(""),
             page_num,
@@ -2551,7 +2551,7 @@ mod tests {
                 "data_being_added{}file_c.txt",
                 std::path::MAIN_SEPARATOR_STR
             ),
-            format!("root_file.txt"),
+            "root_file.txt".to_string(),
         ] {
             assert!(
                 staged.contains(&p),
