@@ -261,7 +261,7 @@ impl PyRemoteRepo {
         Ok(result)
     }
 
-    fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<[u8]>, PyOxenError> {
+    fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<'_, [u8]>, PyOxenError> {
         let bytes = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::file::get_file(&self.repo, &revision, &remote_path).await
         })?;

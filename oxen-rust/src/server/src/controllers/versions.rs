@@ -535,8 +535,8 @@ pub async fn save_multiparts(
             continue;
         };
 
-        if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" || name == "file" {
+        if let Some(name) = content_disposition.get_name()
+            && (name == "file[]" || name == "file") {
                 // The file hash is passed in as the filename. In version store, the file hash is the identifier.
                 let upload_filehash = content_disposition.get_filename().map_or_else(
                     || {
@@ -590,7 +590,6 @@ pub async fn save_multiparts(
                     }
                 }
             }
-        }
     }
 
     Ok(err_files)

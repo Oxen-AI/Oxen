@@ -1,8 +1,8 @@
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db;
 use crate::error::OxenError;
-use crate::model::staged_data::StagedDataOpts;
 use crate::model::LocalRepository;
+use crate::model::staged_data::StagedDataOpts;
 use crate::opts::RmOpts;
 use crate::repositories;
 use crate::util;
@@ -16,8 +16,8 @@ use rocksdb::IteratorMode;
 use tokio::time::Duration;
 
 use crate::core::staged::with_staged_db_manager;
-use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::core::v_latest::add::CumulativeStats;
+use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
@@ -330,7 +330,7 @@ pub fn remove_dir_with_db_manager(
         for (path, node) in nodes {
             let path = parent_path.join(path);
             let corrected_node = match &node.node {
-                EMerkleTreeNode::File(ref file_node) => {
+                EMerkleTreeNode::File(file_node) => {
                     let mut file_node = file_node.clone();
                     file_node.set_name(&path.to_string_lossy());
                     MerkleTreeNode {
@@ -341,7 +341,7 @@ pub fn remove_dir_with_db_manager(
                     }
                 }
 
-                EMerkleTreeNode::Directory(ref dir_node) => {
+                EMerkleTreeNode::Directory(dir_node) => {
                     let mut dir_node = dir_node.clone();
                     dir_node.set_name(path.to_string_lossy());
                     MerkleTreeNode {
@@ -756,7 +756,7 @@ fn r_process_remove_dir(
             return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
-            )))
+            )));
         }
     }
 

@@ -88,8 +88,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let mut data_types: Vec<DataTypeCount> = vec![];
 
     // If we have a commit on the main branch, we can get the size and data types from the commit
-    if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME) {
-        if let Some(dir_node) =
+    if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME)
+        && let Some(dir_node) =
             repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
         {
             size = dir_node.num_bytes();
@@ -102,7 +102,6 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 })
                 .collect();
         }
-    }
 
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {

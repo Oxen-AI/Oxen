@@ -59,8 +59,8 @@ impl RunCmd for MigrateCmd {
         // Parse Args
         let migrations = migrations();
 
-        if let Some((direction, sub_matches)) = args.subcommand() {
-            if let Some((migration, sub_matches)) = sub_matches.subcommand() {
+        if let Some((direction, sub_matches)) = args.subcommand()
+            && let Some((migration, sub_matches)) = sub_matches.subcommand() {
                 let migration = migrations
                     .get(migration)
                     .ok_or(OxenError::basic_str(format!(
@@ -86,7 +86,6 @@ impl RunCmd for MigrateCmd {
                     )));
                 }
             }
-        }
 
         Ok(())
     }

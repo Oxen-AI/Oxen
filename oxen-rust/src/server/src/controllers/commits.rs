@@ -767,14 +767,13 @@ pub async fn upload_chunk(
     let chunk_file = tmp_dir.join(format!("chunk_{chunk_num:016}"));
 
     // mkdir if !exists
-    if !tmp_dir.exists() {
-        if let Err(err) = util::fs::create_dir_all(&tmp_dir) {
+    if !tmp_dir.exists()
+        && let Err(err) = util::fs::create_dir_all(&tmp_dir) {
             log::error!("upload_chunk could not complete chunk upload, mkdir failed: {err:?}");
             return Ok(
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
             );
         }
-    }
 
     // Read bytes from body
     let mut bytes = web::BytesMut::new();

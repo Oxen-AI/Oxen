@@ -1,7 +1,7 @@
 use bytesize::ByteSize;
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
@@ -9,8 +9,8 @@ use tar::Archive;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
-use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
 use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -620,7 +620,7 @@ pub fn dir_entries_with_paths(
             return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
-            )))
+            )));
         }
     }
 
@@ -664,7 +664,7 @@ pub fn unique_dir_entries(
             return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
-            )))
+            )));
         }
     }
 
@@ -1087,15 +1087,15 @@ fn p_write_tree(
     let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
-            EMerkleTreeNode::VNode(ref vnode) => {
+            EMerkleTreeNode::VNode(vnode) => {
                 db.add_child(vnode)?;
                 p_write_tree(repo, child, vnode)?;
             }
-            EMerkleTreeNode::Directory(ref dir_node) => {
+            EMerkleTreeNode::Directory(dir_node) => {
                 db.add_child(dir_node)?;
                 p_write_tree(repo, child, dir_node)?;
             }
-            EMerkleTreeNode::File(ref file_node) => {
+            EMerkleTreeNode::File(file_node) => {
                 db.add_child(file_node)?;
             }
             node => {

@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
@@ -17,11 +15,6 @@ use crate::view::{JsonDataFrameViewResponse, JsonDataFrameViews, StatusMessage};
 pub mod columns;
 pub mod embeddings;
 pub mod rows;
-
-#[derive(Serialize, Deserialize)]
-struct PutParam {
-    is_indexed: bool,
-}
 
 pub async fn get(
     remote_repo: &RemoteRepository,

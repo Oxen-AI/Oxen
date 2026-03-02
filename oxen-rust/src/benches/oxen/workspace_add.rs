@@ -208,7 +208,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 b.to_async(&rt).iter(|| async {
                     api::client::workspaces::files::add(
                         &remote_repo,
-                        &workspace.id,
+                        &workspace.id.as_str(),
                         "",
                         files.clone(),
                         &None,

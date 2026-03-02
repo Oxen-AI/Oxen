@@ -617,8 +617,8 @@ pub async fn save_parts(
             continue;
         };
 
-        if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" || name == "file" {
+        if let Some(name) = content_disposition.get_name()
+            && (name == "file[]" || name == "file") {
                 // The file path is passed in as the filename
                 let upload_filename = content_disposition.get_filename().map_or_else(
                     || {
@@ -731,7 +731,6 @@ pub async fn save_parts(
                     }
                 }
             }
-        }
     }
 
     Ok((upload_files, err_files))

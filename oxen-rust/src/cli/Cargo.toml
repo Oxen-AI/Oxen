@@ -1,7 +1,7 @@
 [package]
 name = "oxen-cli"
 version = "0.44.2"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
 name = "oxen"
@@ -19,6 +19,7 @@ liboxen = { path = "../lib" }
 log = "0.4.20"
 minus = { version = "5.3.1", features = ["static_output", "search"] }
 serde_json = "1.0.78"
+tempfile = "3.26.0"
 time = { version = "0.3.20", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 url = "2.4.1"

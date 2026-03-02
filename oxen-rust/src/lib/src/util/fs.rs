@@ -1735,22 +1735,22 @@ pub async fn resize_cache_image_version_store(
         }
     };
 
-    let resized_img = if resize.width.is_some() && resize.height.is_some() {
+    let resized_img = if let Some(resize_width) = resize.width && let Some(resize_height) = resize.height {
         img.resize_exact(
-            resize.width.unwrap(),
-            resize.height.unwrap(),
+            resize_width,
+            resize_height,
             image::imageops::FilterType::Lanczos3,
         )
-    } else if resize.width.is_some() {
+    } else if let Some(resize_width) = resize.width {
         img.resize(
-            resize.width.unwrap(),
-            resize.width.unwrap(),
+            resize_width,
+            resize_width,
             image::imageops::FilterType::Lanczos3,
         )
-    } else if resize.height.is_some() {
+    } else if let Some(resize_height) = resize.height {
         img.resize(
-            resize.height.unwrap(),
-            resize.height.unwrap(),
+            resize_height,
+            resize_height,
             image::imageops::FilterType::Lanczos3,
         )
     } else {

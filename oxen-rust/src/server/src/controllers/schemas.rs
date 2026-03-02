@@ -20,8 +20,8 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     // Try to see if they are asking for a specific file
-    if let Ok(resource) = parse_resource(&req, &repo) {
-        if resource.path != Path::new("") {
+    if let Ok(resource) = parse_resource(&req, &repo)
+        && resource.path != Path::new("") {
             let commit = &resource.clone().commit.unwrap();
 
             log::debug!(
@@ -53,7 +53,6 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
             };
             return Ok(HttpResponse::Ok().json(response));
         }
-    }
 
     // Otherwise, list all schemas
     let revision = path_param(&req, "resource")?;
