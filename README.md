@@ -41,7 +41,9 @@ oxen commit "Adding 200k images and their corresponding annotations"
 oxen push origin main
 ```
 
-Oxen is comprised of a [command line interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for [Rust](https://github.com/Oxen-AI/Oxen) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
+Oxen is comprised of a [command line
+interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for
+[Rust](https://github.com/Oxen-AI/Oxen/tree/main/oxen-rust) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
 
 ## 🌾 What kind of data?
 
