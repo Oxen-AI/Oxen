@@ -3,7 +3,9 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "faker",
+#     "numpy",
 #     "pillow",
+#     "scipy",
 #     "tqdm",
 # ]
 # ///
@@ -21,6 +23,8 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
+import scipy.stats
 from faker import Faker
 from PIL import Image
 from tqdm import tqdm
@@ -216,6 +220,72 @@ def validate_directory_parameters(num_files: int, num_dirs: int | None,
         return 1
 
 
+def parse_dist_params(params_list: list[str] | None) -> dict[str, float]:
+    """Parse key=value strings into a {str: float} dict for distribution parameters."""
+    if not params_list:
+        return {}
+    result = {}
+    for item in params_list:
+        if '=' not in item:
+            print(f"Error: Invalid --dist-params format: '{item}'. Expected key=value.")
+            sys.exit(1)
+        key, _, value = item.partition('=')
+        try:
+            result[key] = float(value)
+        except ValueError:
+            print(f"Error: Non-numeric value in --dist-params: '{item}'. Value must be a number.")
+            sys.exit(1)
+    return result
+
+
+def validate_distribution(dist_name: str, dist_params: dict[str, float]):
+    """
+    Verify dist_name exists in scipy.stats, freeze it with params, and check support.
+    Returns a frozen distribution object.
+    """
+    dist_obj = getattr(scipy.stats, dist_name, None)
+    if dist_obj is None:
+        print(f"Error: Unknown distribution '{dist_name}'. Must be a scipy.stats distribution.")
+        sys.exit(1)
+    if not isinstance(dist_obj, (scipy.stats.rv_continuous, scipy.stats.rv_discrete)):
+        print(f"Error: '{dist_name}' is not a scipy.stats distribution.")
+        sys.exit(1)
+    try:
+        frozen = dist_obj(**dist_params)
+    except TypeError as e:
+        print(f"Error: Bad parameters for '{dist_name}': {e}")
+        sys.exit(1)
+    lower, _ = frozen.support()
+    if lower < 0:
+        print(f"Error: Distribution '{dist_name}' with the given parameters can produce negative values.")
+        print("Only distributions defined on non-negative numbers are allowed for file sizes.")
+        sys.exit(1)
+    return frozen
+
+
+def sample_file_sizes(frozen_dist, num_files: int, seed: int | None) -> list[int]:
+    """
+    Sample file sizes from a frozen scipy distribution.
+    Rounds to nearest integer, resamples any values <= 0.
+    """
+    rng = np.random.default_rng(seed)
+    sizes = frozen_dist.rvs(size=num_files, random_state=rng)
+    sizes = np.rint(sizes).astype(int)
+
+    # Resample any non-positive values (up to 100 attempts, then clamp to 1)
+    for _ in range(100):
+        bad_mask = sizes <= 0
+        if not bad_mask.any():
+            break
+        n_bad = bad_mask.sum()
+        resampled = frozen_dist.rvs(size=n_bad, random_state=rng)
+        sizes[bad_mask] = np.rint(resampled).astype(int)
+    else:
+        sizes[sizes <= 0] = 1
+
+    return sizes.tolist()
+
+
 def generate_text_file(path: Path, size: int) -> None:
     """Generate a text file with fake text content from pre-generated pool."""
     global TEXT_POOL
@@ -350,6 +420,11 @@ Examples:
   %(prog)s --total-size 500MB --avg-file-size 5MB --type binary --target ./test_data
   %(prog)s --num-files 10k --avg-file-size 1MB --files-per-dir 100 --type text
   %(prog)s --total-size 16GB --num-files 3M --files-per-dir 30k --seed 42 --type text
+
+Distribution-based random file sizes:
+  %(prog)s --num-files 1000 --distribution lognorm --dist-params s=0.954 scale=5000 --type text
+  %(prog)s --num-files 500 --distribution gamma --dist-params a=2.0 scale=10000 --type binary
+  %(prog)s --num-files 10k --distribution expon --dist-params scale=50000 --type text --seed 42
         """
     )
 
@@ -381,30 +456,57 @@ Examples:
     parser.add_argument('--seed', type=int, default=None,
                        help='Random seed for reproducible generation')
 
+    # Distribution-based file sizes
+    parser.add_argument('--distribution', type=str, default=None, metavar='NAME',
+                       help='scipy.stats distribution name for random file sizes (e.g., lognorm, gamma, expon)')
+    parser.add_argument('--dist-params', nargs='+', default=None, metavar='KEY=VALUE',
+                       help='Distribution parameters as key=value pairs (e.g., s=0.954 scale=5000)')
+
     args = parser.parse_args()
+
+    # Validate distribution arguments
+    if args.dist_params is not None and args.distribution is None:
+        parser.error("--dist-params requires --distribution")
+    if args.distribution is not None:
+        if args.num_files is None:
+            parser.error("--num-files is required when using --distribution")
+        if args.avg_file_size is not None:
+            parser.error("--avg-file-size cannot be used with --distribution")
+        if args.total_size is not None:
+            parser.error("--total-size cannot be used with --distribution")
+        if args.type == 'image':
+            parser.error("--type image cannot be used with --distribution")
 
     # Set random seed if provided
     if args.seed is not None:
         random.seed(args.seed)
         Faker.seed(args.seed)
 
-    # Special handling for image type
-    if args.type == 'image':
-        if args.avg_file_size is not None:
-            print("Error: --avg-file-size cannot be specified for image type.")
-            print("Image size is determined by the image dimensions, content, and compression.")
-            sys.exit(1)
+    # Determine file sizes: distribution mode vs. fixed-size mode
+    if args.distribution is not None:
+        dist_params = parse_dist_params(args.dist_params)
+        frozen_dist = validate_distribution(args.distribution, dist_params)
+        num_files = args.num_files
+        file_sizes = sample_file_sizes(frozen_dist, num_files, args.seed)
+    else:
+        # Special handling for image type
+        if args.type == 'image':
+            if args.avg_file_size is not None:
+                print("Error: --avg-file-size cannot be specified for image type.")
+                print("Image size is determined by the image dimensions, content, and compression.")
+                sys.exit(1)
 
-        # Compute average image size by generating test samples
-        print("Computing average image size by generating test samples...")
-        computed_avg_size = compute_avg_image_size(num_samples=10)
-        print(f"Computed average image size: {format_size(computed_avg_size)}\n")
-        args.avg_file_size = computed_avg_size
+            # Compute average image size by generating test samples
+            print("Computing average image size by generating test samples...")
+            computed_avg_size = compute_avg_image_size(num_samples=10)
+            print(f"Computed average image size: {format_size(computed_avg_size)}\n")
+            args.avg_file_size = computed_avg_size
 
-    # Validate and calculate parameters
-    num_files, file_size = validate_parameters(
-        args.total_size, args.num_files, args.avg_file_size
-    )
+        # Validate and calculate parameters
+        num_files, file_size = validate_parameters(
+            args.total_size, args.num_files, args.avg_file_size
+        )
+        file_sizes = [file_size] * num_files
 
     # Validate and calculate directory parameters
     num_dirs = validate_directory_parameters(
@@ -458,7 +560,7 @@ Examples:
         for file_idx in range(num_files_in_dir):
             file_name = f"file_{file_counter + 1:0{file_padding}d}.{ext}"
             file_path = dir_path / file_name
-            file_tasks.append((file_path, args.type, file_size))
+            file_tasks.append((file_path, args.type, file_sizes[file_counter]))
             file_counter += 1
 
     # Choose executor type and worker count based on file type
@@ -480,8 +582,19 @@ Examples:
     print(f"  Target: {target}")
     print(f"  File type: {args.type}")
     print(f"  Number of files: {num_files}")
-    print(f"  File size: {format_size(file_size)}")
-    print(f"  Total size: ~{format_size(num_files * file_size)}")
+    if args.distribution is not None:
+        sizes_arr = np.array(file_sizes)
+        print(f"  Distribution: {args.distribution}")
+        print(f"  Dist params: {dist_params}")
+        print(f"  File size min: {format_size(int(sizes_arr.min()))}")
+        print(f"  File size max: {format_size(int(sizes_arr.max()))}")
+        print(f"  File size mean: {format_size(int(sizes_arr.mean()))}")
+        print(f"  File size median: {format_size(int(np.median(sizes_arr)))}")
+        print(f"  File size std: {format_size(int(sizes_arr.std()))}")
+        print(f"  Total size: ~{format_size(int(sizes_arr.sum()))}")
+    else:
+        print(f"  File size: {format_size(file_sizes[0])}")
+        print(f"  Total size: ~{format_size(num_files * file_sizes[0])}")
     print(f"  Directories: {num_dirs}")
     print(f"  Files per directory: ~{num_files // num_dirs}")
     print(f"  Workers: {max_workers} {executor_type}")
