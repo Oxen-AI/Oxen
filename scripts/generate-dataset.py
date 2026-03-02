@@ -20,6 +20,7 @@ import random
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -31,6 +32,16 @@ from tqdm import tqdm
 
 
 FileType = Literal["text", "image", "binary"]
+
+
+@dataclass
+class Tier:
+    num: int
+    dist_name: str
+    dist_params: dict[str, float]
+    file_type: str
+    frozen_dist: object  # frozen scipy distribution
+
 
 # Global text pool for reusing generated text (shared across threads)
 TEXT_POOL = None
@@ -263,6 +274,55 @@ def validate_distribution(dist_name: str, dist_params: dict[str, float]):
     return frozen
 
 
+def parse_tier(tier_string: str, default_type: str) -> Tier:
+    """Parse a --tier string like 'num=100 dist=lognorm s=0.4 scale=12000 type=text'."""
+    tokens = tier_string.split()
+    kv: dict[str, str] = {}
+    for token in tokens:
+        if '=' not in token:
+            print(f"Error: Invalid token in --tier: '{token}'. Expected key=value.")
+            sys.exit(1)
+        key, _, value = token.partition('=')
+        kv[key] = value
+
+    if 'num' not in kv:
+        print(f"Error: --tier requires 'num=N'. Got: '{tier_string}'")
+        sys.exit(1)
+    if 'dist' not in kv:
+        print(f"Error: --tier requires 'dist=NAME'. Got: '{tier_string}'")
+        sys.exit(1)
+
+    num = positive_int(kv.pop('num'))
+    dist_name = kv.pop('dist')
+    file_type = kv.pop('type', default_type)
+
+    if file_type == 'image':
+        print("Error: type=image is not allowed in --tier (images can't use distributions).")
+        sys.exit(1)
+    if file_type not in ('text', 'binary'):
+        print(f"Error: Invalid type '{file_type}' in --tier. Must be 'text' or 'binary'.")
+        sys.exit(1)
+
+    # Remaining keys are distribution parameters
+    dist_params: dict[str, float] = {}
+    for key, value in kv.items():
+        try:
+            dist_params[key] = float(value)
+        except ValueError:
+            print(f"Error: Non-numeric distribution parameter in --tier: '{key}={value}'.")
+            sys.exit(1)
+
+    frozen_dist = validate_distribution(dist_name, dist_params)
+
+    return Tier(
+        num=num,
+        dist_name=dist_name,
+        dist_params=dist_params,
+        file_type=file_type,
+        frozen_dist=frozen_dist,
+    )
+
+
 def _make_rng(seed: int | None) -> np.random.Generator:
     return np.random.default_rng(seed)
 
@@ -452,6 +512,12 @@ Distribution-based random file sizes (use --num-files or --total-size):
   %(prog)s --num-files 500 --distribution gamma --dist-params a=2.0 scale=10000 --type binary
   %(prog)s --total-size 1GB --distribution expon --dist-params scale=50000 --type binary
   %(prog)s --num-files 10k --distribution expon --dist-params scale=50000 --type text --seed 42
+
+Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/--total-size/etc.):
+  %(prog)s --target /tmp/dataset --seed 42 \\
+    --tier "num=9700 dist=lognorm s=0.4 scale=12000 type=text" \\
+    --tier "num=250 dist=lognorm s=0.4 scale=300000000 type=binary" \\
+    --tier "num=50 dist=lognorm s=0.4 scale=2000000000 type=binary"
         """
     )
 
@@ -489,7 +555,27 @@ Distribution-based random file sizes (use --num-files or --total-size):
     parser.add_argument('--dist-params', nargs='+', default=None, metavar='KEY=VALUE',
                        help='Distribution parameters as key=value pairs (e.g., s=0.954 scale=5000)')
 
+    # Tier-based generation
+    parser.add_argument('--tier', action='append', default=None,
+                       metavar='"num=N dist=NAME [type=TYPE] [param=val ...]"',
+                       help='Define a file-size tier (repeatable). '
+                            'Mutually exclusive with --num-files, --total-size, '
+                            '--avg-file-size, --distribution, --dist-params.')
+
     args = parser.parse_args()
+
+    # Validate --tier mutual exclusivity
+    if args.tier is not None:
+        tier_exclusive = {
+            '--num-files': args.num_files,
+            '--total-size': args.total_size,
+            '--avg-file-size': args.avg_file_size,
+            '--distribution': args.distribution,
+            '--dist-params': args.dist_params,
+        }
+        conflicts = [name for name, val in tier_exclusive.items() if val is not None]
+        if conflicts:
+            parser.error(f"--tier cannot be used with {', '.join(conflicts)}")
 
     # Validate distribution arguments
     if args.dist_params is not None and args.distribution is None:
@@ -509,8 +595,22 @@ Distribution-based random file sizes (use --num-files or --total-size):
         random.seed(args.seed)
         Faker.seed(args.seed)
 
-    # Determine file sizes: distribution mode vs. fixed-size mode
-    if args.distribution is not None:
+    # Determine file sizes: tier mode, distribution mode, or fixed-size mode
+    tiers: list[Tier] | None = None
+    tier_tasks: list[tuple[str, int]] | None = None  # (file_type, size) per file
+
+    if args.tier is not None:
+        # Tier mode: parse each tier, sample sizes, combine and shuffle
+        tiers = [parse_tier(t, args.type) for t in args.tier]
+        tier_tasks = []
+        for i, tier in enumerate(tiers):
+            tier_seed = args.seed + i if args.seed is not None else None
+            sizes = sample_file_sizes(tier.frozen_dist, tier.num, tier_seed)
+            tier_tasks.extend((tier.file_type, s) for s in sizes)
+        random.shuffle(tier_tasks)
+        file_sizes = [s for _, s in tier_tasks]
+        num_files = len(file_sizes)
+    elif args.distribution is not None:
         dist_params = parse_dist_params(args.dist_params)
         frozen_dist = validate_distribution(args.distribution, dist_params)
         if args.num_files is not None:
@@ -558,13 +658,12 @@ Distribution-based random file sizes (use --num-files or --total-size):
             print("Aborted.")
             sys.exit(0)
 
-    # Determine file extension
+    # Extension lookup
     extensions = {
         'text': 'txt',
         'image': 'png',
         'binary': 'bin',
     }
-    ext = extensions[args.type]
 
     # Calculate files per directory
     files_per_dir = num_files // num_dirs
@@ -589,31 +688,50 @@ Distribution-based random file sizes (use --num-files or --total-size):
         num_files_in_dir = files_per_dir + (1 if dir_idx < extra_files else 0)
 
         for file_idx in range(num_files_in_dir):
+            if tier_tasks is not None:
+                file_type, size = tier_tasks[file_counter]
+            else:
+                file_type = args.type
+                size = file_sizes[file_counter]
+            ext = extensions[file_type]
             file_name = f"file_{file_counter + 1:0{file_padding}d}.{ext}"
             file_path = dir_path / file_name
-            file_tasks.append((file_path, args.type, file_sizes[file_counter]))
+            file_tasks.append((file_path, file_type, size))
             file_counter += 1
 
     # Choose executor type and worker count based on file type
-    if args.type == 'image':
+    # Tier mode disallows images, so always use threads
+    if tiers is not None or args.type != 'image':
+        executor_class = ThreadPoolExecutor
+        default_workers = os.cpu_count() * 4
+        executor_type = "threads"
+    else:
         # Image generation is CPU-bound, use ProcessPoolExecutor
         executor_class = ProcessPoolExecutor
         default_workers = os.cpu_count()
         executor_type = "processes"
-    else:
-        # Text and binary generation are I/O-bound, use ThreadPoolExecutor
-        executor_class = ThreadPoolExecutor
-        default_workers = os.cpu_count() * 4
-        executor_type = "threads"
 
     max_workers = args.workers or default_workers
 
     # Display generation plan
     print("\nGeneration Plan:")
     print(f"  Target: {target}")
-    print(f"  File type: {args.type}")
-    print(f"  Number of files: {num_files}")
-    if args.distribution is not None:
+    if tiers is not None:
+        all_sizes = np.array(file_sizes)
+        for i, tier in enumerate(tiers):
+            tier_sizes = np.array(
+                sample_file_sizes(tier.frozen_dist, tier.num,
+                                  args.seed + i if args.seed is not None else None)
+            )
+            print(f"  Tier {i + 1}: {tier.num} {tier.file_type} files")
+            print(f"    Distribution: {tier.dist_name}({', '.join(f'{k}={v}' for k, v in tier.dist_params.items())})")
+            print(f"    Size range: {format_size(int(tier_sizes.min()))} – {format_size(int(tier_sizes.max()))}")
+            print(f"    Mean / median: {format_size(int(tier_sizes.mean()))} / {format_size(int(np.median(tier_sizes)))}")
+        print(f"  Total files: {num_files}")
+        print(f"  Total size: ~{format_size(int(all_sizes.sum()))}")
+    elif args.distribution is not None:
+        print(f"  File type: {args.type}")
+        print(f"  Number of files: {num_files}")
         sizes_arr = np.array(file_sizes)
         print(f"  Distribution: {args.distribution}")
         print(f"  Dist params: {dist_params}")
@@ -624,6 +742,8 @@ Distribution-based random file sizes (use --num-files or --total-size):
         print(f"  File size std: {format_size(int(sizes_arr.std()))}")
         print(f"  Total size: ~{format_size(int(sizes_arr.sum()))}")
     else:
+        print(f"  File type: {args.type}")
+        print(f"  Number of files: {num_files}")
         print(f"  File size: {format_size(file_sizes[0])}")
         print(f"  Total size: ~{format_size(num_files * file_sizes[0])}")
     print(f"  Directories: {num_dirs}")
@@ -632,7 +752,10 @@ Distribution-based random file sizes (use --num-files or --total-size):
     print()
 
     # Generate files in parallel using appropriate executor for workload type
-    if args.type == 'text':
+    needs_text = args.type == 'text' or (
+        tiers is not None and any(t.file_type == 'text' for t in tiers)
+    )
+    if needs_text:
         print("Initializing text pool...", flush=True)
         # Initialize text pool in main thread (threads share memory)
         global TEXT_POOL
