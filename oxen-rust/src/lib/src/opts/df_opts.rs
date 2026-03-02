@@ -65,6 +65,7 @@ pub struct DFOpts {
     pub tail: Option<usize>,
     pub take: Option<String>,
     pub unique: Option<String>,
+    pub unique_count: Option<String>,
     #[schema(value_type = Option<Vec<String>>)]
     pub vstack: Option<Vec<PathBuf>>,
     #[schema(value_type = Option<String>)]
@@ -117,6 +118,7 @@ impl DFOpts {
             take: None,
             text2sql: None,
             unique: None,
+            unique_count: None,
             vstack: None,
             write: None,
         }
@@ -161,6 +163,7 @@ impl DFOpts {
         self.sql.is_some()
             || self.text2sql.is_some()
             || self.unique.is_some()
+            || self.unique_count.is_some()
             || self.filter.is_some()
     }
 
@@ -185,6 +188,7 @@ impl DFOpts {
             || self.take.is_some()
             || self.text2sql.is_some()
             || self.unique.is_some()
+            || self.unique_count.is_some()
             || self.vstack.is_some()
     }
 
@@ -234,6 +238,17 @@ impl DFOpts {
 
     pub fn unique_columns(&self) -> Option<Vec<String>> {
         if let Some(columns) = self.unique.clone() {
+            let split = columns
+                .split(',')
+                .map(String::from)
+                .collect::<Vec<String>>();
+            return Some(split);
+        }
+        None
+    }
+
+    pub fn unique_count_columns(&self) -> Option<Vec<String>> {
+        if let Some(columns) = self.unique_count.clone() {
             let split = columns
                 .split(',')
                 .map(String::from)

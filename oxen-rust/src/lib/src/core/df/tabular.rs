@@ -421,6 +421,12 @@ fn unique_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError
     Ok(df.unique(Some(columns), UniqueKeepStrategy::First))
 }
 
+fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError> {
+    log::debug!("Got unique_count: {columns:?}");
+    let group_by_cols: Vec<Expr> = columns.iter().map(col).collect();
+    Ok(df.group_by(group_by_cols).agg([len().alias("count")]))
+}
+
 pub async fn transform(df: DataFrame, opts: DFOpts) -> Result<DataFrame, OxenError> {
     let df = transform_lazy(df.lazy(), opts.clone()).await?;
     Ok(transform_slice_lazy(df, &opts)?.collect()?)
@@ -512,6 +518,10 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
 
     if let Some(columns) = opts.unique_columns() {
         df = unique_df(df, columns)?;
+    }
+
+    if let Some(columns) = opts.unique_count_columns() {
+        df = unique_count_df(df, columns)?;
     }
 
     if let Some(sort_by) = &opts.sort_by {
@@ -1848,6 +1858,37 @@ mod tests {
 │ 0002.jpg ┆ dog   ┆ 2.0   ┆ 5.0   ┆ false      │
 └──────────┴───────┴───────┴───────┴────────────┘",
             format!("{filtered_df}")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unique_count_single_field() -> Result<(), OxenError> {
+        let df = df!(
+            "image" => &["0000.jpg", "0001.jpg", "0002.jpg", "0003.jpg"],
+            "label" => &["dog", "dog", "unknown", "dog"],
+        )
+        .unwrap();
+
+        let mut opts = DFOpts::empty();
+        opts.unique_count = Some(String::from("label"));
+        opts.sort_by = Some(String::from("label"));
+        let result_df = tabular::transform(df, opts).await?;
+
+        println!("{result_df}");
+
+        assert_eq!(
+            r"shape: (2, 2)
+┌─────────┬───────┐
+│ label   ┆ count │
+│ ---     ┆ ---   │
+│ str     ┆ u32   │
+╞═════════╪═══════╡
+│ dog     ┆ 3     │
+│ unknown ┆ 1     │
+└─────────┴───────┘",
+            format!("{result_df}")
         );
 
         Ok(())

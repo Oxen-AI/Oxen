@@ -192,16 +192,11 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 // Generate a random workspace id
                 let workspace_id = Uuid::new_v4().to_string();
 
-                // Use the branch name as the workspace name
-                let name = format!("{branch_name}: {workspace_id}");
-
                 let workspace = rt
-                    .block_on(api::client::workspaces::create_with_new_branch(
+                    .block_on(api::client::workspaces::create(
                         &remote_repo,
                         &branch_name,
                         &workspace_id,
-                        Path::new("/"),
-                        Some(name.clone()),
                     ))
                     .unwrap();
 
