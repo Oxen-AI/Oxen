@@ -304,9 +304,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  %(prog)s --target /tmp/dataset --max-depth 5 --seed 42
   %(prog)s --target /tmp/dataset --max-depth 5 \\
       --distribution lognorm --dist-params s=0.5 scale=10 --seed 42
-
   %(prog)s --target /tmp/dataset --max-depth 3 \\
       --distribution gamma --dist-params a=2.0 scale=5 --dry-run
         """,
@@ -321,12 +321,12 @@ Examples:
         help="Maximum nesting depth of the output tree",
     )
     parser.add_argument(
-        "--distribution", type=str, required=True, metavar="NAME",
-        help="scipy.stats distribution name controlling files-per-directory (e.g., lognorm, gamma)",
+        "--distribution", type=str, default="lognorm", metavar="NAME",
+        help="scipy.stats distribution name controlling files-per-directory (default: lognorm)",
     )
     parser.add_argument(
         "--dist-params", nargs="+", default=None, metavar="KEY=VALUE",
-        help="Distribution parameters as key=value pairs (e.g., s=0.5 scale=10)",
+        help="Distribution parameters as key=value pairs (default for lognorm: s=0.5 scale=8)",
     )
     parser.add_argument(
         "--seed", type=int, default=None,
@@ -344,8 +344,15 @@ Examples:
         print(f"Error: '{target}' is not a directory or does not exist.")
         sys.exit(1)
 
-    # Validate distribution
+    # Apply default dist-params when none given and distribution is the default
+    DIST_DEFAULTS: dict[str, dict[str, float]] = {
+        "lognorm": {"s": 0.5, "scale": 8},
+    }
     dist_params = parse_dist_params(args.dist_params)
+    if not dist_params and args.distribution in DIST_DEFAULTS:
+        dist_params = DIST_DEFAULTS[args.distribution]
+
+    # Validate distribution
     frozen_dist = validate_distribution(args.distribution, dist_params)
 
     # Set up RNG and Faker
