@@ -263,27 +263,53 @@ def validate_distribution(dist_name: str, dist_params: dict[str, float]):
     return frozen
 
 
-def sample_file_sizes(frozen_dist, num_files: int, seed: int | None) -> list[int]:
-    """
-    Sample file sizes from a frozen scipy distribution.
-    Rounds to nearest integer, resamples any values <= 0.
-    """
-    rng = np.random.default_rng(seed)
-    sizes = frozen_dist.rvs(size=num_files, random_state=rng)
-    sizes = np.rint(sizes).astype(int)
+def _make_rng(seed: int | None) -> np.random.Generator:
+    return np.random.default_rng(seed)
 
-    # Resample any non-positive values (up to 100 attempts, then clamp to 1)
+
+def _clamp_positive(sizes: np.ndarray, frozen_dist, rng: np.random.Generator) -> np.ndarray:
+    """Resample any non-positive values in sizes (up to 100 attempts, then clamp to 1)."""
     for _ in range(100):
         bad_mask = sizes <= 0
         if not bad_mask.any():
             break
-        n_bad = bad_mask.sum()
-        resampled = frozen_dist.rvs(size=n_bad, random_state=rng)
+        resampled = frozen_dist.rvs(size=bad_mask.sum(), random_state=rng)
         sizes[bad_mask] = np.rint(resampled).astype(int)
     else:
         sizes[sizes <= 0] = 1
+    return sizes
 
-    return sizes.tolist()
+
+def sample_file_sizes(frozen_dist, num_files: int, seed: int | None) -> list[int]:
+    """
+    Sample exactly num_files file sizes from a frozen scipy distribution.
+    Rounds to nearest integer, resamples any values <= 0.
+    """
+    rng = _make_rng(seed)
+    sizes = np.rint(frozen_dist.rvs(size=num_files, random_state=rng)).astype(int)
+    return _clamp_positive(sizes, frozen_dist, rng).tolist()
+
+
+def sample_file_sizes_until(frozen_dist, total_size: int, seed: int | None) -> list[int]:
+    """
+    Sample file sizes from a frozen scipy distribution until their cumulative
+    sum equals or exceeds total_size. Generates in batches for efficiency.
+    """
+    rng = _make_rng(seed)
+    batch_size = 1024
+    collected: list[int] = []
+    remaining = total_size
+
+    while remaining > 0:
+        batch = np.rint(frozen_dist.rvs(size=batch_size, random_state=rng)).astype(int)
+        batch = _clamp_positive(batch, frozen_dist, rng)
+        for val in batch:
+            collected.append(int(val))
+            remaining -= int(val)
+            if remaining <= 0:
+                break
+
+    return collected
 
 
 def generate_text_file(path: Path, size: int) -> None:
@@ -421,9 +447,10 @@ Examples:
   %(prog)s --num-files 10k --avg-file-size 1MB --files-per-dir 100 --type text
   %(prog)s --total-size 16GB --num-files 3M --files-per-dir 30k --seed 42 --type text
 
-Distribution-based random file sizes:
+Distribution-based random file sizes (use --num-files or --total-size):
   %(prog)s --num-files 1000 --distribution lognorm --dist-params s=0.954 scale=5000 --type text
   %(prog)s --num-files 500 --distribution gamma --dist-params a=2.0 scale=10000 --type binary
+  %(prog)s --total-size 1GB --distribution expon --dist-params scale=50000 --type binary
   %(prog)s --num-files 10k --distribution expon --dist-params scale=50000 --type text --seed 42
         """
     )
@@ -468,12 +495,12 @@ Distribution-based random file sizes:
     if args.dist_params is not None and args.distribution is None:
         parser.error("--dist-params requires --distribution")
     if args.distribution is not None:
-        if args.num_files is None:
-            parser.error("--num-files is required when using --distribution")
+        if args.num_files is None and args.total_size is None:
+            parser.error("--distribution requires either --num-files or --total-size")
+        if args.num_files is not None and args.total_size is not None:
+            parser.error("--num-files and --total-size cannot both be used with --distribution")
         if args.avg_file_size is not None:
             parser.error("--avg-file-size cannot be used with --distribution")
-        if args.total_size is not None:
-            parser.error("--total-size cannot be used with --distribution")
         if args.type == 'image':
             parser.error("--type image cannot be used with --distribution")
 
@@ -486,8 +513,12 @@ Distribution-based random file sizes:
     if args.distribution is not None:
         dist_params = parse_dist_params(args.dist_params)
         frozen_dist = validate_distribution(args.distribution, dist_params)
-        num_files = args.num_files
-        file_sizes = sample_file_sizes(frozen_dist, num_files, args.seed)
+        if args.num_files is not None:
+            num_files = args.num_files
+            file_sizes = sample_file_sizes(frozen_dist, num_files, args.seed)
+        else:
+            file_sizes = sample_file_sizes_until(frozen_dist, args.total_size, args.seed)
+            num_files = len(file_sizes)
     else:
         # Special handling for image type
         if args.type == 'image':
