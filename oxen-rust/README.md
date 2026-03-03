@@ -305,8 +305,8 @@ env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust
 ## Pre-Commit Hook
 
 We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
-make sure to install [`pre-commit-hooks`](https://pre-commit.com/) library
-and then install the precommits locally using
+make sure to install [`pre-commit`](https://pre-commit.com/) library
+and then install the pre-commit-hooks locally using:
 
 ```bash
 pre-commit install
