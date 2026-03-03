@@ -19,6 +19,7 @@ script to give it realistic directory structure.
 """
 
 import argparse
+import json
 import shutil
 import sys
 import time
@@ -282,6 +283,83 @@ def collect_stats(node: DirNode) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Plan serialization
+# ---------------------------------------------------------------------------
+
+
+def tree_to_plan(node: DirNode) -> dict:
+    """Recursively convert a DirNode tree to a JSON-serializable plan dict."""
+    return {
+        "name": node.name,
+        "n_files": len(node.files),
+        "children": [tree_to_plan(child) for child in node.children],
+    }
+
+
+def _count_plan_files(plan: dict) -> int:
+    """Recursively count total files in a plan."""
+    return plan["n_files"] + sum(_count_plan_files(c) for c in plan["children"])
+
+
+def plan_to_tree(plan: dict, files: list[Path]) -> DirNode:
+    """
+    Reconstruct a DirNode tree from a plan dict, distributing *files*
+    proportionally based on the original file counts in the plan.
+
+    Files should already be shuffled before calling this function.
+    """
+    node = DirNode(name=plan["name"])
+
+    if not files:
+        return node
+
+    plan_total = _count_plan_files(plan)
+    if plan_total == 0:
+        # Degenerate plan with no files — put everything in root
+        node.files = files
+        return node
+
+    child_plans = plan["children"]
+
+    if not child_plans:
+        # Leaf node — gets all files
+        node.files = files
+        return node
+
+    # Collect all "slots": this node + each child subtree
+    # Each slot's proportion is its recursive file count / plan_total
+    slot_proportions = [plan["n_files"] / plan_total]
+    for child_plan in child_plans:
+        child_total = _count_plan_files(child_plan)
+        slot_proportions.append(child_total / plan_total)
+
+    # Allocate files to slots proportionally
+    n_total = len(files)
+    raw_counts = np.array(slot_proportions) * n_total
+    slot_counts = np.floor(raw_counts).astype(int)
+
+    # Distribute remainder to slots with largest fractional parts
+    deficit = n_total - slot_counts.sum()
+    fractional = raw_counts - slot_counts
+    top_indices = np.argsort(fractional)[::-1][:deficit]
+    slot_counts[top_indices] += 1
+
+    # Assign files to this node
+    n_here = int(slot_counts[0])
+    node.files = files[:n_here]
+    offset = n_here
+
+    # Recurse into children
+    for i, child_plan in enumerate(child_plans):
+        count = int(slot_counts[i + 1])
+        child_files = files[offset:offset + count]
+        offset += count
+        node.children.append(plan_to_tree(child_plan, child_files))
+
+    return node
+
+
 def remove_empty_dirs(root: Path) -> int:
     """Remove empty directories under root (bottom-up). Returns count removed."""
     removed = 0
@@ -309,6 +387,11 @@ Examples:
       --distribution lognorm --dist-params s=0.5 scale=10 --seed 42
   %(prog)s --target /tmp/dataset --max-depth 3 \\
       --distribution gamma --dist-params a=2.0 scale=5 --dry-run
+
+  # Save a plan and apply it to another dataset:
+  %(prog)s --target /tmp/dataset_a --max-depth 5 --seed 42 \\
+      --save-plan /tmp/tree-plan.json --dry-run
+  %(prog)s --target /tmp/dataset_b --from-plan /tmp/tree-plan.json --seed 99
         """,
     )
 
@@ -317,8 +400,8 @@ Examples:
         help="Directory containing the files to reorganize",
     )
     parser.add_argument(
-        "--max-depth", type=int, required=True,
-        help="Maximum nesting depth of the output tree",
+        "--max-depth", type=int, default=None,
+        help="Maximum nesting depth of the output tree (required unless --from-plan is used)",
     )
     parser.add_argument(
         "--distribution", type=str, default="lognorm", metavar="NAME",
@@ -336,6 +419,15 @@ Examples:
         "--dry-run", action="store_true",
         help="Print the planned tree without moving anything",
     )
+    parser.add_argument(
+        "--save-plan", type=str, default=None, metavar="PATH",
+        help="Save the tree structure as a JSON plan file (works with --dry-run)",
+    )
+    parser.add_argument(
+        "--from-plan", type=str, default=None, metavar="PATH",
+        help="Load a saved plan instead of generating a new tree "
+             "(ignores --max-depth, --distribution, --dist-params)",
+    )
 
     args = parser.parse_args()
 
@@ -344,16 +436,9 @@ Examples:
         print(f"Error: '{target}' is not a directory or does not exist.")
         sys.exit(1)
 
-    # Apply default dist-params when none given and distribution is the default
-    DIST_DEFAULTS: dict[str, dict[str, float]] = {
-        "lognorm": {"s": 0.5, "scale": 8},
-    }
-    dist_params = parse_dist_params(args.dist_params)
-    if not dist_params and args.distribution in DIST_DEFAULTS:
-        dist_params = DIST_DEFAULTS[args.distribution]
-
-    # Validate distribution
-    frozen_dist = validate_distribution(args.distribution, dist_params)
+    # --max-depth is required unless --from-plan is given
+    if args.from_plan is None and args.max_depth is None:
+        parser.error("--max-depth is required when not using --from-plan")
 
     # Set up RNG and Faker
     rng = _make_rng(args.seed)
@@ -373,8 +458,35 @@ Examples:
 
     print(f"Found {len(all_files)} files in '{target}'.\n")
 
-    # Build the tree
-    tree = build_tree(all_files, 0, args.max_depth, frozen_dist, rng, faker)
+    # Build the tree — either from a saved plan or by generating a new one
+    if args.from_plan:
+        plan_path = Path(args.from_plan)
+        if not plan_path.is_file():
+            print(f"Error: Plan file '{plan_path}' does not exist.")
+            sys.exit(1)
+        with open(plan_path) as f:
+            plan = json.load(f)
+        tree = plan_to_tree(plan, all_files)
+    else:
+        # Apply default dist-params when none given and distribution is the default
+        DIST_DEFAULTS: dict[str, dict[str, float]] = {
+            "lognorm": {"s": 0.5, "scale": 8},
+        }
+        dist_params = parse_dist_params(args.dist_params)
+        if not dist_params and args.distribution in DIST_DEFAULTS:
+            dist_params = DIST_DEFAULTS[args.distribution]
+
+        frozen_dist = validate_distribution(args.distribution, dist_params)
+        tree = build_tree(all_files, 0, args.max_depth, frozen_dist, rng, faker)
+
+    # Save the plan if requested
+    if args.save_plan:
+        plan_out = tree_to_plan(tree)
+        save_path = Path(args.save_plan)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, "w") as f:
+            json.dump(plan_out, f, indent=2)
+        print(f"Plan saved to '{save_path}'.\n")
 
     # Print tree structure
     print("Planned tree structure:")
