@@ -17,6 +17,8 @@ Generate test datasets with configurable size, structure, and file types.
 import argparse
 import os
 import random
+import shutil
+import subprocess
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -446,8 +448,20 @@ def generate_image_file(path: Path, size: int) -> None:
     img.save(path, 'PNG')
 
 
-def generate_binary_file(path: Path, size: int) -> None:
-    """Generate a binary file with random bytes."""
+HAS_DD = shutil.which("dd") is not None
+
+
+def generate_binary_file_dd(path: Path, size: int) -> None:
+    """Generate a binary file with random bytes using dd."""
+    subprocess.run(
+        ["dd", "if=/dev/random", f"of={path}", f"bs={size}", "count=1"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def generate_binary_file_python(path: Path, size: int) -> None:
+    """Generate a binary file with random bytes using Python."""
     with open(path, 'wb') as f:
         # Write in chunks to avoid memory issues with large files
         chunk_size = min(1024 * 1024, size)  # 1MB chunks or smaller
@@ -458,6 +472,14 @@ def generate_binary_file(path: Path, size: int) -> None:
             # Use random.randbytes() instead of os.urandom() for much faster generation
             f.write(random.randbytes(write_size))
             remaining -= write_size
+
+
+def generate_binary_file(path: Path, size: int) -> None:
+    """Generate a binary file with random bytes, using dd if available."""
+    if HAS_DD:
+        generate_binary_file_dd(path, size)
+    else:
+        generate_binary_file_python(path, size)
 
 
 def compute_avg_image_size(num_samples: int = 10) -> int:
