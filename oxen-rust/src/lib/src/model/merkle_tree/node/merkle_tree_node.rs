@@ -27,6 +27,8 @@ impl MerkleTreeNode {
     pub fn from_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
         // Check cache first
         if let Some(cached_node) = merkle_tree_node_cache::get_cached_node(repo, hash) {
+            // copy out of cache: we want to be able to evict from cache w/o requiring
+            // any users of the cache to give-up their reference to the node
             return Ok((*cached_node).clone());
         }
 

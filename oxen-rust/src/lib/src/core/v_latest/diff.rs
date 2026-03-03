@@ -29,6 +29,7 @@ pub async fn list_diff_entries(
         "list_diff_entries base_dir: '{base_path:?}', head_dir: '{head_path:?}' base_commit: '{base_commit}', head_commit: '{head_commit}'"
     );
 
+    // TODO: migrate to use updated function that doesn't error when the path doesn't exist in the tree
     let base_tree = CommitMerkleTree::read_from_path_maybe(repo, base_commit, &base_path, true)?;
     let head_tree = CommitMerkleTree::read_from_path_maybe(repo, head_commit, &head_path, true)?;
 
