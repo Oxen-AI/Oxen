@@ -171,11 +171,16 @@ Examples:
         print("\n(dry-run) No files were uploaded.")
         return
 
-    # Connect to the remote repo
+    # Connect to the remote repo, creating it if it doesn't exist
     if args.host:
         repo = RemoteRepo(args.repo, host=args.host, scheme=args.scheme)
     else:
         repo = RemoteRepo(args.repo, scheme=args.scheme)
+
+    if not repo.exists():
+        print(f"Repository '{args.repo}' not found on remote. Creating...")
+        repo.create(empty=True, is_public=True)
+        print(f"Created repository '{args.repo}'.")
 
     overall_start = time.time()
 
