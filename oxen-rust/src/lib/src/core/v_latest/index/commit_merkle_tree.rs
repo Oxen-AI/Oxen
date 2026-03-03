@@ -75,31 +75,6 @@ impl CommitMerkleTree {
         Ok(Self { root, dir_hashes })
     }
 
-    pub fn from_path(
-        repo: &LocalRepository,
-        commit: &Commit,
-        path: impl AsRef<Path>,
-        load_recursive: bool,
-    ) -> Result<Self, OxenError> {
-        // This debug log is to help make sure we don't load the tree too many times
-        // if you see it in the logs being called too much, it could be why the code is slow.
-        log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
-        // TODO: migrate to use single read_from function
-        let node = CommitMerkleTree::read_from_path(repo, commit, path, load_recursive)?.ok_or(
-            OxenError::basic_str(format!(
-                "Merkle tree hash not found for commit: '{}'",
-                commit.id
-            )),
-        )?;
-
-        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-
-        Ok(Self {
-            root: node,
-            dir_hashes,
-        })
-    }
-
     pub fn root_with_children(
         repo: &LocalRepository,
         commit: &Commit,
