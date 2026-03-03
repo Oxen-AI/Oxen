@@ -41,7 +41,9 @@ pub async fn create(
             match response {
                 Ok(val) => Ok(val.data_frame.view.to_df().await),
                 Err(err) => {
-                    let err = format!("api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+                    let err = format!(
+                        "api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+                    );
                     Err(OxenError::basic_str(err))
                 }
             }
@@ -81,7 +83,9 @@ pub async fn delete(
             match response {
                 Ok(val) => Ok(val.data_frame.view.to_df().await),
                 Err(err) => {
-                    let err = format!("api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+                    let err = format!(
+                        "api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+                    );
                     Err(OxenError::basic_str(err))
                 }
             }
@@ -127,7 +131,9 @@ pub async fn update(
             match response {
                 Ok(val) => Ok(val),
                 Err(err) => {
-                    let err = format!("api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+                    let err = format!(
+                        "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+                    );
                     Err(OxenError::basic_str(err))
                 }
             }
@@ -186,8 +192,8 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::model::data_frame::schema::field::Changes;
     use crate::model::NewCommitBody;
+    use crate::model::data_frame::schema::field::Changes;
     use crate::opts::DFOpts;
     use crate::test;
 

@@ -4,12 +4,12 @@ use clap::{Arg, ArgMatches, Command};
 use liboxen::api;
 use liboxen::error;
 use liboxen::error::OxenError;
-use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::LocalRepository;
 use liboxen::model::RemoteRepository;
 use liboxen::model::StagedData;
 use liboxen::model::StagedEntry;
 use liboxen::model::StagedEntryStatus;
+use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::util;
 
 use std::collections::HashMap;
@@ -98,7 +98,9 @@ impl RunCmd for WorkspaceStatusCmd {
             None => match args.get_one::<String>("workspace") {
                 None => None,
                 something => {
-                    eprintln!("DEPRECATION WARNING: '--workspace' option has been renamed to '--workspace-id'. '--workspace' will be **REMOVED** in a future release!");
+                    eprintln!(
+                        "DEPRECATION WARNING: '--workspace' option has been renamed to '--workspace-id'. '--workspace' will be **REMOVED** in a future release!"
+                    );
                     something
                 }
             },

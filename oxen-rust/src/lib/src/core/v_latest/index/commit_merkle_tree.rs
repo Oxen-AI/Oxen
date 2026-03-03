@@ -427,7 +427,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
+        if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
 
@@ -468,7 +468,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
+        if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
 
@@ -517,7 +517,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
+        if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
 
@@ -836,14 +836,14 @@ impl CommitMerkleTree {
             return Ok(());
         }
 
-        if let Some(base_hashes) = base_hashes {
-            if base_hashes.contains(&node.hash) {
-                if let Some(ref mut shared_hashes) = shared_hashes {
-                    shared_hashes.insert(node.hash);
-                }
-
-                return Ok(());
+        if let Some(base_hashes) = base_hashes
+            && base_hashes.contains(&node.hash)
+        {
+            if let Some(ref mut shared_hashes) = shared_hashes {
+                shared_hashes.insert(node.hash);
             }
+
+            return Ok(());
         }
 
         if let Some(ref mut unique_hashes) = unique_hashes {
@@ -935,14 +935,14 @@ impl CommitMerkleTree {
             return Ok(());
         }
 
-        if let Some(base_hashes) = base_hashes {
-            if base_hashes.contains_key(&(node.hash, dtype)) {
-                if let Some(ref mut shared_hashes) = shared_hashes {
-                    shared_hashes.insert((node.hash, dtype), current_path.to_path_buf());
-                }
-
-                return Ok(());
+        if let Some(base_hashes) = base_hashes
+            && base_hashes.contains_key(&(node.hash, dtype))
+        {
+            if let Some(ref mut shared_hashes) = shared_hashes {
+                shared_hashes.insert((node.hash, dtype), current_path.to_path_buf());
             }
+
+            return Ok(());
         }
 
         if let Some(ref mut unique_hashes) = unique_hashes {
@@ -1036,14 +1036,14 @@ impl CommitMerkleTree {
             return Ok(());
         }
 
-        if let Some(base_hashes) = base_hashes {
-            if base_hashes.contains(&node.hash) {
-                if let Some(ref mut shared_hashes) = shared_hashes {
-                    shared_hashes.insert(node.hash);
-                }
-
-                return Ok(());
+        if let Some(base_hashes) = base_hashes
+            && base_hashes.contains(&node.hash)
+        {
+            if let Some(ref mut shared_hashes) = shared_hashes {
+                shared_hashes.insert(node.hash);
             }
+
+            return Ok(());
         }
 
         if let Some(ref mut unique_hashes) = unique_hashes {

@@ -4,10 +4,10 @@ use crate::model::{ContentHashable, NewCommit};
 use crate::util;
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::prelude::*;
 use std::path::Path;
-use xxhash_rust::xxh3::{xxh3_128, Xxh3};
+use xxhash_rust::xxh3::{Xxh3, xxh3_128};
 
 pub fn hash_buffer(buffer: &[u8]) -> String {
     let val = xxh3_128(buffer);

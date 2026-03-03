@@ -53,8 +53,8 @@ mod tests {
     use crate::{api, repositories, test, util};
 
     use crate::config::UserConfig;
-    use crate::model::staged_data::StagedDataOpts;
     use crate::model::EntryDataType;
+    use crate::model::staged_data::StagedDataOpts;
     use std::path::{Path, PathBuf};
 
     #[tokio::test]

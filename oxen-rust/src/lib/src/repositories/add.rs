@@ -91,9 +91,11 @@ mod tests {
                 // Get the status and make sure the file is staged
                 let status = repositories::status(&local_repo)?;
                 assert_eq!(status.staged_files.len(), 1);
-                assert!(status
-                    .staged_files
-                    .contains_key(&PathBuf::from("clone_depth_1_add.txt")));
+                assert!(
+                    status
+                        .staged_files
+                        .contains_key(&PathBuf::from("clone_depth_1_add.txt"))
+                );
 
                 Ok(())
             })
@@ -129,9 +131,11 @@ A: Oxen.ai
                 // Get the status and make sure the file is staged
                 let status = repositories::status(&local_repo)?;
                 assert_eq!(status.staged_files.len(), 1);
-                assert!(status
-                    .staged_files
-                    .contains_key(&PathBuf::from("annotations").join("test").join("README.md")));
+                assert!(
+                    status
+                        .staged_files
+                        .contains_key(&PathBuf::from("annotations").join("test").join("README.md"))
+                );
 
                 // Make sure no files are marked as removed, because they are just not downloaded in the subtree
                 assert_eq!(status.removed_files.len(), 0);
@@ -475,10 +479,12 @@ A: Oxen.ai
             status.print();
 
             // Should find the untracked dir
-            assert!(status
-                .untracked_dirs
-                .iter()
-                .any(|(path, _)| *path == PathBuf::from("empty_dir")));
+            assert!(
+                status
+                    .untracked_dirs
+                    .iter()
+                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+            );
 
             // Add the empty dir
             repositories::add(&repo, &empty_dir).await?;
@@ -620,18 +626,22 @@ A: Oxen.ai
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);
-            assert!(status
-                .modified_files
-                .contains(&PathBuf::from("annotations/train/one_shot.csv")));
+            assert!(
+                status
+                    .modified_files
+                    .contains(&PathBuf::from("annotations/train/one_shot.csv"))
+            );
 
             repositories::add(&repo, &one_shot_path).await?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
             assert_eq!(status.modified_files.len(), 0);
-            assert!(status
-                .staged_files
-                .contains_key(&PathBuf::from("annotations/train/one_shot.csv")));
+            assert!(
+                status
+                    .staged_files
+                    .contains_key(&PathBuf::from("annotations/train/one_shot.csv"))
+            );
 
             Ok(())
         })

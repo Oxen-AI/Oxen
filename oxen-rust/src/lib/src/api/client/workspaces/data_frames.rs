@@ -227,7 +227,9 @@ pub async fn diff(
 ) -> Result<JsonDataFrameViews, OxenError> {
     let file_path_str = path.to_str().unwrap();
 
-    let uri = format!("/workspaces/{workspace_id}/data_frames/diff/{file_path_str}?page={page_num}&page_size={page_size}");
+    let uri = format!(
+        "/workspaces/{workspace_id}/data_frames/diff/{file_path_str}?page={page_num}&page_size={page_size}"
+    );
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -690,8 +692,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_nonexistent_data_frame_returns_resource_not_found(
-    ) -> Result<(), OxenError> {
+    async fn test_download_nonexistent_data_frame_returns_resource_not_found()
+    -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let workspace_id = "some_workspace";

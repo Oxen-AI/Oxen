@@ -1,8 +1,8 @@
 use futures::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
@@ -189,7 +189,9 @@ async fn revalidate_and_push_missing_files(
         if clean_result.corrupted > clean_result.cleaned
             || clean_result.errors > clean_result.cleaned
         {
-            println!("🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again.");
+            println!(
+                "🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again."
+            );
         }
         return push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await;
     } else {

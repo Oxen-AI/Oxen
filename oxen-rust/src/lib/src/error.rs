@@ -30,11 +30,9 @@ pub const NO_REPO_FOUND: &str = "No oxen repository exists, looking for director
 
 pub const HEAD_NOT_FOUND: &str = "HEAD not found";
 
-pub const EMAIL_AND_NAME_NOT_FOUND: &str =
-    "oxen not configured, set email and name with:\n\noxen config --name YOUR_NAME --email YOUR_EMAIL\n";
+pub const EMAIL_AND_NAME_NOT_FOUND: &str = "oxen not configured, set email and name with:\n\noxen config --name YOUR_NAME --email YOUR_EMAIL\n";
 
-pub const AUTH_TOKEN_NOT_FOUND: &str =
-    "oxen authentication token not found, obtain one from your administrator and configure with:\n\noxen config --auth <HOST> <TOKEN>\n";
+pub const AUTH_TOKEN_NOT_FOUND: &str = "oxen authentication token not found, obtain one from your administrator and configure with:\n\noxen config --auth <HOST> <TOKEN>\n";
 
 #[derive(Error, Debug)]
 pub enum OxenError {
@@ -201,9 +199,9 @@ impl OxenError {
 
     pub fn remote_not_set(name: impl AsRef<str>) -> Self {
         let name = name.as_ref();
-        OxenError::basic_str(
-            format!("Remote not set, you can set a remote by running:\n\noxen config --set-remote {name} <url>\n")
-        )
+        OxenError::basic_str(format!(
+            "Remote not set, you can set a remote by running:\n\noxen config --set-remote {name} <url>\n"
+        ))
     }
 
     pub fn remote_not_found(remote: Remote) -> Self {
@@ -324,7 +322,9 @@ impl OxenError {
     }
 
     pub fn must_be_on_valid_branch() -> OxenError {
-        OxenError::basic_str("Repository is in a detached HEAD state, checkout a valid branch to continue.\n\n  oxen checkout <branch>\n")
+        OxenError::basic_str(
+            "Repository is in a detached HEAD state, checkout a valid branch to continue.\n\n  oxen checkout <branch>\n",
+        )
     }
 
     pub fn no_schemas_staged() -> OxenError {
@@ -493,7 +493,9 @@ impl OxenError {
     }
 
     pub fn must_supply_valid_api_key() -> OxenError {
-        OxenError::basic_str("Must supply valid API key. Create an account at https://oxen.ai and then set the API key with:\n\n  oxen config --auth hub.oxen.ai <API_KEY>\n")
+        OxenError::basic_str(
+            "Must supply valid API key. Create an account at https://oxen.ai and then set the API key with:\n\n  oxen config --auth hub.oxen.ai <API_KEY>\n",
+        )
     }
 
     pub fn file_has_no_parent(path: impl AsRef<Path>) -> OxenError {
@@ -533,7 +535,10 @@ impl OxenError {
     }
 
     pub fn invalid_set_remote_url(url: impl AsRef<str>) -> OxenError {
-        let err = format!("\nRemote invalid, must be fully qualified URL, got: {:?}\n\n  oxen config --set-remote origin https://hub.oxen.ai/<namespace>/<reponame>\n", url.as_ref());
+        let err = format!(
+            "\nRemote invalid, must be fully qualified URL, got: {:?}\n\n  oxen config --set-remote origin https://hub.oxen.ai/<namespace>/<reponame>\n",
+            url.as_ref()
+        );
         OxenError::basic_str(err)
     }
 

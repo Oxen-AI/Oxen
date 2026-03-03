@@ -5,7 +5,7 @@ use clap::{Arg, ArgGroup, ArgMatches, Command};
 
 use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
 
-use crate::cmd::{rm::rm_args, RunCmd};
+use crate::cmd::{RunCmd, rm::rm_args};
 pub const NAME: &str = "rm";
 pub struct WorkspaceRmCmd;
 

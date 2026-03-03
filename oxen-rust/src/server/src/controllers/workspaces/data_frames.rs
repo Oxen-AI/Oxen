@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, df_opts_query, path_param, DFOptsQuery, PageNumQuery};
+use crate::params::{DFOptsQuery, PageNumQuery, app_data, df_opts_query, path_param};
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 
 use liboxen::constants::{self, TABLE_NAME};
 use liboxen::core::db::data_frames::df_db::with_df_db_manager;
@@ -666,7 +666,7 @@ mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
-    use actix_web::{web, App};
+    use actix_web::{App, web};
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
@@ -843,8 +843,8 @@ mod tests {
     /// CSV committed, workspace created, NOT indexed.
     /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
     #[actix_web::test]
-    async fn test_download_existing_unindexed_returns_200_with_is_indexed_false(
-    ) -> Result<(), OxenError> {
+    async fn test_download_existing_unindexed_returns_200_with_is_indexed_false()
+    -> Result<(), OxenError> {
         test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
@@ -946,8 +946,8 @@ mod tests {
     /// File NOT in base commit, only staged in workspace via `files::add`.
     /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
     #[actix_web::test]
-    async fn test_download_streaming_unindexed_workspace_only_file_returns_200(
-    ) -> Result<(), OxenError> {
+    async fn test_download_streaming_unindexed_workspace_only_file_returns_200()
+    -> Result<(), OxenError> {
         test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";

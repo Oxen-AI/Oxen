@@ -13,11 +13,11 @@ use crate::core::df::pretty_print;
 use crate::core::df::sql;
 use crate::error::OxenError;
 use crate::io::chunk_reader::ChunkReader;
-use crate::model::data_frame::schema::DataType;
-use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::Commit;
 use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
+use crate::model::data_frame::schema::DataType;
+use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::opts::{CountLinesOpts, DFOpts, PaginateOpts};
 use crate::repositories;
 use crate::util::fs;
@@ -280,8 +280,10 @@ pub fn row_from_str_and_schema(
 
     if values.len() != schema.len() {
         return Err(OxenError::basic_str(format!(
-            "Error: Added row must have same number of columns as df\nRow columns: {}\ndf columns: {}", values.len(), schema.len())
-        ));
+            "Error: Added row must have same number of columns as df\nRow columns: {}\ndf columns: {}",
+            values.len(),
+            schema.len()
+        )));
     }
 
     let mut vec: Vec<Column> = Vec::new();
@@ -483,13 +485,12 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
         }
     }
 
-    if let Some(sql) = opts.sql.clone() {
-        if let Some(repo_dir) = opts.repo_dir.as_ref() {
-            let repo = LocalRepository::from_dir(repo_dir)?;
-            df =
-                sql::query_df_from_repo(sql, &repo, &opts.path.clone().unwrap_or_default(), &opts)?
-                    .lazy();
-        }
+    if let Some(sql) = opts.sql.clone()
+        && let Some(repo_dir) = opts.repo_dir.as_ref()
+    {
+        let repo = LocalRepository::from_dir(repo_dir)?;
+        df = sql::query_df_from_repo(sql, &repo, &opts.path.clone().unwrap_or_default(), &opts)?
+            .lazy();
     }
 
     if opts.should_randomize {
@@ -522,12 +523,12 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
         df = df.reverse();
     }
 
-    if let Some(columns) = opts.columns_names() {
-        if !columns.is_empty() {
-            log::debug!("transform_lazy selecting columns: {columns:?}");
-            let cols = columns.iter().map(col).collect::<Vec<Expr>>();
-            df = df.select(&cols);
-        }
+    if let Some(columns) = opts.columns_names()
+        && !columns.is_empty()
+    {
+        log::debug!("transform_lazy selecting columns: {columns:?}");
+        let cols = columns.iter().map(col).collect::<Vec<Expr>>();
+        df = df.select(&cols);
     }
 
     if let Some(names) = &opts.rename_col {
@@ -925,10 +926,7 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
                     let vec: Vec<bool> = l.bool().unwrap().into_iter().flatten().collect();
                     json!(vec)
                 }
-                polars::prelude::DataType::List(_) => {
-                    let json_value = any_val_to_json(AnyValue::List(l));
-                    json_value
-                }
+                polars::prelude::DataType::List(_) => any_val_to_json(AnyValue::List(l)),
                 polars::prelude::DataType::Struct(_) => any_val_to_json(AnyValue::List(l)),
                 dtype => {
                     panic!("Unsupported dtype: {dtype:?}")
@@ -2046,7 +2044,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(columns, vec!["caption", "media_path"]);
         let nl = if cfg!(windows) { "\r\n" } else { "\n" };
-        let expected = format!("[VISUAL]: Jade Mills, a woman in her 60s with blonde shoulder-length hair, sits in a professional podcast interview setting. She wears a dusty pink blazer over a white high-neck lace top with intricate detailing. The background features a soft teal-green gradient with large windows showing blurred outdoor scenery. A professional black microphone on a boom arm is positioned to her right. Jade Mills gazes slightly upward and to her left with a contemplative expression, her eyes looking off-camera. Her posture is upright and engaged, seated on what appears to be a dark chair or couch with teal cushions visible at the edge of the frame.{nl}{nl}[CHARACTER_SPEECH]: Jade Mills: I don't want a baby in a wife on the road with me, and he left. So...");
+        let expected = format!(
+            "[VISUAL]: Jade Mills, a woman in her 60s with blonde shoulder-length hair, sits in a professional podcast interview setting. She wears a dusty pink blazer over a white high-neck lace top with intricate detailing. The background features a soft teal-green gradient with large windows showing blurred outdoor scenery. A professional black microphone on a boom arm is positioned to her right. Jade Mills gazes slightly upward and to her left with a contemplative expression, her eyes looking off-camera. Her posture is upright and engaged, seated on what appears to be a dark chair or couch with teal cushions visible at the edge of the frame.{nl}{nl}[CHARACTER_SPEECH]: Jade Mills: I don't want a baby in a wife on the road with me, and he left. So..."
+        );
         assert_eq!(
             df.column("caption")
                 .unwrap()
@@ -2063,8 +2063,8 @@ mod tests {
     #[tokio::test]
     async fn test_any_val_to_json_primitive_types() -> Result<(), OxenError> {
         use polars::prelude::AnyValue;
-        use serde_json::json;
         use serde_json::Value;
+        use serde_json::json;
 
         let val = AnyValue::Null;
         let json = tabular::any_val_to_json(val);

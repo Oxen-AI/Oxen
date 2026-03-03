@@ -325,16 +325,8 @@ impl DFOpts {
         } else {
             Some(String::from("false"))
         };
-        let page = if self.page.is_some() {
-            Some(format!("{}", self.page.unwrap()))
-        } else {
-            None
-        };
-        let page_size = if self.page_size.is_some() {
-            Some(format!("{}", self.page_size.unwrap()))
-        } else {
-            None
-        };
+        let page = self.page.map(|p| format!("{}", p));
+        let page_size = self.page_size.map(|ps| format!("{}", ps));
 
         let params = vec![
             ("item", self.item.clone()),

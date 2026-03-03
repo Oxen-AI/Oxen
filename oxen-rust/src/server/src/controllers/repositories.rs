@@ -3,8 +3,8 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
-use futures_util::stream::StreamExt; // Import StreamExt for the next() method
 use futures_util::TryStreamExt;
+use futures_util::stream::StreamExt; // Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
@@ -22,7 +22,7 @@ use liboxen::view::{
 use actix_multipart::Multipart; // Gives us Multipart
 use liboxen::model::{RepoNew, User};
 
-use actix_web::{web, HttpRequest, HttpResponse, Result};
+use actix_web::{HttpRequest, HttpResponse, Result, web};
 use serde_json::from_slice;
 use std::path::PathBuf;
 use utoipa;
@@ -91,17 +91,17 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME)
         && let Some(dir_node) =
             repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
-        {
-            size = dir_node.num_bytes();
-            data_types = dir_node
-                .data_type_counts()
-                .iter()
-                .map(|(data_type, count)| DataTypeCount {
-                    data_type: data_type.to_string(),
-                    count: *count as usize,
-                })
-                .collect();
-        }
+    {
+        size = dir_node.num_bytes();
+        data_types = dir_node
+            .data_type_counts()
+            .iter()
+            .map(|(data_type, count)| DataTypeCount {
+                data_type: data_type.to_string(),
+                count: *count as usize,
+            })
+            .collect();
+    }
 
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {

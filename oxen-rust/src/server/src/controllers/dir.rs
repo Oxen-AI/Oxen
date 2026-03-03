@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param, PageNumVersionQuery};
+use crate::params::{PageNumVersionQuery, app_data, parse_resource, path_param};
 
 use liboxen::core::versions::MinOxenVersion;
 use liboxen::opts::PaginateOpts;
@@ -8,7 +8,7 @@ use liboxen::perf_guard;
 use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use utoipa;
 
 /// List directory contents
@@ -84,7 +84,7 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
-    use actix_web::{web, App};
+    use actix_web::{App, web};
     use std::path::Path;
 
     use liboxen::error::OxenError;

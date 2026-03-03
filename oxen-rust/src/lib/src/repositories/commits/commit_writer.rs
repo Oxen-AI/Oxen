@@ -22,17 +22,17 @@ use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
-use crate::model::merkle_tree::node::dir_node::DirNodeOpts;
-use crate::model::merkle_tree::node::vnode::VNodeOpts;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::merkle_tree::node::StagedMerkleTreeNode;
-use crate::model::merkle_tree::node::VNode;
 use crate::model::MerkleHash;
 use crate::model::MerkleTreeNodeType;
 use crate::model::NewCommit;
 use crate::model::NewCommitBody;
 use crate::model::User;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::model::merkle_tree::node::StagedMerkleTreeNode;
+use crate::model::merkle_tree::node::VNode;
+use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
+use crate::model::merkle_tree::node::dir_node::DirNodeOpts;
+use crate::model::merkle_tree::node::vnode::VNodeOpts;
 use crate::model::{Commit, LocalRepository, StagedEntryStatus};
 
 use crate::util::hasher;
@@ -537,13 +537,13 @@ fn cleanup_rm_dirs(
 ) -> Result<(), OxenError> {
     for (path, entries) in dir_entries.iter() {
         for entry in entries.iter() {
-            if let EMerkleTreeNode::Directory(dir_node) = &entry.node.node {
-                if entry.status == StagedEntryStatus::Removed {
-                    let dir_path = path.join(dir_node.name());
-                    log::debug!("dir path for cleanup: {dir_path:?}");
-                    let key = dir_path.to_str().unwrap();
-                    dir_hash_db.delete(key)?;
-                }
+            if let EMerkleTreeNode::Directory(dir_node) = &entry.node.node
+                && entry.status == StagedEntryStatus::Removed
+            {
+                let dir_path = path.join(dir_node.name());
+                log::debug!("dir path for cleanup: {dir_path:?}");
+                let key = dir_path.to_str().unwrap();
+                dir_hash_db.delete(key)?;
             }
         }
     }
@@ -644,29 +644,29 @@ fn split_into_vnodes(
             // Overwrite the existing child
             // if add or modify, replace the child
             // if remove, remove the child
-            if let Ok(path) = child.node.maybe_path() {
-                if path != PathBuf::from("") {
-                    match child.status {
-                        StagedEntryStatus::Removed => {
-                            log::debug!(
-                                "removing child {:?} {:?} with {:?}",
-                                child.node.node.node_type(),
-                                path,
-                                child.node.maybe_path().unwrap()
-                            );
-                            children.remove(child);
-                            removed_children.insert(child.to_owned());
-                        }
-                        _ => {
-                            log::debug!(
-                                "replacing child {:?} {:?} with {:?}",
-                                child.node.node.node_type(),
-                                path,
-                                child.node.maybe_path().unwrap()
-                            );
-                            log::debug!("replaced child {}", child.node);
-                            children.replace(child.clone());
-                        }
+            if let Ok(path) = child.node.maybe_path()
+                && path != Path::new("")
+            {
+                match child.status {
+                    StagedEntryStatus::Removed => {
+                        log::debug!(
+                            "removing child {:?} {:?} with {:?}",
+                            child.node.node.node_type(),
+                            path,
+                            child.node.maybe_path().unwrap()
+                        );
+                        children.remove(child);
+                        removed_children.insert(child.to_owned());
+                    }
+                    _ => {
+                        log::debug!(
+                            "replacing child {:?} {:?} with {:?}",
+                            child.node.node.node_type(),
+                            path,
+                            child.node.maybe_path().unwrap()
+                        );
+                        log::debug!("replaced child {}", child.node);
+                        children.replace(child.clone());
                     }
                 }
             }
@@ -1048,19 +1048,19 @@ fn compute_dir_node(
         "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"
     );
     let head_commit_maybe = repositories::commits::head_commit_maybe(repo)?;
-    if let Some(head_commit) = head_commit_maybe {
-        if let Ok(Some(old_dir_node)) = repositories::tree::get_dir_without_children(
+    if let Some(head_commit) = head_commit_maybe
+        && let Ok(Some(old_dir_node)) = repositories::tree::get_dir_without_children(
             repo,
             &head_commit,
             &path,
             Some(dir_hashes),
-        ) {
-            let old_dir_node = old_dir_node.dir().unwrap();
-            num_entries = old_dir_node.num_entries();
-            num_bytes = old_dir_node.num_bytes();
-            data_type_counts = old_dir_node.data_type_counts().clone();
-            data_type_sizes = old_dir_node.data_type_sizes().clone();
-        };
+        )
+    {
+        let old_dir_node = old_dir_node.dir().unwrap();
+        num_entries = old_dir_node.num_entries();
+        num_bytes = old_dir_node.num_bytes();
+        data_type_counts = old_dir_node.data_type_counts().clone();
+        data_type_sizes = old_dir_node.data_type_sizes().clone();
     }
 
     for child in children.iter() {

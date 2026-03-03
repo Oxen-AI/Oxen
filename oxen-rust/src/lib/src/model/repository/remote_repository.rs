@@ -1,7 +1,7 @@
 use crate::api;
 use crate::core::versions::MinOxenVersion;
-use crate::view::repository::{RepositoryCreationView, RepositoryDataTypesView};
 use crate::view::RepositoryView;
+use crate::view::repository::{RepositoryCreationView, RepositoryDataTypesView};
 use crate::{error::OxenError, model::Remote};
 use http::Uri;
 use serde::{Deserialize, Serialize};

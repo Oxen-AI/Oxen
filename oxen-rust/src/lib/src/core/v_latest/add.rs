@@ -19,7 +19,7 @@ use crate::constants::{OXEN_HIDDEN_DIR, STAGED_DIR};
 use crate::core;
 use crate::core::db;
 use crate::core::oxenignore;
-use crate::core::staged::staged_db_manager::{with_staged_db_manager, StagedDBManager};
+use crate::core::staged::staged_db_manager::{StagedDBManager, with_staged_db_manager};
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::workspace::Workspace;
@@ -201,17 +201,17 @@ pub async fn add_files(
             )
             .await?;
 
-            if let Some(entry) = entry {
-                if let EMerkleTreeNode::File(file_node) = &entry.node.node {
-                    let data_type = file_node.data_type();
-                    total.total_files += 1;
-                    total.total_bytes += file_node.num_bytes();
-                    total
-                        .data_type_counts
-                        .entry(data_type.clone())
-                        .and_modify(|count| *count += 1)
-                        .or_insert(1);
-                }
+            if let Some(entry) = entry
+                && let EMerkleTreeNode::File(file_node) = &entry.node.node
+            {
+                let data_type = file_node.data_type();
+                total.total_files += 1;
+                total.total_bytes += file_node.num_bytes();
+                total
+                    .data_type_counts
+                    .entry(data_type.clone())
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
             }
         } else if corrected_path.is_symlink() {
             log::debug!("Skipping symlink: {corrected_path:?}");
@@ -381,12 +381,11 @@ pub async fn process_add_dir(
                     let dir = entry.path();
                     let dir_path = util::fs::path_relative_to_dir(dir, &*Arc::clone(&repo_path))?;
                     // Check if the dir is excluded
-                    if let Some(dir_hashes_ref) = dir_hashes.as_ref() {
-                        if let Some(dir_hash) = dir_hashes_ref.get(&dir_path) {
-                            if excluded_hashes.contains(dir_hash) {
-                                return Ok::<(), OxenError>(());
-                            }
-                        }
+                    if let Some(dir_hashes_ref) = dir_hashes.as_ref()
+                        && let Some(dir_hash) = dir_hashes_ref.get(&dir_path)
+                        && excluded_hashes.contains(dir_hash)
+                    {
+                        return Ok::<(), OxenError>(());
                     }
 
                     let dir_node =
@@ -769,14 +768,14 @@ pub fn process_add_file(
     let maybe_file_node = file_status.previous_file_node.clone();
     let previous_metadata = file_status.previous_metadata.clone();
 
-    log::debug!("status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}");
+    log::debug!(
+        "status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}"
+    );
 
-    if let Some(_file_node) = &maybe_file_node {
-        if merge_conflicts.contains(&relative_path) {
-            log::debug!("merge conflict resolved: {relative_path:?}");
-            status = StagedEntryStatus::Modified; // Mark as modified if there's a conflict
-            repositories::merge::mark_conflict_as_resolved(repo, &relative_path)?;
-        }
+    if maybe_file_node.is_some() && merge_conflicts.contains(&relative_path) {
+        log::debug!("merge conflict resolved: {relative_path:?}");
+        status = StagedEntryStatus::Modified; // Mark as modified if there's a conflict
+        repositories::merge::mark_conflict_as_resolved(repo, &relative_path)?;
     }
 
     // Don't have to add the file to the staged db if it hasn't changed
@@ -868,14 +867,14 @@ pub fn process_add_file_with_staged_db_manager(
     let maybe_file_node = file_status.previous_file_node.clone();
     let previous_metadata = file_status.previous_metadata.clone();
 
-    log::debug!("status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}");
+    log::debug!(
+        "status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}"
+    );
 
-    if let Some(_file_node) = &maybe_file_node {
-        if merge_conflicts.contains(&relative_path) {
-            log::debug!("merge conflict resolved: {relative_path:?}");
-            status = StagedEntryStatus::Modified; // Mark as modified if there's a conflict
-            repositories::merge::mark_conflict_as_resolved(repo, &relative_path)?;
-        }
+    if maybe_file_node.is_some() && merge_conflicts.contains(&relative_path) {
+        log::debug!("merge conflict resolved: {relative_path:?}");
+        status = StagedEntryStatus::Modified; // Mark as modified if there's a conflict
+        repositories::merge::mark_conflict_as_resolved(repo, &relative_path)?;
     }
 
     // Don't have to add the file to the staged db if it hasn't changed
@@ -1067,7 +1066,9 @@ pub fn generate_file_node(
         .unwrap_or_default()
         .to_string_lossy();
     let relative_path_str = relative_path.to_str().unwrap_or_default();
-    log::debug!("status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}");
+    log::debug!(
+        "status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}"
+    );
 
     // version_path is where the file is stored, relative_path is the working directory path that contains the file extension
     let mime_type = util::fs::file_mime_type_from_extension(version_path, &relative_path);
@@ -1134,25 +1135,24 @@ pub fn maybe_construct_generic_metadata_for_tabular(
     log::debug!("maybe_construct_generic_metadata_for_tabular {df_metadata:?}");
     log::debug!("previous_oxen_metadata {previous_oxen_metadata:?}");
 
-    if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone() {
-        if let GenericMetadata::MetadataTabular(ref previous_oxen_metadata) = previous_oxen_metadata
-        {
-            // Combine the two by using previous_oxen_metadata as the source of truth for metadata,
-            // but keeping df_metadata's fields
+    if let Some(GenericMetadata::MetadataTabular(mut df_metadata)) = df_metadata.clone()
+        && let GenericMetadata::MetadataTabular(ref previous_oxen_metadata) = previous_oxen_metadata
+    {
+        // Combine the two by using previous_oxen_metadata as the source of truth for metadata,
+        // but keeping df_metadata's fields
 
-            for field in &mut df_metadata.tabular.schema.fields {
-                if let Some(oxen_field) = previous_oxen_metadata
-                    .tabular
-                    .schema
-                    .fields
-                    .iter()
-                    .find(|oxen_field| oxen_field.name == field.name)
-                {
-                    field.metadata = oxen_field.metadata.clone();
-                }
+        for field in &mut df_metadata.tabular.schema.fields {
+            if let Some(oxen_field) = previous_oxen_metadata
+                .tabular
+                .schema
+                .fields
+                .iter()
+                .find(|oxen_field| oxen_field.name == field.name)
+            {
+                field.metadata = oxen_field.metadata.clone();
             }
-            return Some(GenericMetadata::MetadataTabular(df_metadata));
         }
+        return Some(GenericMetadata::MetadataTabular(df_metadata));
     }
     df_metadata
 }
@@ -1257,22 +1257,28 @@ mod tests {
             let status = repositories::status(&repo)?;
 
             // The normal file should be staged
-            assert!(status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(normal_file)));
+            assert!(
+                status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(normal_file))
+            );
 
             // The ignored file should not be staged
-            assert!(!status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(ignored_file)));
+            assert!(
+                !status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(ignored_file))
+            );
 
             // The oxenignore file itself should be staged
-            assert!(status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(".oxenignore")));
+            assert!(
+                status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(".oxenignore"))
+            );
 
             Ok(())
         })
@@ -1372,30 +1378,40 @@ mod tests {
             let status = repositories::status(&repo)?;
 
             // Files in normal_dir should be staged
-            assert!(status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(format!("{normal_dir}/file1.txt"))));
-            assert!(status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(format!("{normal_dir}/file2.txt"))));
+            assert!(
+                status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(format!("{normal_dir}/file1.txt")))
+            );
+            assert!(
+                status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(format!("{normal_dir}/file2.txt")))
+            );
 
             // Files in ignored_dir should not be staged
-            assert!(!status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file1.txt"))));
-            assert!(!status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file2.txt"))));
+            assert!(
+                !status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file1.txt")))
+            );
+            assert!(
+                !status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(format!("{dir_to_ignore}/file2.txt")))
+            );
 
             // The oxenignore file itself should be staged
-            assert!(status
-                .staged_files
-                .iter()
-                .any(|path| path.0.ends_with(".oxenignore")));
+            assert!(
+                status
+                    .staged_files
+                    .iter()
+                    .any(|path| path.0.ends_with(".oxenignore"))
+            );
 
             Ok(())
         })

@@ -814,11 +814,11 @@ impl MerkleTreeNode {
             }
         }
 
-        if let EMerkleTreeNode::Directory(_) = &self.node {
-            if traversed_path == path_components.last().unwrap() {
-                traversed_nodes.push(self.clone());
-                return Ok((Some(self.clone()), traversed_nodes));
-            }
+        if let EMerkleTreeNode::Directory(_) = &self.node
+            && traversed_path == path_components.last().unwrap()
+        {
+            traversed_nodes.push(self.clone());
+            return Ok((Some(self.clone()), traversed_nodes));
         }
 
         if let EMerkleTreeNode::VNode(_) = &self.node {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
-use crate::constants::{VERSION_CHUNKS_DIR, VERSION_CHUNK_FILE_NAME, VERSION_FILE_NAME};
+use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::storage::version_store::VersionStore;
 use crate::util::{self, concurrency, hasher};
@@ -12,9 +12,9 @@ use crate::view::versions::CleanCorruptedVersionsResult;
 use async_trait::async_trait;
 use bytes::Bytes;
 use image::{self, DynamicImage};
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 use tokio::io::{BufReader, BufWriter};
@@ -344,10 +344,10 @@ impl VersionStore for LocalVersionStore {
         let mut entries = fs::read_dir(&chunk_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
-            if file_type.is_dir() {
-                if let Ok(chunk_offset) = entry.file_name().to_string_lossy().parse::<u64>() {
-                    chunks.push(chunk_offset);
-                }
+            if file_type.is_dir()
+                && let Ok(chunk_offset) = entry.file_name().to_string_lossy().parse::<u64>()
+            {
+                chunks.push(chunk_offset);
             }
         }
         Ok(chunks)

@@ -20,9 +20,10 @@ pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
         constants::DEFAULT_HOST.to_string(),
     );
     if let Some(host) = config.default_host
-        && !host.is_empty() {
-            default_host.1 = host;
-        }
+        && !host.is_empty()
+    {
+        default_host.1 = host;
+    }
     Ok(default_host)
 }
 

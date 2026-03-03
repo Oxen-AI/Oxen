@@ -270,25 +270,31 @@ mod tests {
 
                 assert!(local_repo.path.join("annotations").exists());
                 assert!(local_repo.path.join("annotations").join("train").exists());
-                assert!(local_repo
-                    .path
-                    .join("annotations")
-                    .join("train")
-                    .join("one_shot.csv")
-                    .exists());
-                assert!(local_repo
-                    .path
-                    .join("annotations")
-                    .join("train")
-                    .join("two_shot.csv")
-                    .exists());
+                assert!(
+                    local_repo
+                        .path
+                        .join("annotations")
+                        .join("train")
+                        .join("one_shot.csv")
+                        .exists()
+                );
+                assert!(
+                    local_repo
+                        .path
+                        .join("annotations")
+                        .join("train")
+                        .join("two_shot.csv")
+                        .exists()
+                );
                 assert!(local_repo.path.join("annotations").join("test").exists());
-                assert!(local_repo
-                    .path
-                    .join("annotations")
-                    .join("test")
-                    .join("annotations.csv")
-                    .exists());
+                assert!(
+                    local_repo
+                        .path
+                        .join("annotations")
+                        .join("test")
+                        .join("annotations.csv")
+                        .exists()
+                );
                 assert!(!local_repo.path.join("train").exists());
 
                 Ok(())
@@ -310,12 +316,14 @@ mod tests {
                 let local_repo = clone_remote(&opts).await?.unwrap();
 
                 assert!(local_repo.path.join("annotations").join("test").exists());
-                assert!(local_repo
-                    .path
-                    .join("annotations")
-                    .join("test")
-                    .join("annotations.csv")
-                    .exists());
+                assert!(
+                    local_repo
+                        .path
+                        .join("annotations")
+                        .join("test")
+                        .join("annotations.csv")
+                        .exists()
+                );
                 assert!(!local_repo.path.join("annotations").join("train").exists());
                 assert!(!local_repo.path.join("train").exists());
 
@@ -341,12 +349,14 @@ mod tests {
 
                 assert!(local_repo.path.join("annotations").join("test").exists());
                 assert!(local_repo.path.join("nlp").exists());
-                assert!(local_repo
-                    .path
-                    .join("annotations")
-                    .join("test")
-                    .join("annotations.csv")
-                    .exists());
+                assert!(
+                    local_repo
+                        .path
+                        .join("annotations")
+                        .join("test")
+                        .join("annotations.csv")
+                        .exists()
+                );
                 assert!(!local_repo.path.join("annotations").join("train").exists());
                 assert!(!local_repo.path.join("train").exists());
 
@@ -755,11 +765,13 @@ mod tests {
                 // Verify other files/dirs are NOT present
                 assert!(!cloned_repo_a.path.join("README.md").exists());
                 assert!(!cloned_repo_a.path.join("train").exists());
-                assert!(!cloned_repo_a
-                    .path
-                    .join("annotations")
-                    .join("train")
-                    .exists()); // only annotations/test
+                assert!(
+                    !cloned_repo_a
+                        .path
+                        .join("annotations")
+                        .join("train")
+                        .exists()
+                ); // only annotations/test
 
                 let fetch_opts = FetchOpts {
                     branch: DEFAULT_BRANCH_NAME.to_string(),
@@ -785,11 +797,13 @@ mod tests {
 
                 assert!(!cloned_repo_a.path.join("README.md").exists());
                 assert!(!cloned_repo_a.path.join("train").exists());
-                assert!(!cloned_repo_a
-                    .path
-                    .join("annotations")
-                    .join("train")
-                    .exists());
+                assert!(
+                    !cloned_repo_a
+                        .path
+                        .join("annotations")
+                        .join("train")
+                        .exists()
+                );
 
                 Ok(())
             })

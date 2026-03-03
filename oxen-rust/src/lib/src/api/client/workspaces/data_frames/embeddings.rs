@@ -103,8 +103,8 @@ pub async fn index(
 mod tests {
     use serde_json::json;
 
-    use crate::config::embedding_config::EmbeddingStatus;
     use crate::config::UserConfig;
+    use crate::config::embedding_config::EmbeddingStatus;
     use crate::constants::{DEFAULT_BRANCH_NAME, OXEN_ROW_ID_COL};
     use crate::core::df::tabular;
     use crate::error::OxenError;

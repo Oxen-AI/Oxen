@@ -9,8 +9,8 @@ use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
-use crate::view::schema::SchemaWithPath;
 use crate::view::ListSchemaResponse;
+use crate::view::schema::SchemaWithPath;
 
 pub async fn list(
     remote_repo: &RemoteRepository,

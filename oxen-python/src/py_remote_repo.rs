@@ -54,7 +54,7 @@ impl PyRemoteRepo {
                 return Err(OxenError::basic_str(format!(
                     "Invalid repo name, must be in format namespace/repo_name. Got {repo}"
                 ))
-                .into())
+                .into());
             }
         };
 
@@ -527,8 +527,10 @@ impl PyRemoteRepo {
                 self.set_revision(commit_id.clone());
                 self.commit_id = Some(commit_id.clone());
                 Ok(commit_id)
-            },
-            _ => Err(PyValueError::new_err(format!("{revision} is not a valid branch name or commit id. Consider creating it with `create_branch`")))
+            }
+            _ => Err(PyValueError::new_err(format!(
+                "{revision} is not a valid branch name or commit id. Consider creating it with `create_branch`"
+            ))),
         }
     }
 

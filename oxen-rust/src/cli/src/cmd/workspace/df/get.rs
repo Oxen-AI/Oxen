@@ -120,8 +120,9 @@ impl RunCmd for WorkspaceDFGetCmd {
                     println!("{df:?}");
                     println!("Query took: {:?}", start.elapsed());
                 } else {
-                    return Err(OxenError::basic_str(
-                        format!("No data frame found. Index the data frame before querying.\n\n  oxen workspace df index {path} -w {workspace_id}\n")));
+                    return Err(OxenError::basic_str(format!(
+                        "No data frame found. Index the data frame before querying.\n\n  oxen workspace df index {path} -w {workspace_id}\n"
+                    )));
                 }
             }
             Err(e) => {

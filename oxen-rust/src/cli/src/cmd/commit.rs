@@ -67,21 +67,24 @@ fn resolve_editor(maybe_config: Option<&UserConfig>) -> Option<String> {
     // 1. Check UserConfig
     if let Some(config) = maybe_config
         && let Some(ref editor) = config.editor
-            && !editor.is_empty() {
-                return Some(editor.to_string());
-            }
+        && !editor.is_empty()
+    {
+        return Some(editor.to_string());
+    }
 
     // 2. Fall back to VISUAL env var
     if let Ok(editor) = std::env::var("VISUAL")
-        && !editor.is_empty() {
-            return Some(editor);
-        }
+        && !editor.is_empty()
+    {
+        return Some(editor);
+    }
 
     // 3. Fall back to EDITOR env var
     if let Ok(editor) = std::env::var("EDITOR")
-        && !editor.is_empty() {
-            return Some(editor);
-        }
+        && !editor.is_empty()
+    {
+        return Some(editor);
+    }
 
     None
 }

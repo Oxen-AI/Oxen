@@ -1048,10 +1048,12 @@ mod tests {
             status.print();
 
             // Should find the untracked dir
-            assert!(status
-                .untracked_dirs
-                .iter()
-                .any(|(path, _)| *path == PathBuf::from("empty_dir")));
+            assert!(
+                status
+                    .untracked_dirs
+                    .iter()
+                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+            );
 
             // Add the empty dir
             repositories::add(&repo, &empty_dir).await?;

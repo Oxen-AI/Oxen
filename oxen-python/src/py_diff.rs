@@ -1,6 +1,6 @@
 use liboxen::error::OxenError;
-use liboxen::model::diff::generic_diff::GenericDiff;
 use liboxen::model::DiffEntry;
+use liboxen::model::diff::generic_diff::GenericDiff;
 use pyo3::prelude::*;
 
 use liboxen::model::diff::DiffResult;

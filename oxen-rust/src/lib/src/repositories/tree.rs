@@ -807,7 +807,7 @@ fn r_list_files_and_dirs(
             }
             EMerkleTreeNode::Directory(dir_node) => {
                 let new_path = traversed_path.join(dir_node.name());
-                if new_path != PathBuf::from("") {
+                if new_path != Path::new("") {
                     dir_nodes.insert(DirNodeWithPath {
                         dir_node: dir_node.to_owned(),
                         path: new_path.to_owned(),

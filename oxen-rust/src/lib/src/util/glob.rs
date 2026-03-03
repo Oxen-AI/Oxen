@@ -8,7 +8,7 @@ use crate::{repositories, util};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
-use glob::{glob, Pattern};
+use glob::{Pattern, glob};
 use glob_match::glob_match;
 use ignore::gitignore::Gitignore;
 
@@ -245,7 +245,9 @@ fn expand_glob_pattern(
 ) -> Result<HashSet<PathBuf>, OxenError> {
     let mut paths = HashSet::new();
 
-    log::debug!("Expand_glob_pattern got: pattern: {glob_pattern:?}, parent_path: {parent_path:?}, is_final: {is_final:?}");
+    log::debug!(
+        "Expand_glob_pattern got: pattern: {glob_pattern:?}, parent_path: {parent_path:?}, is_final: {is_final:?}"
+    );
 
     if let Some(dir_node) =
         repositories::tree::get_dir_with_children(repo, head_commit, parent_path, None)?

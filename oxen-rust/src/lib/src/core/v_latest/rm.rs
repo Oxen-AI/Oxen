@@ -90,7 +90,7 @@ fn remove_staged_recursively_inner(
                         let path = util::fs::path_relative_to_dir(path, &repo.path)?;
                         let db_path = PathBuf::from(key);
                         log::debug!("considering rm db_path: {db_path:?} for path: {path:?}");
-                        if db_path.starts_with(&path) && path != PathBuf::from("") {
+                        if db_path.starts_with(&path) && path != Path::new("") {
                             let mut parent = db_path.parent().unwrap_or(Path::new(""));
                             remove_staged_entry(&db_path, staged_db)?;
                             while parent != Path::new("") {
@@ -322,7 +322,7 @@ pub fn remove_dir_with_db_manager(
     let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
     // let err_files: Vec<ErrorFileInfo> = vec![];
 
-    let result = with_staged_db_manager(repo, |staged_db_manager| {
+    with_staged_db_manager(repo, |staged_db_manager| {
         // Walk the tree, collecting every node under the dir
         let nodes = root_dir.list_files_and_dirs()?;
         let parent_path = root_path.parent().unwrap_or(&empty_path);
@@ -395,9 +395,7 @@ pub fn remove_dir_with_db_manager(
                 Err(e)
             }
         }
-    });
-
-    result
+    })
 }
 
 // Stages the file_node as removed, and all its parents in the repo as modified

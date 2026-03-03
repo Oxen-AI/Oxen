@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use clap::{arg, Arg, Command};
+use clap::{Arg, Command, arg};
 
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;

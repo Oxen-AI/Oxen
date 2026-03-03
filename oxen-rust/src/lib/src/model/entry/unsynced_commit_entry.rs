@@ -1,5 +1,5 @@
-use crate::model::entry::commit_entry::Entry;
 use crate::model::Commit;
+use crate::model::entry::commit_entry::Entry;
 
 #[derive(Debug)]
 pub struct UnsyncedCommitEntries {

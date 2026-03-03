@@ -3,12 +3,12 @@ use std::path::Path;
 use crate::core::staged::with_staged_db_manager;
 use crate::core::v_latest;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::FileNode;
-use crate::model::metadata::generic_metadata::GenericMetadata;
-use crate::model::metadata::MetadataTabular;
 use crate::model::Schema;
 use crate::model::StagedEntryStatus;
 use crate::model::Workspace;
+use crate::model::merkle_tree::node::FileNode;
+use crate::model::metadata::MetadataTabular;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::repositories;
 
 /// Updates the staged schema by changing the column name from `before_column` to `after_column`

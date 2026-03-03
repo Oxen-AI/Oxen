@@ -21,38 +21,39 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
 
     // Try to see if they are asking for a specific file
     if let Ok(resource) = parse_resource(&req, &repo)
-        && resource.path != Path::new("") {
-            let commit = &resource.clone().commit.unwrap();
+        && resource.path != Path::new("")
+    {
+        let commit = &resource.clone().commit.unwrap();
 
-            log::debug!(
-                "schemas::list_or_get file {:?} commit {}",
-                resource.path,
-                commit
-            );
+        log::debug!(
+            "schemas::list_or_get file {:?} commit {}",
+            resource.path,
+            commit
+        );
 
-            let schema =
-                repositories::data_frames::schemas::get_by_path(&repo, commit, &resource.path)?;
+        let schema =
+            repositories::data_frames::schemas::get_by_path(&repo, commit, &resource.path)?;
 
-            let mut schema_w_paths: Vec<SchemaWithPath> = vec![];
-            if let Some(schema) = schema {
-                schema_w_paths.push(SchemaWithPath::new(
-                    resource.path.to_string_lossy().into(),
-                    schema,
-                ));
-            }
-
-            let resource = ResourceVersion {
-                path: resource.path.to_string_lossy().into(),
-                version: resource.version.to_string_lossy().into(),
-            };
-            let response = ListSchemaResponse {
-                status: StatusMessage::resource_found(),
-                schemas: schema_w_paths,
-                commit: Some(commit.clone()),
-                resource: Some(resource),
-            };
-            return Ok(HttpResponse::Ok().json(response));
+        let mut schema_w_paths: Vec<SchemaWithPath> = vec![];
+        if let Some(schema) = schema {
+            schema_w_paths.push(SchemaWithPath::new(
+                resource.path.to_string_lossy().into(),
+                schema,
+            ));
         }
+
+        let resource = ResourceVersion {
+            path: resource.path.to_string_lossy().into(),
+            version: resource.version.to_string_lossy().into(),
+        };
+        let response = ListSchemaResponse {
+            status: StatusMessage::resource_found(),
+            schemas: schema_w_paths,
+            commit: Some(commit.clone()),
+            resource: Some(resource),
+        };
+        return Ok(HttpResponse::Ok().json(response));
+    }
 
     // Otherwise, list all schemas
     let revision = path_param(&req, "resource")?;

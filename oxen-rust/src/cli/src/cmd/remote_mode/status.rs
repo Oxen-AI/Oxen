@@ -4,8 +4,8 @@ use clap::{Arg, ArgMatches, Command};
 use liboxen::api;
 use liboxen::error;
 use liboxen::error::OxenError;
-use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::LocalRepository;
+use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::repositories;
 use liboxen::util;
 

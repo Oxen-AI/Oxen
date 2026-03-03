@@ -6,7 +6,7 @@ use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
-use crate::storage::{create_version_store, StorageConfig, VersionStore};
+use crate::storage::{StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::view::RepositoryView;
 

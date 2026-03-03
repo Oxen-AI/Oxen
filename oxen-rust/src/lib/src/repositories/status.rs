@@ -97,8 +97,8 @@ pub fn status_from_dir(
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
-    use crate::model::staged_data::StagedDataOpts;
     use crate::model::StagedEntryStatus;
+    use crate::model::staged_data::StagedDataOpts;
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
@@ -176,8 +176,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_status_shows_intermediate_directory_if_file_added(
-    ) -> Result<(), OxenError> {
+    async fn test_command_status_shows_intermediate_directory_if_file_added()
+    -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Add a deep file
             repositories::add(
@@ -241,9 +241,11 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&one_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&one_shot_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -277,9 +279,11 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&one_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&one_shot_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -315,9 +319,11 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&labels_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&labels_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -358,15 +364,19 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&two_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&two_shot_relative_path.to_path_buf())
+            );
 
             // Make sure we can see the staged file
             assert_eq!(repo_status.staged_files.len(), 1);
-            assert!(repo_status
-                .staged_files
-                .contains_key(&one_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .staged_files
+                    .contains_key(&one_shot_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -841,9 +851,11 @@ mod tests {
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);
-            assert!(status
-                .modified_files
-                .contains(&PathBuf::from("annotations/train/one_shot.csv")));
+            assert!(
+                status
+                    .modified_files
+                    .contains(&PathBuf::from("annotations/train/one_shot.csv"))
+            );
 
             Ok(())
         })

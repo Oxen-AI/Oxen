@@ -2,8 +2,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     borrow::Cow,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 

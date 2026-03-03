@@ -7,8 +7,8 @@ use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
 use crate::model::entry::metadata_entry::CLIMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
-use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, LocalRepository, MetadataEntry, ParsedResource};
 use crate::util;
 
