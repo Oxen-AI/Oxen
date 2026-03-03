@@ -80,6 +80,13 @@ Examples:
         help="Oxen server host (e.g., hub.oxen.ai). Uses OXEN_HOST env var or default if omitted.",
     )
     parser.add_argument(
+        "--scheme",
+        type=str,
+        choices=["http", "https"],
+        default=None,
+        help="Connection scheme. Defaults to http for localhost/127.0.0.1, https otherwise.",
+    )
+    parser.add_argument(
         "--repo",
         type=str,
         required=True,
@@ -118,6 +125,14 @@ Examples:
 
     args = parser.parse_args()
 
+    # Default scheme: http for localhost/127.0.0.1, https otherwise
+    if args.scheme is None:
+        host_name = (args.host or "").split(":")[0]
+        if host_name in ("localhost", "127.0.0.1"):
+            args.scheme = "http"
+        else:
+            args.scheme = "https"
+
     directory = Path(args.directory)
     if not directory.is_dir():
         print(f"Error: '{directory}' is not a directory or does not exist.")
@@ -140,6 +155,8 @@ Examples:
     # Print plan
     print(f"\nUpload plan:")
     print(f"  Repository:    {args.repo}")
+    if args.host:
+        print(f"  Host:          {args.scheme}://{args.host}")
     print(f"  Branch:        {args.branch}")
     print(f"  Source:        {directory}")
     print(f"  Total files:   {total_files:,}")
@@ -156,9 +173,9 @@ Examples:
 
     # Connect to the remote repo
     if args.host:
-        repo = RemoteRepo(args.repo, host=args.host)
+        repo = RemoteRepo(args.repo, host=args.host, scheme=args.scheme)
     else:
-        repo = RemoteRepo(args.repo)
+        repo = RemoteRepo(args.repo, scheme=args.scheme)
 
     overall_start = time.time()
 
