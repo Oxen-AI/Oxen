@@ -36,14 +36,6 @@ Oxen is purely written in Rust 🦀. You should install the Rust toolchain with 
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Rust Toolchain
-
-Oxen uses a rust-toolchain file to specify the rust version and components. You can install the required toolchain with the following command within the oxen-rust directory:
-
-```bash
-rustup install toolchain
-```
-
 ### Cmake
 
 On macOS, you can install cmake with homebrew
