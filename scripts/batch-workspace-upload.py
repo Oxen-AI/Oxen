@@ -196,7 +196,7 @@ Examples:
         # Add all files in the batch, preserving directory structure relative
         # to the source directory.
         print("  Adding files...")
-        workspace.add_files(directory, batch)
+        workspace.add_files(directory.parent, batch)
 
         # Commit the workspace
         print(f"  Committing: \"{msg}\"")
