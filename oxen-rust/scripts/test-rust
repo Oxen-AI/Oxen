@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build, configure, and run the Oxen test suite. Any arguments passed to this script will be passed
-# to `cargo nexttest run`
+# to `cargo nextest run`
 
 set -euo pipefail
 

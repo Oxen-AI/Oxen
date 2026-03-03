@@ -83,6 +83,7 @@ content:
 ```toml
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/ld64.mold"]
+```
 
 ### macOS with Apple Silicon
 
@@ -101,7 +102,7 @@ rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld", ]
 
 ### macOS with Intel
 
-On macOS Intel you can use the MIT-licensed version, of mold, [sold](https://github.com/bluewhalesystems/sold)).
+On macOS Intel you can use the MIT-licensed version of mold, [sold](https://github.com/bluewhalesystems/sold)).
 
 
 Use the following instructions to install sold on macOS Intel and configure cargo to use it for building Oxen:
@@ -265,7 +266,7 @@ mkdir -p data/test/{runs,config}
 
 You can also increase the number of open files your system allows ulimit before running tests:
 
-```
+```bash
 ulimit -n 10240
 ```
 
@@ -280,25 +281,25 @@ cargo test -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 You can use the following script to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
 
 ```bash
-scripts/test
+scripts/test-rust
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```bash
-scripts/test --lib test_get_metadata_text_readme
+scripts/test-rust --lib test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test --no-capture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust --no-capture test_command_push_clone_pull_push
 ```
 
 To set a different test host you can set the `OXEN_TEST_HOST` environment variable
 
 ```bash
-env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test
+env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust
 ```
 
 ## Pre-Commit Hook
