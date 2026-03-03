@@ -256,7 +256,7 @@ docker load -i result
 ```
 
 # Unit & Integration Tests
- 
+
 ## Manual Test Setup
 
 Here are the steps to manually configure and run tests (see also the [Automatic Test Setup](#automatic-test-setup) section). Make sure your user is configured and server is running on the default port and host, by following these setup steps:
@@ -272,7 +272,7 @@ mkdir -p data/test/{runs,config}
 *Note:* tests open up a lot of file handles, so limit num test threads if running everything.
 
 You can also increase the number of open files your system allows ulimit before running tests:
- 
+
 ```
 ulimit -n 10240
 ```
