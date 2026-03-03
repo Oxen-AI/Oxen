@@ -18,11 +18,17 @@ use crate::model::Workspace;
 use crate::model::{Commit, ParsedResource};
 use crate::model::{Remote, RepoNew};
 
-pub mod path_buf_error;
-pub mod string_error;
+#[macro_use]
+pub(crate) mod wrapper;
 
+mod path_buf_error;
 pub use crate::error::path_buf_error::PathBufError;
+
+mod string_error;
 pub use crate::error::string_error::StringError;
+
+mod commit_error;
+pub use crate::error::commit_error::CommitError;
 
 use polars::prelude::PolarsError;
 
@@ -79,6 +85,14 @@ pub enum OxenError {
     ResourceNotFound(StringError),
     PathDoesNotExist(Box<PathBufError>),
     ParsedResourceNotFound(Box<PathBufError>),
+
+    /// The Path was requested at the given commit, but there is no entry
+    /// for the path in the merkle tree under this commit.
+    PathIsNotInCommit(Box<CommitError>, Box<PathBufError>),
+
+    /// A tree was request for the given commit, but the commit
+    /// does not exist in the repository.
+    CommitDoesNotExist(Box<CommitError>),
 
     // Versioning
     MigrationRequired(StringError),
@@ -147,11 +161,16 @@ pub enum OxenError {
 
 impl fmt::Display for OxenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use OxenError::*;
+        // TODO:
+        // - migrate all user-facing error messages to Display
+        // - make sure each error has its own explicit branch (no wildcard matching)
+        // - use `println!("{e}")` in user-facing code when we get an `OxenError`
         match self {
-            OxenError::OxenUpdateRequired(err)
-            | OxenError::Basic(err)
-            | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
-            OxenError::InvalidRepoName(name) => write!(
+            OxenUpdateRequired(e) | Basic(e) | ThumbnailingNotEnabled(e) => write!(f, "{e}"),
+            PathIsNotInCommit(c, p) => write!(f, "Path '{p}' is not present in commit '{c}'."),
+            CommitDoesNotExist(c) => write!(f, "Commit '{c}' does not exist in repository."),
+            InvalidRepoName(name) => write!(
                 f,
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
             ),

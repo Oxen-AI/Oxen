@@ -3,38 +3,13 @@
 //! Struct that wraps a string and implements the necessary traits for errors.
 //!
 
-use std::fmt;
+// TODO: do we actually need to wrap values into something that implements Error?
+// TODO: investigate if it's sufficient to use values directly
 
-pub struct StringError(String);
-
-impl StringError {
-    pub fn new(s: String) -> Self {
-        StringError(s)
-    }
-}
+error_wrapper!(String);
 
 impl From<&str> for StringError {
     fn from(s: &str) -> Self {
-        StringError(s.to_string())
+        s.to_string().into()
     }
 }
-
-impl From<String> for StringError {
-    fn from(s: String) -> Self {
-        StringError(s)
-    }
-}
-
-impl std::fmt::Display for StringError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::fmt::Debug for StringError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for StringError {}
