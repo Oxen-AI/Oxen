@@ -476,7 +476,7 @@ def generate_binary_file_python(path: Path, size: int) -> None:
 
 def generate_binary_file(path: Path, size: int) -> None:
     """Generate a binary file with random bytes, using dd if available."""
-    if HAS_DD:
+    if HAS_DD and size > 400 * 1024 * 1024:
         generate_binary_file_dd(path, size)
     else:
         generate_binary_file_python(path, size)
