@@ -448,7 +448,8 @@ def generate_image_file(path: Path, size: int) -> None:
     img.save(path, 'PNG')
 
 
-HAS_DD = shutil.which("dd") is not None
+#HAS_DD = shutil.which("dd") is not None
+HAS_DD = False
 
 
 def generate_binary_file_dd(path: Path, size: int) -> None:
