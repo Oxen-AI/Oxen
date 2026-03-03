@@ -548,6 +548,8 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     # Other options
     parser.add_argument('--seed', type=int, default=None,
                        help='Random seed for reproducible generation')
+    parser.add_argument('--dry-run', action='store_true',
+                       help='Print the generation plan without creating any files')
 
     # Distribution-based file sizes
     parser.add_argument('--distribution', type=str, default=None, metavar='NAME',
@@ -750,6 +752,10 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     print(f"  Files per directory: ~{num_files // num_dirs}")
     print(f"  Workers: {max_workers} {executor_type}")
     print()
+
+    if args.dry_run:
+        print("(dry-run) No files were generated.")
+        return
 
     # Generate files in parallel using appropriate executor for workload type
     needs_text = args.type == 'text' or (
