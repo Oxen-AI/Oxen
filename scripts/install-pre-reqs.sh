@@ -85,11 +85,21 @@ elif [ "$PLATFORM" = "linux" ]; then
 
     # Build essentials, OpenSSL, libclang, pkg-config
     NEEDED_PKGS=()
-    dpkg -s build-essential &>/dev/null || NEEDED_PKGS+=(build-essential)
-    dpkg -s libssl-dev       &>/dev/null || NEEDED_PKGS+=(libssl-dev)
-    dpkg -s libclang-dev     &>/dev/null || NEEDED_PKGS+=(libclang-dev)
-    dpkg -s pkg-config       &>/dev/null || NEEDED_PKGS+=(pkg-config)
-    dpkg -s curl             &>/dev/null || NEEDED_PKGS+=(curl)
+    dpkg -s build-essential     &>/dev/null || NEEDED_PKGS+=(build-essential)
+    dpkg -s cmake               &>/dev/null || NEEDED_PKGS+=(cmake)
+    dpkg -s pkg-config          &>/dev/null || NEEDED_PKGS+=(pkg-config)
+    dpkg -s openssl             &>/dev/null || NEEDED_PKGS+=(openssl)
+    dpkg -s libssl-dev          &>/dev/null || NEEDED_PKGS+=(libssl-dev)
+    dpkg -s clang               &>/dev/null || NEEDED_PKGS+=(clang)
+    dpkg -s libclang-dev        &>/dev/null || NEEDED_PKGS+=(libclang-dev)
+    dpkg -s curl                &>/dev/null || NEEDED_PKGS+=(curl)
+    dpkg -s libavcodec-dev      &>/dev/null || NEEDED_PKGS+=(libavcodec-dev)
+    dpkg -s libavformat-dev     &>/dev/null || NEEDED_PKGS+=(libavformat-dev)
+    dpkg -s libavutil-dev       &>/dev/null || NEEDED_PKGS+=(libavutil-dev)
+    dpkg -s libavfilter-dev     &>/dev/null || NEEDED_PKGS+=(libavfilter-dev)
+    dpkg -s libavdevice-dev     &>/dev/null || NEEDED_PKGS+=(libavdevice-dev)
+    dpkg -s libavcodec          &>/dev/null || NEEDED_PKGS+=(libavcodec)
+    dpkg -s libjpeg-turbo-progs &>/dev/null || NEEDED_PKGS+=(libjpeg-turbo-progs)
 
     if [ ${#NEEDED_PKGS[@]} -gt 0 ]; then
         info "Installing system packages: ${NEEDED_PKGS[*]}"
@@ -151,12 +161,28 @@ install_cargo_tool() {
     local version="$3"
     local extra_flags="${4:-}"
 
+    # '---' means "no pinned version; install latest".
+    local pinned=true
+    if [ "$version" = "---" ]; then
+        pinned=false
+    fi
+
     if command_exists "$cmd"; then
-        ok "$cmd already installed (want $version)"
+        if $pinned; then
+            ok "$cmd already installed (want $version)"
+        else
+            ok "$cmd already installed (latest)"
+        fi
     else
-        info "Installing $crate@$version..."
-        # shellcheck disable=SC2086
-        cargo install $extra_flags "$crate" --version "$version"
+        if $pinned; then
+            info "Installing $crate@$version..."
+            # shellcheck disable=SC2086
+            cargo install $extra_flags "$crate" --version "$version"
+        else
+            info "Installing $crate (latest)..."
+            # shellcheck disable=SC2086
+            cargo install $extra_flags "$crate"
+        fi
     fi
 }
 
