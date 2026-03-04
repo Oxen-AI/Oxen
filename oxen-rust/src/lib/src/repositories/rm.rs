@@ -46,6 +46,7 @@ fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -60,7 +61,7 @@ mod tests {
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     /// Should be able to use `oxen rm -r` then restore to get files back
@@ -910,7 +911,8 @@ mod tests {
 
             // copy a cat into the dog image
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("images")
                     .join("cat_1.jpg"),
@@ -920,10 +922,15 @@ mod tests {
             // There should be one modified file
             let status = repositories::status(&repo)?;
             status.print();
-            assert_eq!(status.modified_files.len(), 1);
+            assert_eq!(
+                status.modified_files.len(),
+                1,
+                "Expected 1 modified file but found: {:?}",
+                status.modified_files
+            );
 
             let result = repositories::rm(&repo, &opts);
-            assert!(result.is_err());
+            assert!(result.is_err(), "{result:?}");
 
             Ok(())
         })

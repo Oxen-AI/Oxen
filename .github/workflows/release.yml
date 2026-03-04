@@ -55,7 +55,7 @@ jobs:
     needs: set_env
     uses: ./.github/workflows/release_docker.yml
     with:
-      ARCHITECTURE: x86_64
+      ARCHITECTURE: amd64
       AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
       AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
       RELEASE_VERSION: ${{ needs.set_env.outputs.release_version }}

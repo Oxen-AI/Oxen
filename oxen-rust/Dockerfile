@@ -1,4 +1,4 @@
-FROM rust:1.85.0 AS builder
+FROM rust:1.88 AS builder
 
 USER root
 RUN apt-get update
@@ -50,7 +50,7 @@ RUN apt-get update \
 
 WORKDIR /usr/src/oxen-server
 COPY . .
-RUN cargo build --release --features ffmpeg
+RUN cargo build --workspace --release --features liboxen/ffmpeg
 
 # Minimal image to run the binary (without Rust toolchain)
 FROM debian:bookworm-slim AS runtime

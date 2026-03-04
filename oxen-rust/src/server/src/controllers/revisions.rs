@@ -44,6 +44,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use actix_web::http::{self};
 
@@ -53,7 +54,6 @@ mod tests {
     use liboxen::repositories;
 
     use crate::controllers;
-    use crate::test;
 
     #[actix_web::test]
     async fn test_get() -> Result<(), OxenError> {
