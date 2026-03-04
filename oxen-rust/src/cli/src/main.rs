@@ -62,6 +62,7 @@ async fn async_main() -> ExitCode {
         Box::new(cmd::EmbeddingsCmd),
         Box::new(cmd::InfoCmd),
         Box::new(cmd::InitCmd),
+        Box::new(cmd::LfsCmd),
         Box::new(cmd::LoadCmd),
         Box::new(cmd::LogCmd),
         Box::new(cmd::LsCmd),

@@ -273,3 +273,9 @@ pub fn chunk_size() -> u64 {
 
 // Oxen request Id
 pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
+
+// LFS
+/// Name of the LFS config file inside .oxen/
+pub const LFS_CONFIG_FILENAME: &str = "lfs.toml";
+/// Subdirectory under .oxen/ where large file versions are cached
+pub const LFS_VERSIONS_DIR: &str = "versions";

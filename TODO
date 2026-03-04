@@ -1,0 +1,2 @@
+- do `oxen lfs init` when doing a `git clone` on an oxen-enabled repository
+- fix gaps (oxen lfs push)
