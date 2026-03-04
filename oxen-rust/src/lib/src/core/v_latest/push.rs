@@ -321,6 +321,11 @@ async fn get_commit_missing_hashes(
             )?
             else {
                 log::error!("push_commits commit node not found for commit: {commit}");
+                eprintln!(
+                    "Warning: commit node not found locally for commit {}.\n \
+                    You may need to run `oxen pull <remote> <branch> --all` to fetch the complete history.",
+                    commit.id
+                );
                 continue;
             };
 
@@ -407,7 +412,11 @@ async fn push_commits(
         .map(|commit| {
             let commit_hash = commit.hash()?;
             let info = commit_info.get(&commit_hash).cloned().ok_or_else(|| {
-                OxenError::basic_str(format!("Commit info not found for commit {commit_hash}"))
+                OxenError::basic_str(format!(
+                    "Commit info not found for commit {commit_hash}. \
+                    Not all nodes are present locally. \
+                    Run `oxen pull <remote> <branch> --all` to fetch the complete history before pushing."
+                ))
             })?;
             Ok((commit, info))
         })
@@ -499,6 +508,19 @@ async fn push_commits(
     Ok(())
 }
 
+fn wrap_push_entry_error(entry_type: &str, err: OxenError) -> OxenError {
+    let err_str = err.to_string();
+    if err_str.contains("No such file or directory") || err_str.contains("NotFound") {
+        OxenError::basic_str(format!(
+            "Error syncing {entry_type} entries\n\n\
+            Not all file versions are present locally. \n \
+            Run `oxen pull <remote> <branch> --all` to fetch the complete history before pushing."
+        ))
+    } else {
+        OxenError::basic_str(format!("Error syncing {entry_type} entries: {err}"))
+    }
+}
+
 pub async fn push_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -545,14 +567,8 @@ pub async fn push_entries(
             log::debug!("Moving on to post-push validation");
             Ok(())
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            Err(OxenError::basic_str(err))
-        }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            Err(OxenError::basic_str(err))
-        }
+        (Err(err), Ok(_)) => Err(wrap_push_entry_error("large", err)),
+        (Ok(_), Err(err)) => Err(wrap_push_entry_error("small", err)),
         _ => Err(OxenError::basic_str("Unknown error syncing entries")),
     }
 }

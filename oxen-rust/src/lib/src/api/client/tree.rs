@@ -81,6 +81,13 @@ pub async fn create_nodes(
         progress.set_message(format!("Packing {}/{} nodes", i + 1, nodes.len()));
 
         log::debug!("create_nodes appending dir to tar");
+        if !node_dir.exists() {
+            return Err(OxenError::basic_str(format!(
+                "Node {node_hash} not found locally. \
+                Not all nodes are present locally. \
+                Run `oxen pull <remote> <branch> --all` to fetch the complete history before pushing."
+            )));
+        }
         tar.append_dir_all(dir_prefix, node_dir)?;
     }
 
