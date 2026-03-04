@@ -43,14 +43,18 @@ if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
 fi
 
 # ---------- 4. Configure test user ----------
-echo "==> Configuring test user..."
-mkdir -p ./data/test/runs
-mkdir -p ./data/test/config
+if [ ! -d ./data/test/runs ] || [ ! -d ./data/test/config ]; then
+    echo "==> Configuring test user..."
+    mkdir -p ./data/test/runs
+    mkdir -p ./data/test/config
 
-./target/debug/oxen-server add-user \
-    --email ox@oxen.ai \
-    --name Ox \
-    --output data/test/config/user_config.toml
+    ./target/debug/oxen-server add-user \
+        --email ox@oxen.ai \
+        --name Ox \
+        --output data/test/config/user_config.toml
+else
+    echo "==> Test user already configured, skipping."
+fi
 
 # ---------- 5. Start oxen-server ----------
 echo "==> Starting oxen-server..."

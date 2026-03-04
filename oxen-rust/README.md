@@ -20,29 +20,11 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
   - [ ] Backblaze
 - [ ] Block level deduplication
 
-# Library Architecture
-
-If you are a developer and want to learn more about adding code or the overall architecture [start here](docs/dev/AddLibraryCode.md). Otherwise, a quick start to make sure everything is working follows.
-
 # 🔨 Build & Run
 
-## Install Dependencies
+## Install Prerequisites
 
-### Rust
-
-Oxen is purely written in Rust 🦀. You should install the Rust toolchain with rustup: https://www.rust-lang.org/tools/install.
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-### Cmake
-
-On macOS, you can install cmake with homebrew
-
-```bash
-brew install cmake
-```
+See the [prerequisites](../README.md#prerequisites) section of the main readme to install the needed prerequisites.
 
 ## Build
 
@@ -108,32 +90,6 @@ Then create `.cargo/config.toml` in your Oxen repo root with the following:
 ```toml
 [target.aarch64-apple-darwin]
 rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld", ]
-```
-
-### macOS with Intel
-
-On macOS Intel you can use the MIT-licensed version of mold, [sold](https://github.com/bluewhalesystems/sold)).
-
-
-Use the following instructions to install sold on macOS Intel and configure cargo to use it for building Oxen:
-
-```bash
-git clone --depth=1 --single-branch https://github.com/bluewhalesystems/sold.git
-
-mkdir sold/build
-cd sold/build
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=c++ ..
-cmake --build . -j $(nproc)
-sudo cmake --install .
-```
-
-Then create `.cargo/config.toml` in your Oxen repo root with the following
-content:
-
-```toml
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/ld64.mold"]
-
 ```
 
 # Run
@@ -316,16 +272,6 @@ To set a different test host you can set the `OXEN_TEST_HOST` environment variab
 
 ```bash
 env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust
-```
-
-## Pre-Commit Hook
-
-We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
-make sure to install [`pre-commit`](https://pre-commit.com/) library
-and then install the pre-commit-hooks locally using:
-
-```bash
-pre-commit install
 ```
 
 # Oxen Server
