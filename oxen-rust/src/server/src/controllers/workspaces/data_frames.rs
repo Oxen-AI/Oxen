@@ -676,7 +676,7 @@ mod tests {
     /// Expected: 200 with `text/csv` body containing the data.
     #[actix_web::test]
     async fn test_download_indexed_data_frame_returns_csv_content() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -739,7 +739,7 @@ mod tests {
     /// Expected: 200 JSON with `is_indexed: false`, `data_frame: None`.
     #[actix_web::test]
     async fn test_download_unindexed_workspace_only_file_returns_200() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -797,7 +797,7 @@ mod tests {
     /// Expected: 404.
     #[actix_web::test]
     async fn test_download_nonexistent_path_returns_404() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -845,7 +845,7 @@ mod tests {
     #[actix_web::test]
     async fn test_download_existing_unindexed_returns_200_with_is_indexed_false(
     ) -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -899,7 +899,7 @@ mod tests {
     #[actix_web::test]
     async fn test_download_streaming_unindexed_committed_file_returns_200() -> Result<(), OxenError>
     {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -948,7 +948,7 @@ mod tests {
     #[actix_web::test]
     async fn test_download_streaming_unindexed_workspace_only_file_returns_200(
     ) -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -1000,7 +1000,7 @@ mod tests {
     /// Expected: 404.
     #[actix_web::test]
     async fn test_download_streaming_nonexistent_path_returns_404() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";

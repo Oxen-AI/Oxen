@@ -1884,7 +1884,7 @@ pub fn handle_video_thumbnail(
         );
         Err(OxenError::thumbnailing_not_enabled(
             "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
-             Build with --features ffmpeg to enable this functionality.",
+             Build with --features liboxen/ffmpeg to enable this functionality.",
         ))
     }
 
@@ -2275,14 +2275,16 @@ def add(a, b):
             let test_id_file = repo.path.join("test_id.txt");
             let test_id_file_no_ext = repo.path.join("test_id");
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("text")
                     .join("test_id.txt"),
                 &test_id_file,
             )?;
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("text")
                     .join("test_id.txt"),
@@ -2309,10 +2311,12 @@ def add(a, b):
             assert_eq!(
                 EntryDataType::Tabular,
                 util::fs::file_data_type(
-                    &Path::new("data")
+                    test::REPO_ROOT
+                        .join("data")
                         .join("test")
                         .join("json")
                         .join("tabular.json")
+                        .as_path()
                 )
             );
 
