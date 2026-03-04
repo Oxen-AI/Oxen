@@ -396,38 +396,6 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
     }
 }
 
-fn list_forward_paginated(
-    repo: &LocalRepository,
-    head_commit: Commit,
-    skip: usize,
-    limit: usize,
-) -> Result<Vec<Commit>, OxenError> {
-    let mut results = Vec::new();
-    let mut current = Some(head_commit);
-    let mut count = 0;
-    let end_idx = skip + limit;
-
-    while let Some(commit) = current {
-        if count >= skip && count < end_idx {
-            results.push(commit.clone());
-        }
-        count += 1;
-
-        if count >= end_idx {
-            break;
-        }
-
-        current = if let Some(parent_id) = commit.parent_ids.first() {
-            let parent_id: MerkleHash = parent_id.parse()?;
-            get_by_hash(repo, &parent_id)?
-        } else {
-            None
-        };
-    }
-
-    Ok(results)
-}
-
 pub fn list_recursive_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -485,12 +453,12 @@ fn traverse_commits(
     mut results: Option<&mut Vec<Commit>>,
 ) -> Result<usize, OxenError> {
     let mut count = 0;
-    let mut stack: Vec<Commit> = vec![config.head_commit];
+    let mut queue: Vec<Commit> = vec![config.head_commit];
     let end_idx = config.skip + config.limit;
     let can_early_exit = config.known_total_count.is_some();
     let collect_results = results.is_some();
 
-    while let Some(commit) = stack.pop() {
+    while let Some(commit) = queue.pop() {
         if config.visited.contains(&commit.id) {
             continue;
         }
@@ -524,7 +492,7 @@ fn traverse_commits(
             }
         }
 
-        // Process commit in pre-order (newest-first)
+        // Process commit (globally newest-first)
         if count >= config.skip && count < end_idx {
             if let Some(ref mut res) = results {
                 res.push(commit.clone());
@@ -542,22 +510,18 @@ fn traverse_commits(
             break;
         }
 
-        // Push children to stack (sorted so newest is processed first)
-        let mut parent_commits: Vec<Commit> = Vec::new();
+        // Add parents to the queue
         for parent_id in commit.parent_ids.clone() {
             let parent_id = parent_id.parse()?;
             if let Some(c) = get_by_hash(config.repo, &parent_id)? {
-                parent_commits.push(c);
+                if !config.visited.contains(&c.id) {
+                    queue.push(c);
+                }
             }
         }
 
-        // Sort by timestamp ascending, so when we push to stack, newest is on top
-        parent_commits.sort_by_key(|c| c.timestamp);
-        for parent_commit in parent_commits {
-            if !config.visited.contains(&parent_commit.id) {
-                stack.push(parent_commit);
-            }
-        }
+        // Sort ascending so pop() yields the newest commit next
+        queue.sort_by_key(|c| c.timestamp);
     }
 
     Ok(config.known_total_count.unwrap_or(count))
@@ -675,13 +639,6 @@ pub fn list_from_paginated_impl(
         log::info!(
             "list_from_paginated_impl: total_count={total_count}, cached={cached}, skip={skip}, limit={limit}"
         );
-
-        if skip + limit <= 10 {
-            let _perf_fast = crate::perf_guard!("core::commits::list_forward_paginated");
-            let commits = list_forward_paginated(repo, commit, skip, limit)?;
-            drop(_perf_fast);
-            return Ok((commits, total_count, cached));
-        }
 
         let _perf_recursive = crate::perf_guard!("core::commits::list_recursive_paginated");
         let (commits, _) =
