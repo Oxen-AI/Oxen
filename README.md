@@ -134,10 +134,10 @@ However, each codebase shares the same pre-requisites and pre-commit hooks.
 
 #### Automatic Install
 
-You should use [`./scripts/prereq_install_script.sh`](./scripts/prereq_install_script.sh) to automatically install the required development tools and toolchains for Rust and Python. Execute that as:
+You should use [`./scripts/install-pre-reqs.sh`](./scripts/install-pre-reqs.sh) to automatically install the required development tools and toolchains for Rust and Python. Execute that as:
 
 ```bash
-./scripts/prereq_install_script.sh
+./scripts/install-pre-reqs.sh
 ```
 
 It supports MacOS and Debian-based Linux distributions. If you have a different OS or distribution, or if you have some error with the install script, you can follow the manual installation steps below.

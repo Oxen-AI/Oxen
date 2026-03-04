@@ -286,6 +286,6 @@ fi
 
 if $INSTALLED_UV; then
     echo '  # uv'
-    echo '  export PATH="$HOME/.local/bin:$PATH"'
+    echo "  export PATH=\"${UV_BIN_DIR:-$HOME/.local/bin}:\$PATH\""
     echo ""
 fi
