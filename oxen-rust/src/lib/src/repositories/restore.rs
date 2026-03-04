@@ -14,12 +14,12 @@ use crate::opts::RestoreOpts;
 /// ```
 /// use liboxen::command;
 /// use liboxen::util;
-/// # use liboxen::test;
+/// #
 /// # use liboxen::error::OxenError;
 /// # use liboxen::opts::RestoreOpts;
 /// # use std::path::Path;
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");

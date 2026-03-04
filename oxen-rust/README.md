@@ -46,15 +46,25 @@ brew install cmake
 
 ## Build
 
+Build the entire workspace (CLI, server, and library):
+
 ```bash
-cargo build
+cargo build --workspace
+```
+
+Or build a specific crate:
+
+```bash
+cargo build -p oxen-server
+cargo build -p oxen-cli
+cargo build -p liboxen
 ```
 
 If on intel mac, you may need to build with the following
 
 ```bash
 rustup target install x86_64-apple-darwin
-cargo build --target x86_64-apple-darwin
+cargo build --workspace --target x86_64-apple-darwin
 ```
 
 If on Windows, you may need to add the following directories to the 'INCLUDE' environment variable
@@ -192,6 +202,12 @@ You can also create a .env.local file in the /src/server directory which can con
 Run the server
 
 ```bash
+cargo run -p oxen-server -- start
+```
+
+Or run the compiled binary directly:
+
+```bash
 ./target/debug/oxen-server start
 ```
 
@@ -229,9 +245,9 @@ To develop with the standard rust toolchain in a Nix dev shell:
 
 ```bash
 nix develop -c $SHELL
-cargo build
-cargo run --bin oxen-server start
-cargo run --bin oxen start
+cargo build --workspace
+cargo run -p oxen-server -- start
+cargo run -p oxen-cli -- init
 ```
 
 The flake also provides derivations to build OCI (Docker) images with the minimal
@@ -273,7 +289,7 @@ ulimit -n 10240
 Then you can run the tests with the `cargo test` or `cargo nextest` (preferred) directly. To run all tests with the default number of threads:
 
 ```bash
-cargo test -- --test-threads=$(getconf _NPROCESSORS_ONLN)
+cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 ```
 
 ## Automatic Test Setup
@@ -373,13 +389,13 @@ docker-compose up -d --scale oxen=4 --no-recreate
 we use criterion to handle benchmarks.
 
 ```bash
-cargo bench
+cargo bench --workspace
 ```
 
 To save baseline you can run
 
 ```bash
-cargo bench -- --save-baseline bench
+cargo bench --workspace -- --save-baseline bench
 ```
 
 Which would then store the benchmark under `target/criterion/add`
@@ -390,5 +406,11 @@ To enable thumbnailing for videos, you will have to build with ffmpeg enabled
 
 ```bash
 brew install ffmpeg@7
-cargo build --features ffmpeg
+cargo build --workspace --all-features
+```
+
+Or for a specific crate:
+
+```bash
+cargo build -p oxen-server --features liboxen/ffmpeg
 ```

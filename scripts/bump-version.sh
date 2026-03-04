@@ -118,7 +118,7 @@ echo "  ✓ oxen-python/pyproject.toml" >&2
 # Update lock files (only workspace packages, not all dependencies)
 echo "Updating lock files..." >&2
 echo "  Updating oxen-rust/Cargo.lock..." >&2
-(cd oxen-rust && cargo update -p liboxen -p oxen-cli -p oxen-server --quiet)
+(cd oxen-rust && cargo update --workspace --quiet) #cargo update -p liboxen -p oxen-cli -p oxen-server -p oxen-bench --quiet)
 echo "  ✓ oxen-rust/Cargo.lock" >&2
 
 echo "  Updating oxen-python/Cargo.lock and uv.lock..." >&2

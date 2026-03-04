@@ -3,7 +3,7 @@ retries = 2
 failure-output = "immediate-final"
 fail-fast = { max-fail = 10 }
 # temporarily disable S3 tests
-default-filter = 'not binary(s3_tests)'
+default-filter = 'not test(s3_tests::)'
 
 [profile.ci]
 # Do not cancel the test run on the first failure
@@ -11,4 +11,4 @@ fail-fast = false
 retries = 2
 failure-output = "immediate-final"
 # temporarily disable S3 tests
-default-filter = 'not binary(s3_tests)'
+default-filter = 'not test(s3_tests::)'
