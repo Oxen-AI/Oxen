@@ -2266,12 +2266,10 @@ mod tests {
 
     use std::path::Path;
 
-    use liboxen::error::OxenError;
-    use liboxen::repositories;
+    use crate::error::OxenError;
+    use crate::repositories;
 
-    use liboxen::test::{
-        run_training_data_repo_test_fully_committed_async, write_txt_file_to_path,
-    };
+    use super::{run_training_data_repo_test_fully_committed_async, write_txt_file_to_path};
 
     #[tokio::test]
     async fn test_oxen_ignore_file() -> Result<(), OxenError> {
