@@ -57,7 +57,7 @@ if [ "$PLATFORM" = "macos" ]; then
         info "Installing Xcode Command Line Tools..."
         xcode-select --install
         echo "Please complete the Xcode CLI Tools installation, then re-run this script."
-        exit 0
+        exit 1
     else
         ok "Xcode Command Line Tools already installed"
     fi
@@ -155,6 +155,13 @@ fi
 
 info "Checking cargo tools..."
 
+installed_cargo_version() {
+    # Extracts the installed version of a crate from `cargo install --list`.
+    # Output format: "crate-name v1.2.3:"
+    local crate="$1"
+    cargo install --list 2>/dev/null | grep "^${crate} v" | sed 's/.*v\([^ :]*\).*/\1/'
+}
+
 install_cargo_tool() {
     local cmd="$1"
     local crate="$2"
@@ -169,7 +176,15 @@ install_cargo_tool() {
 
     if command_exists "$cmd"; then
         if $pinned; then
-            ok "$cmd already installed (want $version)"
+            local installed
+            installed="$(installed_cargo_version "$crate")"
+            if [ "$installed" = "$version" ]; then
+                ok "$cmd already installed at $version"
+            else
+                warn "$cmd version mismatch: installed=$installed, want=$version. Reinstalling..."
+                # shellcheck disable=SC2086
+                cargo install $extra_flags "$crate" --version "$version" --force
+            fi
         else
             ok "$cmd already installed (latest)"
         fi
