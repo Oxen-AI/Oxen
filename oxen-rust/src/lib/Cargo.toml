@@ -122,5 +122,4 @@ zip = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }
-oxen-test = { path = "../oxen-test" }
 serial_test = { workspace = true }

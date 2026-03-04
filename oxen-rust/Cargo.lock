@@ -4456,7 +4456,6 @@ dependencies = [
  "mp4",
  "num_cpus",
  "os_path",
- "oxen-test",
  "par-stream",
  "parking_lot",
  "pathdiff",
@@ -5232,7 +5231,6 @@ dependencies = [
  "liboxen",
  "log",
  "minus",
- "oxen-test",
  "serde_json",
  "tempfile",
  "time",
@@ -5267,7 +5265,6 @@ dependencies = [
  "lru 0.14.0",
  "mime",
  "os_path",
- "oxen-test",
  "percent-encoding",
  "regex",
  "rocksdb",
@@ -5281,18 +5278,6 @@ dependencies = [
  "url",
  "utoipa",
  "utoipa-swagger-ui",
- "uuid",
-]
-
-[[package]]
-name = "oxen-test"
-version = "0.44.2"
-dependencies = [
- "aws-sdk-s3",
- "liboxen",
- "log",
- "rand 0.8.5",
- "tokio",
  "uuid",
 ]
 

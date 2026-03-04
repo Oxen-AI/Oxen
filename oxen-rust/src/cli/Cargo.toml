@@ -36,6 +36,3 @@ time = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
-
-[dev-dependencies]
-oxen-test = { path = "../oxen-test" }

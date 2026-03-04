@@ -56,4 +56,3 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 actix-multipart-test = { workspace = true }
-oxen-test = { path = "../oxen-test" }
