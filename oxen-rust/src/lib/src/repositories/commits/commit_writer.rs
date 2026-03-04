@@ -1242,6 +1242,7 @@ fn create_commit_data(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::collections::HashSet;
     use std::path::Path;
 
@@ -1250,9 +1251,9 @@ mod tests {
     use crate::model::MerkleHash;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
-    use crate::test::add_n_files_m_dirs;
+
     use crate::util;
+    use test::add_n_files_m_dirs;
 
     #[tokio::test]
     async fn test_first_commit() -> Result<(), OxenError> {

@@ -19,7 +19,7 @@
 //!
 //! Build with performance logging:
 //! ```bash
-//! cargo build --features perf-logging
+//! cargo build --features liboxen/perf-logging
 //! ```
 
 #[cfg(feature = "perf-logging")]

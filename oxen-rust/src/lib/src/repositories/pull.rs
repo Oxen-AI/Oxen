@@ -299,7 +299,7 @@ mod tests {
                 repositories::branches::create_checkout(&cloned_repo, branch_name)?;
 
                 // Track some more data in the cloned repo
-                let hotdog_path = Path::new("data/test/images/hotdog_1.jpg");
+                let hotdog_path = test::test_hotdog_1();
                 let new_file_path = cloned_repo.path.join("train").join("hotdog_1.jpg");
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&cloned_repo, &new_file_path).await?;
@@ -327,7 +327,7 @@ mod tests {
                 assert_eq!(og_num_files + 1, num_new_files);
 
                 // Add another file on the OG side, and push it back
-                let hotdog_path = Path::new("data/test/images/hotdog_2.jpg");
+                let hotdog_path = test::test_hotdog_2();
                 let new_file_path = train_path.join("hotdog_2.jpg");
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&repo, &train_path).await?;
@@ -379,7 +379,10 @@ mod tests {
             ];
             util::fs::create_dir_all(&train_dir)?;
             for path in train_paths.iter() {
-                util::fs::copy(path, train_dir.join(path.file_name().unwrap()))?;
+                util::fs::copy(
+                    test::REPO_ROOT.join(path),
+                    train_dir.join(path.file_name().unwrap()),
+                )?;
             }
 
             repositories::add(&repo, &train_dir).await?;
@@ -412,7 +415,7 @@ mod tests {
                 repositories::branches::create_checkout(&cloned_repo, branch_name)?;
 
                 // Track some more data in the cloned repo
-                let hotdog_path = Path::new("data/test/images/hotdog_1.jpg");
+                let hotdog_path = test::test_hotdog_1();
                 let new_file_path = cloned_repo.path.join("train").join("hotdog_1.jpg");
                 util::fs::copy(hotdog_path, &new_file_path)?;
                 repositories::add(&cloned_repo, &new_file_path).await?;

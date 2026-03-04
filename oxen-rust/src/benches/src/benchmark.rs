@@ -1,12 +1,7 @@
 use criterion::Criterion;
 use std::env;
 
-mod oxen;
-use crate::oxen::add;
-use crate::oxen::download;
-use crate::oxen::fetch;
-use crate::oxen::push;
-use crate::oxen::workspace_add;
+use oxen_bench::oxen::{add, download, fetch, push, workspace_add};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

@@ -17,9 +17,9 @@ use crate::opts::StorageOpts;
 /// # use liboxen::command;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 /// let base_dir = Path::new("repo_dir_init");
 /// command::repositori(base_dir)?;
 /// assert!(base_dir.join(".oxen").exists());
@@ -66,6 +66,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
+
     use crate::util;
 
     #[tokio::test]

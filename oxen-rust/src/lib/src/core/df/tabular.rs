@@ -1681,11 +1681,12 @@ pub async fn show_node(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::core::df::{filter, tabular};
+    use crate::test::{self, TEST_DATA_DIR};
     use crate::view::JsonDataFrameView;
     use crate::{error::OxenError, opts::DFOpts};
     use itertools::Itertools;
-    use polars::prelude::*;
     use tokio::task;
 
     #[test]
@@ -1853,7 +1854,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_json() -> Result<(), OxenError> {
-        let df = tabular::read_df_json("data/test/text/test.json")?.collect()?;
+        let df = tabular::read_df_json(test::test_text_json())?.collect()?;
 
         println!("{df}");
 
@@ -1876,7 +1877,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_jsonl() -> Result<(), OxenError> {
         let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-            tabular::read_df_jsonl("data/test/text/test.jsonl")?
+            tabular::read_df_jsonl(test::test_text_jsonl())?
                 .collect()
                 .map_err(OxenError::from)
         })
@@ -1907,7 +1908,7 @@ mod tests {
     #[tokio::test]
     async fn test_sniff_empty_rows_carriage_return_csv() -> Result<(), OxenError> {
         let opts = DFOpts::empty();
-        let df = tabular::read_df("data/test/csvs/empty_rows_carriage_return.csv", opts).await?;
+        let df = tabular::read_df(test::test_csv_empty_rows_carriage_return(), opts).await?;
         assert_eq!(df.width(), 4);
         Ok(())
     }
@@ -1915,7 +1916,7 @@ mod tests {
     #[tokio::test]
     async fn test_sniff_delimiter_tabs() -> Result<(), OxenError> {
         let opts = DFOpts::empty();
-        let df = tabular::read_df("data/test/csvs/tabs.csv", opts).await?;
+        let df = tabular::read_df(test::test_tabs_csv(), opts).await?;
         assert_eq!(df.width(), 4);
         Ok(())
     }
@@ -1923,7 +1924,7 @@ mod tests {
     #[tokio::test]
     async fn test_sniff_emoji_csv() -> Result<(), OxenError> {
         let opts = DFOpts::empty();
-        let df = tabular::read_df("data/test/csvs/emojis.csv", opts).await?;
+        let df = tabular::read_df(test::test_emojis(), opts).await?;
         assert_eq!(df.width(), 2);
         Ok(())
     }
@@ -1932,7 +1933,7 @@ mod tests {
     async fn test_slice_parquet_lazy() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
         opts.slice = Some("329..333".to_string());
-        let df = tabular::scan_df_parquet("data/test/parquet/wiki_1k.parquet", 333)?;
+        let df = tabular::scan_df_parquet(test::test_1k_parquet(), 333)?;
         let df = tabular::transform_lazy(df, opts.clone()).await?;
 
         let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
@@ -1967,7 +1968,7 @@ mod tests {
     async fn test_slice_parquet_full_read() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
         opts.slice = Some("329..333".to_string());
-        let mut df = tabular::read_df("data/test/parquet/wiki_1k.parquet", opts).await?;
+        let mut df = tabular::read_df(test::test_1k_parquet(), opts).await?;
         println!("{df:?}");
 
         assert_eq!(df.width(), 3);
@@ -1988,8 +1989,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_file_with_unmatched_quotes() -> Result<(), OxenError> {
-        let df =
-            tabular::read_df("data/test/csvs/spam_ham_data_w_quote.tsv", DFOpts::empty()).await?;
+        let df = tabular::read_df(test::test_spam_ham(), DFOpts::empty()).await?;
         assert_eq!(df.width(), 2);
         assert_eq!(df.height(), 100);
         Ok(())
@@ -1997,7 +1997,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_csv_with_quoted_fields_default() -> Result<(), OxenError> {
-        let df = tabular::read_df("data/test/csvs/quoted_fields.csv", DFOpts::empty()).await?;
+        let df = tabular::read_df(
+            TEST_DATA_DIR
+                .join("test")
+                .join("csvs")
+                .join("quoted_fields.csv"),
+            DFOpts::empty(),
+        )
+        .await?;
         assert_eq!(df.width(), 3);
         assert_eq!(df.height(), 10);
 
@@ -2012,8 +2019,13 @@ mod tests {
 
     #[test]
     fn test_sniff_csv_dialect_detects_quote_char() -> Result<(), OxenError> {
-        let dialect =
-            super::sniff_csv_dialect("data/test/csvs/quoted_fields.csv", &DFOpts::empty())?;
+        let dialect = sniff_csv_dialect(
+            TEST_DATA_DIR
+                .join("test")
+                .join("csvs")
+                .join("quoted_fields.csv"),
+            &DFOpts::empty(),
+        )?;
         assert_eq!(dialect.delimiter, b',');
         assert_eq!(dialect.quote_char, Some(b'"'));
         Ok(())
@@ -2021,19 +2033,31 @@ mod tests {
 
     #[test]
     fn test_reject_empty_quote() -> Result<(), OxenError> {
-        let r = super::sniff_csv_dialect("data/test/csvs/quoted_fields.csv", &{
-            let mut opts = DFOpts::empty();
-            opts.quote_char = Some("".to_string());
-            opts
-        });
+        let r = sniff_csv_dialect(
+            TEST_DATA_DIR
+                .join("test")
+                .join("csvs")
+                .join("quoted_fields.csv"),
+            &{
+                let mut opts = DFOpts::empty();
+                opts.quote_char = Some("".to_string());
+                opts
+            },
+        );
         assert!(matches!(r, Err(OxenError::Basic(_))));
         Ok(())
     }
 
     #[tokio::test]
     async fn test_csv_video_captions_quoting() -> Result<(), OxenError> {
-        let df =
-            tabular::read_df("data/test/csvs/caption_video_gen_fmt.csv", DFOpts::empty()).await?;
+        let df = tabular::read_df(
+            TEST_DATA_DIR
+                .join("test")
+                .join("csvs")
+                .join("caption_video_gen_fmt.csv"),
+            DFOpts::empty(),
+        )
+        .await?;
         assert_eq!(df.height(), 10);
         assert_eq!(df.width(), 2);
         let columns = df

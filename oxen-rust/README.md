@@ -30,15 +30,25 @@ If you are a developer and want to learn more about adding code or the overall a
 
 ## Build
 
+Build the entire workspace (CLI, server, and library):
+
 ```bash
-cargo build
+cargo build --workspace
+```
+
+Or build a specific crate:
+
+```bash
+cargo build -p oxen-server
+cargo build -p oxen-cli
+cargo build -p liboxen
 ```
 
 If on intel mac, you may need to build with the following
 
 ```bash
-$ rustup target install x86_64-apple-darwin
-$ cargo build --target x86_64-apple-darwin
+rustup target install x86_64-apple-darwin
+cargo build --workspace --target x86_64-apple-darwin
 ```
 
 If on Windows, you may need to add the following directories to the 'INCLUDE' environment variable
@@ -160,6 +170,12 @@ You can also create a .env.local file in the /src/server directory which can con
 Run the server
 
 ```bash
+cargo run -p oxen-server -- start
+```
+
+Or run the compiled binary directly:
+
+```bash
 ./target/debug/oxen-server start
 ```
 
@@ -191,9 +207,9 @@ To develop with the standard rust toolchain in a Nix dev shell:
 
 ```bash
 nix develop -c $SHELL
-cargo build
-cargo run --bin oxen-server start
-cargo run --bin oxen start
+cargo build --workspace
+cargo run -p oxen-server -- start
+cargo run -p oxen-cli -- init
 ```
 
 The flake also provides derviations to build OCI (Docker) images with the minimal
@@ -233,37 +249,36 @@ ulimit -n 10240
 
 Run tests with nextest (preferred):
 ```bash
-cargo nextest run
+cargo nextest run --workspace
 ```
 
 Run with vanilla cargo:
 ```bash
-cargo test -- --test-threads=$(nproc)
+cargo test --workspace -- --test-threads=$(nproc)
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```bash
-cargo nextest run --lib test_get_metadata_text_readme
+cargo nextest run -p liboxen --lib test_get_metadata_text_readme
 ```
 
 To run the catchall (integration) tests
 
 ```bash
-cargo nextest run --test test
+cargo nextest run --workspace --test test
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo nextest run --no-capture
-test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo nextest run --workspace --no-capture test_command_push_clone_pull_push
 ```
 
 To set a different test host you can set the `OXEN_TEST_HOST` environment variable
 
 ```bash
-env OXEN_TEST_HOST=0.0.0.0:4000 cargo nextest run
+env OXEN_TEST_HOST=0.0.0.0:4000 cargo nextest run --workspace
 ```
 
 # Oxen Server
@@ -327,13 +342,13 @@ docker-compose up -d --scale oxen=4 --no-recreate
 we use criterion to handle benchmarks.
 
 ```bash
-cargo bench
+cargo bench --workspace
 ```
 
 To save baseline you can run
 
 ```bash
-cargo bench -- --save-baseline bench
+cargo bench --workspace -- --save-baseline bench
 ```
 
 Which would then store the benchmark under `target/criterion/add`
@@ -344,5 +359,11 @@ To enable thumbnailing for videos, you will have to build with ffmpeg enabled
 
 ```bash
 brew install ffmpeg@7
-cargo build --features ffmpeg
+cargo build --workspace --all-features
+```
+
+Or for a specific crate:
+
+```bash
+cargo build -p oxen-server --features liboxen/ffmpeg
 ```

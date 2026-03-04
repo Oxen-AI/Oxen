@@ -779,7 +779,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_get_nonexistent_file_returns_404() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";

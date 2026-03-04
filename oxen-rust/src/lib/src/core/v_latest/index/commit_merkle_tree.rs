@@ -1234,6 +1234,7 @@ impl CommitMerkleTree {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::PathBuf;
 
@@ -1242,8 +1243,8 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::MerkleTreeNodeType;
     use crate::repositories;
-    use crate::test;
-    use crate::test::add_n_files_m_dirs;
+
+    use test::add_n_files_m_dirs;
 
     #[tokio::test]
     async fn test_load_dir_nodes() -> Result<(), OxenError> {
