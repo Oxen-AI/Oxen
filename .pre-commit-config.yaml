@@ -43,14 +43,14 @@ repos:
 
       - id: ruff-check
         name: ruff check (oxen-python)
-        entry: bash -c 'uvx ruff check oxen-python/'
+        entry: bash -c '. ./tool-versions.env && uvx ruff@"$RUFF_VERSION" check oxen-python/'
         language: system
         files: ^oxen-python/.*\.py$
         pass_filenames: false
 
       - id: ruff-format
         name: ruff format (oxen-python)
-        entry: bash -c 'uvx ruff format oxen-python/'
+        entry: bash -c '. ./tool-versions.env && uvx ruff@"$RUFF_VERSION" format oxen-python/'
         language: system
         files: ^oxen-python/.*\.py$
         pass_filenames: false

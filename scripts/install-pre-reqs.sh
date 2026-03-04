@@ -17,6 +17,20 @@ warn()  { printf "\033[1;33m[WARN]\033[0m  %s\n" "$*"; }
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+###############################################################################
+# Load pinned tool versions
+###############################################################################
+
+TOOL_VERSIONS_FILE="$REPO_ROOT/tool-versions.env"
+if [ ! -f "$TOOL_VERSIONS_FILE" ]; then
+    echo "ERROR: $TOOL_VERSIONS_FILE not found"; exit 1
+fi
+# shellcheck source=../tool-versions.env
+. "$TOOL_VERSIONS_FILE"
+
 OS="$(uname -s)"
 case "$OS" in
     Darwin) PLATFORM="macos" ;;
@@ -111,8 +125,6 @@ fi
 # Ensure the project's required toolchain is installed.
 # rust-toolchain.toml in oxen-rust/ will be picked up automatically by cargo,
 # but we can pre-install it so the first build doesn't stall.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUST_TOOLCHAIN_FILE="$REPO_ROOT/oxen-rust/rust-toolchain.toml"
 
 if [ -f "$RUST_TOOLCHAIN_FILE" ]; then
@@ -135,23 +147,24 @@ info "Checking cargo tools..."
 
 install_cargo_tool() {
     local cmd="$1"
-    local crate="${2:-$1}"
-    local extra_flags="${3:-}"
+    local crate="$2"
+    local version="$3"
+    local extra_flags="${4:-}"
 
     if command_exists "$cmd"; then
-        ok "$cmd already installed"
+        ok "$cmd already installed (want $version)"
     else
-        info "Installing $crate..."
+        info "Installing $crate@$version..."
         # shellcheck disable=SC2086
-        cargo install $extra_flags "$crate"
+        cargo install $extra_flags "$crate" --version "$version"
     fi
 }
 
-install_cargo_tool bacon          bacon
-install_cargo_tool cargo-machete  cargo-machete
-install_cargo_tool cargo-llvm-cov cargo-llvm-cov
-install_cargo_tool cargo-sort     cargo-sort
-install_cargo_tool cargo-nextest  cargo-nextest  "--locked"
+install_cargo_tool bacon          bacon          "$BACON_VERSION"
+install_cargo_tool cargo-machete  cargo-machete  "$CARGO_MACHETE_VERSION"
+install_cargo_tool cargo-llvm-cov cargo-llvm-cov "$CARGO_LLVM_COV_VERSION"
+install_cargo_tool cargo-sort     cargo-sort     "$CARGO_SORT_VERSION"
+install_cargo_tool cargo-nextest  cargo-nextest  "$CARGO_NEXTEST_VERSION" "--locked"
 
 ###############################################################################
 # 4. uv (Python package/project manager)
