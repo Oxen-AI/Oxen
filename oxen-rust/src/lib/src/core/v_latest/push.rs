@@ -511,6 +511,7 @@ async fn push_commits(
 fn wrap_push_entry_error(entry_type: &str, err: OxenError) -> OxenError {
     let err_str = err.to_string();
     if err_str.contains("No such file or directory") || err_str.contains("NotFound") {
+        log::debug!("error cause: {err}");
         OxenError::basic_str(format!(
             "Error syncing {entry_type} entries\n\n\
             Not all file versions are present locally. \n \
