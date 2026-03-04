@@ -1140,4 +1140,250 @@ mod tests {
         })
         .await
     }
+
+    // a file that only exists on branch B should be removed
+    // when checking out branch A, even if the user deleted a different file.
+    #[tokio::test]
+    async fn test_checkout_removes_branch_specific_file_when_switching() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a file on main
+            let common_file = repo.path.join("common.txt");
+            util::fs::write_to_path(&common_file, "common content")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Initial commit with common.txt")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create feature branch and add a new file
+            let branch_name = "feature/add-new";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            let new_file = repo.path.join("feature_only.txt");
+            util::fs::write_to_path(&new_file, "only on feature branch")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add feature_only.txt")?;
+
+            // feature_only.txt should exist on feature branch
+            assert!(new_file.exists());
+
+            // Checkout main — feature_only.txt should be removed
+            repositories::checkout(&repo, &main_branch.name).await?;
+            assert!(
+                !new_file.exists(),
+                "feature_only.txt should be removed when checking out main"
+            );
+            assert!(
+                common_file.exists(),
+                "common.txt should exist when checking out"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // when a directory exists on branch B but not branch A,
+    // checking out branch B should restore the directory and its files.
+    #[tokio::test]
+    async fn test_checkout_restores_directory_from_target_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit files in a directory on main
+            let dir = repo.path.join("data");
+            std::fs::create_dir_all(&dir)?;
+            let file1 = dir.join("file1.txt");
+            let file2 = dir.join("file2.txt");
+            util::fs::write_to_path(&file1, "data file 1")?;
+            util::fs::write_to_path(&file2, "data file 2")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add data directory")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create a branch that removes the directory
+            let branch_name = "feature/no-data";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            std::fs::remove_dir_all(&dir)?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Remove data directory")?;
+
+            // Verify dir is gone on feature branch
+            assert!(!dir.exists());
+
+            // Checkout main — directory should be restored
+            repositories::checkout(&repo, &main_branch.name).await?;
+            assert!(
+                dir.exists(),
+                "data/ directory should be restored when checking out main"
+            );
+            assert!(
+                file1.exists(),
+                "data/file1.txt should be restored when checking out main"
+            );
+            assert!(
+                file2.exists(),
+                "data/file2.txt should be restored when checking out main"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // round-trip checkout should give a clean working directory
+    // matching the target branch each time.
+    #[tokio::test]
+    async fn test_checkout_roundtrip_restores_all_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Main branch: common.txt
+            let common_file = repo.path.join("common.txt");
+            util::fs::write_to_path(&common_file, "common")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Initial commit")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Feature branch: common.txt + extra.txt + subdir/nested.txt
+            let branch_name = "feature/extras";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            let extra_file = repo.path.join("extra.txt");
+            util::fs::write_to_path(&extra_file, "extra content")?;
+            let subdir = repo.path.join("subdir");
+            std::fs::create_dir_all(&subdir)?;
+            let nested_file = subdir.join("nested.txt");
+            util::fs::write_to_path(&nested_file, "nested content")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add extra files")?;
+
+            // Checkout main — extra files should be removed
+            repositories::checkout(&repo, &main_branch.name).await?;
+            assert!(common_file.exists(), "common.txt should exist on main");
+            assert!(!extra_file.exists(), "extra.txt should NOT exist on main");
+            assert!(
+                !nested_file.exists(),
+                "subdir/nested.txt should NOT exist on main"
+            );
+
+            // Checkout feature again — all files should come back
+            repositories::checkout(&repo, branch_name).await?;
+            assert!(common_file.exists(), "common.txt should exist on feature");
+            assert!(
+                extra_file.exists(),
+                "extra.txt should be restored on feature"
+            );
+            assert!(
+                nested_file.exists(),
+                "subdir/nested.txt should be restored on feature"
+            );
+
+            // And back to main once more
+            repositories::checkout(&repo, &main_branch.name).await?;
+            assert!(
+                !extra_file.exists(),
+                "extra.txt should be removed again on main"
+            );
+            assert!(
+                !nested_file.exists(),
+                "subdir/nested.txt should be removed again on main"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // deleting a directory and checking out the same branch
+    // that has the directory should restore it (e.g., `oxen checkout .` or
+    // re-checkout of current branch after unstaged deletion).
+    #[tokio::test]
+    async fn test_checkout_restores_deleted_directory_same_branch_content() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Both branches have the same directory content
+            let dir = repo.path.join("models");
+            std::fs::create_dir_all(&dir)?;
+            let model_file = dir.join("model.bin");
+            util::fs::write_to_path(&model_file, "model data")?;
+            let config_file = dir.join("config.json");
+            util::fs::write_to_path(&config_file, r#"{"lr": 0.01}"#)?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add models directory")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create feature branch with same models/ content but an extra file
+            let branch_name = "feature/new-stuff";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            let new_file = repo.path.join("new_feature.txt");
+            util::fs::write_to_path(&new_file, "new feature")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add new_feature.txt")?;
+
+            // Go back to main
+            repositories::checkout(&repo, &main_branch.name).await?;
+
+            // Delete the models directory (uncommitted)
+            std::fs::remove_dir_all(&dir)?;
+            assert!(!dir.exists());
+
+            // Checkout feature branch — models/ has same content on both branches,
+            // but it should still be restored because we're checking out a branch
+            repositories::checkout(&repo, branch_name).await?;
+            assert!(
+                dir.exists(),
+                "models/ directory should be restored when checking out feature branch"
+            );
+            assert!(model_file.exists(), "models/model.bin should be restored");
+            assert!(
+                config_file.exists(),
+                "models/config.json should be restored"
+            );
+            assert!(
+                new_file.exists(),
+                "new_feature.txt should exist on feature branch"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // Regression test: when a file on the current branch has the same content
+    // (same hash) as a different file on the target branch, checkout should
+    // still remove it if it doesn't exist on the target branch.
+    #[tokio::test]
+    async fn test_checkout_removes_duplicate_content_file_at_different_path(
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Main branch: file1.txt with some content
+            let file1 = repo.path.join("file1.txt");
+            util::fs::write_to_path(&file1, "shared content")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add file1.txt on main")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create feature branch and add file2.txt with identical content
+            let branch_name = "feature/dup-content";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            let file2 = repo.path.join("file2.txt");
+            util::fs::write_to_path(&file2, "shared content")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add file2.txt with same content as file1.txt")?;
+
+            // Both files should exist on the feature branch
+            assert!(file1.exists(), "file1.txt should exist on feature branch");
+            assert!(file2.exists(), "file2.txt should exist on feature branch");
+
+            // Checkout main — file2.txt should be removed even though its
+            // content hash matches file1.txt on main
+            repositories::checkout(&repo, &main_branch.name).await?;
+            assert!(file1.exists(), "file1.txt should exist on main");
+            assert!(
+                !file2.exists(),
+                "file2.txt should be removed on main even though it shares content hash with file1.txt"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }
