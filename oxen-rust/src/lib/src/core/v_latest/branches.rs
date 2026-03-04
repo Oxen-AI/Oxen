@@ -468,9 +468,6 @@ fn r_remove_if_not_in_target(
 
                         paths_to_remove.push(full_path.clone());
                     }
-                // If in remote-mode, save original file contents to version_store
-                } else if repo.is_remote_mode() {
-                    files_to_store.push((from_node.hash, full_path.clone()))
                 }
             } else if full_path.exists() && repo.is_remote_mode() {
                 // File exists in both trees at the same path — it may be overwritten
