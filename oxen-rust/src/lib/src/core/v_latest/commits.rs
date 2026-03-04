@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::Path;
 
 use glob::Pattern;
@@ -396,6 +397,38 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
     }
 }
 
+fn list_forward_paginated(
+    repo: &LocalRepository,
+    head_commit: Commit,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<Commit>, OxenError> {
+    let mut results = Vec::new();
+    let mut current = Some(head_commit);
+    let mut count = 0;
+    let end_idx = skip + limit;
+
+    while let Some(commit) = current {
+        if count >= skip && count < end_idx {
+            results.push(commit.clone());
+        }
+        count += 1;
+
+        if count >= end_idx {
+            break;
+        }
+
+        current = if let Some(parent_id) = commit.parent_ids.first() {
+            let parent_id: MerkleHash = parent_id.parse()?;
+            get_by_hash(repo, &parent_id)?
+        } else {
+            None
+        };
+    }
+
+    Ok(results)
+}
+
 pub fn list_recursive_paginated(
     repo: &LocalRepository,
     head_commit: Commit,
@@ -448,17 +481,45 @@ fn mark_ancestors_visited(
     Ok(())
 }
 
+/// Wrapper to order commits by timestamp descending in a BinaryHeap (max-heap).
+/// Ties are broken by commit id for deterministic ordering.
+struct TimestampedCommit(Commit);
+
+impl PartialEq for TimestampedCommit {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.timestamp == other.0.timestamp && self.0.id == other.0.id
+    }
+}
+
+impl Eq for TimestampedCommit {}
+
+impl PartialOrd for TimestampedCommit {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TimestampedCommit {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .timestamp
+            .cmp(&other.0.timestamp)
+            .then_with(|| self.0.id.cmp(&other.0.id))
+    }
+}
+
 fn traverse_commits(
     config: CommitTraversalConfig,
     mut results: Option<&mut Vec<Commit>>,
 ) -> Result<usize, OxenError> {
     let mut count = 0;
-    let mut queue: Vec<Commit> = vec![config.head_commit];
+    let mut heap = BinaryHeap::new();
+    heap.push(TimestampedCommit(config.head_commit));
     let end_idx = config.skip + config.limit;
     let can_early_exit = config.known_total_count.is_some();
     let collect_results = results.is_some();
 
-    while let Some(commit) = queue.pop() {
+    while let Some(TimestampedCommit(commit)) = heap.pop() {
         if config.visited.contains(&commit.id) {
             continue;
         }
@@ -492,7 +553,7 @@ fn traverse_commits(
             }
         }
 
-        // Process commit (globally newest-first)
+        // Process commit (globally newest-first via max-heap)
         if count >= config.skip && count < end_idx {
             if let Some(ref mut res) = results {
                 res.push(commit.clone());
@@ -510,18 +571,15 @@ fn traverse_commits(
             break;
         }
 
-        // Add parents to the queue
+        // Add parents to the heap
         for parent_id in commit.parent_ids.clone() {
             let parent_id = parent_id.parse()?;
             if let Some(c) = get_by_hash(config.repo, &parent_id)? {
                 if !config.visited.contains(&c.id) {
-                    queue.push(c);
+                    heap.push(TimestampedCommit(c));
                 }
             }
         }
-
-        // Sort ascending so pop() yields the newest commit next
-        queue.sort_by_key(|c| c.timestamp);
     }
 
     Ok(config.known_total_count.unwrap_or(count))
@@ -639,6 +697,13 @@ pub fn list_from_paginated_impl(
         log::info!(
             "list_from_paginated_impl: total_count={total_count}, cached={cached}, skip={skip}, limit={limit}"
         );
+
+        if skip + limit <= 10 {
+            let _perf_fast = crate::perf_guard!("core::commits::list_forward_paginated");
+            let commits = list_forward_paginated(repo, commit, skip, limit)?;
+            drop(_perf_fast);
+            return Ok((commits, total_count, cached));
+        }
 
         let _perf_recursive = crate::perf_guard!("core::commits::list_recursive_paginated");
         let (commits, _) =
