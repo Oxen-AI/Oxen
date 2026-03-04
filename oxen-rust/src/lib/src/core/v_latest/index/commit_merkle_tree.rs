@@ -13,7 +13,7 @@ use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 
-use crate::error::OxenError;
+use crate::error::{CommitError, OxenError, PathBufError};
 use crate::model::{Commit, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode};
 
 use crate::util::hasher;
@@ -66,10 +66,9 @@ impl CommitMerkleTree {
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
-        let root =
-            CommitMerkleTree::root_with_children(repo, commit)?.ok_or(OxenError::basic_str(
-                format!("Merkle tree hash not found for commit: '{}'", commit.id),
-            ))?;
+        let root = CommitMerkleTree::root_with_children(repo, commit)?.ok_or(
+            OxenError::CommitDoesNotExist(CommitError::boxed(commit.clone())),
+        )?;
 
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
         Ok(Self { root, dir_hashes })
@@ -617,8 +616,8 @@ impl CommitMerkleTree {
         let node = self
             .root
             .get_by_path(path)?
-            .ok_or(OxenError::basic_str(format!(
-                "Merkle tree hash not found for parent: {path:?}"
+            .ok_or(OxenError::PathDoesNotExist(PathBufError::boxed(
+                path.to_path_buf(),
             )))?;
         let mut children = HashSet::new();
         for child in &node.children {
