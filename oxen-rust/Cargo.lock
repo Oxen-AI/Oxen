@@ -4403,7 +4403,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liboxen"
-version = "0.43.1"
+version = "0.44.2"
 dependencies = [
  "actix-web",
  "approx",
@@ -5209,7 +5209,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "oxen-bench"
-version = "0.43.1"
+version = "0.44.2"
 dependencies = [
  "codspeed-criterion-compat",
  "liboxen",
@@ -5220,7 +5220,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-cli"
-version = "0.43.1"
+version = "0.44.2"
 dependencies = [
  "async-trait",
  "bytesize",
@@ -5243,7 +5243,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-server"
-version = "0.43.1"
+version = "0.44.2"
 dependencies = [
  "actix-http",
  "actix-multipart",
@@ -5286,7 +5286,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-test"
-version = "0.43.1"
+version = "0.44.2"
 dependencies = [
  "aws-sdk-s3",
  "liboxen",

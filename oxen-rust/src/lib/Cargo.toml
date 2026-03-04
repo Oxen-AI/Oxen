@@ -8,7 +8,7 @@ homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
-categories = { workspace = true }
+categories = ["science", "multimedia", "database"]
 publish = true
 
 [package.metadata.docs.rs]
