@@ -1,11 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "src/benches",
-    "src/cli",
-    "src/lib",
-    "src/server",
-]
+members = ["src/benches", "src/cli", "src/lib", "src/server"]
 exclude = ["experiments/*"]
 
 [workspace.package]
