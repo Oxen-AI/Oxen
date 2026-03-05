@@ -98,7 +98,6 @@ elif [ "$PLATFORM" = "linux" ]; then
     dpkg -s libavutil-dev       &>/dev/null || NEEDED_PKGS+=(libavutil-dev)
     dpkg -s libavfilter-dev     &>/dev/null || NEEDED_PKGS+=(libavfilter-dev)
     dpkg -s libavdevice-dev     &>/dev/null || NEEDED_PKGS+=(libavdevice-dev)
-    dpkg -s libavcodec          &>/dev/null || NEEDED_PKGS+=(libavcodec)
     dpkg -s libjpeg-turbo-progs &>/dev/null || NEEDED_PKGS+=(libjpeg-turbo-progs)
 
     if [ ${#NEEDED_PKGS[@]} -gt 0 ]; then
