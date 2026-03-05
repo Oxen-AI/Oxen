@@ -555,7 +555,7 @@ Examples:
 
     # Print summary stats
     stats = collect_stats(tree)
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total directories: {stats['total_dirs']}")
     print(f"  Total files:       {stats['total_files']}")
     print(

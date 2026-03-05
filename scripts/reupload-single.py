@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 from oxen import RemoteRepo, Workspace
-from tqdm import tqdm
 
 
 def positive_int(value: str) -> int:
@@ -73,7 +72,7 @@ def main(
     dry_run: bool = False,
 ) -> int:
     # Print plan
-    print(f"\nUpload plan:")
+    print("\nUpload plan:")
     print(f"  Repository:      {repo_name}")
     if host:
         print(f"  Host:            {scheme}://{host}")

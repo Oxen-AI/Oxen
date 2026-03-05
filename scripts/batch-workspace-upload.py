@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 from oxen import RemoteRepo, Workspace
-from tqdm import tqdm
 
 
 def positive_int(value: str) -> int:
@@ -153,7 +152,7 @@ Examples:
     message_template = args.message or "batch {batch}/{total_batches}"
 
     # Print plan
-    print(f"\nUpload plan:")
+    print("\nUpload plan:")
     print(f"  Repository:    {args.repo}")
     if args.host:
         print(f"  Host:          {args.scheme}://{args.host}")

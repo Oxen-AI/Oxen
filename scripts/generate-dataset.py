@@ -17,8 +17,6 @@ Generate test datasets with configurable size, structure, and file types.
 import argparse
 import os
 import random
-import shutil
-import subprocess
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
