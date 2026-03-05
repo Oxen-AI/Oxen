@@ -330,11 +330,17 @@ async fn get_commit_missing_hashes(
                 let t = node.node.node_type();
 
                 if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
-                    let file_hash = *node.node.hash();
-                    // Only add files we haven't seen before (not in base_hashes or already collected)
-                    if !base_hashes.contains(&file_hash) && file_hashes_seen.insert(file_hash) {
-                        files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
-                    }
+
+
+                  if let Some(commit_entry) = CommitEntry::from_node(&node.node) {
+                      let file_hash = *node.node.hash();
+                      // Only add files we haven't seen before (not in base_hashes or already collected)
+                      if !base_hashes.contains(&file_hash) && file_hashes_seen.insert(file_hash) {
+                          files.push(Entry::CommitEntry(commit_entry));
+                      }
+                  } else {
+                    log::error!("[skip] Walking Merkle tree at node {}, found node type {:?} that we could not convert into a CommitEntry", node.hash, t);
+                  }
                 } else if !node.node.is_leaf() {
                     let hash = node.node.hash();
                     dir_nodes.insert(*hash);
@@ -645,7 +651,7 @@ async fn chunk_and_send_large_entries(
                     None,
                     entry.num_bytes(),
                     &entry.hash(),
-                    Some(bar),
+                    Some(bar.clone()),
                 )
                 .await
                 {

@@ -356,7 +356,7 @@ fn collect_missing_entries_for_subtree(
                   missing_entries.insert(entry);
               }
           } else {
-            log::error!("[skip] Walking Merkle tree {}, found node type {:?} that we could not convert into a CommitEntry", tree.hash(), t);
+            log::error!("[skip] Walking Merkle tree at node {}, found node type {:?} that we could not convert into a CommitEntry", node.hash, t);
           }
         }
     });
