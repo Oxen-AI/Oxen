@@ -19,7 +19,7 @@ categories = [
     "database",
     "computer-vision",
 ]
-rust-version = "1.88"
+rust-version = "1.94"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

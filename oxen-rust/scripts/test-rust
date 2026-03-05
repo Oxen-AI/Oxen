@@ -27,8 +27,7 @@ cargo build
 # ---------- 2. Install/Update nextest ----------
 if ! command -v cargo-nextest &>/dev/null; then
     echo "==> Installing cargo-nextest..."
-    # TODO: Remove "+stable" after upgrading off of Rust 1.88
-    cargo +stable install --quiet --locked cargo-nextest
+    cargo install --quiet --locked cargo-nextest
 fi
 
 # ---------- 3. Verify ulimit ----------
