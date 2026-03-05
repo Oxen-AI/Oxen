@@ -1,5 +1,6 @@
 use crate::api;
 use crate::api::client;
+use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::commit::NewCommitBody;
 use crate::model::RemoteRepository;
@@ -21,31 +22,39 @@ pub async fn put_file(
     let branch = branch.as_ref();
     let directory = directory.as_ref();
     let file_path = file_path.as_ref();
+    let file_name_str = file_name.map(|f| f.as_ref().to_string());
     let uri = format!("/file/{branch}/{directory}");
     log::debug!("put_file {uri:?}, file_path {file_path:?}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    let client = client::new_for_url(&url)?;
-    let file_part = Part::file(file_path).await?;
-    let file_part = if let Some(file_name) = file_name {
-        file_part.file_name(file_name.as_ref().to_string())
-    } else {
-        file_part
-    };
-    let mut form = Form::new().part("file", file_part);
+    let config = retry::RetryConfig::default();
+    retry::with_retry(&config, |_attempt| {
+        let url = url.clone();
+        let file_name_str = file_name_str.clone();
+        let commit_body = commit_body.clone();
+        async move {
+            let client = client::new_for_url(&url)?;
+            let file_part = Part::file(file_path).await?;
+            let file_part = if let Some(ref name) = file_name_str {
+                file_part.file_name(name.clone())
+            } else {
+                file_part
+            };
+            let mut form = Form::new().part("file", file_part);
 
-    if let Some(body) = commit_body {
-        form = form.text("name", body.author);
-        form = form.text("email", body.email);
-        form = form.text("message", body.message);
-    }
+            if let Some(body) = commit_body {
+                form = form.text("name", body.author);
+                form = form.text("email", body.email);
+                form = form.text("message", body.message);
+            }
 
-    let req = client.put(&url).multipart(form);
-
-    let res = req.send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: CommitResponse = serde_json::from_str(&body)?;
-    Ok(response)
+            let res = client.put(&url).multipart(form).send().await?;
+            let body = client::parse_json_body(&url, res).await?;
+            let response: CommitResponse = serde_json::from_str(&body)?;
+            Ok(response)
+        }
+    })
+    .await
 }
 
 pub async fn get_file(

@@ -834,33 +834,15 @@ pub async fn upload_single_tarball_to_server_with_client_with_retry(
     buffer: &[u8],
     bar: Arc<ProgressBar>,
 ) -> Result<(), OxenError> {
-    let mut total_tries = 0;
-
-    while total_tries < constants::NUM_HTTP_RETRIES {
-        match upload_single_tarball_to_server_with_client(
-            client,
-            remote_repo,
-            buffer,
-            bar.to_owned(),
-        )
-        .await
-        {
-            Ok(_) => {
-                return Ok(());
-            }
-            Err(err) => {
-                total_tries += 1;
-                // Exponentially back off
-                let sleep_time = total_tries * total_tries;
-                log::debug!(
-                    "upload_single_tarball_to_server_with_retry upload failed sleeping {sleep_time}: {err:?}"
-                );
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
-            }
+    let config = crate::api::client::retry::RetryConfig::default();
+    crate::api::client::retry::with_retry(&config, |_attempt| {
+        let bar = bar.clone();
+        async move {
+            upload_single_tarball_to_server_with_client(client, remote_repo, buffer, bar).await?;
+            Ok(())
         }
-    }
-
-    Err(OxenError::basic_str("Upload retry failed."))
+    })
+    .await
 }
 
 async fn upload_single_tarball_to_server_with_client(
@@ -948,10 +930,9 @@ pub async fn upload_data_chunk_to_server_with_retry(
     is_compressed: bool,
     filename: &Option<String>,
 ) -> Result<(), OxenError> {
-    let mut total_tries = 0;
-    let mut last_error = String::from("");
-    while total_tries < constants::NUM_HTTP_RETRIES {
-        match upload_data_chunk_to_server(
+    let config = crate::api::client::retry::RetryConfig::default();
+    crate::api::client::retry::with_retry(&config, |_attempt| async move {
+        upload_data_chunk_to_server(
             client,
             remote_repo,
             chunk,
@@ -960,27 +941,10 @@ pub async fn upload_data_chunk_to_server_with_retry(
             is_compressed,
             filename,
         )
-        .await
-        {
-            Ok(_) => {
-                return Ok(());
-            }
-            Err(err) => {
-                total_tries += 1;
-                // Exponentially back off
-                let sleep_time = total_tries * total_tries;
-                log::debug!(
-                    "upload_data_chunk_to_server_with_retry upload failed sleeping {sleep_time}: {err}"
-                );
-                last_error = format!("{err}");
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
-            }
-        }
-    }
-
-    Err(OxenError::basic_str(format!(
-        "Upload chunk retry failed. {last_error}"
-    )))
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 async fn upload_data_chunk_to_server(

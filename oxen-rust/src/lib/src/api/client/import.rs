@@ -1,5 +1,6 @@
 use crate::api;
 use crate::api::client;
+use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 
@@ -21,39 +22,48 @@ pub async fn upload_zip(
     let name = name.as_ref();
     let email = email.as_ref();
 
-    // Read the ZIP file
+    // Read the ZIP file into memory once for potential retries
     let zip_data = std::fs::read(zip_path)?;
     let file_name = zip_path
         .file_name()
         .ok_or_else(|| OxenError::basic_str("Invalid ZIP file path"))?
-        .to_string_lossy();
+        .to_string_lossy()
+        .to_string();
 
-    // Create the URL for workspace ZIP upload endpoint
     let uri = format!("/import/upload/{branch_name}/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let commit_msg = commit_message.map(|m| m.as_ref().to_string());
 
-    // Create multipart form
-    let file_part = reqwest::multipart::Part::bytes(zip_data).file_name(file_name.to_string());
-    let mut form = reqwest::multipart::Form::new()
-        .part("file", file_part)
-        .text("name", name.to_string())
-        .text("email", email.to_string())
-        .text("resource_path", directory.to_string());
+    let config = retry::RetryConfig::default();
+    retry::with_retry(&config, |_attempt| {
+        let url = url.clone();
+        let zip_data = zip_data.clone();
+        let file_name = file_name.clone();
+        let name = name.to_string();
+        let email = email.to_string();
+        let directory = directory.to_string();
+        let commit_msg = commit_msg.clone();
+        async move {
+            let file_part = reqwest::multipart::Part::bytes(zip_data).file_name(file_name);
+            let mut form = reqwest::multipart::Form::new()
+                .part("file", file_part)
+                .text("name", name)
+                .text("email", email)
+                .text("resource_path", directory);
 
-    if let Some(msg) = commit_message {
-        form = form.text("commit_message", msg.as_ref().to_string());
-    }
+            if let Some(ref msg) = commit_msg {
+                form = form.text("commit_message", msg.clone());
+            }
 
-    // Send the request
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-
-    // Parse the response
-    let response: crate::view::CommitResponse = serde_json::from_str(&body)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
-
-    Ok(response.commit)
+            let client = client::new_for_url(&url)?;
+            let response = client.post(&url).multipart(form).send().await?;
+            let body = client::parse_json_body(&url, response).await?;
+            let response: crate::view::CommitResponse = serde_json::from_str(&body)
+                .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
+            Ok(response.commit)
+        }
+    })
+    .await
 }
 
 #[cfg(test)]
