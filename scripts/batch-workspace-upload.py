@@ -197,6 +197,12 @@ Examples:
         print("  Adding files...")
         workspace.add_files(directory.parent, batch)
 
+        status = workspace.status()
+        if status.is_clean():
+            batch_elapsed = time.time() - batch_start
+            print(f"  Workspace is clean. Skipping commit. (batch elapsed: {batch_elapsed:.1f}s)")
+            continue
+
         # Commit the workspace
         print(f'  Committing: "{msg}"')
         commit = workspace.commit(msg)
