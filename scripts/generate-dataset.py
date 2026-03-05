@@ -25,6 +25,8 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+import tempfile
+
 
 import numpy as np
 import scipy.stats
@@ -129,6 +131,7 @@ def parse_size(size_str: str) -> int:
 
 def format_size(size_bytes: int) -> str:
     """Format bytes to human-readable string."""
+    size_bytes: float = float(size_bytes)
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size_bytes < 1024.0:
             return f"{size_bytes:.2f}{unit}"
@@ -148,7 +151,7 @@ def init_text_pool(pool_size_mb: int = 10) -> list[tuple[str, int]]:
     target = pool_size_mb * 1024 * 1024
 
     while total_size < target:
-        text = fake.text(max_nb_chars=1000) + "\n"
+        text: str = fake.text(max_nb_chars=1000) + "\n"
         byte_size = len(text.encode('utf-8'))
         chunks.append((text, byte_size))
         total_size += byte_size
@@ -156,7 +159,8 @@ def init_text_pool(pool_size_mb: int = 10) -> list[tuple[str, int]]:
     return chunks
 
 
-def validate_parameters(total_size: int | None, num_files: int | None,
+def validate_parameters(
+    *, total_size: int | None, num_files: int | None,
                        avg_file_size: int | None) -> tuple[int, int]:
     """
     Validate and calculate final parameters.
@@ -174,6 +178,9 @@ def validate_parameters(total_size: int | None, num_files: int | None,
 
     # If all three provided, check consistency
     if params_provided == 3:
+        assert num_files is not None
+        assert avg_file_size is not None
+        assert total_size is not None
         expected_total = num_files * avg_file_size
         tolerance = 0.01  # 1% tolerance
         if abs(expected_total - total_size) / total_size > tolerance:
@@ -189,10 +196,14 @@ def validate_parameters(total_size: int | None, num_files: int | None,
 
     # Calculate missing parameter
     if total_size is None:
+        assert num_files is not None
+        assert avg_file_size is not None
         total_size = num_files * avg_file_size
         print(f"Calculated total size: {format_size(total_size)}")
         return num_files, avg_file_size
     elif num_files is None:
+        assert total_size is not None
+        assert avg_file_size is not None
         num_files = total_size // avg_file_size
         print(f"Calculated number of files: {num_files}")
         return num_files, avg_file_size
@@ -378,6 +389,9 @@ def generate_text_file(path: Path, size: int) -> None:
     """Generate a text file with fake text content from pre-generated pool."""
     global TEXT_POOL
 
+    if TEXT_POOL is None:
+        raise ValueError("Need to initialize TEXT_POOL before generating text files")
+
     # Build entire file content first, then write once (faster for small files)
     parts = []
     current_size = 0
@@ -398,21 +412,38 @@ def generate_text_file(path: Path, size: int) -> None:
         current_size += chunk_size
 
     # Single write operation
-    with open(path, 'w') as f:
+    with open(path, 'wt') as f:
         f.write(''.join(parts))
 
 
-def generate_image_file(path: Path, size: int) -> None:
+Pixel = tuple[int, int, int]
+"""A pixel is a (R,G,B) value with each component in the range [0, 255].
+"""
+
+def generate_image_file(path: Path) -> None:
     """
-    Generate a PNG image file with a mosaic pattern (mix of solid blocks and noise).
+    Generate a 1024x1024 PNG image file with a mosaic pattern.
+    See `generate_image` for details.
+    """
+    img = generate_image(
+        # Fixed dimensions for now (1024x1024)
+        width = 1024,
+        height = 1024,
+        # 32x32 blocks
+        block_size = 32,
+    )
+
+    # Save as PNG
+    img.save(path, 'PNG')
+
+def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
+    """
+    Generate an image with a mosaic pattern (mix of solid blocks and noise).
 
     These are quick to generate, are visually distinct from one another, are
     compressable to a fairly realistic level, and still provide a high level of
     randomness.
     """
-    # Fixed dimensions for now (1024x1024)
-    width, height = 1024, 1024
-    block_size = 32  # 32x32 blocks
 
     img = Image.new('RGB', (width, height))
     pixels = img.load()
@@ -428,17 +459,18 @@ def generate_image_file(path: Path, size: int) -> None:
                 # Fill block with random pixels (noise)
                 for y in range(block_y, min(block_y + block_size, height)):
                     for x in range(block_x, min(block_x + block_size, width)):
-                        pixels[x, y] = (
+                        block: Pixel = (
                             random.randint(0, 255),
                             random.randint(0, 255),
-                            random.randint(0, 255)
+                            random.randint(0, 255),
                         )
+                        pixels[x, y] = block
             else:
                 # Fill block with solid random color
-                color = (
+                color: Pixel = (
                     random.randint(0, 255),
                     random.randint(0, 255),
-                    random.randint(0, 255)
+                    random.randint(0, 255),
                 )
                 for y in range(block_y, min(block_y + block_size, height)):
                     for x in range(block_x, min(block_x + block_size, width)):
@@ -448,21 +480,8 @@ def generate_image_file(path: Path, size: int) -> None:
     img.save(path, 'PNG')
 
 
-#HAS_DD = shutil.which("dd") is not None
-HAS_DD = False
-
-
-def generate_binary_file_dd(path: Path, size: int) -> None:
-    """Generate a binary file with random bytes using dd."""
-    subprocess.run(
-        ["dd", "if=/dev/random", f"of={path}", f"bs={size}", "count=1"],
-        check=True,
-        capture_output=True,
-    )
-
-
-def generate_binary_file_python(path: Path, size: int) -> None:
-    """Generate a binary file with random bytes using Python."""
+def generate_binary_file(path: Path, size: int) -> None:
+    """Generate a binary file with random bytes."""
     with open(path, 'wb') as f:
         # Write in chunks to avoid memory issues with large files
         chunk_size = min(1024 * 1024, size)  # 1MB chunks or smaller
@@ -475,28 +494,18 @@ def generate_binary_file_python(path: Path, size: int) -> None:
             remaining -= write_size
 
 
-def generate_binary_file(path: Path, size: int) -> None:
-    """Generate a binary file with random bytes, using dd if available."""
-    if HAS_DD and size > 400 * 1024 * 1024:
-        generate_binary_file_dd(path, size)
-    else:
-        generate_binary_file_python(path, size)
-
-
 def compute_avg_image_size(num_samples: int = 10) -> int:
     """
     Compute average image size by generating sample images.
     Returns the average size in bytes.
     """
-    import tempfile
-
-    sizes = []
+    sizes: list[int] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
 
         for i in range(num_samples):
             sample_file = tmp_path / f"sample_{i}.png"
-            generate_image_file(sample_file, 0)  # Size parameter not used for images
+            generate_image_file(sample_file)
             sizes.append(sample_file.stat().st_size)
 
     return sum(sizes) // len(sizes)
@@ -660,7 +669,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
         # Validate and calculate parameters
         num_files, file_size = validate_parameters(
-            args.total_size, args.num_files, args.avg_file_size
+            total_size=args.total_size, num_files=args.num_files, avg_file_size=args.avg_file_size
         )
         file_sizes = [file_size] * num_files
 
