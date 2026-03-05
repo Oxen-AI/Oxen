@@ -130,7 +130,7 @@ and [`oxen-python`'s build instructions](./oxen-python/README.md#build) for spec
 
 However, each codebase shares the same pre-requisites and pre-commit hooks.
 
-### Pre-Requisites
+### Prerequisites
 Oxen is purely written in Rust 🦀. You should install the Rust toolchain with [`rustup`](https://www.rust-lang.org/tools/install).
 
 ```bash
@@ -149,6 +149,12 @@ You can install all of these at once with the following commands:
 ```bash
 cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
 cargo install --locked cargo-nextest
+```
+
+Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be installed on macOS with:
+
+```bash
+brew install cmake
 ```
 
 The [Python interface](./oxen-python/README.md) uses [`liboxen`](./oxen-rust/src/lib/) bindings provided by PyO3.
