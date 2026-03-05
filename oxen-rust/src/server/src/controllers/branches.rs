@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, path_param, PageNumQuery};
+use crate::params::{PageNumQuery, app_data, path_param};
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;

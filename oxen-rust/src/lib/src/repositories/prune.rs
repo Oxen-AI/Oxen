@@ -1,7 +1,7 @@
 //! Prune orphaned nodes and version files from the repository
 
 use crate::core::v_latest::prune::{
-    prune as prune_impl, prune_remote as prune_remote_impl, PruneStats,
+    PruneStats, prune as prune_impl, prune_remote as prune_remote_impl,
 };
 use crate::error::OxenError;
 use crate::model::{LocalRepository, RemoteRepository};

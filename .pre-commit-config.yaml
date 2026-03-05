@@ -54,3 +54,17 @@ repos:
         language: system
         files: ^oxen-python/.*\.py$
         pass_filenames: false
+
+      - id: ruff-check-scripts
+        name: ruff check (scripts)
+        entry: bash -c 'uvx ruff check scripts/'
+        language: system
+        files: ^scripts/.*\.py$
+        pass_filenames: false
+
+      - id: ruff-format-scripts
+        name: ruff format (scripts)
+        entry: bash -c 'uvx ruff format scripts/'
+        language: system
+        files: ^scripts/.*\.py$
+        pass_filenames: false

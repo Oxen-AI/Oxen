@@ -14,7 +14,7 @@ use crate::model::merkle_tree::node::{
 use crate::model::{Commit, LocalRepository, MerkleHash};
 
 use crate::util::hasher;
-use crate::util::progress_bar::{oxen_progress_bar, ProgressBarType};
+use crate::util::progress_bar::{ProgressBarType, oxen_progress_bar};
 use crate::{repositories, util};
 
 pub struct AddChildCountsToNodesMigration;

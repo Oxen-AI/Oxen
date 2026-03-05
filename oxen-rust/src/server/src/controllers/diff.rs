@@ -3,18 +3,18 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::core::df::tabular;
 use liboxen::core::v_latest::diff::get_dir_diff_entry_with_summary;
 use liboxen::error::OxenError;
 use liboxen::model::data_frame::DataFrameSchemaSize;
+use liboxen::model::diff::DiffResult;
 use liboxen::model::diff::diff_entry_status::DiffEntryStatus;
 use liboxen::model::diff::dir_diff_summary::{DirDiffSummary, DirDiffSummaryImpl};
 use liboxen::model::diff::generic_diff_summary::GenericDiffSummary;
-use liboxen::model::diff::DiffResult;
 use liboxen::model::{Commit, CommitEntry, DataFrameSize, LocalRepository, Schema};
-use liboxen::opts::df_opts::DFOptsView;
 use liboxen::opts::DFOpts;
+use liboxen::opts::df_opts::DFOptsView;
 use liboxen::view::compare::{
     CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
     CompareTabular, CompareTabularResponse,
@@ -31,8 +31,8 @@ use liboxen::{constants, repositories, util};
 
 use crate::helpers::get_repo;
 use crate::params::{
-    app_data, df_opts_query, parse_base_head, path_param, resolve_base_head, DFOptsQuery,
-    PageNumQuery,
+    DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, path_param,
+    resolve_base_head,
 };
 
 /// List commits between two revisions

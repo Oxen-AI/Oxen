@@ -1,8 +1,8 @@
 use crate::core::db::data_frames::row_changes_db::get_all_data_frame_row_changes;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::data_frame::update_result::UpdateResult;
 use crate::model::Workspace;
+use crate::model::data_frame::update_result::UpdateResult;
 use crate::view::data_frames::DataFrameRowChange;
 
 use polars::datatypes::AnyValue;
@@ -18,8 +18,8 @@ use crate::constants::{DIFF_STATUS_COL, OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME
 use crate::core::db;
 
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
-use crate::model::staged_row_status::StagedRowStatus;
 use crate::model::LocalRepository;
+use crate::model::staged_row_status::StagedRowStatus;
 
 use std::path::Path;
 

@@ -95,7 +95,7 @@ impl DirNode {
 
     pub fn get_opts(&self) -> DirNodeOpts {
         match &self.node {
-            EDirNode::V0_25_0(ref data) => DirNodeOpts {
+            EDirNode::V0_25_0(data) => DirNodeOpts {
                 name: data.name.clone(),
                 hash: data.hash,
                 num_entries: data.num_entries,
@@ -106,7 +106,7 @@ impl DirNode {
                 data_type_counts: data.data_type_counts.clone(),
                 data_type_sizes: data.data_type_sizes.clone(),
             },
-            EDirNode::V0_19_0(ref data) => DirNodeOpts {
+            EDirNode::V0_19_0(data) => DirNodeOpts {
                 name: data.name.clone(),
                 hash: data.hash,
                 num_entries: 0, // not supported in v0.19.0
@@ -138,8 +138,8 @@ impl DirNode {
 
     fn node(&self) -> &dyn TDirNode {
         match &self.node {
-            EDirNode::V0_25_0(ref data) => data,
-            EDirNode::V0_19_0(ref data) => data,
+            EDirNode::V0_25_0(data) => data,
+            EDirNode::V0_19_0(data) => data,
         }
     }
 

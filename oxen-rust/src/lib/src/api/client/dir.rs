@@ -2,9 +2,9 @@ use std::path::Path;
 
 use crate::api::client;
 use crate::error::OxenError;
-use crate::model::metadata::generic_metadata::GenericMetadata;
-use crate::model::metadata::MetadataDir;
 use crate::model::RemoteRepository;
+use crate::model::metadata::MetadataDir;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::view::entries::EMetadataEntry;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
 use crate::{api, constants};

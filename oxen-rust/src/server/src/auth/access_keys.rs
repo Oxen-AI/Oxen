@@ -2,7 +2,7 @@ use liboxen::error::OxenError;
 use liboxen::model::User;
 use liboxen::util;
 
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rocksdb::{DBWithThreadMode, LogLevel, MultiThreaded, Options};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

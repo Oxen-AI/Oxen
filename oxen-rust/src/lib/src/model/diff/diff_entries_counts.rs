@@ -1,5 +1,5 @@
-use crate::model::diff::AddRemoveModifyCounts;
 use crate::model::DiffEntry;
+use crate::model::diff::AddRemoveModifyCounts;
 use crate::view::Pagination;
 
 #[derive(Debug)]

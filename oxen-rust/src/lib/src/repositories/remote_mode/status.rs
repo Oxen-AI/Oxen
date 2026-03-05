@@ -1,11 +1,11 @@
 use crate::api;
 use crate::error::OxenError;
-use crate::model::staged_data::StagedDataOpts;
 use crate::model::LocalRepository;
 use crate::model::RemoteRepository;
 use crate::model::StagedData;
 use crate::model::StagedEntry;
 use crate::model::StagedEntryStatus;
+use crate::model::staged_data::StagedDataOpts;
 
 use crate::core::v_latest::status::status_from_opts_and_staged_data;
 
@@ -119,8 +119,8 @@ mod tests {
     // README.md
 
     #[tokio::test]
-    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone(
-    ) -> Result<(), OxenError> {
+    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone()
+    -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 

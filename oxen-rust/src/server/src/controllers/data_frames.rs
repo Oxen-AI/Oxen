@@ -11,7 +11,7 @@ use liboxen::repositories;
 use liboxen::view::data_frames::FromDirectoryRequest;
 use liboxen::view::entries::ResourceVersion;
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::opts::{DFOpts, PaginateOpts};
 use liboxen::view::{
     CommitResponse, JsonDataFrameView, JsonDataFrameViewResponse, JsonDataFrameViews, Pagination,

@@ -54,7 +54,7 @@ impl PyRemoteRepo {
                 return Err(OxenError::basic_str(format!(
                     "Invalid repo name, must be in format namespace/repo_name. Got {repo}"
                 ))
-                .into())
+                .into());
             }
         };
 
@@ -261,7 +261,7 @@ impl PyRemoteRepo {
         Ok(result)
     }
 
-    fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<[u8]>, PyOxenError> {
+    fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<'_, [u8]>, PyOxenError> {
         let bytes = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::file::get_file(&self.repo, &revision, &remote_path).await
         })?;
@@ -527,8 +527,10 @@ impl PyRemoteRepo {
                 self.set_revision(commit_id.clone());
                 self.commit_id = Some(commit_id.clone());
                 Ok(commit_id)
-            },
-            _ => Err(PyValueError::new_err(format!("{revision} is not a valid branch name or commit id. Consider creating it with `create_branch`")))
+            }
+            _ => Err(PyValueError::new_err(format!(
+                "{revision} is not a valid branch name or commit id. Consider creating it with `create_branch`"
+            ))),
         }
     }
 

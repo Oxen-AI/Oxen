@@ -208,27 +208,28 @@ impl DiffEntry {
                 .clone_from(&head_resource);
         }
 
-        if let Some(df_opts) = df_opts {
-            if data_type == EntryDataType::Tabular && should_do_full_diff {
-                log::debug!("doing full diff for tabular");
-                let diff =
-                    TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts).await;
-                return Ok(DiffEntry {
-                    status: status.to_string(),
-                    data_type: data_type.clone(),
-                    filename: file_path.as_os_str().to_str().unwrap().to_string(),
-                    is_dir: false,
-                    size: current_entry.num_bytes(),
-                    head_resource,
-                    base_resource,
-                    head_entry: head_meta_entry,
-                    base_entry: base_meta_entry,
-                    diff_summary: Some(GenericDiffSummary::TabularDiffWrapper(
-                        diff.clone().tabular.summary.to_wrapper(),
-                    )),
-                    diff: Some(GenericDiff::TabularDiff(Box::new(diff))),
-                });
-            }
+        if let Some(df_opts) = df_opts
+            && data_type == EntryDataType::Tabular
+            && should_do_full_diff
+        {
+            log::debug!("doing full diff for tabular");
+            let diff =
+                TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts).await;
+            return Ok(DiffEntry {
+                status: status.to_string(),
+                data_type: data_type.clone(),
+                filename: file_path.as_os_str().to_str().unwrap().to_string(),
+                is_dir: false,
+                size: current_entry.num_bytes(),
+                head_resource,
+                base_resource,
+                head_entry: head_meta_entry,
+                base_entry: base_meta_entry,
+                diff_summary: Some(GenericDiffSummary::TabularDiffWrapper(
+                    diff.clone().tabular.summary.to_wrapper(),
+                )),
+                diff: Some(GenericDiff::TabularDiff(Box::new(diff))),
+            });
         }
 
         // TODO: handle all diff types more generically

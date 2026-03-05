@@ -1,8 +1,8 @@
 use std::{fs::File, path::Path};
 
 use bytesize::ByteSize;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::io::Write;
 
 use crate::core;

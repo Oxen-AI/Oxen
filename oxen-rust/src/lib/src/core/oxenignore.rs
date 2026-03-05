@@ -26,13 +26,12 @@ pub fn is_ignored(path: &Path, gitignore: &Option<Gitignore>, is_dir: bool) -> b
     if path.starts_with(OXEN_HIDDEN_DIR) {
         return true;
     }
-    if let Some(gitignore) = gitignore {
-        if gitignore
+    if let Some(gitignore) = gitignore
+        && gitignore
             .matched_path_or_any_parents(path, is_dir)
             .is_ignore()
-        {
-            return true;
-        }
+    {
+        return true;
     }
     false
 }

@@ -3,14 +3,14 @@ use arrow::array::{Float32Array, Float64Array, ListArray, RecordBatch};
 use duckdb;
 use polars::frame::DataFrame;
 
-use crate::config::embedding_config::{EmbeddingColumn, EmbeddingStatus};
-use crate::config::EmbeddingConfig;
 use crate::config::EMBEDDING_CONFIG_FILENAME;
+use crate::config::EmbeddingConfig;
+use crate::config::embedding_config::{EmbeddingColumn, EmbeddingStatus};
 use crate::constants::{EXCLUDE_OXEN_COLS, TABLE_NAME};
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::error::OxenError;
-use crate::model::data_frame::schema::Field;
 use crate::model::Workspace;
+use crate::model::data_frame::schema::Field;
 use crate::opts::{EmbeddingQueryOpts, PaginateOpts};
 use crate::{repositories, util};
 
@@ -211,7 +211,7 @@ fn get_embedding_length(
             _ => {
                 return Err(OxenError::basic_str(
                     "Column must be a list of float32 or float64",
-                ))
+                ));
             }
         },
         arrow::datatypes::DataType::FixedSizeList(field, size) => match field.data_type() {
@@ -219,7 +219,7 @@ fn get_embedding_length(
             _ => {
                 return Err(OxenError::basic_str(
                     "Column FixedSizeList must be a float32 type",
-                ))
+                ));
             }
         },
         _ => return Err(OxenError::basic_str("Column must be a list type")),
@@ -284,7 +284,9 @@ fn build_similarity_query_sql(
         .collect::<Vec<&str>>();
 
     let columns_str = columns.join(", ");
-    let sql = format!("SELECT {columns_str}, array_cosine_similarity({column}, {embedding_str}::FLOAT[{vector_length}]) as {similarity_column} FROM df ORDER BY {similarity_column} DESC");
+    let sql = format!(
+        "SELECT {columns_str}, array_cosine_similarity({column}, {embedding_str}::FLOAT[{vector_length}]) as {similarity_column} FROM df ORDER BY {similarity_column} DESC"
+    );
     Ok(sql)
 }
 
@@ -522,7 +524,7 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                 _ => {
                     return Err(OxenError::basic_str(
                         "Expected arrow::datatypes::DataType::Float32 inside List",
-                    ))
+                    ));
                 }
             },
             arrow::datatypes::DataType::FixedSizeList(field, _) => match field.data_type() {
@@ -549,13 +551,13 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                 _ => {
                     return Err(OxenError::basic_str(
                         "Column FixedSizeList must be a float32 type",
-                    ))
+                    ));
                 }
             },
             _ => {
                 return Err(OxenError::basic_str(
                     "Expected arrow::datatypes::DataType::List inside as data type",
-                ))
+                ));
             }
         }
     }

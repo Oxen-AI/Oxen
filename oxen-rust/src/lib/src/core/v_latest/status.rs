@@ -457,10 +457,10 @@ fn find_changes(
     let is_dir = full_path.is_dir();
     log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
 
-    if let Some(ignore) = &opts.ignore {
-        if ignore.contains(search_node_path) || ignore.contains(&full_path) {
-            return Ok((UntrackedData::new(), HashSet::new(), HashSet::new()));
-        }
+    if let Some(ignore) = &opts.ignore
+        && (ignore.contains(search_node_path) || ignore.contains(&full_path))
+    {
+        return Ok((UntrackedData::new(), HashSet::new(), HashSet::new()));
     }
 
     let mut untracked = UntrackedData::new();
@@ -555,12 +555,12 @@ fn find_changes(
             // If it's none of the above conditions
             // then check if it's untracked or modified
             let mut found_file = false;
-            if let Some(search_node) = &search_node {
-                if let EMerkleTreeNode::File(file_node) = &search_node.node {
-                    found_file = true;
-                    if util::fs::is_modified_from_node_with_metadata(&path, file_node, metadata)? {
-                        modified.insert(relative_path.clone());
-                    }
+            if let Some(search_node) = &search_node
+                && let EMerkleTreeNode::File(file_node) = &search_node.node
+            {
+                found_file = true;
+                if util::fs::is_modified_from_node_with_metadata(&path, file_node, metadata)? {
+                    modified.insert(relative_path.clone());
                 }
             }
             log::debug!("find_changes found_file {found_file:?} {path:?}");
@@ -593,7 +593,7 @@ fn find_changes(
                 return Ok((untracked, modified, removed));
             }
 
-            if subtree_paths.len() == 1 && subtree_paths[0] == PathBuf::from("") {
+            if subtree_paths.len() == 1 && subtree_paths[0] == Path::new("") {
                 // If the subtree is the root, we need to check for removed files in the root
                 let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
                 if let Some(node) = dir_node {
@@ -667,15 +667,15 @@ fn find_local_changes(
 
     log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
 
-    if let Some(ignore) = &opts.ignore {
-        if ignore.contains(search_node_path) || ignore.contains(&full_path) {
-            return Ok((
-                UntrackedData::new(),
-                UnsyncedData::new(),
-                HashSet::new(),
-                HashSet::new(),
-            ));
-        }
+    if let Some(ignore) = &opts.ignore
+        && (ignore.contains(search_node_path) || ignore.contains(&full_path))
+    {
+        return Ok((
+            UntrackedData::new(),
+            UnsyncedData::new(),
+            HashSet::new(),
+            HashSet::new(),
+        ));
     }
 
     let mut untracked = UntrackedData::new();
@@ -765,12 +765,12 @@ fn find_local_changes(
             // If it's none of the above conditions
             // then check if it's untracked or modified
             let mut found_file = false;
-            if let Some(search_node) = &search_node {
-                if let EMerkleTreeNode::File(file_node) = &search_node.node {
-                    found_file = true;
-                    if util::fs::is_modified_from_node(&path, file_node)? {
-                        modified.insert(relative_path.clone());
-                    }
+            if let Some(search_node) = &search_node
+                && let EMerkleTreeNode::File(file_node) = &search_node.node
+            {
+                found_file = true;
+                if util::fs::is_modified_from_node(&path, file_node)? {
+                    modified.insert(relative_path.clone());
                 }
             }
             log::debug!("find_changes found_file {found_file:?} {path:?}");
@@ -804,7 +804,7 @@ fn find_local_changes(
                 return Ok((untracked, unsynced, modified, removed));
             }
 
-            if subtree_paths.len() == 1 && subtree_paths[0] == PathBuf::from("") {
+            if subtree_paths.len() == 1 && subtree_paths[0] == Path::new("") {
                 // If the subtree is the root, we need to check for removed files in the root
                 let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
                 if let Some(node) = dir_node {

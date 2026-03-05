@@ -5,11 +5,11 @@ use crate::params::{app_data, path_param};
 use liboxen::core;
 use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
+use liboxen::model::LocalRepository;
+use liboxen::model::Workspace;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
-use liboxen::model::LocalRepository;
-use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::util::hasher;
@@ -21,7 +21,7 @@ use liboxen::view::{
 
 use actix_multipart::Multipart;
 use actix_web::Error;
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
@@ -617,118 +617,116 @@ pub async fn save_parts(
             continue;
         };
 
-        if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" || name == "file" {
-                // The file path is passed in as the filename
-                let upload_filename = content_disposition.get_filename().map_or_else(
-                    || {
-                        Err(actix_web::error::ErrorBadRequest(
-                            "Missing hash in multipart request",
-                        ))
-                    },
-                    |fhash_os_str| Ok(fhash_os_str.to_string()),
-                )?;
+        if let Some(name) = content_disposition.get_name()
+            && (name == "file[]" || name == "file")
+        {
+            // The file path is passed in as the filename
+            let upload_filename = content_disposition.get_filename().map_or_else(
+                || {
+                    Err(actix_web::error::ErrorBadRequest(
+                        "Missing hash in multipart request",
+                    ))
+                },
+                |fhash_os_str| Ok(fhash_os_str.to_string()),
+            )?;
 
-                let mut field_bytes = Vec::new();
-                while let Some(chunk) = field.try_next().await? {
-                    field_bytes.extend_from_slice(&chunk);
-                }
+            let mut field_bytes = Vec::new();
+            while let Some(chunk) = field.try_next().await? {
+                field_bytes.extend_from_slice(&chunk);
+            }
 
-                let is_gzipped = field
-                    .content_type()
-                    .map(|mime| {
-                        mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
-                    })
-                    .unwrap_or(false);
+            let is_gzipped = field
+                .content_type()
+                .map(|mime| {
+                    mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
+                })
+                .unwrap_or(false);
 
-                let upload_filename_copy = upload_filename.clone();
+            let upload_filename_copy = upload_filename.clone();
 
-                let (upload_filehash, data_to_store) =
-                    match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
-                        if is_gzipped {
-                            log::debug!(
-                                "Decompressing gzipped data for file: {upload_filename_copy:?}"
-                            );
+            let (upload_filehash, data_to_store) =
+                match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
+                    if is_gzipped {
+                        log::debug!(
+                            "Decompressing gzipped data for file: {upload_filename_copy:?}"
+                        );
 
-                            // Decompress the data if it is gzipped
-                            let mut decoder = GzDecoder::new(&field_bytes[..]);
-                            let mut decompressed_bytes: Vec<u8> = Vec::new();
-                            decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                                OxenError::basic_str(format!(
-                                    "Failed to decompress gzipped data: {e}"
-                                ))
-                            })?;
+                        // Decompress the data if it is gzipped
+                        let mut decoder = GzDecoder::new(&field_bytes[..]);
+                        let mut decompressed_bytes: Vec<u8> = Vec::new();
+                        decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
+                            OxenError::basic_str(format!("Failed to decompress gzipped data: {e}"))
+                        })?;
 
-                            // Hash file contents
-                            let hash = hasher::hash_buffer(&decompressed_bytes);
+                        // Hash file contents
+                        let hash = hasher::hash_buffer(&decompressed_bytes);
 
-                            Ok((hash, decompressed_bytes))
-                        } else {
-                            log::debug!("Data for file {upload_filename_copy:?} is not gzipped.");
+                        Ok((hash, decompressed_bytes))
+                    } else {
+                        log::debug!("Data for file {upload_filename_copy:?} is not gzipped.");
 
-                            // Only hash file contents
-                            let hash = hasher::hash_buffer(&field_bytes);
-                            Ok((hash, field_bytes))
-                        }
-                    })
-                    .await
-                    {
-                        Ok(Ok((hash, data))) => (hash, data),
-                        Ok(Err(e)) => {
-                            log::error!(
-                                "Failed to decompress data for file {}: {:?}",
-                                &upload_filename,
-                                e
-                            );
-                            record_error_file(
-                                &mut err_files,
-                                upload_filename.clone(),
-                                None,
-                                format!("Failed to decompress data: {e:?}"),
-                            );
-                            continue;
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Failed to execute blocking decompression task for file {}: {}",
-                                &upload_filename,
-                                e
-                            );
-                            record_error_file(
-                                &mut err_files,
-                                upload_filename.clone(),
-                                None,
-                                format!("Failed to execute blocking decompression: {e}"),
-                            );
-                            continue;
-                        }
-                    };
-
-                match version_store
-                    .store_version(&upload_filehash, &data_to_store)
-                    .await
-                {
-                    Ok(_) => {
-                        upload_files.push(FileWithHash {
-                            hash: upload_filehash.to_string(),
-                            path: upload_filename.into(),
-                        });
-                        log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                        // Only hash file contents
+                        let hash = hasher::hash_buffer(&field_bytes);
+                        Ok((hash, field_bytes))
                     }
-                    Err(e) => {
+                })
+                .await
+                {
+                    Ok(Ok((hash, data))) => (hash, data),
+                    Ok(Err(e)) => {
                         log::error!(
-                            "Failed to store version for hash {}: {}",
-                            &upload_filehash,
+                            "Failed to decompress data for file {}: {:?}",
+                            &upload_filename,
                             e
                         );
                         record_error_file(
                             &mut err_files,
-                            upload_filehash.clone(),
+                            upload_filename.clone(),
                             None,
-                            format!("Failed to store version: {e}"),
+                            format!("Failed to decompress data: {e:?}"),
                         );
                         continue;
                     }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to execute blocking decompression task for file {}: {}",
+                            &upload_filename,
+                            e
+                        );
+                        record_error_file(
+                            &mut err_files,
+                            upload_filename.clone(),
+                            None,
+                            format!("Failed to execute blocking decompression: {e}"),
+                        );
+                        continue;
+                    }
+                };
+
+            match version_store
+                .store_version(&upload_filehash, &data_to_store)
+                .await
+            {
+                Ok(_) => {
+                    upload_files.push(FileWithHash {
+                        hash: upload_filehash.to_string(),
+                        path: upload_filename.into(),
+                    });
+                    log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to store version for hash {}: {}",
+                        &upload_filehash,
+                        e
+                    );
+                    record_error_file(
+                        &mut err_files,
+                        upload_filehash.clone(),
+                        None,
+                        format!("Failed to store version: {e}"),
+                    );
+                    continue;
                 }
             }
         }
@@ -774,7 +772,7 @@ mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
-    use actix_web::{web, App};
+    use actix_web::{App, web};
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;

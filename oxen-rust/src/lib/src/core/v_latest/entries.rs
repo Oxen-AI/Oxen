@@ -3,16 +3,16 @@ use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::WorkspaceMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode, MerkleTreeNode};
-use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     Commit, CommitEntry, EntryDataType, LocalRepository, MerkleHash, MetadataEntry, ParsedResource,
 };
 use crate::opts::PaginateOpts;
 use crate::repositories;
 use crate::util;
-use crate::view::entries::{EMetadataEntry, ResourceVersion};
 use crate::view::PaginatedDirEntries;
+use crate::view::entries::{EMetadataEntry, ResourceVersion};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -123,12 +123,9 @@ pub fn list_directory_with_depth(
     drop(_perf_paginate);
 
     let _perf_workspace = crate::perf_guard!("core::entries::populate_workspace_data");
-    let entries: Vec<EMetadataEntry> = if parsed_resource.workspace.is_some() {
+    let entries: Vec<EMetadataEntry> = if let Some(workspace) = parsed_resource.workspace.as_ref() {
         repositories::workspaces::populate_entries_with_workspace_data(
-            repo,
-            directory,
-            parsed_resource.workspace.as_ref().unwrap(),
-            &entries,
+            repo, directory, workspace, &entries,
         )?
     } else {
         entries

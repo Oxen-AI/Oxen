@@ -4,10 +4,10 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
-use actix_web::{web::Bytes, HttpRequest, HttpResponse};
-use liboxen::model::data_frame::update_result::UpdateResult;
-use liboxen::model::data_frame::DataFrameSchemaSize;
+use actix_web::{HttpRequest, HttpResponse, web::Bytes};
 use liboxen::model::Schema;
+use liboxen::model::data_frame::DataFrameSchemaSize;
+use liboxen::model::data_frame::update_result::UpdateResult;
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
 use liboxen::view::json_data_frame_view::{
@@ -159,7 +159,9 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    log::debug!("update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?} with json data {data:?}");
+    log::debug!(
+        "update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?} with json data {data:?}"
+    );
 
     let modified_row = repositories::workspaces::data_frames::rows::update(
         &repo, &workspace, &file_path, &row_id, data,

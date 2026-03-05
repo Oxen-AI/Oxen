@@ -27,9 +27,9 @@ pub fn get_metadata_with_extension(
 
 #[cfg(test)]
 mod tests {
-    use crate::model::metadata::generic_metadata::GenericMetadata;
-    use crate::model::metadata::MetadataTabular;
     use crate::model::EntryDataType;
+    use crate::model::metadata::MetadataTabular;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::repositories;
     use crate::test;
 

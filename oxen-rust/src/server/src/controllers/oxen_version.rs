@@ -2,8 +2,8 @@ use crate::params::app_data;
 use actix_web::{HttpRequest, HttpResponse};
 use liboxen::constants::MIN_OXEN_VERSION;
 use liboxen::repositories;
-use liboxen::view::oxen_version::OxenVersionResponse;
 use liboxen::view::StatusMessage;
+use liboxen::view::oxen_version::OxenVersionResponse;
 use serde::Serialize;
 
 /// Check Oxen server status

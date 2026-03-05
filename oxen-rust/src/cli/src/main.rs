@@ -141,7 +141,9 @@ async fn async_main() -> ExitCode {
                         }
                         // Disallowed commands
                         "embeddings" | "merge" | "push" | "workspace" => {
-                            eprintln!("Command `oxen {command}` not implemented for remote-mode repositories");
+                            eprintln!(
+                                "Command `oxen {command}` not implemented for remote-mode repositories"
+                            );
                             return ExitCode::FAILURE;
                         }
                         _ => {} // All other commands behave as normal
