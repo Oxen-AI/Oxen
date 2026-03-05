@@ -347,13 +347,17 @@ fn collect_missing_entries_for_subtree(
     tree.walk_tree(|node: &MerkleTreeNode| {
         let t = node.node.node_type();
         if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
-            let file_hash = *node.node.hash();
-            // Only add files we haven't seen before
-            if file_hashes_seen.insert(file_hash) {
-                let entry = Entry::CommitEntry(CommitEntry::from_node(&node.node));
-                *total_bytes += entry.num_bytes();
-                missing_entries.insert(entry);
-            }
+          if let Some(commit_entry) = CommitEntry::from_node(&node.node) {
+              let file_hash = *node.node.hash();
+              // Only add files we haven't seen before
+              if file_hashes_seen.insert(file_hash) {
+                  let entry = Entry::CommitEntry(commit_entry);
+                  *total_bytes += entry.num_bytes();
+                  missing_entries.insert(entry);
+              }
+          } else {
+            log::error!("[skip] Walking Merkle tree {}, found node type {:?} that we could not convert into a CommitEntry", tree.hash(), t);
+          }
         }
     });
     Ok(())

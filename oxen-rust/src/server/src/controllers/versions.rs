@@ -579,13 +579,13 @@ pub async fn save_multiparts(
                         log::info!("Successfully stored version for hash: {upload_filehash}");
                     }
                     Err(e) => {
-                        log::error!("Failed to store version for hash {upload_filehash}: {e}");
-                        record_error_file(
-                            &mut err_files,
-                            upload_filehash.clone(),
-                            None,
-                            format!("Failed to store version: {e}"),
-                        );
+                        let msg = format!("Failed to store version for hash {upload_filehash}");
+                        log::error!("{msg}: {e}");
+                        err_files.push(ErrorFileInfo {
+                            hash: filehash,
+                            path: filepath,
+                            error: e,
+                        });
                         continue;
                     }
                 }
@@ -596,20 +596,6 @@ pub async fn save_multiparts(
     Ok(err_files)
 }
 
-// Record the error file info for retry
-fn record_error_file(
-    err_files: &mut Vec<ErrorFileInfo>,
-    filehash: String,
-    filepath: Option<PathBuf>,
-    error: String,
-) {
-    let info = ErrorFileInfo {
-        hash: filehash,
-        path: filepath,
-        error,
-    };
-    err_files.push(info);
-}
 
 #[cfg(test)]
 mod tests {

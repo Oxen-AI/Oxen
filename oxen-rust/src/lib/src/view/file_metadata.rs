@@ -40,7 +40,7 @@ pub struct ErrorFileInfo {
     pub hash: String,
     #[schema(value_type = Option<String>)]
     pub path: Option<PathBuf>,
-    pub error: String,
+    pub error: OxenError,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

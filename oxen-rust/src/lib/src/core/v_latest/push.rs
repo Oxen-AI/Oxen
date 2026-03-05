@@ -643,6 +643,8 @@ async fn chunk_and_send_large_entries(
                     path,
                     None::<PathBuf>,
                     None,
+                    entry.num_bytes(),
+                    &entry.hash()
                     Some(entry.clone()),
                     Some(&bar),
                 )

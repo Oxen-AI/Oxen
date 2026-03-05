@@ -33,24 +33,27 @@ impl PartialEq for Entry {
 impl Eq for Entry {}
 
 impl Entry {
-    pub fn commit_id(&self) -> String {
+
+  const EMPTY: &str = "";
+
+    pub fn commit_id(&self) -> &str {
         match self {
-            Entry::CommitEntry(entry) => entry.commit_id.clone(),
-            Entry::SchemaEntry(entry) => entry.commit_id.clone(),
+            Entry::CommitEntry(entry) => &entry.commit_id,
+            Entry::SchemaEntry(entry) => &entry.commit_id,
         }
     }
 
-    pub fn path(&self) -> PathBuf {
+    pub fn path(&self) -> &Path {
         match self {
-            Entry::CommitEntry(entry) => entry.path.clone(),
-            Entry::SchemaEntry(entry) => entry.path.clone(),
+            Entry::CommitEntry(entry) => &entry.path,
+            Entry::SchemaEntry(entry) => &entry.path,
         }
     }
 
-    pub fn hash(&self) -> String {
+    pub fn hash(&self) -> &str {
         match self {
-            Entry::CommitEntry(entry) => entry.hash.clone(),
-            Entry::SchemaEntry(entry) => entry.hash.clone(),
+            Entry::CommitEntry(entry) => &entry.hash,
+            Entry::SchemaEntry(entry) => &entry.hash,
         }
     }
 
@@ -60,10 +63,11 @@ impl Entry {
             Entry::SchemaEntry(entry) => entry.num_bytes,
         }
     }
+
     pub fn extension(&self) -> String {
         match self {
             Entry::CommitEntry(entry) => entry.extension(),
-            Entry::SchemaEntry(_entry) => "".to_string(),
+            Entry::SchemaEntry(_) => "".to_string(),
         }
     }
 }
@@ -78,15 +82,6 @@ impl From<CommitEntry> for Entry {
 impl From<SchemaEntry> for Entry {
     fn from(entry: SchemaEntry) -> Self {
         Entry::SchemaEntry(entry)
-    }
-}
-
-impl From<Entry> for CommitEntry {
-    fn from(entry: Entry) -> Self {
-        match entry {
-            Entry::CommitEntry(entry) => entry,
-            _ => panic!("Cannot convert Entry to CommitEntry"),
-        }
     }
 }
 
@@ -177,11 +172,11 @@ impl CommitEntry {
         }
     }
 
-    pub fn from_node(node: &EMerkleTreeNode) -> CommitEntry {
+    pub fn from_node(node: &EMerkleTreeNode) -> Option<CommitEntry> {
         match node {
-            EMerkleTreeNode::Directory(dir_node) => CommitEntry::from_dir_node(dir_node),
-            EMerkleTreeNode::File(file_node) => CommitEntry::from_file_node(file_node),
-            _ => panic!("Cannot convert EMerkleTreeNode to CommitEntry"),
+            EMerkleTreeNode::Directory(dir_node) => Some(CommitEntry::from_dir_node(dir_node)),
+            EMerkleTreeNode::File(file_node) => Some(CommitEntry::from_file_node(file_node)),
+            _ => None,
         }
     }
 
@@ -224,11 +219,12 @@ impl CommitEntry {
         PathBuf::from(format!("{}.{}", commit_id, self.extension()))
     }
 
+
     pub fn extension(&self) -> String {
         if let Some(ext) = self.path.extension() {
-            String::from(ext.to_str().unwrap_or(""))
+            ext.to_string_lossy().to_string()
         } else {
-            String::from("")
+            "".to_string()
         }
     }
 

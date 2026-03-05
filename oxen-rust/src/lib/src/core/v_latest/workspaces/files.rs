@@ -124,7 +124,7 @@ pub fn add_version_files(
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
-                        error: format!("Failed to add file to staged db: {e}"),
+                        error: OxenError::Context(Box::new(e), "Failed to add file to staged db.".into()),
                     });
                     continue;
                 }

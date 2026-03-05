@@ -110,13 +110,14 @@ pub async fn parallel_large_file_upload(
     file_path: impl AsRef<Path>,
     dst_dir: Option<impl AsRef<Path>>, // dst_dir is provided for workspace add workflow
     workspace_id: Option<String>,
-    entry: Option<Entry>,                 // entry is provided for push workflow
+    file_size: u64,
+    hash: &str,
     progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
 
     let mut upload =
-        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, entry).await?;
+        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, file_size, hash).await?;
 
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
 
@@ -143,23 +144,11 @@ async fn create_multipart_large_file_upload(
     remote_repo: &RemoteRepository,
     file_path: impl AsRef<Path>,
     dst_dir: Option<impl AsRef<Path>>,
-    entry: Option<Entry>,
+    file_size: u64,
+    hash: &str,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let file_path = file_path.as_ref();
     let dst_dir = dst_dir.as_ref();
-
-    let (file_size, hash) = match entry {
-        Some(entry) => (entry.num_bytes(), entry.hash()),
-        None => {
-            // Figure out how many parts we need to upload
-            let Ok(metadata) = file_path.metadata() else {
-                return Err(OxenError::path_does_not_exist(file_path));
-            };
-            let file_size = metadata.len();
-            let hash = util::hasher::hash_file_contents(file_path)?;
-            (file_size, hash)
-        }
-    };
 
     let uri = format!("/versions/{hash}/create");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -537,7 +526,7 @@ pub async fn multipart_batch_upload(
                 err_files.push(ErrorFileInfo {
                     hash: file_hash.clone(),
                     path: None,
-                    error: format!("Failed to finish gzip for file {}: {}", &file_hash, e),
+                    error: OxenError::Context(Box::new(e.into()), format!("Failed to finish gzip for file {}", &file_hash)),
                 });
                 continue;
             }
@@ -663,7 +652,7 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
                         err_files.push(ErrorFileInfo {
                             hash: hash.clone(),
                             path: None,
-                            error: format!("Failed to finish gzip for file {}: {}", &hash, e),
+                            error: OxenError::Context(Box::new(e.into()), format!("Failed to finish gzip for file {}", &hash)),
                         });
                         continue;
                     }
@@ -790,9 +779,19 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     Ok(upload_result.err_files)
 }
 
+fn calculate_file_size_hash(file_path: &Path) -> Result<(u64, String), OxenError> {
+    let Ok(metadata) = file_path.metadata() else {
+        return Err(OxenError::path_does_not_exist(file_path));
+    };
+    let file_size = metadata.len();
+    let hash = util::hasher::hash_file_contents(file_path)?;
+    Ok((file_size, hash))
+}
+
+
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use super::*;
 
     use crate::api;
     use crate::error::OxenError;
@@ -807,15 +806,16 @@ mod tests {
             let metadata = path.metadata().unwrap();
             let original_file_size = metadata.len();
 
+            let (file_size, hash) = calculate_file_size_hash(&path)?;
+
             // Just testing upload, not adding to workspace
-            let workspace_id = None;
-            let dst_dir: Option<PathBuf> = None;
-            let result = api::client::versions::parallel_large_file_upload(
+            let result = parallel_large_file_upload(
                 &remote_repo,
                 path,
-                dst_dir,
-                workspace_id,
                 None,
+                None,
+                file_size,
+                &hash,
                 None,
             )
             .await;

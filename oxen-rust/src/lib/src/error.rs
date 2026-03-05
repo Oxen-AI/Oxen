@@ -156,6 +156,7 @@ pub enum OxenError {
     RmpDecodeError(rmp_serde::decode::Error),
 
     // Fallback
+    Context(Box<Self>, String),
     Basic(StringError),
 }
 
@@ -170,6 +171,7 @@ impl fmt::Display for OxenError {
             OxenUpdateRequired(e) | Basic(e) | ThumbnailingNotEnabled(e) => write!(f, "{e}"),
             PathIsNotInCommit(c, p) => write!(f, "Path '{p}' is not present in commit '{c}'."),
             CommitDoesNotExist(c) => write!(f, "Commit '{c}' does not exist in repository."),
+            Context(e, context) => write!(f, "{context}: {}", e.as_ref()),
             InvalidRepoName(name) => write!(
                 f,
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"

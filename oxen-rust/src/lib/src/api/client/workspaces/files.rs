@@ -250,7 +250,8 @@ pub async fn upload_single_file(
             path,
             Some(directory),
             Some(workspace_id.as_ref().to_string()),
-            None,
+            file_size,
+            &hash,
             None,
         )
         .await
@@ -281,7 +282,7 @@ async fn upload_multiple_files(
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
     strict_errors: bool,
-) -> Result<(), OxenError> {
+) -> Result<ErrorFiles, OxenError> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -345,6 +346,9 @@ async fn upload_multiple_files(
     let total_size = large_files_size + small_files_size;
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
+
+    let mut failed_to_upload = vec![];
+
     // Process large files individually with parallel upload
     for (path, _) in large_files {
         let dst_dir = match local_or_base {
@@ -360,18 +364,27 @@ async fn upload_multiple_files(
             &path,
             Some(&dst_dir),
             Some(workspace_id.to_string()),
-            None,
+            file_size,
+            &hash,
             None,
         )
         .await
         {
             Ok(_) => log::debug!("Successfully uploaded large file: {path:?}"),
-            Err(err) => log::error!("Failed to upload large file {path:?}: {err}"),
+            Err(err) => {
+              let msg = format!("Failed to upload large file {path:?}");
+              log::error!("{msg}: {err}");
+              failed_to_upload.push(ErrorFileInfo {
+                hash: hash.clone(),
+                path: Some(path),
+                error: OxenError::Context(Box::new(err), msg),
+              });
+            },
         }
     }
 
     // Upload small files in batches
-    parallel_batched_small_file_upload(
+    let err_files_small_upload = parallel_batched_small_file_upload(
         remote_repo,
         workspace_id,
         directory,
@@ -384,6 +397,8 @@ async fn upload_multiple_files(
     Ok(())
 }
 
+type ErrorFiles = Vec<ErrorFileInfo>;
+
 pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -391,9 +406,9 @@ pub(crate) async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
-) -> Result<(), OxenError> {
+) -> Result<ErrorFiles, OxenError> {
     if small_files.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
 
     let (base_or_repo_path, head_commit_local_repo_maybe, keep_relative_paths) = match local_or_base
@@ -717,7 +732,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                             .map(|f| ErrorFileInfo {
                                                 hash: f.hash.clone(),
                                                 path: Some(f.path.clone()),
-                                                error: format!("{e:?}"),
+                                                error: e,
                                             })
                                             .collect::<Vec<ErrorFileInfo>>()
                                     );
@@ -756,16 +771,13 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
     log::debug!("All upload tasks completed");
     progress.finish();
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     if !err_files.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Failed to upload {} files after retry",
-            err_files.len()
-        )));
+        log::error!("Failed to upload {} files after retry", err_files.len());
+        Ok(err_files)
+    } else {
+      Ok(vec![])
     }
-
-    Ok(())
 }
 
 // Retry stage_files_to_workspace until successful or retry limit breached
