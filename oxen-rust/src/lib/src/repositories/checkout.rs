@@ -1386,4 +1386,74 @@ mod tests {
         })
         .await
     }
+
+    // Both branches share the same "data/" directory (identical content, so
+    // the hash is in common_nodes). On disk, the user manually deletes the
+    // directory and creates a regular file at "data" (uncommitted).
+    // Checking out the other branch should detect that "data" on disk is NOT
+    // a directory and restore the directory contents instead of taking the
+    // fast-path exit that assumes the directory is already present.
+    //
+    // This exposes a bug where full_dir_path.exists() is used instead of
+    // full_dir_path.is_dir(): the file satisfies .exists(), the hash is in
+    // common_nodes, and the code returns Ok(()) — silently skipping the
+    // entire subtree restoration.
+    #[tokio::test]
+    async fn test_checkout_restores_directory_when_file_exists_at_same_path(
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // -- main branch: "data/" is a directory with two files --
+            let dir = repo.path.join("data");
+            std::fs::create_dir_all(&dir)?;
+            let file1 = dir.join("file1.txt");
+            let file2 = dir.join("file2.txt");
+            util::fs::write_to_path(&file1, "data file 1")?;
+            util::fs::write_to_path(&file2, "data file 2")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add data directory with files")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // -- feature branch: same "data/" directory (identical content) --
+            // Plus an extra file so the branches diverge and checkout does work.
+            repositories::branches::create_checkout(&repo, "feature/shared-data")?;
+            let extra = repo.path.join("extra.txt");
+            util::fs::write_to_path(&extra, "extra")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add extra.txt, data/ is unchanged")?;
+
+            // Sanity: data/ directory exists identically on both branches
+            assert!(dir.is_dir());
+            assert!(file1.exists());
+            assert!(file2.exists());
+
+            // -- Simulate user manually replacing "data/" dir with a file --
+            std::fs::remove_dir_all(&dir)?;
+            util::fs::write_to_path(&repo.path.join("data"), "I am a plain file, not a dir")?;
+
+            // Sanity: "data" is now a regular file on disk
+            let data_path = repo.path.join("data");
+            assert!(data_path.is_file(), "data should be a regular file");
+            assert!(!data_path.is_dir(), "data should NOT be a directory");
+
+            // -- checkout main: data/ directory should be fully restored --
+            repositories::checkout(&repo, &main_branch.name).await?;
+
+            assert!(
+                dir.is_dir(),
+                "data/ should be restored as a directory when checking out main"
+            );
+            assert!(
+                file1.exists(),
+                "data/file1.txt should be restored when checking out main"
+            );
+            assert!(
+                file2.exists(),
+                "data/file2.txt should be restored when checking out main"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }

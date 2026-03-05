@@ -663,15 +663,21 @@ fn r_restore_missing_or_modified_files(
         EMerkleTreeNode::Directory(dir_node) => {
             let dir_path = path.join(dir_node.name());
             let full_dir_path = repo.path.join(&dir_path);
+            // If something exists at this path but is not a directory (e.g. the
+            // user replaced a dir with a file), remove it so restoration can proceed.
+            if full_dir_path.exists() && !full_dir_path.is_dir() {
+                std::fs::remove_file(&full_dir_path)?;
+            }
+
             // Early exit if the directory is the same in the from and target trees
-            // AND it still exists on disk (if deleted, we need to restore it)
-            if hashes.common_nodes.contains(&target_node.hash) && full_dir_path.exists() {
+            // AND it still exists on disk as a directory (if deleted or replaced, we need to restore it)
+            if hashes.common_nodes.contains(&target_node.hash) && full_dir_path.is_dir() {
                 return Ok(());
             };
 
             // If the directory doesn't exist on disk, we need to walk all vnodes
             // (including shared ones) to restore all missing files
-            let walk_all = !full_dir_path.exists();
+            let walk_all = !full_dir_path.is_dir();
 
             let children = {
                 // Get vnodes for the from dir node
