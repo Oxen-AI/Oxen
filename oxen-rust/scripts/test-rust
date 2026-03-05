@@ -24,11 +24,9 @@ trap cleanup EXIT INT TERM
 echo "==> Building oxen (cargo build)..."
 cargo build
 
-# ---------- 2. Install/Update nextest ----------
-if ! command -v cargo-nextest &>/dev/null; then
-    echo "==> Installing cargo-nextest..."
-    cargo install --quiet --locked cargo-nextest
-fi
+# ---------- 2. Ensure all prerequisites are installed ----------
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+"$REPO_ROOT/scripts/install-pre-reqs.sh"
 
 # ---------- 3. Verify ulimit ----------
 CURRENT_ULIMIT=$(ulimit -n)
