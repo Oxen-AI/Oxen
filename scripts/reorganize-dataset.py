@@ -116,17 +116,33 @@ class DirNode:
 # ---------------------------------------------------------------------------
 
 
-def generate_dir_name(faker: Faker, rng: np.random.Generator) -> str:
+def generate_dir_name(
+    faker: Faker,
+    rng: np.random.Generator,
+    *,
+    single_word: float = 0.6,
+    compound_word: float = 0.8,
+    validate: bool = True,
+) -> str:
     """Generate a realistic directory name with mixed styles."""
+    if validate:
+        assert 0 <= single_word <= 1., f"{single_word=} must be between 0 and 1"
+        assert 0 <= compound_word <= 1., f"{compound_word=} must be between 0 and 1"
+        range_compound_word = compound_word - single_word
+        assert 0 <= range_compound_word <= 1, f"{range_compound_word=} must be between 0 and 1"
+        range_number = 1.0 - range_compound_word - single_word
+        assert 0 <= range_number <= 1, f"{range_number=} must be between 0 and 1"
+        assert np.isclose(range_number + range_compound_word + single_word), f"Proportions for single_word={single_word}, compound_word={range_compound_word}, number_word={range_number} must be between 0 and 1 and all sum to 1"
+
     roll = rng.random()
-    if roll < 0.6:
-        # Single word (~60%)
+    if roll < single_word:
+        # Single word (~single_word%)
         return faker.word()
-    elif roll < 0.8:
-        # Compound word_word (~20%)
+    elif roll < compound_word:
+        # Compound word_word (~compound_word-single_word)%)
         return f"{faker.word()}_{faker.word()}"
     else:
-        # Numbered word_NNN (~20%)
+        # Numbered word_NNN (~(1-compound_word)%)
         return f"{faker.word()}_{rng.integers(1, 999):03d}"
 
 
@@ -211,7 +227,13 @@ def build_tree(
         child_files = remaining[offset:offset + count]
         offset += count
 
-        child_name = generate_dir_name(faker, rng)
+        child_name = generate_dir_name(
+            faker,
+            rng,
+            single_word = 0.6,
+            compound_word = 0.8,
+            validate = False,
+        )
         child_name = deduplicate_name(child_name, existing_names)
         existing_names.add(child_name)
 
