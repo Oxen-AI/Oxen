@@ -38,20 +38,10 @@ jobs:
             oxen-rust
             oxen-python
 
-      - name: Install system dependencies (Linux)
+      - name: Install dependencies and development tools
         run: |
-          sudo apt-get update
-          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
-
-      - name: Load pinned tool versions
-        run: |
-          # Export tool-versions.env so subsequent steps can use them.
-          grep -v '^\s*#' tool-versions.env | grep -v '^\s*$' >> "$GITHUB_ENV"
-
-      - name: Install dev tools for pre-commit hooks
-        run: |
-          cargo install cargo-sort --version "$CARGO_SORT_VERSION"
-          uv tool install pre-commit
+          cd ${{ github.workspace }}
+          ./scripts/install-pre-reqs.sh
 
       - name: Run Pre-Commit Hooks
         run: |
