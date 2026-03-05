@@ -39,103 +39,122 @@ pub mod workspaces;
 const VERSION: &str = crate::constants::OXEN_VERSION;
 const USER_AGENT: &str = "Oxen";
 
+pub struct ClientConfig {
+
+  /// Overall timeout for the entire request (connect + send + response).
+  pub timeout: time::Duration,
+
+  /// Timeout for establishing the TCP connection only.
+  pub connect_timeout: time::Duration,
+
+  /// Timeout for individual read operations on the response body (added in 0.12+).
+  pub read_timeout: time::Duration,
+
+  /// How long idle connections stay in the pool.
+  pub pool_idle_timeout: time::Duration,
+
+  /// The client's maximum number of retries for failed requests.
+  pub max_retries: usize,
+
+  /// Whether the client should add the user agent to requests.
+  pub should_add_user_agent: bool,
+
+}
+
+/// Parses the URL into a scheme and hostname pair. Hostname includes port if specified.
 pub fn get_scheme_and_host_from_url<U: IntoUrl>(url: U) -> Result<(String, String), OxenError> {
     let parsed_url = url.into_url()?;
-    let mut host_str = parsed_url.host_str().unwrap_or_default().to_string();
-    if let Some(port) = parsed_url.port() {
-        host_str = format!("{host_str}:{port}");
-    }
-    Ok((parsed_url.scheme().to_owned(), host_str))
+    let host = parsed_url.host_str().unwrap_or_default().to_string();
+    let hostname = if let Some(port) = parsed_url.port() {
+        format!("{host}:{port}");
+    } else {
+      host
+    };
+    Ok((parsed_url.scheme().to_owned(), hostname))
 }
 
 // TODO: we probably want to create a pool of clients instead of constructing a
 // new one for each request so we can take advantage of keep-alive
-pub fn new_for_url<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
+pub fn new_for_url<U: IntoUrl>(url: U, config: &ClientConfig) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    new_for_host(host, true)
+    new_for_host(host, config)
 }
 
-pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
+pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U, config: &ClientConfig) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    new_for_host(host, false)
+    new_for_host(host, config)
 }
 
-fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
-    match builder_for_host(host.as_ref(), should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::timeout()))
+fn new_for_host<S: AsRef<str>>(host: S, config: &ClientConfig) -> Result<Client, OxenError> {
+    match builder_for_host(host.as_ref(), config.should_add_user_agent)?
+        .timeout(config.timeout)
         .build()
     {
         Ok(client) => Ok(client),
-        Err(reqwest_err) => Err(OxenError::HTTP(reqwest_err)),
+        Err(reqwest_err) => Err(reqwest_err.into()),
     }
 }
 
-pub fn new_for_remote_repo(remote_repo: &RemoteRepository) -> Result<Client, OxenError> {
-    let (_scheme, host) = get_scheme_and_host_from_url(remote_repo.url())?;
-    new_for_host(host, true)
+pub fn builder_for_url<U: IntoUrl>(url: U, config: &ClientConfig) -> Result<ClientBuilder, OxenError> {
+    let (_, host) = get_scheme_and_host_from_url(url)?;
+    builder_for_host(&host, config)
 }
 
-pub fn builder_for_remote_repo(remote_repo: &RemoteRepository) -> Result<ClientBuilder, OxenError> {
-    let (_scheme, host) = get_scheme_and_host_from_url(remote_repo.url())?;
-    builder_for_host(host, true)
-}
+fn builder_for_host(host: &str, config: &ClientConfig) -> Result<ClientBuilder, OxenError> {
 
-pub fn builder_for_url<U: IntoUrl>(url: U) -> Result<ClientBuilder, OxenError> {
-    let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    builder_for_host(host, true)
-}
+    let mut b = builder(config)?;
 
-fn builder_for_host<S: AsRef<str>>(
-    host: S,
-    should_add_user_agent: bool,
-) -> Result<ClientBuilder, OxenError> {
-    let builder = if should_add_user_agent {
-        builder()
-    } else {
-        Ok(builder_no_user_agent())
-    };
+    if config.should_add_user_agent {
+      b = b.user_agent(build_user_agent()?);
+    }
 
     // If auth_config.toml isn't found, return without authorizing
-    let config = match AuthConfig::get() {
-        Ok(config) => config,
+    match AuthConfig::get() {
+        Ok(config) => {
+          if let Some(auth_token) = config.auth_token_for_host(host) {
+              log::debug!("Setting auth token for host: {}", host);
+              let auth_header = format!("Bearer {auth_token}");
+              let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
+                  Ok(header) => header,
+                  Err(e) => {
+                      log::debug!("Invalid header value: {e}");
+                      return Err(OxenError::basic_str(
+                          "Error setting request auth. Please check your Oxen config.",
+                      ));
+                  }
+              };
+              auth_value.set_sensitive(true);
+              let mut headers = header::HeaderMap::new();
+              headers.insert(header::AUTHORIZATION, auth_value);
+              b = b.default_headers(headers);
+          } else {
+              log::trace!("No auth token found for host: {}", host.as_ref());
+          }
+        },
         Err(e) => {
-            log::debug!(
-                "Error getting config: {}. No auth token found for host {}",
-                e,
-                host.as_ref()
-            );
-            return builder;
-        }
+          log::debug!(
+              "Error getting config: {}. No auth token found for host {}",
+              e,
+              host.as_ref()
+          );
+        },
     };
-    if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
-        log::debug!("Setting auth token for host: {}", host.as_ref());
-        let auth_header = format!("Bearer {auth_token}");
-        let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
-            Ok(header) => header,
-            Err(e) => {
-                log::debug!("Invalid header value: {e}");
-                return Err(OxenError::basic_str(
-                    "Error setting request auth. Please check your Oxen config.",
-                ));
-            }
-        };
-        auth_value.set_sensitive(true);
-        let mut headers = header::HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, auth_value);
-        Ok(builder?.default_headers(headers))
-    } else {
-        log::trace!("No auth token found for host: {}", host.as_ref());
-        builder
-    }
+
+    b = b.timeout(config.timeout);
+
+    b = b.connect_timeout(config.connect_timeout);
+
+    b = b.read_timeout(config.read_timeout);
+
+    Ok(b)
 }
 
-fn builder() -> Result<ClientBuilder, OxenError> {
-    let user_agent = build_user_agent()?;
-    Ok(Client::builder().user_agent(user_agent))
-}
+fn builder(config: &ClientConfig) -> Result<ClientBuilder, OxenError> {
 
-fn builder_no_user_agent() -> ClientBuilder {
-    Client::builder()
+
+
+
+    Ok(b)
 }
 
 fn build_user_agent() -> Result<String, OxenError> {
