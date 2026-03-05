@@ -114,8 +114,8 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util;
-    use crate::view::data_frames::columns::NewColumn;
     use crate::view::data_frames::FromDirectoryRequest;
+    use crate::view::data_frames::columns::NewColumn;
 
     use serde_json::json;
 

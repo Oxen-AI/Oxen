@@ -1,6 +1,6 @@
 use crate::core::db::key_val::kv_db;
 use crate::error::OxenError;
-use serde::{de, Serialize};
+use serde::{Serialize, de};
 
 use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode};
 use std::{collections::HashMap, str};
@@ -141,7 +141,9 @@ where
                             results.push((key, entry));
                         }
                         Err(err) => {
-                            log::warn!("str_json_db::list() Could not deserialize entry '{key}' -> '{value}'\n{err:?}");
+                            log::warn!(
+                                "str_json_db::list() Could not deserialize entry '{key}' -> '{value}'\n{err:?}"
+                            );
                         }
                     }
                 }

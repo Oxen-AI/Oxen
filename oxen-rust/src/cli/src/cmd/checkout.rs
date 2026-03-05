@@ -81,7 +81,9 @@ impl CheckoutCmd {
                 println!("Checked out commit: {name}");
             }
             Err(OxenError::RevisionNotFound(name)) => {
-                println!("Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again.");
+                println!(
+                    "Revision not found: {name}\n\nIf the branch exists on the remote, run\n\n  oxen fetch -b {name}\n\nto update the local copy, then try again."
+                );
             }
             Err(e) => {
                 return Err(e);

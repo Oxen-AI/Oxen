@@ -8,8 +8,8 @@ use crate::view::compare::{
     TabularCompareTargetBody,
 };
 use crate::view::diff::{DirDiffTreeSummary, DirTreeDiffResponse};
-use crate::view::{compare::CompareTabular, JsonDataFrameView};
 use crate::view::{CompareEntriesResponse, JsonDataFrameViewResponse};
+use crate::view::{JsonDataFrameView, compare::CompareTabular};
 
 use serde_json::json;
 

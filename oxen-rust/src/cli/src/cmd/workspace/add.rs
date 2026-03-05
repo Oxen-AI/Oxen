@@ -5,7 +5,7 @@ use clap::{Arg, ArgGroup, ArgMatches, Command};
 
 use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
 
-use crate::cmd::{add::add_args, RunCmd};
+use crate::cmd::{RunCmd, add::add_args};
 pub const NAME: &str = "add";
 pub struct WorkspaceAddCmd;
 

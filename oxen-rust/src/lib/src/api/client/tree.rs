@@ -1,7 +1,7 @@
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures_util::TryStreamExt;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -19,8 +19,8 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
 use crate::opts::fetch_opts::FetchOpts;
-use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::view::tree::MerkleHashResponse;
+use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::view::{MerkleHashesResponse, StatusMessage};
 use crate::{api, util};
 

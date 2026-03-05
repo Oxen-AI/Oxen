@@ -175,10 +175,10 @@ impl TabularDiffWrapper {
             return false;
         }
 
-        if let Some(base_df) = base_df {
-            if let Some(head_df) = head_df {
-                return TabularDiffWrapper::schema_has_changed_df(base_df, head_df);
-            }
+        if let Some(base_df) = base_df
+            && let Some(head_df) = head_df
+        {
+            return TabularDiffWrapper::schema_has_changed_df(base_df, head_df);
         }
 
         // if we get here, one of the dataframes is None and the other is not

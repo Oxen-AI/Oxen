@@ -14,20 +14,20 @@ use futures_util::StreamExt;
 use glob_match::glob_match;
 
 use parking_lot::Mutex;
-use rand::{thread_rng, Rng};
+use rand::{Rng, thread_rng};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::util::hasher;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
@@ -513,22 +513,16 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     // In remote-mode repos, skip adding files already present in tree
                                     if let Some((ref head_commit, ref local_repository)) =
                                         head_commit_local_repo_maybe_clone
-                                    {
-                                        if let Some(file_node) =
+                                        && let Some(file_node) =
                                             repositories::tree::get_file_by_path(
                                                 local_repository,
                                                 head_commit,
                                                 &relative_path,
                                             )?
-                                        {
-                                            if !util::fs::is_modified_from_node(&path, &file_node)?
-                                            {
-                                                log::debug!(
-                                                    "Skipping add on unmodified path {path:?}"
-                                                );
-                                                return Ok(None);
-                                            }
-                                        }
+                                        && !util::fs::is_modified_from_node(&path, &file_node)?
+                                    {
+                                        log::debug!("Skipping add on unmodified path {path:?}");
+                                        return Ok(None);
                                     }
 
                                     // When preserve_paths is set or in remote-mode repos, use the
@@ -554,8 +548,8 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                         std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
                                             |e| {
                                                 OxenError::basic_str(format!(
-                                                  "Failed to copy file '{path:?}' to encoder: {e}"
-                                              ))
+                                                    "Failed to copy file '{path:?}' to encoder: {e}"
+                                                ))
                                             },
                                         )?;
 
@@ -896,7 +890,9 @@ async fn p_upload_single_file(
             }
         }
         Err(err) => {
-            let err = format!("api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            let err = format!(
+                "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+            );
             Err(OxenError::basic_str(err))
         }
     }
@@ -913,7 +909,11 @@ async fn p_upload_bytes_as_file(
     let limit = WORKSPACE_ADD_LIMIT;
     let total_size: u64 = buf.len().try_into().unwrap();
     if total_size > limit {
-        let error_msg = format!("Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.", ByteSize::b(total_size), ByteSize::b(limit));
+        let error_msg = format!(
+            "Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.",
+            ByteSize::b(total_size),
+            ByteSize::b(limit)
+        );
         return Err(OxenError::basic_str(error_msg));
     }
 
@@ -961,7 +961,9 @@ async fn p_upload_bytes_as_file(
             }
         }
         Err(err) => {
-            let err = format!("api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            let err = format!(
+                "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+            );
             Err(OxenError::basic_str(err))
         }
     }
@@ -1232,8 +1234,8 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::{EntryDataType, NewCommitBody, RemoteRepository};
-    use crate::opts::fetch_opts::FetchOpts;
     use crate::opts::CloneOpts;
+    use crate::opts::fetch_opts::FetchOpts;
     use crate::view::workspaces::WorkspaceResponseWithStatus;
     use crate::{api, constants};
     use crate::{repositories, test};
@@ -1397,8 +1399,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_remote_readme_repo_and_commit_multiple_data_frames(
-    ) -> Result<(), OxenError> {
+    async fn test_create_remote_readme_repo_and_commit_multiple_data_frames()
+    -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =

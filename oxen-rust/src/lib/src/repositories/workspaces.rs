@@ -5,13 +5,13 @@ use crate::core::staged::staged_db_manager::with_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
-use crate::model::{merkle_tree, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
+use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus, merkle_tree};
 use crate::opts::StorageOpts;
 use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
 
-use crate::model::{workspace::WorkspaceConfig, Commit, LocalRepository, NewCommitBody, Workspace};
+use crate::model::{Commit, LocalRepository, NewCommitBody, Workspace, workspace::WorkspaceConfig};
 use crate::view::entries::EMetadataEntry;
 use crate::view::merge::Mergeable;
 
@@ -584,8 +584,8 @@ mod tests {
     use crate::util;
 
     #[tokio::test]
-    async fn test_can_commit_different_files_workspaces_without_merge_conflicts(
-    ) -> Result<(), OxenError> {
+    async fn test_can_commit_different_files_workspaces_without_merge_conflicts()
+    -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Write two files, hello.txt and goodbye.txt, and commit them
             let hello_file = repo.path.join("hello.txt");
@@ -645,8 +645,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cannot_commit_different_files_workspaces_with_merge_conflicts(
-    ) -> Result<(), OxenError> {
+    async fn test_cannot_commit_different_files_workspaces_with_merge_conflicts()
+    -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Both workspaces try to commit the same file
             let hello_file = repo.path.join("greetings").join("hello.txt");
@@ -705,8 +705,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs(
-    ) -> Result<(), OxenError> {
+    async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs()
+    -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Write two files, greetings/hello.txt and greetings/goodbye.txt, and commit them
             let hello_file = repo.path.join("greetings").join("hello.txt");

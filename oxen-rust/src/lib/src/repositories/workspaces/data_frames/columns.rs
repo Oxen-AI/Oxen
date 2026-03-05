@@ -6,11 +6,11 @@ use crate::error::OxenError;
 use crate::model::{LocalRepository, Schema, Workspace};
 use crate::repositories;
 
+use crate::view::JsonDataFrameViews;
+use crate::view::data_frames::DataFrameColumnChange;
 use crate::view::data_frames::columns::{
     ColumnToDelete, ColumnToRestore, ColumnToUpdate, NewColumn,
 };
-use crate::view::data_frames::DataFrameColumnChange;
-use crate::view::JsonDataFrameViews;
 
 use polars::frame::DataFrame;
 use rocksdb::DB;
@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 use rocksdb::IteratorMode;
 
-use crate::model::data_frame::schema::field::{Changes, PreviousField};
 use crate::model::data_frame::schema::Field;
+use crate::model::data_frame::schema::field::{Changes, PreviousField};
 
 pub fn add(
     repo: &LocalRepository,

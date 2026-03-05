@@ -10,7 +10,7 @@ use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository, RemoteBranch, RemoteRepository};
 use crate::opts::fetch_opts::FetchOpts;
 use crate::repositories;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 
 /// # Fetch the remote branches and objects
 pub async fn fetch_all(

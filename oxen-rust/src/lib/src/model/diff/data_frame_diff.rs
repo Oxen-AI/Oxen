@@ -34,10 +34,11 @@ pub struct DataFrameDiff {
 impl fmt::Display for DataFrameDiff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut results: Vec<String> = vec![];
-        if let Some(rows) = &self.added_rows {
-            if rows.height() > 0 && rows.width() > 0 {
-                results.push(format!("Added Rows\n\n{rows}\n\n"));
-            }
+        if let Some(rows) = &self.added_rows
+            && rows.height() > 0
+            && rows.width() > 0
+        {
+            results.push(format!("Added Rows\n\n{rows}\n\n"));
         }
 
         if let Some(rows) = &self.removed_rows {

@@ -8,19 +8,19 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use utoipa::ToSchema;
 
+use super::StatusMessage;
 use super::data_frames::DataFrameColumnChange;
 use super::data_frames::DataFrameRowChange;
-use super::StatusMessage;
 use crate::constants;
 use crate::core::df::tabular;
 use crate::error::OxenError;
-use crate::model::data_frame::DataFrameSchemaSize;
 use crate::model::Commit;
 use crate::model::DataFrameSize;
+use crate::model::data_frame::DataFrameSchemaSize;
 use crate::opts::df_opts::DFOptsView;
 
-use crate::view::entries::ResourceVersion;
 use crate::view::Pagination;
+use crate::view::entries::ResourceVersion;
 use crate::{model::Schema, opts::DFOpts};
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

@@ -40,9 +40,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::model::diff::DiffResult;
 use crate::model::diff::diff_entries_counts::DiffEntriesCounts;
 use crate::model::diff::schema_diff::SchemaDiff;
-use crate::model::diff::DiffResult;
 use crate::model::diff::{AddRemoveModifyCounts, TextDiff};
 
 use crate::opts::{DFOpts, DiffOpts};
@@ -2006,7 +2006,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let diff = repositories::diffs::diff(opts).await?;
 
             match diff.first() {
-                Some(DiffResult::Text(ref result)) => {
+                Some(DiffResult::Text(result)) => {
                     let lines = &result.lines;
                     println!("!!!!");
 

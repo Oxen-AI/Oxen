@@ -4,7 +4,7 @@ use crate::constants::{MERGE_HEAD_FILE, ORIG_HEAD_FILE};
 use crate::core::db;
 use crate::core::merge;
 use crate::error::OxenError;
-use crate::model::{merge_conflict::NodeMergeConflict, Commit, LocalRepository};
+use crate::model::{Commit, LocalRepository, merge_conflict::NodeMergeConflict};
 use crate::util;
 
 use rocksdb::DB;

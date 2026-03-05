@@ -1,4 +1,4 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RepoNew};
@@ -174,7 +174,8 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                 b.to_async(&rt).iter_batched(
                     || {
                         // Create a new remote for each iteration
-                        let iter_dirname = format!("push-run-{}", rand::thread_rng().gen::<u64>());
+                        let iter_dirname =
+                            format!("push-run-{}", rand::thread_rng().r#gen::<u64>());
 
                         let repo_new = RepoNew::from_namespace_name_host(
                             DEFAULT_NAMESPACE,

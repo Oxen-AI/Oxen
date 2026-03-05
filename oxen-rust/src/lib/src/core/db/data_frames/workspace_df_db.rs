@@ -3,9 +3,9 @@ use sql_query_builder as sql;
 
 use crate::constants::{DIFF_STATUS_COL, OXEN_COLS, OXEN_ROW_ID_COL};
 
+use crate::model::Schema;
 use crate::model::data_frame::schema::Field;
 use crate::model::staged_row_status::StagedRowStatus;
-use crate::model::Schema;
 use crate::{constants::TABLE_NAME, error::OxenError};
 use polars::prelude::*; // or use polars::lazy::*; if you're working in a lazy context
 

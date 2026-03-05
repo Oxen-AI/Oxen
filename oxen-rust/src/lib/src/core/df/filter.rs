@@ -83,11 +83,11 @@ fn find_next_logical_op(
     let mut logical_op: Option<(DFLogicalOp, usize)> = None;
     let mut min_idx = query.len();
     for op in logical_ops {
-        if let Some(idx) = query.find(op.as_str()) {
-            if idx < min_idx {
-                logical_op = Some((op.to_owned(), idx));
-                min_idx = idx;
-            }
+        if let Some(idx) = query.find(op.as_str())
+            && idx < min_idx
+        {
+            logical_op = Some((op.to_owned(), idx));
+            min_idx = idx;
         }
     }
     logical_op
@@ -160,7 +160,7 @@ pub fn parse(query: Option<String>) -> Result<Option<DFFilterExp>, OxenError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::df::filter::{parse, DFFilterOp, DFLogicalOp},
+        core::df::filter::{DFFilterOp, DFLogicalOp, parse},
         error::OxenError,
     };
 

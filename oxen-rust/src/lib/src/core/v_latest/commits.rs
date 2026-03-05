@@ -139,12 +139,11 @@ pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     let mut latest_commit: Option<Commit> = None;
     for branch in branches {
         let commit = get_by_id(repo, &branch.commit_id)?;
-        if let Some(commit) = commit {
-            if latest_commit.is_none()
-                || commit.timestamp < latest_commit.as_ref().unwrap().timestamp
-            {
-                latest_commit = Some(commit);
-            }
+        if let Some(commit) = commit
+            && (latest_commit.is_none()
+                || commit.timestamp < latest_commit.as_ref().unwrap().timestamp)
+        {
+            latest_commit = Some(commit);
         }
     }
     latest_commit.ok_or(OxenError::no_commits_found())
@@ -187,12 +186,12 @@ pub fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
     // We only need to look at one ref as all branches will have the same root
     let branches = with_ref_manager(repo, |manager| manager.list_branches())?;
 
-    if let Some(branch) = branches.first() {
-        if let Some(commit) = get_by_id(repo, &branch.commit_id)? {
-            let mut seen = HashSet::new();
-            let root_commit = root_commit_recursive(repo, commit.id.parse()?, &mut seen)?;
-            return Ok(Some(root_commit));
-        }
+    if let Some(branch) = branches.first()
+        && let Some(commit) = get_by_id(repo, &branch.commit_id)?
+    {
+        let mut seen = HashSet::new();
+        let root_commit = root_commit_recursive(repo, commit.id.parse()?, &mut seen)?;
+        return Ok(Some(root_commit));
     }
     log::debug!("root_commit_maybe: no root commit found");
     Ok(None)
@@ -469,10 +468,10 @@ fn mark_ancestors_visited(
 
         for parent_id in current.parent_ids.clone() {
             let parent_id: MerkleHash = parent_id.parse()?;
-            if let Some(parent) = get_by_hash(repo, &parent_id)? {
-                if !visited.contains(&parent.id) {
-                    stack.push(parent);
-                }
+            if let Some(parent) = get_by_hash(repo, &parent_id)?
+                && !visited.contains(&parent.id)
+            {
+                stack.push(parent);
             }
         }
     }
@@ -498,37 +497,39 @@ fn traverse_commits(
         config.visited.insert(commit.id.clone());
 
         // Check for base case
-        if let Some(base) = config.stop_at_base {
-            if commit.id == base.id {
-                if count >= config.skip && count < end_idx {
-                    if let Some(ref mut res) = results {
-                        res.push(commit);
-                    }
-                }
-                count += 1;
-                continue;
+        if let Some(base) = config.stop_at_base
+            && commit.id == base.id
+        {
+            if count >= config.skip
+                && count < end_idx
+                && let Some(ref mut res) = results
+            {
+                res.push(commit);
             }
+            count += 1;
+            continue;
         }
 
         // Check cache
-        if let Some(db) = config.cache_db {
-            if let Some(cached_count) = get_cached_count(db, &commit.id)? {
-                log::debug!(
-                    "Found cached count for commit {}: {} commits",
-                    &commit.id[..8],
-                    cached_count
-                );
-                mark_ancestors_visited(config.repo, &commit, config.visited)?;
-                count += cached_count;
-                continue;
-            }
+        if let Some(db) = config.cache_db
+            && let Some(cached_count) = get_cached_count(db, &commit.id)?
+        {
+            log::debug!(
+                "Found cached count for commit {}: {} commits",
+                &commit.id[..8],
+                cached_count
+            );
+            mark_ancestors_visited(config.repo, &commit, config.visited)?;
+            count += cached_count;
+            continue;
         }
 
         // Process commit in pre-order (newest-first)
-        if count >= config.skip && count < end_idx {
-            if let Some(ref mut res) = results {
-                res.push(commit.clone());
-            }
+        if count >= config.skip
+            && count < end_idx
+            && let Some(ref mut res) = results
+        {
+            res.push(commit.clone());
         }
         count += 1;
 
@@ -717,11 +718,11 @@ fn list_recursive_with_depth(
 
     while let Some((current_commit, current_depth)) = stack.pop() {
         // Check if we've already visited this commit at a shallower or equal depth
-        if let Some(&existing_depth) = results.get(&current_commit) {
-            if existing_depth <= current_depth {
-                // We've already processed this commit, skip it
-                continue;
-            }
+        if let Some(&existing_depth) = results.get(&current_commit)
+            && existing_depth <= current_depth
+        {
+            // We've already processed this commit, skip it
+            continue;
         }
 
         // Insert or update with the current (shallower) depth
@@ -904,10 +905,10 @@ fn push_unvisited_parents(
     stack: &mut Vec<Commit>,
 ) -> Result<(), OxenError> {
     for parent_id in &commit.parent_ids {
-        if let Some(parent) = repositories::revisions::get(repo, parent_id.clone())? {
-            if !visited.contains(&parent.id) {
-                stack.push(parent);
-            }
+        if let Some(parent) = repositories::revisions::get(repo, parent_id.clone())?
+            && !visited.contains(&parent.id)
+        {
+            stack.push(parent);
         }
     }
     Ok(())

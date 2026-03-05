@@ -15,13 +15,13 @@ use crate::{current_function, util};
 
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures_util::{StreamExt, TryStreamExt};
 use http::Method;
 use std::fs::{self};
-use std::io::prelude::*;
 use std::io::Cursor;
+use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
@@ -143,7 +143,7 @@ pub async fn download_entry(
         Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
             return Err(OxenError::basic_str(
                 "Workspace entries are not supported for download",
-            ))
+            ));
         }
         None => {
             return Err(OxenError::path_does_not_exist(download_path));
@@ -171,12 +171,13 @@ pub async fn download_entry(
 
     // * if the dst is a directory, and it exists, then we download the file to the dst
     // given by the dst + the file name
-    if local_path.is_dir() && local_path.exists() {
-        if let Some(file_name) = &remote_file_name {
-            // Only append if the remote entry is a file
-            if !entry.is_dir {
-                local_path = local_path.join(file_name);
-            }
+    if local_path.is_dir()
+        && local_path.exists()
+        && let Some(file_name) = &remote_file_name
+    {
+        // Only append if the remote entry is a file
+        if !entry.is_dir {
+            local_path = local_path.join(file_name);
         }
     }
 
@@ -203,7 +204,7 @@ pub async fn download_entries_to_repo(
             Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
                 return Err(OxenError::basic_str(
                     "Workspace entries are not supported for download",
-                ))
+                ));
             }
             None => {
                 return Err(OxenError::path_does_not_exist(remote_path));
@@ -1109,11 +1110,13 @@ mod tests {
                 .await?;
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());
-            assert!(local_path
-                .join("annotations")
-                .join("train")
-                .join("bounding_box.csv")
-                .exists());
+            assert!(
+                local_path
+                    .join("annotations")
+                    .join("train")
+                    .join("bounding_box.csv")
+                    .exists()
+            );
 
             Ok(remote_repo)
         })

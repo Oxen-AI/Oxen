@@ -1,5 +1,5 @@
 use crate::api::client;
-use crate::constants::{DEFAULT_PAGE_NUM, DIRS_DIR, DIR_HASHES_DIR, HISTORY_DIR};
+use crate::constants::{DEFAULT_PAGE_NUM, DIR_HASHES_DIR, DIRS_DIR, HISTORY_DIR};
 
 use crate::error::OxenError;
 use crate::model::commit::CommitWithBranchName;
@@ -7,7 +7,7 @@ use crate::model::entry::unsynced_commit_entry::UnsyncedCommitEntries;
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::PaginateOpts;
 use crate::util::hasher::hash_buffer;
-use crate::util::progress_bar::{oxify_bar, ProgressBarType};
+use crate::util::progress_bar::{ProgressBarType, oxify_bar};
 use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::{api, constants, repositories};
 use crate::{current_function, util};
@@ -26,8 +26,8 @@ use std::sync::Arc;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use bytesize::ByteSize;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures_util::TryStreamExt;
 use http::header::CONTENT_LENGTH;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -152,8 +152,12 @@ pub async fn list_missing_hashes(
     match response {
         Ok(response) => {
             let hashes = response.hashes;
-            Ok(commits.iter().filter(|c| hashes.contains(&c.hash().unwrap())).cloned().collect())
-        },
+            Ok(commits
+                .iter()
+                .filter(|c| hashes.contains(&c.hash().unwrap()))
+                .cloned()
+                .collect())
+        }
         Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
@@ -1007,7 +1011,13 @@ async fn upload_data_chunk_to_server(
 
     let uri = format!(
         "/commits/upload_chunk?chunk_num={}&total_size={}&hash={}&total_chunks={}&is_compressed={}{}",
-        params.chunk_num, params.total_size, hash, params.total_chunks, is_compressed, maybe_filename);
+        params.chunk_num,
+        params.total_size,
+        hash,
+        params.total_chunks,
+        is_compressed,
+        maybe_filename
+    );
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let total_size = chunk.len() as u64;
     log::debug!(

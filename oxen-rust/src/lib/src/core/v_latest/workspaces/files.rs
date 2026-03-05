@@ -1,8 +1,8 @@
-use actix_web::{web, Error};
+use actix_web::{Error, web};
 use futures::StreamExt;
 use parking_lot::Mutex;
-use reqwest::header::HeaderValue;
 use reqwest::Client;
+use reqwest::header::HeaderValue;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -293,12 +293,12 @@ async fn fetch_file(
         .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
 
     let content_length = response.content_length();
-    if let Some(content_length) = content_length {
-        if content_length > MAX_CONTENT_LENGTH {
-            return Err(OxenError::file_import_error(format!(
-                "Content length {content_length} exceeds maximum allowed size of 1GB"
-            )));
-        }
+    if let Some(content_length) = content_length
+        && content_length > MAX_CONTENT_LENGTH
+    {
+        return Err(OxenError::file_import_error(format!(
+            "Content length {content_length} exceeds maximum allowed size of 1GB"
+        )));
     }
     let is_zip = content_type.contains("zip");
 
@@ -505,14 +505,14 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         let mut zipfile_name = zip_file.mangled_name();
 
         // Sanitize filename
-        if let Some(zipfile_name_str) = zipfile_name.to_str() {
-            if zipfile_name_str.chars().any(|c| c.is_whitespace()) {
-                let new_name = zipfile_name_str
-                    .chars()
-                    .map(|c| if c.is_whitespace() { '_' } else { c })
-                    .collect::<String>();
-                zipfile_name = PathBuf::from(new_name);
-            }
+        if let Some(zipfile_name_str) = zipfile_name.to_str()
+            && zipfile_name_str.chars().any(|c| c.is_whitespace())
+        {
+            let new_name = zipfile_name_str
+                .chars()
+                .map(|c| if c.is_whitespace() { '_' } else { c })
+                .collect::<String>();
+            zipfile_name = PathBuf::from(new_name);
         }
 
         // Validate path components to prevent directory traversal

@@ -8,8 +8,8 @@ mod tests {
 
     use crate::config::UserConfig;
     use crate::error::OxenError;
-    use crate::model::staged_data::StagedDataOpts;
     use crate::model::NewCommitBody;
+    use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
     use crate::{api, repositories, test, util};
 

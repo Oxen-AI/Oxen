@@ -6,10 +6,10 @@ use actix_web::{HttpRequest, HttpResponse};
 
 use liboxen::error::OxenError;
 use liboxen::repositories;
+use liboxen::view::StatusMessage;
 use liboxen::view::merge::{
     MergeConflictFile, MergeResult, MergeSuccessResponse, Mergeable, MergeableResponse,
 };
-use liboxen::view::StatusMessage;
 
 /// Check if branches are mergeable
 #[utoipa::path(

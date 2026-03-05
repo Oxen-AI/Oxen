@@ -70,29 +70,29 @@ pub async fn restore(
     let row_id = row_id.as_ref();
     let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id).await?;
     let diff = repositories::workspaces::data_frames::full_diff(workspace, path.as_ref())?;
-    if let DiffResult::Tabular(diff) = diff {
-        if !diff.has_changes() {
-            log::debug!("no changes, deleting file from staged db");
-            // Restored to original state == delete file from staged db
-            // TODO: Implement this
-            with_staged_db_manager(&workspace.workspace_repo, |manager| {
+    if let DiffResult::Tabular(diff) = diff
+        && !diff.has_changes()
+    {
+        log::debug!("no changes, deleting file from staged db");
+        // Restored to original state == delete file from staged db
+        // TODO: Implement this
+        with_staged_db_manager(&workspace.workspace_repo, |manager| {
+            manager.remove_staged_recursively(
+                &workspace.workspace_repo,
+                &HashSet::from([path.as_ref().to_path_buf()]),
+            )?;
+
+            // loop over parents and delete from staged db
+            let mut current_path = path.as_ref().to_path_buf();
+            while let Some(parent) = current_path.parent() {
                 manager.remove_staged_recursively(
                     &workspace.workspace_repo,
-                    &HashSet::from([path.as_ref().to_path_buf()]),
+                    &HashSet::from([parent.to_path_buf()]),
                 )?;
-
-                // loop over parents and delete from staged db
-                let mut current_path = path.as_ref().to_path_buf();
-                while let Some(parent) = current_path.parent() {
-                    manager.remove_staged_recursively(
-                        &workspace.workspace_repo,
-                        &HashSet::from([parent.to_path_buf()]),
-                    )?;
-                    current_path = parent.to_path_buf();
-                }
-                Ok(())
-            })?;
-        }
+                current_path = parent.to_path_buf();
+            }
+            Ok(())
+        })?;
     }
 
     Ok(restored_row)

@@ -7,8 +7,8 @@ use liboxen::api;
 use liboxen::config::UserConfig;
 use liboxen::constants::{DEFAULT_HOST, DEFAULT_SCHEME};
 use liboxen::error::OxenError;
-use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::RepoNew;
+use liboxen::model::file::{FileContents, FileNew};
 use liboxen::opts::StorageOpts;
 
 use crate::cmd::RunCmd;
@@ -130,7 +130,8 @@ impl RunCmd for CreateRemoteCmd {
             repo_new.is_public = Some(is_public);
             repo_new.scheme = Some(scheme);
             let remote_repo = api::client::repositories::create_empty(repo_new).await?;
-            println!("🎉 Remote successfully created for '{}/{}'\n\nIf this is a brand new repository:\n\n  oxen clone {}\n\nTo push an existing local repository to a new remote:\n\n  oxen config --set-remote origin {}\n",
+            println!(
+                "🎉 Remote successfully created for '{}/{}'\n\nIf this is a brand new repository:\n\n  oxen clone {}\n\nTo push an existing local repository to a new remote:\n\n  oxen config --set-remote origin {}\n",
                 namespace, name, remote_repo.remote.url, remote_repo.remote.url
             );
         } else {
@@ -190,7 +191,8 @@ Happy Mooooooving of data 🐂
             repo.scheme = Some(scheme);
 
             let remote_repo = api::client::repositories::create(repo).await?;
-            println!("🎉 Remote successfully created for '{}/{}'\n\nClone your repository with:\n\n  oxen clone {}\n",
+            println!(
+                "🎉 Remote successfully created for '{}/{}'\n\nClone your repository with:\n\n  oxen clone {}\n",
                 namespace, name, remote_repo.remote.url
             );
         }

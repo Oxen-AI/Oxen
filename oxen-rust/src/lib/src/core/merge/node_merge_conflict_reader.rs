@@ -2,7 +2,7 @@ use crate::constants::{MERGE_DIR, MERGE_HEAD_FILE};
 use crate::core::db;
 use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBReader;
 use crate::error::OxenError;
-use crate::model::{merge_conflict::NodeMergeConflict, Commit, LocalRepository};
+use crate::model::{Commit, LocalRepository, merge_conflict::NodeMergeConflict};
 use crate::{repositories, util};
 
 use rocksdb::DB;

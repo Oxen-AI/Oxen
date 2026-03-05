@@ -2,13 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::constants::DIFF_STATUS_COL;
 use crate::error::OxenError;
+use crate::model::Schema;
 use crate::model::data_frame::schema::Field;
 use crate::model::diff::tabular_diff::{
     TabularDiffDupes, TabularDiffMods, TabularDiffParameters, TabularDiffSchemas,
     TabularDiffSummary, TabularSchemaDiff,
 };
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
-use crate::model::Schema;
 use crate::view::compare::{
     TabularCompareFieldBody, TabularCompareFields, TabularCompareTargetBody,
 };
@@ -16,7 +16,7 @@ use crate::view::compare::{
 use polars::chunked_array::ops::SortMultipleOptions;
 use polars::datatypes::AnyValue;
 use polars::lazy::dsl::coalesce;
-use polars::lazy::dsl::{all, as_struct, col, GetOutput};
+use polars::lazy::dsl::{GetOutput, all, as_struct, col};
 use polars::lazy::frame::IntoLazy;
 use polars::prelude::ChunkCompareEq;
 use polars::prelude::PlSmallStr;
@@ -25,7 +25,7 @@ use polars::prelude::{Column, NamedFrom};
 use polars::prelude::{DataFrame, DataFrameJoinOps};
 use polars::series::Series;
 
-use super::{tabular, SchemaDiff};
+use super::{SchemaDiff, tabular};
 
 const TARGETS_HASH_COL: &str = "_targets_hash";
 const KEYS_HASH_COL: &str = "_keys_hash";
@@ -45,9 +45,9 @@ pub fn diff(
 ) -> Result<TabularDiff, OxenError> {
     if !targets.is_empty() && keys.is_empty() {
         let targets = targets.iter().map(|k| k.as_ref()).collect::<Vec<&str>>();
-        return Err(OxenError::basic_str(
-            format!("Must specify at least one key column if specifying target columns. Targets: {targets:?}"),
-        ));
+        return Err(OxenError::basic_str(format!(
+            "Must specify at least one key column if specifying target columns. Targets: {targets:?}"
+        )));
     }
 
     let keys: Vec<&str> = keys.iter().map(|k| k.as_ref()).collect();
@@ -146,10 +146,10 @@ pub fn diff(
 fn sort_df_on_keys(df: DataFrame, keys: Vec<&str>) -> Result<DataFrame, OxenError> {
     let mut sort_cols = vec![];
     for key in keys.iter() {
-        if let Ok(col) = df.column(key) {
-            if col.dtype().is_primitive() {
-                sort_cols.push(*key);
-            }
+        if let Ok(col) = df.column(key)
+            && col.dtype().is_primitive()
+        {
+            sort_cols.push(*key);
         }
     }
 
@@ -474,12 +474,11 @@ fn test_function(
     if !has_targets {
         return DIFF_STATUS_UNCHANGED.to_string();
     }
-    if let Some(target_hash_left) = target_hash_left {
-        if let Some(target_hash_right) = target_hash_right {
-            if target_hash_left != target_hash_right {
-                return DIFF_STATUS_MODIFIED.to_string();
-            }
-        }
+    if let Some(target_hash_left) = target_hash_left
+        && let Some(target_hash_right) = target_hash_right
+        && target_hash_left != target_hash_right
+    {
+        return DIFF_STATUS_MODIFIED.to_string();
     }
     DIFF_STATUS_UNCHANGED.to_string()
 }

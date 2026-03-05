@@ -1,6 +1,6 @@
 use liboxen::api;
-use liboxen::config::embedding_config::EmbeddingStatus;
 use liboxen::config::UserConfig;
+use liboxen::config::embedding_config::EmbeddingStatus;
 use liboxen::error::OxenError;
 use liboxen::model::{NewCommitBody, RemoteRepository};
 use liboxen::opts::{DFOpts, PaginateOpts};

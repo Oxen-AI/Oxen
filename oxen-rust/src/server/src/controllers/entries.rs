@@ -1,19 +1,19 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param, PageNumQuery};
+use crate::params::{PageNumQuery, app_data, parse_resource, path_param};
 
 use liboxen::constants::AVG_CHUNK_SIZE;
 use liboxen::error::OxenError;
 use liboxen::util::fs::replace_file_name_keep_extension;
 use liboxen::util::paginate;
-use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::view::StatusMessage;
+use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::{constants, current_function, repositories};
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use futures_util::stream::StreamExt as _;
 use serde::Deserialize;
 

@@ -210,7 +210,9 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
         }
         Err(err) => {
             log::error!("Failed to create remote url {url}\n{err:?}");
-            let err = format!("Create repository could not connect to {url}. Make sure you have the correct server and that it is running.");
+            let err = format!(
+                "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
+            );
             Err(OxenError::basic_str(err))
         }
     }
@@ -254,7 +256,9 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
             }
         }
     } else {
-        let err = format!("Create repository could not connect to {url}. Make sure you have the correct server and that it is running.");
+        let err = format!(
+            "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
+        );
         Err(OxenError::basic_str(err))
     }
 }
@@ -574,9 +578,9 @@ mod tests {
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
+    use crate::model::RepoNew;
     use crate::model::file::FileContents;
     use crate::model::file::FileNew;
-    use crate::model::RepoNew;
     use crate::repositories;
     use crate::test;
     use crate::view::entries::EMetadataEntry;

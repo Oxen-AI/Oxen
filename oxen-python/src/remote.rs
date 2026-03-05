@@ -7,7 +7,7 @@ use crate::py_remote_repo::PyRemoteRepo;
 use liboxen::config::UserConfig;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
-use liboxen::model::{file::FileNew, RepoNew};
+use liboxen::model::{RepoNew, file::FileNew};
 use liboxen::opts::StorageOpts;
 
 #[pyfunction]

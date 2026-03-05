@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
-use aws_sdk_s3::{config::Region, primitives::ByteStream, Client};
+use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
 use image::DynamicImage;
 use std::collections::HashMap;

@@ -1,4 +1,4 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
@@ -158,7 +158,7 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
                 b.to_async(&rt).iter_batched(
                     || {
                         let iter_dir =
-                            repo_dir.join(format!("run-{}", rand::thread_rng().gen::<u64>()));
+                            repo_dir.join(format!("run-{}", rand::thread_rng().r#gen::<u64>()));
 
                         // Create a clean local repo without the files
                         let oxen_hidden_path = util::fs::oxen_hidden_dir(&iter_dir);

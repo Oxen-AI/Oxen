@@ -11,7 +11,7 @@ use liboxen::model::LocalRepository;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::cmd::{restore::restore_args, RunCmd};
+use crate::cmd::{RunCmd, restore::restore_args};
 pub const NAME: &str = "restore";
 pub struct WorkspaceRestoreCmd;
 
