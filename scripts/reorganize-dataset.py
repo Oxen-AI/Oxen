@@ -45,14 +45,16 @@ def parse_dist_params(params_list: list[str] | None) -> dict[str, float]:
         return {}
     result = {}
     for item in params_list:
-        if '=' not in item:
+        if "=" not in item:
             print(f"Error: Invalid --dist-params format: '{item}'. Expected key=value.")
             sys.exit(1)
-        key, _, value = item.partition('=')
+        key, _, value = item.partition("=")
         try:
             result[key] = float(value)
         except ValueError:
-            print(f"Error: Non-numeric value in --dist-params: '{item}'. Value must be a number.")
+            print(
+                f"Error: Non-numeric value in --dist-params: '{item}'. Value must be a number."
+            )
             sys.exit(1)
     return result
 
@@ -64,7 +66,9 @@ def validate_distribution(dist_name: str, dist_params: dict[str, float]):
     """
     dist_obj = getattr(scipy.stats, dist_name, None)
     if dist_obj is None:
-        print(f"Error: Unknown distribution '{dist_name}'. Must be a scipy.stats distribution.")
+        print(
+            f"Error: Unknown distribution '{dist_name}'. Must be a scipy.stats distribution."
+        )
         sys.exit(1)
     if not isinstance(dist_obj, (scipy.stats.rv_continuous, scipy.stats.rv_discrete)):
         print(f"Error: '{dist_name}' is not a scipy.stats distribution.")
@@ -76,7 +80,9 @@ def validate_distribution(dist_name: str, dist_params: dict[str, float]):
         sys.exit(1)
     lower, _ = frozen.support()
     if lower < 0:
-        print(f"Error: Distribution '{dist_name}' with the given parameters can produce negative values.")
+        print(
+            f"Error: Distribution '{dist_name}' with the given parameters can produce negative values."
+        )
         print("Only distributions defined on non-negative numbers are allowed.")
         sys.exit(1)
     return frozen
@@ -86,7 +92,9 @@ def _make_rng(seed: int | None) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
-def _clamp_positive(sizes: np.ndarray, frozen_dist, rng: np.random.Generator) -> np.ndarray:
+def _clamp_positive(
+    sizes: np.ndarray, frozen_dist, rng: np.random.Generator
+) -> np.ndarray:
     """Resample any non-positive values in sizes (up to 100 attempts, then clamp to 1)."""
     for _ in range(100):
         bad_mask = sizes <= 0
@@ -126,13 +134,17 @@ def generate_dir_name(
 ) -> str:
     """Generate a realistic directory name with mixed styles."""
     if validate:
-        assert 0 <= single_word <= 1., f"{single_word=} must be between 0 and 1"
-        assert 0 <= compound_word <= 1., f"{compound_word=} must be between 0 and 1"
+        assert 0 <= single_word <= 1.0, f"{single_word=} must be between 0 and 1"
+        assert 0 <= compound_word <= 1.0, f"{compound_word=} must be between 0 and 1"
         range_compound_word = compound_word - single_word
-        assert 0 <= range_compound_word <= 1, f"{range_compound_word=} must be between 0 and 1"
+        assert 0 <= range_compound_word <= 1, (
+            f"{range_compound_word=} must be between 0 and 1"
+        )
         range_number = 1.0 - range_compound_word - single_word
         assert 0 <= range_number <= 1, f"{range_number=} must be between 0 and 1"
-        assert np.isclose(range_number + range_compound_word + single_word), f"Proportions for single_word={single_word}, compound_word={range_compound_word}, number_word={range_number} must be between 0 and 1 and all sum to 1"
+        assert np.isclose(range_number + range_compound_word + single_word), (
+            f"Proportions for single_word={single_word}, compound_word={range_compound_word}, number_word={range_number} must be between 0 and 1 and all sum to 1"
+        )
 
     roll = rng.random()
     if roll < single_word:
@@ -224,21 +236,27 @@ def build_tree(
         count = int(child_counts[i])
         if count == 0:
             continue
-        child_files = remaining[offset:offset + count]
+        child_files = remaining[offset : offset + count]
         offset += count
 
         child_name = generate_dir_name(
             faker,
             rng,
-            single_word = 0.6,
-            compound_word = 0.8,
-            validate = False,
+            single_word=0.6,
+            compound_word=0.8,
+            validate=False,
         )
         child_name = deduplicate_name(child_name, existing_names)
         existing_names.add(child_name)
 
         child_node = build_tree(
-            child_files, depth + 1, max_depth, frozen_dist, rng, faker, child_name,
+            child_files,
+            depth + 1,
+            max_depth,
+            frozen_dist,
+            rng,
+            faker,
+            child_name,
         )
         node.children.append(child_node)
 
@@ -375,7 +393,7 @@ def plan_to_tree(plan: dict, files: list[Path]) -> DirNode:
     # Recurse into children
     for i, child_plan in enumerate(child_plans):
         count = int(slot_counts[i + 1])
-        child_files = files[offset:offset + count]
+        child_files = files[offset : offset + count]
         offset += count
         node.children.append(plan_to_tree(child_plan, child_files))
 
@@ -418,37 +436,56 @@ Examples:
     )
 
     parser.add_argument(
-        "--target", type=str, required=True,
+        "--target",
+        type=str,
+        required=True,
         help="Directory containing the files to reorganize",
     )
     parser.add_argument(
-        "--max-depth", type=int, default=None,
+        "--max-depth",
+        type=int,
+        default=None,
         help="Maximum nesting depth of the output tree (required unless --from-plan is used)",
     )
     parser.add_argument(
-        "--distribution", type=str, default="lognorm", metavar="NAME",
+        "--distribution",
+        type=str,
+        default="lognorm",
+        metavar="NAME",
         help="scipy.stats distribution name controlling files-per-directory (default: lognorm)",
     )
     parser.add_argument(
-        "--dist-params", nargs="+", default=None, metavar="KEY=VALUE",
+        "--dist-params",
+        nargs="+",
+        default=None,
+        metavar="KEY=VALUE",
         help="Distribution parameters as key=value pairs (default for lognorm: s=0.5 scale=8)",
     )
     parser.add_argument(
-        "--seed", type=int, default=None,
+        "--seed",
+        type=int,
+        default=None,
         help="Random seed for reproducibility",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print the planned tree without moving anything",
     )
     parser.add_argument(
-        "--save-plan", type=str, default=None, metavar="PATH",
+        "--save-plan",
+        type=str,
+        default=None,
+        metavar="PATH",
         help="Save the tree structure as a JSON plan file (works with --dry-run)",
     )
     parser.add_argument(
-        "--from-plan", type=str, default=None, metavar="PATH",
+        "--from-plan",
+        type=str,
+        default=None,
+        metavar="PATH",
         help="Load a saved plan instead of generating a new tree "
-             "(ignores --max-depth, --distribution, --dist-params)",
+        "(ignores --max-depth, --distribution, --dist-params)",
     )
 
     args = parser.parse_args()
@@ -521,9 +558,11 @@ Examples:
     print(f"\nSummary:")
     print(f"  Total directories: {stats['total_dirs']}")
     print(f"  Total files:       {stats['total_files']}")
-    print(f"  Files per dir:     min={stats['min_files_per_dir']}, "
-          f"max={stats['max_files_per_dir']}, "
-          f"mean={stats['mean_files_per_dir']:.1f}")
+    print(
+        f"  Files per dir:     min={stats['min_files_per_dir']}, "
+        f"max={stats['max_files_per_dir']}, "
+        f"mean={stats['mean_files_per_dir']:.1f}"
+    )
     print(f"  Depth histogram:   {stats['depth_histogram']}")
 
     if args.dry_run:

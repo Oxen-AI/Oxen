@@ -57,9 +57,9 @@ def positive_int(value: str) -> int:
 
     # Handle suffixes: k (thousand), M (million), B (billion)
     multipliers = {
-        'K': 1_000,
-        'M': 1_000_000,
-        'B': 1_000_000_000,
+        "K": 1_000,
+        "M": 1_000_000,
+        "B": 1_000_000_000,
     }
 
     for suffix, multiplier in multipliers.items():
@@ -95,18 +95,18 @@ def parse_size(size_str: str) -> int:
     # Check units from longest to shortest to avoid partial matches
     # (e.g., "GB" before "B" so "10GB" doesn't match "B" first)
     units = [
-        ('TB', 1024 ** 4),
-        ('GB', 1024 ** 3),
-        ('MB', 1024 ** 2),
-        ('KB', 1024),
-        ('B', 1),
+        ("TB", 1024**4),
+        ("GB", 1024**3),
+        ("MB", 1024**2),
+        ("KB", 1024),
+        ("B", 1),
     ]
 
     # Try to find unit suffix
     for unit, multiplier in units:
         if size_str.endswith(unit):
             try:
-                value = float(size_str[:-len(unit)])
+                value = float(size_str[: -len(unit)])
                 size_bytes = int(value * multiplier)
             except ValueError:
                 raise argparse.ArgumentTypeError(
@@ -132,7 +132,7 @@ def parse_size(size_str: str) -> int:
 def format_size(size_bytes: int) -> str:
     """Format bytes to human-readable string."""
     size_bytes: float = float(size_bytes)
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024.0:
             return f"{size_bytes:.2f}{unit}"
         size_bytes /= 1024.0
@@ -152,7 +152,7 @@ def init_text_pool(pool_size_mb: int = 10) -> list[tuple[str, int]]:
 
     while total_size < target:
         text: str = fake.text(max_nb_chars=1000) + "\n"
-        byte_size = len(text.encode('utf-8'))
+        byte_size = len(text.encode("utf-8"))
         chunks.append((text, byte_size))
         total_size += byte_size
 
@@ -160,20 +160,20 @@ def init_text_pool(pool_size_mb: int = 10) -> list[tuple[str, int]]:
 
 
 def validate_parameters(
-    *, total_size: int | None, num_files: int | None,
-                       avg_file_size: int | None) -> tuple[int, int]:
+    *, total_size: int | None, num_files: int | None, avg_file_size: int | None
+) -> tuple[int, int]:
     """
     Validate and calculate final parameters.
     Returns: (num_files, file_size)
     """
-    params_provided = sum([
-        total_size is not None,
-        num_files is not None,
-        avg_file_size is not None
-    ])
+    params_provided = sum(
+        [total_size is not None, num_files is not None, avg_file_size is not None]
+    )
 
     if params_provided < 2:
-        print("Error: Must specify at least 2 of: --total-size, --num-files, --avg-file-size")
+        print(
+            "Error: Must specify at least 2 of: --total-size, --num-files, --avg-file-size"
+        )
         sys.exit(1)
 
     # If all three provided, check consistency
@@ -189,7 +189,9 @@ def validate_parameters(
             print(f"  Num files: {num_files}")
             print(f"  Avg file size: {format_size(avg_file_size)}")
             print(f"  Expected total: {format_size(expected_total)}")
-            print("\nPlease adjust parameters so: total_size ≈ num_files × avg_file_size")
+            print(
+                "\nPlease adjust parameters so: total_size ≈ num_files × avg_file_size"
+            )
             sys.exit(1)
         # Use provided values
         return num_files, avg_file_size
@@ -213,22 +215,27 @@ def validate_parameters(
         return num_files, avg_file_size
 
 
-def validate_directory_parameters(num_files: int, num_dirs: int | None,
-                                  files_per_dir: int | None) -> int:
+def validate_directory_parameters(
+    num_files: int, num_dirs: int | None, files_per_dir: int | None
+) -> int:
     """
     Validate and calculate directory parameters.
     Returns: num_dirs
     """
     if num_dirs is not None and files_per_dir is not None:
         # Both provided, check consistency
-        expected_dirs = (num_files + files_per_dir - 1) // files_per_dir  # Ceiling division
+        expected_dirs = (
+            num_files + files_per_dir - 1
+        ) // files_per_dir  # Ceiling division
         if expected_dirs != num_dirs:
             print("Error: Conflicting directory parameters!")
             print(f"  Num files: {num_files}")
             print(f"  Num dirs: {num_dirs}")
             print(f"  Files per dir: {files_per_dir}")
             print(f"  Expected dirs: {expected_dirs}")
-            print("\nPlease adjust parameters so: num_dirs = ceil(num_files / files_per_dir)")
+            print(
+                "\nPlease adjust parameters so: num_dirs = ceil(num_files / files_per_dir)"
+            )
             sys.exit(1)
         return num_dirs
     elif num_dirs is not None:
@@ -250,14 +257,16 @@ def parse_dist_params(params_list: list[str] | None) -> dict[str, float]:
         return {}
     result = {}
     for item in params_list:
-        if '=' not in item:
+        if "=" not in item:
             print(f"Error: Invalid --dist-params format: '{item}'. Expected key=value.")
             sys.exit(1)
-        key, _, value = item.partition('=')
+        key, _, value = item.partition("=")
         try:
             result[key] = float(value)
         except ValueError:
-            print(f"Error: Non-numeric value in --dist-params: '{item}'. Value must be a number.")
+            print(
+                f"Error: Non-numeric value in --dist-params: '{item}'. Value must be a number."
+            )
             sys.exit(1)
     return result
 
@@ -269,7 +278,9 @@ def validate_distribution(dist_name: str, dist_params: dict[str, float]):
     """
     dist_obj = getattr(scipy.stats, dist_name, None)
     if dist_obj is None:
-        print(f"Error: Unknown distribution '{dist_name}'. Must be a scipy.stats distribution.")
+        print(
+            f"Error: Unknown distribution '{dist_name}'. Must be a scipy.stats distribution."
+        )
         sys.exit(1)
     if not isinstance(dist_obj, (scipy.stats.rv_continuous, scipy.stats.rv_discrete)):
         print(f"Error: '{dist_name}' is not a scipy.stats distribution.")
@@ -281,8 +292,12 @@ def validate_distribution(dist_name: str, dist_params: dict[str, float]):
         sys.exit(1)
     lower, _ = frozen.support()
     if lower < 0:
-        print(f"Error: Distribution '{dist_name}' with the given parameters can produce negative values.")
-        print("Only distributions defined on non-negative numbers are allowed for file sizes.")
+        print(
+            f"Error: Distribution '{dist_name}' with the given parameters can produce negative values."
+        )
+        print(
+            "Only distributions defined on non-negative numbers are allowed for file sizes."
+        )
         sys.exit(1)
     return frozen
 
@@ -292,28 +307,32 @@ def parse_tier(tier_string: str, default_type: str) -> Tier:
     tokens = tier_string.split()
     kv: dict[str, str] = {}
     for token in tokens:
-        if '=' not in token:
+        if "=" not in token:
             print(f"Error: Invalid token in --tier: '{token}'. Expected key=value.")
             sys.exit(1)
-        key, _, value = token.partition('=')
+        key, _, value = token.partition("=")
         kv[key] = value
 
-    if 'num' not in kv:
+    if "num" not in kv:
         print(f"Error: --tier requires 'num=N'. Got: '{tier_string}'")
         sys.exit(1)
-    if 'dist' not in kv:
+    if "dist" not in kv:
         print(f"Error: --tier requires 'dist=NAME'. Got: '{tier_string}'")
         sys.exit(1)
 
-    num = positive_int(kv.pop('num'))
-    dist_name = kv.pop('dist')
-    file_type = kv.pop('type', default_type)
+    num = positive_int(kv.pop("num"))
+    dist_name = kv.pop("dist")
+    file_type = kv.pop("type", default_type)
 
-    if file_type == 'image':
-        print("Error: type=image is not allowed in --tier (images can't use distributions).")
+    if file_type == "image":
+        print(
+            "Error: type=image is not allowed in --tier (images can't use distributions)."
+        )
         sys.exit(1)
-    if file_type not in ('text', 'binary'):
-        print(f"Error: Invalid type '{file_type}' in --tier. Must be 'text' or 'binary'.")
+    if file_type not in ("text", "binary"):
+        print(
+            f"Error: Invalid type '{file_type}' in --tier. Must be 'text' or 'binary'."
+        )
         sys.exit(1)
 
     # Remaining keys are distribution parameters
@@ -322,7 +341,9 @@ def parse_tier(tier_string: str, default_type: str) -> Tier:
         try:
             dist_params[key] = float(value)
         except ValueError:
-            print(f"Error: Non-numeric distribution parameter in --tier: '{key}={value}'.")
+            print(
+                f"Error: Non-numeric distribution parameter in --tier: '{key}={value}'."
+            )
             sys.exit(1)
 
     frozen_dist = validate_distribution(dist_name, dist_params)
@@ -340,7 +361,9 @@ def _make_rng(seed: int | None) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
-def _clamp_positive(sizes: np.ndarray, frozen_dist, rng: np.random.Generator) -> np.ndarray:
+def _clamp_positive(
+    sizes: np.ndarray, frozen_dist, rng: np.random.Generator
+) -> np.ndarray:
     """Resample any non-positive values in sizes (up to 100 attempts, then clamp to 1)."""
     for _ in range(100):
         bad_mask = sizes <= 0
@@ -363,7 +386,9 @@ def sample_file_sizes(frozen_dist, num_files: int, seed: int | None) -> list[int
     return _clamp_positive(sizes, frozen_dist, rng).tolist()
 
 
-def sample_file_sizes_until(frozen_dist, total_size: int, seed: int | None) -> list[int]:
+def sample_file_sizes_until(
+    frozen_dist, total_size: int, seed: int | None
+) -> list[int]:
     """
     Sample file sizes from a frozen scipy distribution until their cumulative
     sum equals or exceeds total_size. Generates in batches for efficiency.
@@ -406,19 +431,20 @@ def generate_text_file(path: Path, size: int) -> None:
         if chunk_size > remaining:
             # Approximate trim (may be slightly off due to UTF-8 variable length)
             chunk_text = chunk_text[:remaining]
-            chunk_size = len(chunk_text.encode('utf-8'))
+            chunk_size = len(chunk_text.encode("utf-8"))
 
         parts.append(chunk_text)
         current_size += chunk_size
 
     # Single write operation
-    with open(path, 'wt') as f:
-        f.write(''.join(parts))
+    with open(path, "wt") as f:
+        f.write("".join(parts))
 
 
 Pixel = tuple[int, int, int]
 """A pixel is a (R,G,B) value with each component in the range [0, 255].
 """
+
 
 def generate_image_file(path: Path) -> None:
     """
@@ -427,14 +453,15 @@ def generate_image_file(path: Path) -> None:
     """
     img = generate_image(
         # Fixed dimensions for now (1024x1024)
-        width = 1024,
-        height = 1024,
+        width=1024,
+        height=1024,
         # 32x32 blocks
-        block_size = 32,
+        block_size=32,
     )
 
     # Save as PNG
-    img.save(path, 'PNG')
+    img.save(path, "PNG")
+
 
 def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
     """
@@ -445,7 +472,7 @@ def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
     randomness.
     """
 
-    img = Image.new('RGB', (width, height))
+    img = Image.new("RGB", (width, height))
     pixels = img.load()
 
     # Generate mosaic pattern
@@ -477,12 +504,12 @@ def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
                         pixels[x, y] = color
 
     # Save as PNG
-    img.save(path, 'PNG')
+    img.save(path, "PNG")
 
 
 def generate_binary_file(path: Path, size: int) -> None:
     """Generate a binary file with random bytes."""
-    with open(path, 'wb') as f:
+    with open(path, "wb") as f:
         # Write in chunks to avoid memory issues with large files
         chunk_size = min(1024 * 1024, size)  # 1MB chunks or smaller
         remaining = size
@@ -516,9 +543,9 @@ def generate_file(args: tuple) -> Path:
     path, file_type, size = args
 
     generators = {
-        'text': generate_text_file,
-        'image': generate_image_file,
-        'binary': generate_binary_file,
+        "text": generate_text_file,
+        "image": generate_image_file,
+        "binary": generate_binary_file,
     }
 
     generator = generators[file_type]
@@ -550,62 +577,110 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     --tier "num=9700 dist=lognorm s=0.4 scale=12000 type=text" \\
     --tier "num=250 dist=lognorm s=0.4 scale=300000000 type=binary" \\
     --tier "num=50 dist=lognorm s=0.4 scale=2000000000 type=binary"
-        """
+        """,
     )
 
     # Size parameters
-    parser.add_argument('--total-size', type=parse_size,
-                       help='Total size of generated dataset (e.g., 1GB, 500MB)')
-    parser.add_argument('--num-files', type=positive_int,
-                       help='Number of files to generate (e.g., 100, 10k, 3M)')
-    parser.add_argument('--avg-file-size', type=parse_size,
-                       help='Average size per file (e.g., 10MB, 1GB). Not valid for image type.')
+    parser.add_argument(
+        "--total-size",
+        type=parse_size,
+        help="Total size of generated dataset (e.g., 1GB, 500MB)",
+    )
+    parser.add_argument(
+        "--num-files",
+        type=positive_int,
+        help="Number of files to generate (e.g., 100, 10k, 3M)",
+    )
+    parser.add_argument(
+        "--avg-file-size",
+        type=parse_size,
+        help="Average size per file (e.g., 10MB, 1GB). Not valid for image type.",
+    )
 
     # Structure parameters
-    parser.add_argument('--num-dirs', type=positive_int, default=None,
-                       help='Number of directories to split files into (e.g., 10, 100, 5k)')
-    parser.add_argument('--files-per-dir', type=positive_int, default=None,
-                       help='Number of files per directory (e.g., 100, 10k) - alternative to --num-dirs')
-    parser.add_argument('--target', type=str, default='./test_dataset',
-                       help='Target directory for generated files (default: ./test_dataset)')
+    parser.add_argument(
+        "--num-dirs",
+        type=positive_int,
+        default=None,
+        help="Number of directories to split files into (e.g., 10, 100, 5k)",
+    )
+    parser.add_argument(
+        "--files-per-dir",
+        type=positive_int,
+        default=None,
+        help="Number of files per directory (e.g., 100, 10k) - alternative to --num-dirs",
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        default="./test_dataset",
+        help="Target directory for generated files (default: ./test_dataset)",
+    )
 
     # File type
-    parser.add_argument('--type', type=str, choices=['text', 'image', 'binary'],
-                       default='text', help='Type of files to generate (default: text)')
+    parser.add_argument(
+        "--type",
+        type=str,
+        choices=["text", "image", "binary"],
+        default="text",
+        help="Type of files to generate (default: text)",
+    )
 
     # Parallelism
-    parser.add_argument('--workers', type=positive_int, default=None,
-                       help='Number of parallel worker threads (e.g., 10, 100) - default: CPU count × 4')
+    parser.add_argument(
+        "--workers",
+        type=positive_int,
+        default=None,
+        help="Number of parallel worker threads (e.g., 10, 100) - default: CPU count × 4",
+    )
 
     # Other options
-    parser.add_argument('--seed', type=int, default=None,
-                       help='Random seed for reproducible generation')
-    parser.add_argument('--dry-run', action='store_true',
-                       help='Print the generation plan without creating any files')
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Random seed for reproducible generation"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the generation plan without creating any files",
+    )
 
     # Distribution-based file sizes
-    parser.add_argument('--distribution', type=str, default=None, metavar='NAME',
-                       help='scipy.stats distribution name for random file sizes (e.g., lognorm, gamma, expon)')
-    parser.add_argument('--dist-params', nargs='+', default=None, metavar='KEY=VALUE',
-                       help='Distribution parameters as key=value pairs (e.g., s=0.954 scale=5000)')
+    parser.add_argument(
+        "--distribution",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="scipy.stats distribution name for random file sizes (e.g., lognorm, gamma, expon)",
+    )
+    parser.add_argument(
+        "--dist-params",
+        nargs="+",
+        default=None,
+        metavar="KEY=VALUE",
+        help="Distribution parameters as key=value pairs (e.g., s=0.954 scale=5000)",
+    )
 
     # Tier-based generation
-    parser.add_argument('--tier', action='append', default=None,
-                       metavar='"num=N dist=NAME [type=TYPE] [param=val ...]"',
-                       help='Define a file-size tier (repeatable). '
-                            'Mutually exclusive with --num-files, --total-size, '
-                            '--avg-file-size, --distribution, --dist-params.')
+    parser.add_argument(
+        "--tier",
+        action="append",
+        default=None,
+        metavar='"num=N dist=NAME [type=TYPE] [param=val ...]"',
+        help="Define a file-size tier (repeatable). "
+        "Mutually exclusive with --num-files, --total-size, "
+        "--avg-file-size, --distribution, --dist-params.",
+    )
 
     args = parser.parse_args()
 
     # Validate --tier mutual exclusivity
     if args.tier is not None:
         tier_exclusive = {
-            '--num-files': args.num_files,
-            '--total-size': args.total_size,
-            '--avg-file-size': args.avg_file_size,
-            '--distribution': args.distribution,
-            '--dist-params': args.dist_params,
+            "--num-files": args.num_files,
+            "--total-size": args.total_size,
+            "--avg-file-size": args.avg_file_size,
+            "--distribution": args.distribution,
+            "--dist-params": args.dist_params,
         }
         conflicts = [name for name, val in tier_exclusive.items() if val is not None]
         if conflicts:
@@ -618,10 +693,12 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         if args.num_files is None and args.total_size is None:
             parser.error("--distribution requires either --num-files or --total-size")
         if args.num_files is not None and args.total_size is not None:
-            parser.error("--num-files and --total-size cannot both be used with --distribution")
+            parser.error(
+                "--num-files and --total-size cannot both be used with --distribution"
+            )
         if args.avg_file_size is not None:
             parser.error("--avg-file-size cannot be used with --distribution")
-        if args.type == 'image':
+        if args.type == "image":
             parser.error("--type image cannot be used with --distribution")
 
     # Set random seed if provided
@@ -651,14 +728,18 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
             num_files = args.num_files
             file_sizes = sample_file_sizes(frozen_dist, num_files, args.seed)
         else:
-            file_sizes = sample_file_sizes_until(frozen_dist, args.total_size, args.seed)
+            file_sizes = sample_file_sizes_until(
+                frozen_dist, args.total_size, args.seed
+            )
             num_files = len(file_sizes)
     else:
         # Special handling for image type
-        if args.type == 'image':
+        if args.type == "image":
             if args.avg_file_size is not None:
                 print("Error: --avg-file-size cannot be specified for image type.")
-                print("Image size is determined by the image dimensions, content, and compression.")
+                print(
+                    "Image size is determined by the image dimensions, content, and compression."
+                )
                 sys.exit(1)
 
             # Compute average image size by generating test samples
@@ -669,7 +750,9 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
         # Validate and calculate parameters
         num_files, file_size = validate_parameters(
-            total_size=args.total_size, num_files=args.num_files, avg_file_size=args.avg_file_size
+            total_size=args.total_size,
+            num_files=args.num_files,
+            avg_file_size=args.avg_file_size,
         )
         file_sizes = [file_size] * num_files
 
@@ -683,20 +766,22 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     target.mkdir(parents=True, exist_ok=True)
 
     # Warn if target directory has existing files
-    existing_files = list(target.rglob('*'))
+    existing_files = list(target.rglob("*"))
     existing_files = [f for f in existing_files if f.is_file()]
     if existing_files:
-        print(f"Warning: Target directory contains {len(existing_files)} existing files.")
+        print(
+            f"Warning: Target directory contains {len(existing_files)} existing files."
+        )
         response = input("Continue and potentially overwrite files? [y/N]: ")
-        if response.lower() not in ['y', 'yes']:
+        if response.lower() not in ["y", "yes"]:
             print("Aborted.")
             sys.exit(0)
 
     # Extension lookup
     extensions = {
-        'text': 'txt',
-        'image': 'png',
-        'binary': 'bin',
+        "text": "txt",
+        "image": "png",
+        "binary": "bin",
     }
 
     # Calculate files per directory
@@ -735,7 +820,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
     # Choose executor type and worker count based on file type
     # Tier mode disallows images, so always use threads
-    if tiers is not None or args.type != 'image':
+    if tiers is not None or args.type != "image":
         executor_class = ThreadPoolExecutor
         default_workers = os.cpu_count() * 4
         executor_type = "threads"
@@ -754,13 +839,22 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         all_sizes = np.array(file_sizes)
         for i, tier in enumerate(tiers):
             tier_sizes = np.array(
-                sample_file_sizes(tier.frozen_dist, tier.num,
-                                  args.seed + i if args.seed is not None else None)
+                sample_file_sizes(
+                    tier.frozen_dist,
+                    tier.num,
+                    args.seed + i if args.seed is not None else None,
+                )
             )
             print(f"  Tier {i + 1}: {tier.num} {tier.file_type} files")
-            print(f"    Distribution: {tier.dist_name}({', '.join(f'{k}={v}' for k, v in tier.dist_params.items())})")
-            print(f"    Size range: {format_size(int(tier_sizes.min()))} – {format_size(int(tier_sizes.max()))}")
-            print(f"    Mean / median: {format_size(int(tier_sizes.mean()))} / {format_size(int(np.median(tier_sizes)))}")
+            print(
+                f"    Distribution: {tier.dist_name}({', '.join(f'{k}={v}' for k, v in tier.dist_params.items())})"
+            )
+            print(
+                f"    Size range: {format_size(int(tier_sizes.min()))} – {format_size(int(tier_sizes.max()))}"
+            )
+            print(
+                f"    Mean / median: {format_size(int(tier_sizes.mean()))} / {format_size(int(np.median(tier_sizes)))}"
+            )
         print(f"  Total files: {num_files}")
         print(f"  Total size: ~{format_size(int(all_sizes.sum()))}")
     elif args.distribution is not None:
@@ -790,8 +884,8 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         return
 
     # Generate files in parallel using appropriate executor for workload type
-    needs_text = args.type == 'text' or (
-        tiers is not None and any(t.file_type == 'text' for t in tiers)
+    needs_text = args.type == "text" or (
+        tiers is not None and any(t.file_type == "text" for t in tiers)
     )
     if needs_text:
         print("Initializing text pool...", flush=True)
@@ -805,8 +899,13 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
     start_time = time.time()
     with executor_class(max_workers=max_workers) as executor:
-        with tqdm(total=num_files, desc="Generating files", unit="file",
-                  unit_scale=False, smoothing=0.1) as pbar:
+        with tqdm(
+            total=num_files,
+            desc="Generating files",
+            unit="file",
+            unit_scale=False,
+            smoothing=0.1,
+        ) as pbar:
             for _ in executor.map(generate_file, file_tasks, chunksize=chunksize):
                 pbar.update(1)
     elapsed_time = time.time() - start_time
@@ -814,8 +913,10 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     # Show completion statistics
     files_per_sec = num_files / elapsed_time if elapsed_time > 0 else 0
     print(f"\n✓ Dataset generated successfully in {target}")
-    print(f"  Generated {num_files:,} files in {elapsed_time:.1f}s ({files_per_sec:.1f} files/sec)")
+    print(
+        f"  Generated {num_files:,} files in {elapsed_time:.1f}s ({files_per_sec:.1f} files/sec)"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

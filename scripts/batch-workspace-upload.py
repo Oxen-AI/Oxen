@@ -114,7 +114,7 @@ Examples:
         "--message",
         type=str,
         default=None,
-        help='Commit message template. Use {batch} and {total_batches} for numbering. '
+        help="Commit message template. Use {batch} and {total_batches} for numbering. "
         '(default: "batch {batch}/{total_batches}")',
     )
     parser.add_argument(
@@ -167,7 +167,7 @@ Examples:
     if args.dry_run:
         for i, batch in enumerate(batches, 1):
             msg = message_template.format(batch=i, total_batches=total_batches)
-            print(f"  Batch {i}/{total_batches}: {len(batch):,} files — \"{msg}\"")
+            print(f'  Batch {i}/{total_batches}: {len(batch):,} files — "{msg}"')
         print("\n(dry-run) No files were uploaded.")
         return
 
@@ -199,7 +199,7 @@ Examples:
         workspace.add_files(directory.parent, batch)
 
         # Commit the workspace
-        print(f"  Committing: \"{msg}\"")
+        print(f'  Committing: "{msg}"')
         commit = workspace.commit(msg)
         batch_elapsed = time.time() - batch_start
 
@@ -207,7 +207,9 @@ Examples:
         print()
 
     overall_elapsed = time.time() - overall_start
-    print(f"Done. {total_files:,} files uploaded in {total_batches} batches ({overall_elapsed:.1f}s total).")
+    print(
+        f"Done. {total_files:,} files uploaded in {total_batches} batches ({overall_elapsed:.1f}s total)."
+    )
 
 
 if __name__ == "__main__":

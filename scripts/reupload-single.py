@@ -61,7 +61,17 @@ def batch_iter(items: list, size: int):
         yield items[i : i + size]
 
 
-def main(*, repo_name: str, scheme: str, host: str | None, branch: str, parent: Path, all_files: list[Path], message: str, dry_run: bool = False) -> int:
+def main(
+    *,
+    repo_name: str,
+    scheme: str,
+    host: str | None,
+    branch: str,
+    parent: Path,
+    all_files: list[Path],
+    message: str,
+    dry_run: bool = False,
+) -> int:
     # Print plan
     print(f"\nUpload plan:")
     print(f"  Repository:      {repo_name}")
@@ -89,11 +99,12 @@ def main(*, repo_name: str, scheme: str, host: str | None, branch: str, parent: 
         repo.create(empty=True, is_public=True)
         print(f"Created repository '{args.repo}'.")
 
-
     fails = [f for f in all_files if not f.is_relative_to(parent)]
     if len(fails) > 0:
         fs = ".\n\t".join([str(f) for f in fails])
-        print(f"[ERROR] Found {len(fails)} paths that are not relative to the parent: {parent}\n\t{fs}")
+        print(
+            f"[ERROR] Found {len(fails)} paths that are not relative to the parent: {parent}\n\t{fs}"
+        )
         return 1
 
     print("  Adding files...")
@@ -101,13 +112,12 @@ def main(*, repo_name: str, scheme: str, host: str | None, branch: str, parent: 
     workspace.add_files(parent, all_files)
 
     # Commit the workspace
-    print(f"  Committing: \"{message}\"")
+    print(f'  Committing: "{message}"')
     commit = workspace.commit(message)
     overall_elapsed = time.time() - overall_start
 
     print(f"  Commit {commit.id} ({overall_elapsed:.1f}s)")
     print()
-
 
 
 if __name__ == "__main__":
@@ -144,14 +154,14 @@ Examples:
     parser.add_argument(
         "--branch",
         type=str,
-        default='main',
+        default="main",
         help="Branch to commit to",
     )
     parser.add_argument(
         "--message",
         type=str,
         default="Adding files.",
-        help='Commit message.',
+        help="Commit message.",
     )
     parser.add_argument(
         "--dry-run",
