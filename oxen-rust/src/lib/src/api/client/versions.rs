@@ -112,7 +112,6 @@ pub async fn parallel_large_file_upload(
     workspace_id: Option<String>,
     entry: Option<Entry>,                 // entry is provided for push workflow
     progress: Option<&Arc<PushProgress>>, // for push workflow
-    max_retries: usize,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
 
@@ -121,6 +120,7 @@ pub async fn parallel_large_file_upload(
 
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
 
+    let max_retries = max_retries();
     let results = upload_chunks(
         remote_repo,
         &mut upload,
@@ -196,11 +196,11 @@ pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     hashes: &[String],
     local_repo: &LocalRepository,
-    max_retries: usize,
 ) -> Result<u64, OxenError> {
+    let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
     let mut num_retries = 0;
 
-    while num_retries < max_retries {
+    while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
             Ok(val) => return Ok(val),
             Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
