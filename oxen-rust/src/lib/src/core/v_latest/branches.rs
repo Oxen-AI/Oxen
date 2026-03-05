@@ -61,10 +61,10 @@ impl CheckoutProgressBar {
 
 // Structs grouping related fields to reduce the number of arguments fed into the recursive functions
 
-// files_to_restore: files present in the target tree but not the from tree
-// cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
 struct CheckoutResult {
+    /// files_to_restore: files present in the target tree but not the from tree
     pub files_to_restore: Vec<FileToRestore>,
+    /// cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
     pub cannot_overwrite_entries: Vec<PathBuf>,
 }
 
@@ -77,10 +77,10 @@ impl CheckoutResult {
     }
 }
 
-// seen_paths: HashSet of PathBufs seen while traversing the target tree, used in r_remove_if_not_in_target to identify files not in the target
-// common_nodes: HashSet of the hashes of all the dirs and vnodes that are common between the trees, removing the need to look up dirs and vnodes in the recursive functions
 struct CheckoutHashes {
+    /// seen_paths: HashSet of PathBufs seen while traversing the target tree, used in r_remove_if_not_in_target to identify files not in the target
     pub seen_paths: HashSet<PathBuf>,
+    /// common_nodes: HashSet of the hashes of all the dirs and vnodes that are common between the trees, removing the need to look up dirs and vnodes in the recursive functions
     pub common_nodes: HashSet<MerkleHash>,
 }
 
