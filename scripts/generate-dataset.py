@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Callable, Mapping
 import tempfile
 
 
@@ -35,18 +35,25 @@ from tqdm import tqdm
 
 FileType = Literal["text", "image", "binary"]
 
+FileExtension = Literal["txt", "png", "bin"]
+
 
 @dataclass
 class Tier:
     num: int
     dist_name: str
     dist_params: dict[str, float]
-    file_type: str
+    file_type: FileType
     frozen_dist: object  # frozen scipy distribution
 
 
+TextPool = list[tuple[str, int]]
+"""A set of randomly generated text chunks.
+Allows reuse and mixing of chunks for faster generation while maintaining randomness.
+"""
+
 # Global text pool for reusing generated text (shared across threads)
-TEXT_POOL = None
+TEXT_POOL: TextPool | None = None
 
 
 def positive_int(value: str) -> int:
@@ -137,7 +144,7 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.2f}PB"
 
 
-def init_text_pool(pool_size_mb: int = 10) -> list[tuple[str, int]]:
+def init_text_pool(pool_size_mb: int = 10) -> TextPool:
     """
     Generate a pool of text chunks to reuse across files.
     This avoids calling Faker for every file, speeding up text generation.
@@ -410,20 +417,38 @@ def sample_file_sizes_until(
 
 def generate_text_file(path: Path, size: int) -> None:
     """Generate a text file with fake text content from pre-generated pool."""
+    # Build entire file content first, then write once (faster for small files)
+    parts = generate_text(size)
+
+    # Single write operation
+    with open(path, "wt") as f:
+        f.write("".join(parts))
+
+
+def generate_text(
+    size: int, *, explicit_text_pool: TextPool | None = None
+) -> list[str]:
+    """Generates random text content as a"""
     global TEXT_POOL
 
-    if TEXT_POOL is None:
-        raise ValueError("Need to initialize TEXT_POOL before generating text files")
+    if explicit_text_pool is not None:
+        using_text_pool = explicit_text_pool
+    else:
+        if TEXT_POOL is None:
+            raise ValueError(
+                "Need to initialize TEXT_POOL before generating text files"
+            )
 
-    # Build entire file content first, then write once (faster for small files)
-    parts = []
+        using_text_pool = TEXT_POOL
+
+    parts: list[str] = []
     current_size = 0
 
     while current_size < size:
         remaining = size - current_size
 
         # Randomly select a chunk from the pre-generated pool (text, byte_size)
-        chunk_text, chunk_size = random.choice(TEXT_POOL)
+        chunk_text, chunk_size = random.choice(using_text_pool)
 
         # Trim chunk if it's too large for remaining space
         if chunk_size > remaining:
@@ -434,9 +459,7 @@ def generate_text_file(path: Path, size: int) -> None:
         parts.append(chunk_text)
         current_size += chunk_size
 
-    # Single write operation
-    with open(path, "wt") as f:
-        f.write("".join(parts))
+    return parts
 
 
 Pixel = tuple[int, int, int]
@@ -471,6 +494,7 @@ def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
     """
 
     img = Image.new("RGB", (width, height))
+    # pixels is a pointer to the image's internal pixel data
     pixels = img.load()
 
     # Generate mosaic pattern
@@ -501,8 +525,7 @@ def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
                     for x in range(block_x, min(block_x + block_size, width)):
                         pixels[x, y] = color
 
-    # Save as PNG
-    img.save(path, "PNG")
+    return img
 
 
 def generate_binary_file(path: Path, size: int) -> None:
@@ -520,8 +543,8 @@ def generate_binary_file(path: Path, size: int) -> None:
 
 
 def compute_avg_image_size(num_samples: int = 10) -> int:
-    """
-    Compute average image size by generating sample images.
+    """Compute average image size by generating sample images.
+
     Returns the average size in bytes.
     """
     sizes: list[int] = []
@@ -536,19 +559,22 @@ def compute_avg_image_size(num_samples: int = 10) -> int:
     return sum(sizes) // len(sizes)
 
 
-def generate_file(args: tuple) -> Path:
+FileGenerator = Callable[[Path, int], None]
+"""Something that can randomly generate file contents. Optionally configuarable.
+"""
+
+_GENERATORS: Mapping[FileType, FileGenerator] = {
+    "text": generate_text_file,
+    "image": lambda p, _: generate_image_file(p),
+    "binary": generate_binary_file,
+}
+
+
+def generate_file(args: tuple[Path, FileType, int]) -> Path:
     """Generate a single file. Used for parallel execution."""
     path, file_type, size = args
-
-    generators = {
-        "text": generate_text_file,
-        "image": generate_image_file,
-        "binary": generate_binary_file,
-    }
-
-    generator = generators[file_type]
+    generator = _GENERATORS[file_type]
     generator(path, size)
-
     return path
 
 
@@ -706,7 +732,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
     # Determine file sizes: tier mode, distribution mode, or fixed-size mode
     tiers: list[Tier] | None = None
-    tier_tasks: list[tuple[str, int]] | None = None  # (file_type, size) per file
+    tier_tasks: list[tuple[FileType, int]] | None = None  # (file_type, size) per file
 
     if args.tier is not None:
         # Tier mode: parse each tier, sample sizes, combine and shuffle
@@ -719,6 +745,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         random.shuffle(tier_tasks)
         file_sizes = [s for _, s in tier_tasks]
         num_files = len(file_sizes)
+
     elif args.distribution is not None:
         dist_params = parse_dist_params(args.dist_params)
         frozen_dist = validate_distribution(args.distribution, dist_params)
@@ -730,6 +757,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
                 frozen_dist, args.total_size, args.seed
             )
             num_files = len(file_sizes)
+
     else:
         # Special handling for image type
         if args.type == "image":
@@ -776,7 +804,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
             sys.exit(0)
 
     # Extension lookup
-    extensions = {
+    extensions: Mapping[FileType, FileExtension] = {
         "text": "txt",
         "image": "png",
         "binary": "bin",
@@ -791,7 +819,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     dir_padding = len(str(num_dirs))
 
     # Build list of files to generate
-    file_tasks = []
+    file_tasks: list[tuple[Path, FileType, int]] = []
     file_counter = 0
 
     for dir_idx in range(num_dirs):
@@ -818,17 +846,28 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
     # Choose executor type and worker count based on file type
     # Tier mode disallows images, so always use threads
-    if tiers is not None or args.type != "image":
+    use_threadpool_exe: bool = tiers is not None or args.type != "image"
+
+    if use_threadpool_exe:
         executor_class = ThreadPoolExecutor
-        default_workers = os.cpu_count() * 4
-        executor_type = "threads"
+        executor_type: Literal["threads", "processes"] = "threads"
     else:
         # Image generation is CPU-bound, use ProcessPoolExecutor
         executor_class = ProcessPoolExecutor
-        default_workers = os.cpu_count()
         executor_type = "processes"
 
-    max_workers = args.workers or default_workers
+    if args.workers is None:
+        n_cpus = os.cpu_count()
+        if n_cpus is None:
+            raise ValueError(
+                "Cannot determine the number of CPUs. Please specify a worker count manually via --workers"
+            )
+        if use_threadpool_exe:
+            max_workers: int = n_cpus * 4
+        else:
+            max_workers = n_cpus
+    else:
+        max_workers = args.workers
 
     # Display generation plan
     print("\nGeneration Plan:")
@@ -855,6 +894,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
             )
         print(f"  Total files: {num_files}")
         print(f"  Total size: ~{format_size(int(all_sizes.sum()))}")
+
     elif args.distribution is not None:
         print(f"  File type: {args.type}")
         print(f"  Number of files: {num_files}")
@@ -867,11 +907,13 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         print(f"  File size median: {format_size(int(np.median(sizes_arr)))}")
         print(f"  File size std: {format_size(int(sizes_arr.std()))}")
         print(f"  Total size: ~{format_size(int(sizes_arr.sum()))}")
+
     else:
         print(f"  File type: {args.type}")
         print(f"  Number of files: {num_files}")
         print(f"  File size: {format_size(file_sizes[0])}")
         print(f"  Total size: ~{format_size(num_files * file_sizes[0])}")
+
     print(f"  Directories: {num_dirs}")
     print(f"  Files per directory: ~{num_files // num_dirs}")
     print(f"  Workers: {max_workers} {executor_type}")
@@ -882,14 +924,14 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         return
 
     # Generate files in parallel using appropriate executor for workload type
-    needs_text = args.type == "text" or (
+    needs_text: bool = args.type == "text" or (
         tiers is not None and any(t.file_type == "text" for t in tiers)
     )
     if needs_text:
         print("Initializing text pool...", flush=True)
         # Initialize text pool in main thread (threads share memory)
         global TEXT_POOL
-        TEXT_POOL = init_text_pool(pool_size_mb=10)
+        TEXT_POOL = init_text_pool(pool_size_mb=25)
 
     print("Starting generation...", flush=True)
     # Calculate chunksize with a reasonable cap to avoid excessive buffering
