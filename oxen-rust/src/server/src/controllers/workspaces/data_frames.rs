@@ -583,6 +583,7 @@ pub async fn diff(
     Ok(HttpResponse::Ok().json(resource))
 }
 
+/// Index a data frame into DuckDB for querying
 pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
