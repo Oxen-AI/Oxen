@@ -241,6 +241,8 @@ pub async fn upload_single_file(
         return Err(OxenError::path_does_not_exist(path));
     };
 
+    let (file_size, hash) = calculate_file_size_hash(path)?;
+
     log::debug!("Uploading file with size: {}", metadata.len());
     // If the file is larger than AVG_CHUNK_SIZE, use the parallel upload strategy
     if metadata.len() > chunk_size() {
@@ -346,7 +348,6 @@ async fn upload_multiple_files(
     let total_size = large_files_size + small_files_size;
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
 
-
     let mut failed_to_upload = vec![];
 
     // Process large files individually with parallel upload
@@ -372,14 +373,14 @@ async fn upload_multiple_files(
         {
             Ok(_) => log::debug!("Successfully uploaded large file: {path:?}"),
             Err(err) => {
-              let msg = format!("Failed to upload large file {path:?}");
-              log::error!("{msg}: {err}");
-              failed_to_upload.push(ErrorFileInfo {
-                hash: hash.clone(),
-                path: Some(path),
-                error: OxenError::Context(Box::new(err), msg),
-              });
-            },
+                let msg = format!("Failed to upload large file {path:?}");
+                log::error!("{msg}: {err}");
+                failed_to_upload.push(ErrorFileInfo {
+                    hash: hash.clone(),
+                    path: Some(path),
+                    error: OxenError::Context(Box::new(err), msg),
+                });
+            }
         }
     }
 
@@ -776,7 +777,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
         log::error!("Failed to upload {} files after retry", err_files.len());
         Ok(err_files)
     } else {
-      Ok(vec![])
+        Ok(vec![])
     }
 }
 

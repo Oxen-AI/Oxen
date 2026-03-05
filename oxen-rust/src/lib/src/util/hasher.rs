@@ -117,21 +117,14 @@ pub fn maybe_get_metadata_hash(
 
 pub fn get_metadata_hash(oxen_metadata: &Option<GenericMetadata>) -> Result<u128, OxenError> {
     let mut hasher = Xxh3::new();
-    let metadata_str = serde_json::to_string(&oxen_metadata).unwrap();
+    let metadata_str = serde_json::to_string(&oxen_metadata)?;
     hasher.update(metadata_str.as_bytes());
     Ok(hasher.digest128())
 }
 
-pub fn get_hash_and_size(path: &Path) -> Result<(u128, u64), OxenError> {
-    // If file is < 1GB, one-shot hash for speed
-    // If file is > 1GB, stream hash to avoid memory overage issues
-    let file_size = util::fs::metadata(path)?.len();
-
-    if file_size < 1_000_000_000 {
-        Ok((hash_small_file_contents(path)?, file_size))
-    } else {
-        Ok((hash_large_file_contents(path)?, file_size))
-    }
+pub fn hash_file_contents(path: &Path) -> Result<String, OxenError> {
+    let hash = u128_hash_file_contents(path)?;
+    Ok(format!("{:x}", hash))
 }
 
 pub fn u128_hash_file_contents(path: &Path) -> Result<u128, OxenError> {
@@ -143,18 +136,6 @@ pub fn u128_hash_file_contents(path: &Path) -> Result<u128, OxenError> {
         hash_small_file_contents(path)
     } else {
         hash_large_file_contents(path)
-    }
-}
-
-pub fn hash_file_contents(path: &Path) -> Result<String, OxenError> {
-    // If file is < 1GB, one-shot hash for speed
-    // If file is > 1GB, stream hash to avoid memory overage issues
-    let file_size = util::fs::metadata(path)?.len();
-
-    if file_size < 1_000_000_000 {
-        Ok(format!("{:x}", hash_small_file_contents(path)?))
-    } else {
-        Ok(format!("{:x}", hash_large_file_contents(path)?))
     }
 }
 

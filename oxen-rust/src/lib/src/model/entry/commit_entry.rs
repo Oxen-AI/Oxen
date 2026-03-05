@@ -33,8 +33,7 @@ impl PartialEq for Entry {
 impl Eq for Entry {}
 
 impl Entry {
-
-  const EMPTY: &str = "";
+    const EMPTY: &str = "";
 
     pub fn commit_id(&self) -> &str {
         match self {
@@ -218,7 +217,6 @@ impl CommitEntry {
     pub fn filename_from_commit_id(&self, commit_id: &str) -> PathBuf {
         PathBuf::from(format!("{}.{}", commit_id, self.extension()))
     }
-
 
     pub fn extension(&self) -> String {
         if let Some(ext) = self.path.extension() {

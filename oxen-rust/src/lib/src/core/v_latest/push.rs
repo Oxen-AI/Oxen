@@ -629,7 +629,7 @@ async fn chunk_and_send_large_entries(
                 let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
                     .unwrap_or_else(|e| {
                         log::error!("Failed to get relative path: {e}");
-                        entry.path()
+                        entry.path().to_path_buf()
                     });
                 let path = if relative_path.exists() {
                     relative_path
@@ -644,9 +644,8 @@ async fn chunk_and_send_large_entries(
                     None::<PathBuf>,
                     None,
                     entry.num_bytes(),
-                    &entry.hash()
-                    Some(entry.clone()),
-                    Some(&bar),
+                    &entry.hash(),
+                    Some(bar),
                 )
                 .await
                 {

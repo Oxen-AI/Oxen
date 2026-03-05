@@ -112,12 +112,13 @@ pub async fn parallel_large_file_upload(
     workspace_id: Option<String>,
     file_size: u64,
     hash: &str,
-    progress: Option<&Arc<PushProgress>>, // for push workflow
+    progress: Option<Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
 
     let mut upload =
-        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, file_size, hash).await?;
+        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, file_size, hash)
+            .await?;
 
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
 
@@ -285,7 +286,7 @@ async fn upload_chunks(
     chunk_size: u64,
     parallel_failures: usize,
     max_retries: usize,
-    progress: Option<&Arc<PushProgress>>,
+    progress: Option<Arc<PushProgress>>,
 ) -> Result<Vec<HashMap<String, String>>, OxenError> {
     let client = Arc::new(api::client::new_for_remote_repo_transfer(remote_repo)?);
 
@@ -301,46 +302,52 @@ async fn upload_chunks(
     for chunk_number in 0..num_chunks {
         let remote_repo = remote_repo.clone();
         let upload = upload.clone();
-        let client = Arc::clone(&client);
+        let client = client.clone();
 
         let start = chunk_number * chunk_size;
         let semaphore = semaphore.clone();
         let parallel_failures_semaphore = parallel_failures_semaphore.clone();
         handles.push(tokio::spawn(async move {
-                    let permit = semaphore
-                        .clone()
-                        .acquire_owned()
-                        .await
-                        .map_err(|err| OxenError::basic_str(format!("Error acquiring semaphore: {err}")))?;
-                    let mut chunk = upload_chunk(&client, &remote_repo, &upload, start, chunk_size).await;
-                    let mut i = 0;
-                    if parallel_failures > 0 {
-                        while let Err(ul_err) = chunk {
-                            if i >= max_retries {
-                                return Err(OxenError::basic_str(format!(
-                                    "Failed after too many retries ({max_retries}): {ul_err}"
-                                )));
-                            }
+            let permit = semaphore.clone().acquire_owned().await?;
 
-                            let parallel_failure_permit = parallel_failures_semaphore.clone().try_acquire_owned().map_err(|err| {
-                                OxenError::basic_str(format!(
-                                    "Failed too many failures in parallel ({parallel_failures}): {ul_err} ({err})"
-                                ))
-                            })?;
+            let mut chunk = upload_chunk(&client, &remote_repo, &upload, start, chunk_size).await;
+            let mut i = 0;
+            if parallel_failures > 0 {
+                while let Err(ul_err) = chunk {
+                    if i >= max_retries {
+                        return Err(OxenError::RetryLimit {
+                            upload_err: Box::new(ul_err),
+                            max_retries,
+                        });
+                    }
 
-                            let wait_time = retry::exponential_backoff(BASE_WAIT_TIME as u64, i, MAX_WAIT_TIME as u64);
+                    match parallel_failures_semaphore.clone().try_acquire_owned() {
+                        Ok(_parallel_failure_permit) => {
+                            let wait_time = retry::exponential_backoff(
+                                BASE_WAIT_TIME as u64,
+                                i,
+                                MAX_WAIT_TIME as u64,
+                            );
                             sleep(Duration::from_millis(wait_time)).await;
 
-                            chunk = upload_chunk(&client, &remote_repo, &upload, start, chunk_size).await;
+                            chunk = upload_chunk(&client, &remote_repo, &upload, start, chunk_size)
+                                .await;
                             i += 1;
-                            drop(parallel_failure_permit);
+                        }
+                        Err(err) => {
+                            return Err(OxenError::UploadRetryFailure {
+                                upload_error: Box::new(ul_err),
+                                try_acquire_err: err,
+                                parallel_failures,
+                            });
                         }
                     }
-                    drop(permit);
-                    chunk
-                    .map_err(|e| OxenError::basic_str(format!("Upload error {e}")))
-                    .map(|chunk| (chunk_number, chunk, chunk_size))
-                }));
+                }
+            }
+            drop(permit);
+
+            chunk.map(|chunk| (chunk_number, chunk, chunk_size))
+        }));
     }
 
     let mut results: Vec<HashMap<String, String>> = vec![HashMap::default(); num_chunks as usize];
@@ -350,20 +357,25 @@ async fn upload_chunks(
             Ok(Ok((chunk_number, headers, size))) => {
                 log::debug!("Uploaded part {chunk_number} with size {size}");
                 results[chunk_number as usize] = headers;
-                if let Some(p) = progress {
+                if let Some(p) = progress.as_ref() {
                     p.add_bytes(size);
                 }
             }
             Ok(Err(py_err)) => {
-                return Err(py_err);
+                return Err(OxenError::Context(
+                    Box::new(py_err),
+                    "Error occurred while uploading".into(),
+                ));
             }
             Err(err) => {
-                return Err(OxenError::basic_str(format!(
-                    "Error occurred while uploading: {err}"
-                )));
+                return Err(OxenError::Context(
+                    Box::new(err.into()),
+                    "Error occurred while uploading".into(),
+                ));
             }
         }
     }
+
     if let Some(p) = progress {
         p.add_files(1);
     }
@@ -524,9 +536,12 @@ pub async fn multipart_batch_upload(
             Err(e) => {
                 log::error!("Failed to finish gzip for file {}: {}", &file_hash, e);
                 err_files.push(ErrorFileInfo {
-                    hash: file_hash.clone(),
+                    hash: file_hash.to_string(),
                     path: None,
-                    error: OxenError::Context(Box::new(e.into()), format!("Failed to finish gzip for file {}", &file_hash)),
+                    error: OxenError::Context(
+                        Box::new(e.into()),
+                        format!("Failed to finish gzip for file {}", &file_hash),
+                    ),
                 });
                 continue;
             }
@@ -652,7 +667,10 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
                         err_files.push(ErrorFileInfo {
                             hash: hash.clone(),
                             path: None,
-                            error: OxenError::Context(Box::new(e.into()), format!("Failed to finish gzip for file {}", &hash)),
+                            error: OxenError::Context(
+                                Box::new(e.into()),
+                                format!("Failed to finish gzip for file {}", &hash),
+                            ),
                         });
                         continue;
                     }
@@ -788,7 +806,6 @@ fn calculate_file_size_hash(file_path: &Path) -> Result<(u64, String), OxenError
     Ok((file_size, hash))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,16 +826,9 @@ mod tests {
             let (file_size, hash) = calculate_file_size_hash(&path)?;
 
             // Just testing upload, not adding to workspace
-            let result = parallel_large_file_upload(
-                &remote_repo,
-                path,
-                None,
-                None,
-                file_size,
-                &hash,
-                None,
-            )
-            .await;
+            let result =
+                parallel_large_file_upload(&remote_repo, path, None, None, file_size, &hash, None)
+                    .await;
             assert!(result.is_ok());
 
             let version = api::client::versions::get(&remote_repo, result.unwrap().hash).await?;

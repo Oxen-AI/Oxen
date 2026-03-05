@@ -154,6 +154,21 @@ pub enum OxenError {
     PolarsError(polars::prelude::PolarsError),
     ParseIntError(ParseIntError),
     RmpDecodeError(rmp_serde::decode::Error),
+    SemaphoreError(tokio::sync::AcquireError),
+    JoinError(JoinError),
+
+    // Upload-related errors
+    UploadRetryFailure {
+        upload_error: Box<Self>,
+        try_acquire_err: tokio::sync::TryAcquireError,
+        parallel_failures: usize,
+    },
+
+    /// Retry limit reached while uploading.
+    RetryLimit {
+        upload_err: Box<Self>,
+        max_retries: usize,
+    },
 
     // Fallback
     Context(Box<Self>, String),
@@ -717,7 +732,13 @@ impl From<ParseIntError> for OxenError {
 
 impl From<JoinError> for OxenError {
     fn from(error: JoinError) -> Self {
-        OxenError::basic_str(error.to_string())
+        OxenError::JoinError(error)
+    }
+}
+
+impl From<tokio::sync::AcquireError> for OxenError {
+    fn from(error: tokio::sync::AcquireError) -> Self {
+        OxenError::SemaphoreError(error)
     }
 }
 
