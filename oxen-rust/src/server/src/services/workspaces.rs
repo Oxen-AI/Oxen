@@ -32,10 +32,12 @@ pub fn workspace() -> Scope {
                     "/versions/{directory:.*}",
                     web::post().to(controllers::workspaces::files::add_version_files),
                 )
+                // DEPRECATED: use DELETE /files instead
                 .route(
                     "/versions",
                     web::delete().to(controllers::workspaces::files::rm_files),
                 )
+                // TODO: consolidate with files::delete
                 .route(
                     "/staged",
                     web::delete().to(controllers::workspaces::files::rm_files_from_staged),
@@ -52,6 +54,11 @@ pub fn workspace() -> Scope {
                     "/files/{path:.*}",
                     web::post().to(controllers::workspaces::files::add),
                 )
+                .route(
+                    "/files",
+                    web::delete().to(controllers::workspaces::files::rm_files),
+                )
+                // DEPRECATED: use DELETE /changes/{path:.*} instead
                 .route(
                     "/files/{path:.*}",
                     web::delete().to(controllers::workspaces::files::delete),

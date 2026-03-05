@@ -337,10 +337,10 @@ pub async fn add_version_files(
     }))
 }
 
-/// Delete file from workspace staging
+/// Delete a previously staged file from the workspace (un-stage the file)
 #[utoipa::path(
     delete,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes/{path}",
     description = "Delete a file from workspace staging.",
     tag = "Workspace Files",
     params(
@@ -373,8 +373,8 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 /// Stage files for removal
 #[utoipa::path(
     delete,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/versions",
-    description = "Stage files for removal from the repository. Accept both files and directories.",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files",
+    description = "Stage files for removal from the repository. Accepts both files and directories.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
