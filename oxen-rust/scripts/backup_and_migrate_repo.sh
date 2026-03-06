@@ -28,14 +28,16 @@ if ! oxen save "$REPO_PATH" -o "$ABSOLUTE_REPO_PATH.tar.gz"; then
   exit 1
 fi
 
+S3_LOCATION="s3://$BUCKET_NAME/$FILEPATH/$TIMESTAMP.tar.gz"
+
 # 2. Upload the tarball to S3
-if ! aws s3 cp "$REPO_PATH.tar.gz" "s3://$BUCKET_NAME/$FILEPATH/$TIMESTAMP.tar.gz"; then
+if ! aws s3 cp "$REPO_PATH.tar.gz" "${S3_LOCATION}"; then
   echo "aws s3 cp failed"
   exit 1
 fi
 
 # Step 3: Verify that the tarball has been uploaded to s3
-if ! aws s3 ls "s3://$BUCKET_NAME/$FILEPATH.tar.gz"; then
+if ! aws s3 ls "${S3_LOCATION}"; then
   echo "Verification failed, tarball not found in S3"
   exit 1
 fi
