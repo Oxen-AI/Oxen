@@ -392,23 +392,6 @@ async fn upload_multiple_files(
     Ok(failed_to_upload)
 }
 
-#[derive(Debug)]
-pub(crate) struct ErrorFile {
-    pub hash: String,
-    pub path: Option<PathBuf>,
-    pub error: Arc<OxenError>,
-}
-
-impl From<ErrorFileInfo> for ErrorFile {
-    fn from(other: ErrorFileInfo) -> Self {
-        ErrorFile {
-            hash: other.hash,
-            path: other.path,
-            error: Arc::new(OxenError::basic_str(other.error)),
-        }
-    }
-}
-
 
 pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
