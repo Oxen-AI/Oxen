@@ -554,10 +554,11 @@ fn traverse_commits(
         }
 
         // Process commit (globally newest-first via max-heap)
-        if count >= config.skip && count < end_idx {
-            if let Some(ref mut res) = results {
-                res.push(commit.clone());
-            }
+        if count >= config.skip
+            && count < end_idx
+            && let Some(ref mut res) = results
+        {
+            res.push(commit.clone());
         }
         count += 1;
 
@@ -574,10 +575,10 @@ fn traverse_commits(
         // Add parents to the heap
         for parent_id in commit.parent_ids.clone() {
             let parent_id = parent_id.parse()?;
-            if let Some(c) = get_by_hash(config.repo, &parent_id)? {
-                if !config.visited.contains(&c.id) {
-                    heap.push(TimestampedCommit(c));
-                }
+            if let Some(c) = get_by_hash(config.repo, &parent_id)?
+                && !config.visited.contains(&c.id)
+            {
+                heap.push(TimestampedCommit(c));
             }
         }
     }
