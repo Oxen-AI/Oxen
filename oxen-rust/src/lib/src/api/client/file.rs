@@ -213,7 +213,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::{api, repositories, test, util};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[tokio::test]
     async fn test_update_file() -> Result<(), OxenError> {
@@ -586,6 +586,42 @@ mod tests {
             assert_eq!(
                 thumbnail_bytes_custom[1], 0xD8,
                 "Custom thumbnail should be a JPEG"
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    // Test that downloading a file from a deleted directory returns an error
+    #[tokio::test]
+    async fn test_rm_directory() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let annotations_d = Path::new("annotations");
+            let train_d = annotations_d.join("train");
+            let file = train_d.join("bounding_box.csv");
+
+            // Remove the committed directory "annotations/train"
+            let c = api::client::file::delete_file(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &train_d,
+                Some(NewCommitBody {
+                    message: "delete train dir".into(),
+                    author: "author".into(),
+                    email: "ox@oxen.ai".into(),
+                }),
+            )
+            .await?;
+
+            println!("deleted {} as commit {}", train_d.display(), c.commit.id);
+
+            let contents =
+                api::client::file::get_file(&remote_repo, DEFAULT_BRANCH_NAME, &file).await;
+            assert!(
+                contents.is_err(),
+                "Fetching deleted file should be an error, but got: {:?}",
+                contents
             );
 
             Ok(remote_repo)
