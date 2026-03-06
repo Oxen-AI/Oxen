@@ -111,13 +111,24 @@ mod tests {
 
     #[test]
     fn test_extract_request_id_from_header() {
-        let id = extract_or_generate_request_id(Some("test-id-123"));
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(OXEN_REQUEST_ID),
+            HeaderValue::from_static("test-id-123"),
+        );
+
+        let id = extract_or_generate_request_id(&headers);
         assert_eq!(id, "test-id-123");
     }
 
     #[test]
     fn test_generate_request_id_when_missing() {
-        let id = extract_or_generate_request_id(None);
+        use actix_web::http::header::HeaderMap;
+
+        let headers = HeaderMap::new();
+        let id = extract_or_generate_request_id(&headers);
 
         // Should be valid UUID format
         assert_eq!(id.len(), 36); // UUID length with hyphens
