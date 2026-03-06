@@ -652,7 +652,7 @@ async fn p_rm(
             &file_node,
             &seen_dirs,
         )?);
-    } else if has_dir_node(&maybe_dir_node, file_name)? {
+    } else if has_dir_node(&maybe_dir_node, &file_name)? {
         if let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(
             base_repo,
             commit,
