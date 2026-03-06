@@ -322,6 +322,13 @@ enum ServerCommand {
             help = "Start the server with token-based authentication enforced"
         )]
         auth: bool,
+
+        /// Enable backtrace on stack overflow. NOT for production use.
+        #[arg(
+            long = "backtrace-on-stack-overflow",
+            help = "Enable backtrace-on-stack-overflow for debugging. DO NOT use in production."
+        )]
+        backtrace_on_stack_overflow: bool,
     },
 
     /// Create a new user in the server and output the config file for that user
@@ -394,7 +401,20 @@ async fn main() -> Result<(), ServerError> {
     );
 
     match ServerCli::parse().command {
-        ServerCommand::Start { ip, port, auth } => {
+        ServerCommand::Start {
+            ip,
+            port,
+            auth,
+            backtrace_on_stack_overflow,
+        } => {
+            if backtrace_on_stack_overflow {
+                eprintln!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                eprintln!("!!! WARNING: backtrace-on-stack-overflow is ENABLED  !!!");
+                eprintln!("!!! This should NOT be used in production.           !!!");
+                eprintln!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                unsafe { backtrace_on_stack_overflow::enable() };
+            }
+
             println!("🐂 v{VERSION}");
             println!("{SUPPORT}");
 

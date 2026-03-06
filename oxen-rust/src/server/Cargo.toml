@@ -19,6 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 actix-http = { workspace = true }
+backtrace-on-stack-overflow = { workspace = true }
 actix-multipart = { workspace = true }
 actix-web = { workspace = true }
 actix-web-httpauth = { workspace = true }
