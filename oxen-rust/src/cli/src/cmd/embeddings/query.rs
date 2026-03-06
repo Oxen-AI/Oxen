@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use clap::{arg, Arg, Command};
+use clap::{Arg, Command, arg};
 use liboxen::constants::{DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE};
 use liboxen::core::df::tabular;
 use liboxen::error::OxenError;

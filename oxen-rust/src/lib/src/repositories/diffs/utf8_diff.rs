@@ -93,21 +93,21 @@ pub fn diff(
             pre_context_lines_to_skip = post_context_lines_from_prev_chunk;
         }
 
-        if change_idx > 0 {
-            if let Some(Difference::Same(text)) = diffs.get(context_diff_idx) {
-                let lines: Vec<_> = text.split('\n').collect();
-                let desired_start = lines.len().saturating_sub(3);
-                let actual_start = desired_start.max(pre_context_lines_to_skip);
-                log::debug!(
-                    "Adding pre-context from diff [{context_diff_idx}], lines [{actual_start}..]"
-                );
-                add_lines_to_diff(
-                    &mut result,
-                    text,
-                    ChangeType::Unchanged,
-                    Some((actual_start, lines.len())),
-                );
-            }
+        if change_idx > 0
+            && let Some(Difference::Same(text)) = diffs.get(context_diff_idx)
+        {
+            let lines: Vec<_> = text.split('\n').collect();
+            let desired_start = lines.len().saturating_sub(3);
+            let actual_start = desired_start.max(pre_context_lines_to_skip);
+            log::debug!(
+                "Adding pre-context from diff [{context_diff_idx}], lines [{actual_start}..]"
+            );
+            add_lines_to_diff(
+                &mut result,
+                text,
+                ChangeType::Unchanged,
+                Some((actual_start, lines.len())),
+            );
         }
         post_context_lines_from_prev_chunk = 0;
 

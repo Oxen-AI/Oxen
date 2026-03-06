@@ -1,11 +1,11 @@
 use polars::io::mmap::MmapBytesReader;
 // use polars::io::mmap::ReaderBytes;
 
-use crate::core::v_latest::index::file_chunker::ChunkShardManager;
 use crate::core::v_latest::index::file_chunker::CHUNK_SIZE;
+use crate::core::v_latest::index::file_chunker::ChunkShardManager;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::FileNode;
 use crate::model::LocalRepository;
+use crate::model::merkle_tree::node::FileNode;
 
 use std::io::Read;
 use std::io::Seek;

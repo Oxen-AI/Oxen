@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use clap::{arg, Arg, Command};
+use clap::{Arg, Command, arg};
 use liboxen::core::versions::MinOxenVersion;
 use liboxen::error::OxenError;
 use liboxen::opts::StorageOpts;
@@ -86,7 +86,9 @@ impl RunCmd for InitCmd {
 
         if backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some())
         {
-            return Err(OxenError::basic_str("storage-backend must be specified when storage-backend-path or storage-backend-bucket is provided"));
+            return Err(OxenError::basic_str(
+                "storage-backend must be specified when storage-backend-path or storage-backend-bucket is provided",
+            ));
         }
 
         let storage_opts =

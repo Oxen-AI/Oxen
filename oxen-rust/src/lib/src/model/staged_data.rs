@@ -1,11 +1,11 @@
 use colored::{ColoredString, Colorize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::model::{
-    merge_conflict::EntryMergeConflict, StagedEntry, StagedEntryStatus, StagedSchema,
-    SummarizedStagedDirStats,
+    StagedEntry, StagedEntryStatus, StagedSchema, SummarizedStagedDirStats,
+    merge_conflict::EntryMergeConflict,
 };
 
 use crate::model::LocalRepository;
@@ -173,11 +173,11 @@ impl StagedData {
 
         if self.is_clean() {
             // If in remote-mode repo, check for unsynced files
-            if let Ok(repo) = LocalRepository::from_current_dir() {
-                if repo.is_remote_mode() {
-                    self.__collect_unsynced_dirs(&mut outputs, opts);
-                    self.__collect_unsynced_files(&mut outputs, opts);
-                }
+            if let Ok(repo) = LocalRepository::from_current_dir()
+                && repo.is_remote_mode()
+            {
+                self.__collect_unsynced_dirs(&mut outputs, opts);
+                self.__collect_unsynced_files(&mut outputs, opts);
             }
             outputs.push(MSG_CLEAN_REPO.to_string().normal());
             return outputs;
@@ -293,7 +293,7 @@ impl StagedData {
         for (path, staged_dirs) in self.staged_dirs.paths.iter() {
             let mut dir_row: Vec<ColoredString> = vec![];
             for staged_dir in staged_dirs.iter() {
-                if *path == PathBuf::from("") {
+                if *path == Path::new("") {
                     continue;
                 }
 
@@ -699,11 +699,11 @@ mod tests {
     use colored::Colorize;
     use std::path::PathBuf;
 
-    use crate::model::staged_data::{
-        StagedDataOpts, MSG_CLEAN_REPO, MSG_OXEN_ADD_DIR_EXAMPLE, MSG_OXEN_ADD_FILE_EXAMPLE,
-        MSG_OXEN_RESTORE_STAGED_FILE, MSG_OXEN_RM_FILE_EXAMPLE,
-    };
     use crate::model::StagedEntryStatus;
+    use crate::model::staged_data::{
+        MSG_CLEAN_REPO, MSG_OXEN_ADD_DIR_EXAMPLE, MSG_OXEN_ADD_FILE_EXAMPLE,
+        MSG_OXEN_RESTORE_STAGED_FILE, MSG_OXEN_RM_FILE_EXAMPLE, StagedDataOpts,
+    };
     use crate::model::{StagedData, StagedEntry};
 
     #[test]

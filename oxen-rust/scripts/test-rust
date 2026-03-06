@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#
+# Build, configure, and run the Oxen test suite. Any arguments passed to this script will be passed
+# to `cargo nextest run`
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+SERVER_PID=""
+
+cleanup() {
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "Stopping oxen-server (pid $SERVER_PID)..."
+        kill "$SERVER_PID"
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+# ---------- 1. Build ----------
+echo "==> Building oxen (cargo build)..."
+cargo build
+
+# ---------- 2. Ensure all prerequisites are installed ----------
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+"$REPO_ROOT/scripts/install-pre-reqs.sh"
+
+# ---------- 3. Verify ulimit ----------
+CURRENT_ULIMIT=$(ulimit -n)
+DESIRED_ULIMIT=10240
+if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
+    echo "==> ulimit -n is $CURRENT_ULIMIT (< $DESIRED_ULIMIT). Attempting to raise..."
+    ulimit -n "$DESIRED_ULIMIT" 2>/dev/null || {
+        echo "Warning: Could not raise ulimit -n to $DESIRED_ULIMIT. You may need to limit"
+        echo "the number of threads used by nextest to avoid running out of file descriptors."
+    }
+fi
+
+# ---------- 4. Configure test user ----------
+if [ ! -d ./data/test/runs ] || [ ! -d ./data/test/config ]; then
+    echo "==> Configuring test user..."
+    mkdir -p ./data/test/runs
+    mkdir -p ./data/test/config
+
+    ./target/debug/oxen-server add-user \
+        --email ox@oxen.ai \
+        --name Ox \
+        --output data/test/config/user_config.toml
+else
+    echo "==> Test user already configured, skipping."
+fi
+
+# ---------- 5. Start oxen-server ----------
+echo "==> Starting oxen-server..."
+./target/debug/oxen-server start &
+SERVER_PID=$!
+
+# Give the server a moment to start
+wait_for_server() {
+  for i in $(seq 1 30); do
+    if curl -s -o /dev/null --fail http://localhost:3001/api/health 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+if ! wait_for_server || ! kill -0 "$SERVER_PID" 2>/dev/null; then
+  echo "ERROR: oxen-server failed to start."
+fi
+echo "==> oxen-server running (pid $SERVER_PID)."
+
+# ---------- 6. Run tests ----------
+echo "==> Running tests with 'cargo nextest run $@' ..."
+cargo nextest run "$@"
+
+# cleanup handled via the trapped cleanup function

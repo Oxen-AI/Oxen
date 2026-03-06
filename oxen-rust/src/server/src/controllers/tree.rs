@@ -1,14 +1,14 @@
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use bytesize::ByteSize;
 use futures_util::stream::StreamExt as _;
 use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
-use liboxen::view::tree::merkle_hashes::MerkleHashes;
-use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
+use liboxen::view::tree::MerkleHashResponse;
+use liboxen::view::tree::merkle_hashes::MerkleHashes;
 
 use std::path::PathBuf;
 
@@ -20,8 +20,8 @@ use liboxen::view::tree::nodes::{
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::parse_resource;
 use crate::params::TreeDepthQuery;
+use crate::params::parse_resource;
 use crate::params::{app_data, path_param};
 
 pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {

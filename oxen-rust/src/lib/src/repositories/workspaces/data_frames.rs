@@ -427,11 +427,7 @@ fn get_uniform_media_type(files: &[FileNodeWithDir]) -> Option<&'static str> {
         .iter()
         .all(|file_with_dir| file_with_dir.file_node.data_type() == first_data_type);
 
-    if all_match {
-        Some(render_func)
-    } else {
-        None
-    }
+    if all_match { Some(render_func) } else { None }
 }
 
 /// Sets render metadata for the file_path column if all files are of the same
@@ -572,8 +568,8 @@ mod tests {
     use crate::constants::{DEFAULT_BRANCH_NAME, OXEN_ID_COL};
     use crate::core::df;
     use crate::error::OxenError;
-    use crate::model::diff::DiffResult;
     use crate::model::NewCommitBody;
+    use crate::model::diff::DiffResult;
     use crate::opts::DFOpts;
     use crate::repositories::workspaces;
     use crate::test;
@@ -1359,7 +1355,10 @@ mod tests {
     fn test_add_exclude_to_simple_select() -> Result<(), OxenError> {
         let sql = "SELECT * FROM table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table");
+        assert_eq!(
+            result,
+            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table"
+        );
         Ok(())
     }
 
@@ -1367,7 +1366,10 @@ mod tests {
     fn test_add_exclude_to_complex_select() -> Result<(), OxenError> {
         let sql = "SELECT col1, col2, col3 FROM table WHERE col1 = 'value'";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(result, "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table WHERE col1 = 'value'");
+        assert_eq!(
+            result,
+            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table WHERE col1 = 'value'"
+        );
         Ok(())
     }
 
@@ -1375,7 +1377,10 @@ mod tests {
     fn test_add_exclude_case_insensitive() -> Result<(), OxenError> {
         let sql = "select * from table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") from table");
+        assert_eq!(
+            result,
+            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") from table"
+        );
         Ok(())
     }
 

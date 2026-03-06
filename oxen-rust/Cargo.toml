@@ -4,8 +4,8 @@ members = ["src/benches", "src/cli", "src/lib", "src/server"]
 exclude = ["experiments/*"]
 
 [workspace.package]
-version = "0.44.2"
-edition = "2021"
+version = "0.45.0"
+edition = "2024"
 license-file = "LICENSE"
 description = "Oxen is a fast, unstructured data version control, to help version large machine learning datasets written in Rust."
 homepage = "https://oxen.ai"
@@ -19,7 +19,7 @@ categories = [
     "database",
     "computer-vision",
 ]
-rust-version = "1.88"
+rust-version = "1.94"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

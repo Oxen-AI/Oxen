@@ -154,7 +154,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `cleanup` - Whether to delete the chunks after combining. If false, the chunks will be left in place.
     ///   May be helpful for debugging or chunk-level deduplication.
     async fn combine_version_chunks(&self, hash: &str, cleanup: bool)
-        -> Result<PathBuf, OxenError>;
+    -> Result<PathBuf, OxenError>;
 
     /// Get metadata of a version file
     ///

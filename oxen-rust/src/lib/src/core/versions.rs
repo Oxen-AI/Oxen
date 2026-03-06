@@ -73,7 +73,7 @@ impl PartialEq for MinOxenVersion {
 
 impl PartialOrd for MinOxenVersion {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.to_oxen_version().cmp(&other.to_oxen_version()))
+        Some(self.cmp(other))
     }
 }
 

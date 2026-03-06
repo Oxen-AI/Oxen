@@ -727,7 +727,9 @@ async fn pull_small_entries(
     type PieceOfWork = (RemoteRepository, Vec<String>, LocalRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
-    log::debug!("pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}");
+    log::debug!(
+        "pull_small_entries creating {num_chunks} chunks from {total_size} bytes with size {chunk_size}"
+    );
 
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)

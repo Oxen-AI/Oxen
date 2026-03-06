@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock};
 
 use lru::LruCache;
 use parking_lot::Mutex;
-use rocksdb::{IteratorMode, DB};
+use rocksdb::{DB, IteratorMode};
 
 use crate::constants::{HEAD_FILE, REFS_DIR};
 use crate::core::db;

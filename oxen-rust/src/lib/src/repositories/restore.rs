@@ -138,8 +138,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_restore_removed_file_from_branch_with_commits_between(
-    ) -> Result<(), OxenError> {
+    async fn test_command_restore_removed_file_from_branch_with_commits_between()
+    -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // (file already created in helper)
             let file_to_remove = repo.path.join("labels.txt");

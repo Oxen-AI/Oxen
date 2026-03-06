@@ -38,9 +38,9 @@ def positive_int(value: str) -> int:
 
     # Handle suffixes: k (thousand), M (million), B (billion)
     multipliers = {
-        'K': 1_000,
-        'M': 1_000_000,
-        'B': 1_000_000_000,
+        "K": 1_000,
+        "M": 1_000_000,
+        "B": 1_000_000_000,
     }
 
     for suffix, multiplier in multipliers.items():
@@ -76,18 +76,18 @@ def parse_size(size_str: str) -> int:
     # Check units from longest to shortest to avoid partial matches
     # (e.g., "GB" before "B" so "10GB" doesn't match "B" first)
     units = [
-        ('TB', 1024 ** 4),
-        ('GB', 1024 ** 3),
-        ('MB', 1024 ** 2),
-        ('KB', 1024),
-        ('B', 1),
+        ("TB", 1024**4),
+        ("GB", 1024**3),
+        ("MB", 1024**2),
+        ("KB", 1024),
+        ("B", 1),
     ]
 
     # Try to find unit suffix
     for unit, multiplier in units:
         if size_str.endswith(unit):
             try:
-                value = float(size_str[:-len(unit)])
+                value = float(size_str[: -len(unit)])
                 size_bytes = int(value * multiplier)
             except ValueError:
                 raise argparse.ArgumentTypeError(
@@ -112,7 +112,7 @@ def parse_size(size_str: str) -> int:
 
 def format_size(size_bytes: int) -> str:
     """Format bytes to human-readable string."""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024.0:
             return f"{size_bytes:.2f}{unit}"
         size_bytes /= 1024.0
@@ -132,27 +132,28 @@ def init_text_pool(pool_size_mb: int = 10) -> list[tuple[str, int]]:
 
     while total_size < target:
         text = fake.text(max_nb_chars=1000) + "\n"
-        byte_size = len(text.encode('utf-8'))
+        byte_size = len(text.encode("utf-8"))
         chunks.append((text, byte_size))
         total_size += byte_size
 
     return chunks
 
 
-def validate_parameters(total_size: int | None, num_files: int | None,
-                       avg_file_size: int | None) -> tuple[int, int]:
+def validate_parameters(
+    total_size: int | None, num_files: int | None, avg_file_size: int | None
+) -> tuple[int, int]:
     """
     Validate and calculate final parameters.
     Returns: (num_files, file_size)
     """
-    params_provided = sum([
-        total_size is not None,
-        num_files is not None,
-        avg_file_size is not None
-    ])
+    params_provided = sum(
+        [total_size is not None, num_files is not None, avg_file_size is not None]
+    )
 
     if params_provided < 2:
-        print("Error: Must specify at least 2 of: --total-size, --num-files, --avg-file-size")
+        print(
+            "Error: Must specify at least 2 of: --total-size, --num-files, --avg-file-size"
+        )
         sys.exit(1)
 
     # If all three provided, check consistency
@@ -165,7 +166,9 @@ def validate_parameters(total_size: int | None, num_files: int | None,
             print(f"  Num files: {num_files}")
             print(f"  Avg file size: {format_size(avg_file_size)}")
             print(f"  Expected total: {format_size(expected_total)}")
-            print("\nPlease adjust parameters so: total_size ≈ num_files × avg_file_size")
+            print(
+                "\nPlease adjust parameters so: total_size ≈ num_files × avg_file_size"
+            )
             sys.exit(1)
         # Use provided values
         return num_files, avg_file_size
@@ -185,22 +188,27 @@ def validate_parameters(total_size: int | None, num_files: int | None,
         return num_files, avg_file_size
 
 
-def validate_directory_parameters(num_files: int, num_dirs: int | None,
-                                  files_per_dir: int | None) -> int:
+def validate_directory_parameters(
+    num_files: int, num_dirs: int | None, files_per_dir: int | None
+) -> int:
     """
     Validate and calculate directory parameters.
     Returns: num_dirs
     """
     if num_dirs is not None and files_per_dir is not None:
         # Both provided, check consistency
-        expected_dirs = (num_files + files_per_dir - 1) // files_per_dir  # Ceiling division
+        expected_dirs = (
+            num_files + files_per_dir - 1
+        ) // files_per_dir  # Ceiling division
         if expected_dirs != num_dirs:
             print("Error: Conflicting directory parameters!")
             print(f"  Num files: {num_files}")
             print(f"  Num dirs: {num_dirs}")
             print(f"  Files per dir: {files_per_dir}")
             print(f"  Expected dirs: {expected_dirs}")
-            print("\nPlease adjust parameters so: num_dirs = ceil(num_files / files_per_dir)")
+            print(
+                "\nPlease adjust parameters so: num_dirs = ceil(num_files / files_per_dir)"
+            )
             sys.exit(1)
         return num_dirs
     elif num_dirs is not None:
@@ -234,14 +242,14 @@ def generate_text_file(path: Path, size: int) -> None:
         if chunk_size > remaining:
             # Approximate trim (may be slightly off due to UTF-8 variable length)
             chunk_text = chunk_text[:remaining]
-            chunk_size = len(chunk_text.encode('utf-8'))
+            chunk_size = len(chunk_text.encode("utf-8"))
 
         parts.append(chunk_text)
         current_size += chunk_size
 
     # Single write operation
-    with open(path, 'w') as f:
-        f.write(''.join(parts))
+    with open(path, "w") as f:
+        f.write("".join(parts))
 
 
 def generate_image_file(path: Path, size: int) -> None:
@@ -256,7 +264,7 @@ def generate_image_file(path: Path, size: int) -> None:
     width, height = 1024, 1024
     block_size = 32  # 32x32 blocks
 
-    img = Image.new('RGB', (width, height))
+    img = Image.new("RGB", (width, height))
     pixels = img.load()
 
     # Generate mosaic pattern
@@ -273,26 +281,26 @@ def generate_image_file(path: Path, size: int) -> None:
                         pixels[x, y] = (
                             random.randint(0, 255),
                             random.randint(0, 255),
-                            random.randint(0, 255)
+                            random.randint(0, 255),
                         )
             else:
                 # Fill block with solid random color
                 color = (
                     random.randint(0, 255),
                     random.randint(0, 255),
-                    random.randint(0, 255)
+                    random.randint(0, 255),
                 )
                 for y in range(block_y, min(block_y + block_size, height)):
                     for x in range(block_x, min(block_x + block_size, width)):
                         pixels[x, y] = color
 
     # Save as PNG
-    img.save(path, 'PNG')
+    img.save(path, "PNG")
 
 
 def generate_binary_file(path: Path, size: int) -> None:
     """Generate a binary file with random bytes."""
-    with open(path, 'wb') as f:
+    with open(path, "wb") as f:
         # Write in chunks to avoid memory issues with large files
         chunk_size = min(1024 * 1024, size)  # 1MB chunks or smaller
         remaining = size
@@ -328,9 +336,9 @@ def generate_file(args: tuple) -> Path:
     path, file_type, size = args
 
     generators = {
-        'text': generate_text_file,
-        'image': generate_image_file,
-        'binary': generate_binary_file,
+        "text": generate_text_file,
+        "image": generate_image_file,
+        "binary": generate_binary_file,
     }
 
     generator = generators[file_type]
@@ -350,36 +358,67 @@ Examples:
   %(prog)s --total-size 500MB --avg-file-size 5MB --type binary --target ./test_data
   %(prog)s --num-files 10k --avg-file-size 1MB --files-per-dir 100 --type text
   %(prog)s --total-size 16GB --num-files 3M --files-per-dir 30k --seed 42 --type text
-        """
+        """,
     )
 
     # Size parameters
-    parser.add_argument('--total-size', type=parse_size,
-                       help='Total size of generated dataset (e.g., 1GB, 500MB)')
-    parser.add_argument('--num-files', type=positive_int,
-                       help='Number of files to generate (e.g., 100, 10k, 3M)')
-    parser.add_argument('--avg-file-size', type=parse_size,
-                       help='Average size per file (e.g., 10MB, 1GB). Not valid for image type.')
+    parser.add_argument(
+        "--total-size",
+        type=parse_size,
+        help="Total size of generated dataset (e.g., 1GB, 500MB)",
+    )
+    parser.add_argument(
+        "--num-files",
+        type=positive_int,
+        help="Number of files to generate (e.g., 100, 10k, 3M)",
+    )
+    parser.add_argument(
+        "--avg-file-size",
+        type=parse_size,
+        help="Average size per file (e.g., 10MB, 1GB). Not valid for image type.",
+    )
 
     # Structure parameters
-    parser.add_argument('--num-dirs', type=positive_int, default=None,
-                       help='Number of directories to split files into (e.g., 10, 100, 5k)')
-    parser.add_argument('--files-per-dir', type=positive_int, default=None,
-                       help='Number of files per directory (e.g., 100, 10k) - alternative to --num-dirs')
-    parser.add_argument('--target', type=str, default='./test_dataset',
-                       help='Target directory for generated files (default: ./test_dataset)')
+    parser.add_argument(
+        "--num-dirs",
+        type=positive_int,
+        default=None,
+        help="Number of directories to split files into (e.g., 10, 100, 5k)",
+    )
+    parser.add_argument(
+        "--files-per-dir",
+        type=positive_int,
+        default=None,
+        help="Number of files per directory (e.g., 100, 10k) - alternative to --num-dirs",
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        default="./test_dataset",
+        help="Target directory for generated files (default: ./test_dataset)",
+    )
 
     # File type
-    parser.add_argument('--type', type=str, choices=['text', 'image', 'binary'],
-                       default='text', help='Type of files to generate (default: text)')
+    parser.add_argument(
+        "--type",
+        type=str,
+        choices=["text", "image", "binary"],
+        default="text",
+        help="Type of files to generate (default: text)",
+    )
 
     # Parallelism
-    parser.add_argument('--workers', type=positive_int, default=None,
-                       help='Number of parallel worker threads (e.g., 10, 100) - default: CPU count × 4')
+    parser.add_argument(
+        "--workers",
+        type=positive_int,
+        default=None,
+        help="Number of parallel worker threads (e.g., 10, 100) - default: CPU count × 4",
+    )
 
     # Other options
-    parser.add_argument('--seed', type=int, default=None,
-                       help='Random seed for reproducible generation')
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Random seed for reproducible generation"
+    )
 
     args = parser.parse_args()
 
@@ -389,10 +428,12 @@ Examples:
         Faker.seed(args.seed)
 
     # Special handling for image type
-    if args.type == 'image':
+    if args.type == "image":
         if args.avg_file_size is not None:
             print("Error: --avg-file-size cannot be specified for image type.")
-            print("Image size is determined by the image dimensions, content, and compression.")
+            print(
+                "Image size is determined by the image dimensions, content, and compression."
+            )
             sys.exit(1)
 
         # Compute average image size by generating test samples
@@ -416,20 +457,22 @@ Examples:
     target.mkdir(parents=True, exist_ok=True)
 
     # Warn if target directory has existing files
-    existing_files = list(target.rglob('*'))
+    existing_files = list(target.rglob("*"))
     existing_files = [f for f in existing_files if f.is_file()]
     if existing_files:
-        print(f"Warning: Target directory contains {len(existing_files)} existing files.")
+        print(
+            f"Warning: Target directory contains {len(existing_files)} existing files."
+        )
         response = input("Continue and potentially overwrite files? [y/N]: ")
-        if response.lower() not in ['y', 'yes']:
+        if response.lower() not in ["y", "yes"]:
             print("Aborted.")
             sys.exit(0)
 
     # Determine file extension
     extensions = {
-        'text': 'txt',
-        'image': 'png',
-        'binary': 'bin',
+        "text": "txt",
+        "image": "png",
+        "binary": "bin",
     }
     ext = extensions[args.type]
 
@@ -462,7 +505,7 @@ Examples:
             file_counter += 1
 
     # Choose executor type and worker count based on file type
-    if args.type == 'image':
+    if args.type == "image":
         # Image generation is CPU-bound, use ProcessPoolExecutor
         executor_class = ProcessPoolExecutor
         default_workers = os.cpu_count()
@@ -488,7 +531,7 @@ Examples:
     print()
 
     # Generate files in parallel using appropriate executor for workload type
-    if args.type == 'text':
+    if args.type == "text":
         print("Initializing text pool...", flush=True)
         # Initialize text pool in main thread (threads share memory)
         global TEXT_POOL
@@ -500,8 +543,13 @@ Examples:
 
     start_time = time.time()
     with executor_class(max_workers=max_workers) as executor:
-        with tqdm(total=num_files, desc="Generating files", unit="file",
-                  unit_scale=False, smoothing=0.1) as pbar:
+        with tqdm(
+            total=num_files,
+            desc="Generating files",
+            unit="file",
+            unit_scale=False,
+            smoothing=0.1,
+        ) as pbar:
             for _ in executor.map(generate_file, file_tasks, chunksize=chunksize):
                 pbar.update(1)
     elapsed_time = time.time() - start_time
@@ -509,8 +557,10 @@ Examples:
     # Show completion statistics
     files_per_sec = num_files / elapsed_time if elapsed_time > 0 else 0
     print(f"\n✓ Dataset generated successfully in {target}")
-    print(f"  Generated {num_files:,} files in {elapsed_time:.1f}s ({files_per_sec:.1f} files/sec)")
+    print(
+        f"  Generated {num_files:,} files in {elapsed_time:.1f}s ({files_per_sec:.1f} files/sec)"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

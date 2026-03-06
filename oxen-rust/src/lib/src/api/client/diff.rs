@@ -4,8 +4,8 @@ use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
 use crate::model::{DiffEntry, RemoteRepository};
-use crate::view::compare::{CompareEntries, CompareEntryResponse};
 use crate::view::CompareEntriesResponse;
+use crate::view::compare::{CompareEntries, CompareEntryResponse};
 
 pub async fn list_diff_entries(
     remote_repo: &RemoteRepository,
@@ -65,10 +65,10 @@ mod tests {
     use crate::command;
     use crate::constants;
     use crate::error::OxenError;
+    use crate::model::EntryDataType;
     use crate::model::diff::generic_diff::GenericDiff;
     use crate::model::diff::generic_diff_summary::GenericDiffSummary;
     use crate::model::metadata::generic_metadata::GenericMetadata;
-    use crate::model::EntryDataType;
     use crate::opts::PushOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
@@ -1208,8 +1208,8 @@ who won the game?,The packers beat up on the bears,packers
     */
 
     #[tokio::test]
-    async fn test_list_diff_entries_removing_images_by_rming_parent_in_subdir(
-    ) -> Result<(), OxenError> {
+    async fn test_list_diff_entries_removing_images_by_rming_parent_in_subdir()
+    -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");

@@ -16,7 +16,7 @@ use crate::model::data_frame::schema::Schema;
 use crate::opts::DFOpts;
 use crate::{model, util};
 use duckdb::arrow::record_batch::RecordBatch;
-use duckdb::{params, ToSql};
+use duckdb::{ToSql, params};
 use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use polars::prelude::*;
@@ -95,13 +95,13 @@ where
             db_lock.clone()
         } else {
             // Cache miss: create directory and open DB
-            if let Some(parent) = db_path.parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        log::error!("Failed to create df db directory: {e}");
-                        OxenError::basic_str(format!("Failed to create df db directory: {e}"))
-                    })?;
-                }
+            if let Some(parent) = db_path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    log::error!("Failed to create df db directory: {e}");
+                    OxenError::basic_str(format!("Failed to create df db directory: {e}"))
+                })?;
             }
 
             let conn = get_connection(&db_path).map_err(|e| {
@@ -245,7 +245,11 @@ pub fn get_schema_excluding_cols(
     let table_name = table_name.as_ref();
     let sql = format!(
         "SELECT column_name, data_type FROM information_schema.columns WHERE table_name == '{}' AND column_name NOT IN ({})",
-        table_name, cols.iter().map(|col| format!("'{}'", col.replace('\'', "''"))).collect::<Vec<String>>().join(", ")
+        table_name,
+        cols.iter()
+            .map(|col| format!("'{}'", col.replace('\'', "''")))
+            .collect::<Vec<String>>()
+            .join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
 
@@ -429,16 +433,16 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, O
         if !special_columns.is_empty() {
             let mut ast = Parser::parse_sql(&dialect, sql).expect("Failed to parse SQL");
 
-            if let Some(Statement::Query(query)) = ast.get_mut(0) {
-                if let ast::SetExpr::Select(select) = &mut *query.body {
-                    // Add new columns to the SELECT clause
-                    for special_column in special_columns {
-                        select
-                            .projection
-                            .push(SelectItem::UnnamedExpr(SqlExpr::Identifier(
-                                special_column.into(),
-                            )));
-                    }
+            if let Some(Statement::Query(query)) = ast.get_mut(0)
+                && let ast::SetExpr::Select(select) = &mut *query.body
+            {
+                // Add new columns to the SELECT clause
+                for special_column in special_columns {
+                    select
+                        .projection
+                        .push(SelectItem::UnnamedExpr(SqlExpr::Identifier(
+                            special_column.into(),
+                        )));
                 }
             }
 
@@ -629,7 +633,7 @@ pub fn index_file(path: &Path, conn: &duckdb::Connection) -> Result<(), OxenErro
         _ => {
             return Err(OxenError::basic_str(
                 "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
-            ))
+            ));
         }
     }
     Ok(())
@@ -654,15 +658,30 @@ pub fn index_file_with_id(
 
     match extension {
         "csv" => {
-            let query = format!("CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_csv('{}', AUTO_DETECT=TRUE, header=True);", DUCKDB_DF_TABLE_NAME, OXEN_ID_COL, path.to_string_lossy());
+            let query = format!(
+                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_csv('{}', AUTO_DETECT=TRUE, header=True);",
+                DUCKDB_DF_TABLE_NAME,
+                OXEN_ID_COL,
+                path.to_string_lossy()
+            );
             conn.execute(&query, [])?;
         }
         "tsv" => {
-            let query = format!("CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_csv('{}', AUTO_DETECT=TRUE, header=True);", DUCKDB_DF_TABLE_NAME, OXEN_ID_COL, path.to_string_lossy());
+            let query = format!(
+                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_csv('{}', AUTO_DETECT=TRUE, header=True);",
+                DUCKDB_DF_TABLE_NAME,
+                OXEN_ID_COL,
+                path.to_string_lossy()
+            );
             conn.execute(&query, [])?;
         }
         "parquet" => {
-            let query = format!("CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_parquet('{}');", DUCKDB_DF_TABLE_NAME, OXEN_ID_COL, path.to_string_lossy());
+            let query = format!(
+                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_parquet('{}');",
+                DUCKDB_DF_TABLE_NAME,
+                OXEN_ID_COL,
+                path.to_string_lossy()
+            );
             conn.execute(&query, [])?;
         }
         "jsonl" | "json" | "ndjson" => {
@@ -690,7 +709,7 @@ pub fn index_file_with_id(
         _ => {
             return Err(OxenError::basic_str(
                 "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
-            ))
+            ));
         }
     }
 

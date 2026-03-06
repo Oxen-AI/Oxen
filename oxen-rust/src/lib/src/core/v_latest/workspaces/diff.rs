@@ -4,12 +4,12 @@ use crate::core::db::data_frames::{
     workspace_df_db,
 };
 use crate::error::OxenError;
+use crate::model::Workspace;
 use crate::model::diff::tabular_diff::{
     TabularDiffDupes, TabularDiffMods, TabularDiffParameters, TabularDiffSchemas,
     TabularDiffSummary, TabularSchemaDiff,
 };
 use crate::model::diff::{AddRemoveModifyCounts, DiffResult, TabularDiff};
-use crate::model::Workspace;
 use crate::repositories;
 use std::path::Path;
 

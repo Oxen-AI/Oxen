@@ -7,7 +7,7 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
 use crate::util::progress_bar::spinner_with_msg;
 
-use rocksdb::{IteratorMode, LogLevel, Options, DB};
+use rocksdb::{DB, IteratorMode, LogLevel, Options};
 use std::path::Path;
 use std::str;
 
@@ -21,10 +21,10 @@ pub fn list(path: impl AsRef<Path>, limit: Option<usize>) -> Result<(), OxenErro
     let iter = db.iterator(IteratorMode::Start);
     let mut count = 0;
     for item in iter {
-        if let Some(limit) = limit {
-            if count >= limit {
-                break;
-            }
+        if let Some(limit) = limit
+            && count >= limit
+        {
+            break;
         }
 
         match item {

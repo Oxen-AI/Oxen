@@ -87,21 +87,21 @@ pub async fn staged_df<P: AsRef<Path>>(
             api::client::workspaces::data_frames::get(&remote_repo, &workspace_id, input, &opts)
                 .await;
 
-        if let Ok(val) = val {
-            if let Some(data_frame) = val.data_frame {
-                let mut df = data_frame.view.to_df().await;
-                if let Some(output) = output {
-                    println!("Writing {output:?}");
-                    tabular::write_df(&mut df, output)?;
-                }
-
-                println!(
-                    "Full shape: ({}, {})\n",
-                    data_frame.source.size.height, data_frame.source.size.width
-                );
-                println!("Slice {df:?}");
-                return Ok(df);
+        if let Ok(val) = val
+            && let Some(data_frame) = val.data_frame
+        {
+            let mut df = data_frame.view.to_df().await;
+            if let Some(output) = output {
+                println!("Writing {output:?}");
+                tabular::write_df(&mut df, output)?;
             }
+
+            println!(
+                "Full shape: ({}, {})\n",
+                data_frame.source.size.height, data_frame.source.size.width
+            );
+            println!("Slice {df:?}");
+            return Ok(df);
         }
 
         println!(

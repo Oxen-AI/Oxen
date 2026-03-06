@@ -1,16 +1,16 @@
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
+use crate::model::diff::AddRemoveModifyCounts;
 use crate::model::diff::diff_entries_counts::DiffEntriesCounts;
 use crate::model::diff::diff_entry_status::DiffEntryStatus;
 use crate::model::diff::diff_file_node::DiffFileNode;
 use crate::model::diff::generic_diff_summary::GenericDiffSummary;
-use crate::model::diff::AddRemoveModifyCounts;
 use crate::model::merkle_tree::node::{DirNodeWithPath, FileNode, FileNodeWithDir};
 use crate::model::{Commit, DiffEntry, LocalRepository, MerkleTreeNodeType};
 use crate::opts::DFOpts;
 use crate::repositories;
 use crate::util;
-use futures::{stream, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt, stream};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -335,20 +335,20 @@ pub fn list_changed_dirs(
         let base_dir_hash = match base_dir {
             Some(base_dir) => base_dir.hash,
             None => {
-                return Err(OxenError::basic_str(
-                    format!("Could not calculate dir diff tree: base_dir_hash not found for dir {:?} in commit {}",
-                    dir, base_commit.id)
-                ))
+                return Err(OxenError::basic_str(format!(
+                    "Could not calculate dir diff tree: base_dir_hash not found for dir {:?} in commit {}",
+                    dir, base_commit.id
+                )));
             }
         };
 
         let head_dir_hash = match head_dir {
             Some(head_dir) => head_dir.hash,
             None => {
-                return Err(OxenError::basic_str(
-                    format!("Could not calculate dir diff tree: head_dir_hash not found for dir {:?} in commit {}",
-                    dir, head_commit.id)
-                ))
+                return Err(OxenError::basic_str(format!(
+                    "Could not calculate dir diff tree: head_dir_hash not found for dir {:?} in commit {}",
+                    dir, head_commit.id
+                )));
             }
         };
 
@@ -697,13 +697,13 @@ fn subset_dir_diffs_to_direct_children(
             DiffEntryStatus::Removed => entry.base_entry.as_ref(),
         };
 
-        if let Some(meta_entry) = relevant_entry {
-            if let Some(resource) = &meta_entry.resource {
-                let path = PathBuf::from(&resource.path);
-                log::debug!("subset_dir_diffs_to_direct_children path {path:?} dir {dir:?}");
-                if path.parent() == Some(dir.as_path()) {
-                    filtered_entries.push(entry);
-                }
+        if let Some(meta_entry) = relevant_entry
+            && let Some(resource) = &meta_entry.resource
+        {
+            let path = PathBuf::from(&resource.path);
+            log::debug!("subset_dir_diffs_to_direct_children path {path:?} dir {dir:?}");
+            if path.parent() == Some(dir.as_path()) {
+                filtered_entries.push(entry);
             }
         }
     }

@@ -93,7 +93,9 @@ impl AuthConfig {
             Err(_err) => {
                 let config = Self::new_empty();
                 config.save_default()?;
-                println!("🐂 created a new config file in \"$HOME/{CONFIG_DIR}/{OXEN}/{AUTH_CONFIG_FILENAME}");
+                println!(
+                    "🐂 created a new config file in \"$HOME/{CONFIG_DIR}/{OXEN}/{AUTH_CONFIG_FILENAME}"
+                );
                 Ok(config)
             }
         }

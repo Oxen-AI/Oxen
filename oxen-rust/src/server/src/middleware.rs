@@ -1,12 +1,12 @@
 use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
 };
 use futures_util::future::LocalBoxFuture;
-use std::future::{ready, Ready};
+use std::future::{Ready, ready};
 
 use liboxen::constants::OXEN_REQUEST_ID;
-use liboxen::request_context::{extract_or_generate_request_id, REQUEST_ID};
+use liboxen::request_context::{REQUEST_ID, extract_or_generate_request_id};
 
 /// Middleware factory for request ID injection
 pub struct RequestIdMiddleware;

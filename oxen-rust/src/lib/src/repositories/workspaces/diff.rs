@@ -8,9 +8,9 @@ use std::path::Path;
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::diff::DiffResult;
 use crate::model::LocalRepository;
 use crate::model::Workspace;
+use crate::model::diff::DiffResult;
 
 pub fn diff(
     repo: &LocalRepository,

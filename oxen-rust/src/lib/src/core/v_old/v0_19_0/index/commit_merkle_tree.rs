@@ -74,7 +74,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
+        if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
         log::debug!("Read path {node_path:?} in commit {commit:?} depth: {depth}");
