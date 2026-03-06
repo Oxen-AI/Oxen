@@ -1,15 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-ROOT_PATH=$1
-MIGRATION_NAME=$2
+ROOT_PATH=${1:-}
+MIGRATION_NAME=${2:-}
 
 
 if [[ "$ROOT_PATH" == /* ]]; then
-    ABSOLUTE_ROOT_PATH="$ROOT_PATH"
-    ABSOLUTE_ROOT_PATH="$(realpath $ROOT_PATH)"
+    ABSOLUTE_ROOT_PATH="$(realpath "$ROOT_PATH")"
 else
-    ABSOLUTE_ROOT_PATH="$(pwd)/$ROOT_PATH"
-    ABSOLUTE_ROOT_PATH="$(realpath $ROOT_PATH)"
+    ABSOLUTE_ROOT_PATH="$(realpath "$ROOT_PATH")"
 fi
 
 # Dir where this script is running - to reference ./backup_and_migrate_repo.sh
@@ -29,9 +28,7 @@ for namespace in "$ABSOLUTE_ROOT_PATH"/*; do
 
           # Make the script exectuable
           chmod +x "$DIR/backup_and_migrate_repo.sh"
-          "$DIR/backup_and_migrate_repo.sh" "$repository" "$namespace_name/$repository_name" "$MIGRATION_NAME"
-
-          if [ $? -ne 0 ]; then
+          if ! "$DIR/backup_and_migrate_repo.sh" "$repository" "$namespace_name/$repository_name" "$MIGRATION_NAME"; then
             echo "Backup and migration failed for $repository"
             # exit 1
           fi

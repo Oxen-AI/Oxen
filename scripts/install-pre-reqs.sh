@@ -28,7 +28,7 @@ TOOL_VERSIONS_FILE="$REPO_ROOT/tool-versions.env"
 if [ ! -f "$TOOL_VERSIONS_FILE" ]; then
     echo "ERROR: $TOOL_VERSIONS_FILE not found"; exit 1
 fi
-# shellcheck source=../tool-versions.env
+# shellcheck disable=SC1090,SC1091
 . "$TOOL_VERSIONS_FILE"
 
 OS="$(uname -s)"
@@ -226,7 +226,57 @@ else
 fi
 
 ###############################################################################
-# 5. pre-commit (installed as a uv tool)
+# 5. shellcheck (shell script linter)
+###############################################################################
+
+install_shellcheck() {
+    local version="$1"
+    local arch
+    arch="$(uname -m)"
+
+    local sc_os sc_arch
+    if [ "$PLATFORM" = "macos" ]; then
+        sc_os="darwin"
+    else
+        sc_os="linux"
+    fi
+    case "$arch" in
+        x86_64)  sc_arch="x86_64" ;;
+        aarch64|arm64) sc_arch="aarch64" ;;
+        *)       echo "Unsupported architecture: $arch"; exit 1 ;;
+    esac
+
+    local url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${sc_os}.${sc_arch}.tar.xz"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    info "Downloading shellcheck v${version} from ${url}..."
+    curl -fsSL "$url" | tar -xJ -C "$tmp_dir"
+    sudo install -m 755 "$tmp_dir/shellcheck-v${version}/shellcheck" /usr/local/bin/shellcheck
+    rm -rf "$tmp_dir"
+}
+
+info "Checking shellcheck..."
+
+NEED_SHELLCHECK=false
+if command_exists shellcheck; then
+    INSTALLED_SC_VERSION="$(shellcheck --version | grep '^version:' | awk '{print $2}')"
+    if [ "$INSTALLED_SC_VERSION" = "$SHELLCHECK_VERSION" ]; then
+        ok "shellcheck already installed at $SHELLCHECK_VERSION"
+    else
+        warn "shellcheck version mismatch: installed=$INSTALLED_SC_VERSION, want=$SHELLCHECK_VERSION"
+        NEED_SHELLCHECK=true
+    fi
+else
+    NEED_SHELLCHECK=true
+fi
+
+if $NEED_SHELLCHECK; then
+    install_shellcheck "$SHELLCHECK_VERSION"
+    ok "shellcheck v${SHELLCHECK_VERSION} installed"
+fi
+
+###############################################################################
+# 6. pre-commit (installed as a uv tool)
 ###############################################################################
 
 info "Checking pre-commit..."
@@ -239,7 +289,7 @@ else
 fi
 
 ###############################################################################
-# 6. Install repo pre-commit hooks
+# 7. Install repo pre-commit hooks
 ###############################################################################
 
 if [ -f "$REPO_ROOT/.pre-commit-config.yaml" ]; then
@@ -268,6 +318,7 @@ fi
 
 if $INSTALLED_CARGO; then
     echo '  # Rust / Cargo'
+    # shellcheck disable=SC2016
     echo '  . "$HOME/.cargo/env"'
     echo ""
 fi
