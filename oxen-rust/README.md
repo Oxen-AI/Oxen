@@ -274,7 +274,6 @@ To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 env OXEN_PORT=4000 scripts/test-rust
 ```
 
-The script will select a random free port in [3000, 6000] if `OXEN_PORT` is unset.
 
 # Oxen Server
 
