@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-REPO_PATH=$1
-FILEPATH=$2
-MIGRATION_NAME=$3
-
-
-echo "Received Arguments: $1, $2, $3"
+REPO_PATH=${1:-}
+FILEPATH=${2:-}
+MIGRATION_NAME=${3:-}
 
 BUCKET_NAME="test-repo-backups" #TODONOW CHANGE
 TIMESTAMP=$(date "+%Y%m%d-%H%M%S")
@@ -15,6 +13,8 @@ if [ -z "$REPO_PATH" ] || [ -z "$MIGRATION_NAME" ] || [ -z "$FILEPATH" ]; then
   echo "Usage: $0 <repo_path> <dest_path_prefix> <migration_name>"
   exit 1
 fi
+
+echo "Received Arguments: $1, $2, $3"
 
 if [[ "$REPO_PATH" == /* ]]; then
     ABSOLUTE_REPO_PATH="$REPO_PATH"

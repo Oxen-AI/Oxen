@@ -7,7 +7,7 @@
 #   ./scripts/bump-version.sh patch      - Bump patch version (1.2.3 -> 1.2.4)
 # Example: ./scripts/bump-version.sh 0.39.0
 
-set -e
+set -euo pipefail
 
 # Get current version from the main Cargo.toml
 get_current_version() {
@@ -61,7 +61,7 @@ bump_version() {
     echo "${major}.${minor}.${patch}"
 }
 
-ARG=$1
+ARG=${1:-}
 
 # Validate argument
 if [[ -z "$ARG" ]]; then

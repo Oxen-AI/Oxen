@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 ulimit -n 10240
 
-IN_FILE=$1
-SYNC_SERVER=$2
+IN_FILE=${1:-}
+SYNC_SERVER=${2:-}
 
 if [ -z "$IN_FILE" ]
 then

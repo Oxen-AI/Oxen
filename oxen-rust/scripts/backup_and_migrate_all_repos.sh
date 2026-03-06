@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-ROOT_PATH=$1
-MIGRATION_NAME=$2
+ROOT_PATH=${1:-}
+MIGRATION_NAME=${2:-}
 
 
 if [[ "$ROOT_PATH" == /* ]]; then
