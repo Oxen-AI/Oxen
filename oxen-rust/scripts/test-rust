@@ -53,15 +53,42 @@ else
     echo "==> Test user already configured, skipping."
 fi
 
-# ---------- 5. Start oxen-server ----------
-echo "==> Starting oxen-server..."
-./target/debug/oxen-server start &
+# ---------- 5. Select port and start oxen-server ----------
+port_is_free() {
+  ! lsof -i :"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+if [ -n "${OXEN_PORT:-}" ]; then
+    if ! port_is_free "$OXEN_PORT"; then
+        echo "ERROR: Something is already listening on port $OXEN_PORT. Stop it before running tests."
+        exit 1
+    fi
+else
+    OXEN_PORT=""
+    for _ in $(seq 1 10); do
+        CANDIDATE=$(( RANDOM % 3001 + 3000 ))
+        if port_is_free "$CANDIDATE"; then
+            OXEN_PORT="$CANDIDATE"
+            break
+        fi
+    done
+    if [ -z "$OXEN_PORT" ]; then
+        echo "ERROR: Could not find an open port in range 3000-6000 after 10 attempts."
+        echo "Please supply OXEN_PORT directly, e.g.: OXEN_PORT=4567 $0 $*"
+        exit 1
+    fi
+fi
+
+export OXEN_TEST_HOST="localhost:${OXEN_PORT}"
+
+echo "==> Starting oxen-server on port ${OXEN_PORT}..."
+./target/debug/oxen-server start -p "${OXEN_PORT}" &
 SERVER_PID=$!
 
 # Give the server a moment to start
 wait_for_server() {
   for i in $(seq 1 30); do
-    if curl -s -o /dev/null --fail http://localhost:3000/api/health 2>/dev/null; then
+    if curl -s -o /dev/null --fail "http://localhost:${OXEN_PORT}/api/health" 2>/dev/null; then
       return 0
     fi
     sleep 0.5
@@ -70,10 +97,10 @@ wait_for_server() {
 }
 
 if ! wait_for_server || ! kill -0 "$SERVER_PID" 2>/dev/null; then
-  echo "ERROR: oxen-server failed to start."
+  echo "ERROR: oxen-server failed to start on port ${OXEN_PORT}."
   exit 1
 fi
-echo "==> oxen-server running (pid $SERVER_PID)."
+echo "==> oxen-server running on port ${OXEN_PORT} (pid $SERVER_PID)."
 
 # ---------- 6. Run tests ----------
 echo "==> Running tests with 'cargo nextest run $@' ..."

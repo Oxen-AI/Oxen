@@ -447,6 +447,83 @@ mod tests {
         .await
     }
 
+    // Regression test: checkout in remote mode should not fail when a file
+    // exists in the source branch's tree but is not materialized on disk.
+    // Previously, r_remove_if_not_in_target would push non-existent paths
+    // into files_to_store, causing store_version_from_path to fail with NotFound.
+    #[tokio::test]
+    async fn test_remote_mode_checkout_file_in_tree_but_not_on_disk() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let mut cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
+
+                let main_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
+
+                // Commit a file on the main branch
+                let hello_file = cloned_repo.path.join("hello.txt");
+                util::fs::write_to_path(&hello_file, "Hello")?;
+                let workspace_id = cloned_repo.workspace_name.clone().unwrap();
+                let directory = ".".to_string();
+                api::client::workspaces::files::add(
+                    &remote_repo,
+                    &workspace_id,
+                    &directory,
+                    vec![hello_file.clone()],
+                    &Some(cloned_repo.clone()),
+                )
+                .await?;
+                let commit_body =
+                    NewCommitBody::from_config(&UserConfig::get()?, "Added hello.txt");
+                repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
+
+                // Create a feature branch and add a file only on that branch
+                let branch_name = "feature";
+                repositories::remote_mode::create_checkout(&mut cloned_repo, branch_name).await?;
+
+                let feature_file = cloned_repo.path.join("feature_only.txt");
+                util::fs::write_to_path(&feature_file, "I only exist on feature")?;
+                let current_workspace_id = cloned_repo.workspace_name.clone().unwrap();
+                api::client::workspaces::files::add(
+                    &remote_repo,
+                    &current_workspace_id,
+                    &directory,
+                    vec![feature_file.clone()],
+                    &Some(cloned_repo.clone()),
+                )
+                .await?;
+                let commit_body =
+                    NewCommitBody::from_config(&UserConfig::get()?, "Added feature_only.txt");
+                repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
+
+                // Manually remove the feature-only file from disk to simulate
+                // it not being materialized (e.g., after a server restart or
+                // partial workspace state). The file is still in the merkle tree.
+                std::fs::remove_file(&feature_file)?;
+                assert!(!feature_file.exists());
+
+                // Checkout main — this should succeed even though feature_only.txt
+                // is in the feature branch's tree but not on disk.
+                repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name).await?;
+
+                // hello.txt should still be present
+                assert!(hello_file.exists());
+                // feature_only.txt should still not exist (it's not on main)
+                assert!(!feature_file.exists());
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_remote_mode_checkout_modified_file() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
