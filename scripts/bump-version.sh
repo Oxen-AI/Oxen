@@ -106,9 +106,9 @@ echo "  ✓ oxen-rust/Cargo.toml" >&2
 # Update the readme
 echo "Updating the rust readme..." >&2
 if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' 's/server:.* /server:'"$VERSION"' /' oxen-rust/README.md
+  sed -i '' 's/server:[^[:space:]]*/server:'"$VERSION"'/g' oxen-rust/README.md
 else
-  sed -i 's/server:.* /server:'"$VERSION"' /' oxen-rust/README.md
+  sed -i 's/server:[^[:space:]]*/server:'"$VERSION"'/g' oxen-rust/README.md
 fi
 echo "  ✓ oxen-rust/README.md" >&2
 
