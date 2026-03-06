@@ -120,14 +120,12 @@ pub fn add_version_files(
                     // let parent_dirs = item.parents;
                 }
                 Err(e) => {
-                    log::error!("error with adding file: {e:?}");
+                    let msg = format!("Failed to add file to staged db: {e:?}");
+                    log::error!("{msg}");
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
-                        error: Arc::new(OxenError::Context(
-                            Box::new(e),
-                            "Failed to add file to staged db.".into(),
-                        )),
+                        error: msg,
                     });
                     continue;
                 }

@@ -643,8 +643,8 @@ pub async fn save_parts(
 
                 let upload_filename_copy = upload_filename.clone();
 
-                let (upload_filehash, data_to_store) =
-                    match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
+                let (upload_filehash, data_to_store) = match actix_web::web::block(
+                    move || -> Result<(String, Vec<u8>), OxenError> {
                         if is_gzipped {
                             log::debug!(
                                 "Decompressing gzipped data for file: {upload_filename_copy:?}"
@@ -670,30 +670,31 @@ pub async fn save_parts(
                             let hash = hasher::hash_buffer(&field_bytes);
                             Ok((hash, field_bytes))
                         }
-                    })
-                    .await
-                    {
-                        Ok(Ok((hash, data))) => (hash, data),
-                        Ok(Err(e)) => {
-                            log::error!("Failed to decompress data for file {upload_filename}: {e:?}");
-                            err_files.push(ErrorFileInfo {
-                              hash: upload_filename.clone(),
-                              path: None,
-                              error: format!("Failed to decompress data: {e:?}"),
-                            });
-                            continue;
-                        }
-                        Err(e) => {
-                            log::error!("Failed to execute blocking decompression task for file {upload_filename}: {e}");
-                            err_files.push(ErrorFileInfo {
-                                hash: upload_filename.clone(),
-                                path: None,
-                                error: format!("Failed to execute blocking decompression: {e}"),
-                            });
+                    },
+                )
+                .await
+                {
+                    Ok(Ok((hash, data))) => (hash, data),
+                    Ok(Err(e)) => {
+                        log::error!("Failed to decompress data for file {upload_filename}: {e:?}");
+                        err_files.push(ErrorFileInfo {
+                            hash: upload_filename.clone(),
+                            path: None,
+                            error: format!("Failed to decompress data: {e:?}"),
+                        });
+                        continue;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to execute blocking decompression task for file {upload_filename}: {e}");
+                        err_files.push(ErrorFileInfo {
+                            hash: upload_filename.clone(),
+                            path: None,
+                            error: format!("Failed to execute blocking decompression: {e}"),
+                        });
 
-                            continue;
-                        }
-                    };
+                        continue;
+                    }
+                };
 
                 match version_store
                     .store_version(&upload_filehash, &data_to_store)

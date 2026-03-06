@@ -2,7 +2,6 @@ use crate::api;
 use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
 use crate::api::client::retry;
-use crate::api::client::workspaces::files::ErrorFile;
 use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
@@ -473,7 +472,7 @@ pub async fn multipart_batch_upload_with_retry(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
-    let mut files_to_retry: Vec<ErrorFile> = vec![];
+    let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
     let max_retries = max_retries();
@@ -508,11 +507,11 @@ pub async fn multipart_batch_upload(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
-    files_to_retry: Vec<ErrorFile>,
-) -> Result<Vec<ErrorFile>, OxenError> {
+    files_to_retry: Vec<ErrorFileInfo>,
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = local_repo.version_store()?;
     let mut form = reqwest::multipart::Form::new();
-    let mut err_files: Vec<ErrorFile> = vec![];
+    let mut err_files: Vec<ErrorFileInfo> = vec![];
 
     // if it's the first try, we don't have any files to retry
     let retry_hashes: HashSet<String> = if files_to_retry.is_empty() {
@@ -535,16 +534,12 @@ pub async fn multipart_batch_upload(
         let compressed_bytes = match encoder.finish() {
             Ok(bytes) => bytes,
             Err(e) => {
-                log::error!("Failed to finish gzip for file {}: {}", &file_hash, e);
-                err_files.push(ErrorFile {
+                let msg = format!("Failed to finish gzip for file {file_hash}: {e:?}");
+                log::error!("{msg}");
+                err_files.push(ErrorFileInfo {
                     hash: file_hash.to_string(),
                     path: None,
-                    error: Arc::new(
-                      OxenError::Context(
-                          Box::new(e.into()),
-                          format!("Failed to finish gzip for file {}", &file_hash),
-                      )
-                    ),
+                    error: msg,
                 });
                 continue;
             }
@@ -667,14 +662,6 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
                     Err(e) => {
                         log::error!("Failed to finish gzip for file {}: {}", &hash, e);
                         // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
-                        // err_files.push(ErrorFile {
-                        //     hash: hash.clone(),
-                        //     path: None,
-                        //     error: Arc::new(OxenError::Context(
-                        //         Box::new(e.into()),
-                        //         format!("Failed to finish gzip for file {}", &hash),
-                        //     )),
-                        // });
                         err_files.push(ErrorFileInfo {
                             hash: hash.clone(),
                             path: None,

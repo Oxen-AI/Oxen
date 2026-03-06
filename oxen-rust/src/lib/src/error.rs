@@ -199,10 +199,9 @@ impl fmt::Display for OxenError {
 }
 
 impl OxenError {
-
     // Add context to an OxenError, converting it into a `Context` variant.
     pub(crate) fn context(self, context: String) -> Self {
-      OxenError::Context(Box::new(self), context)
+        OxenError::Context(Box::new(self), context)
     }
 
     pub fn basic_str(s: impl AsRef<str>) -> Self {
@@ -603,7 +602,6 @@ impl OxenError {
         OxenError::basic_str(err)
     }
 }
-
 
 // if you do not want to call .map_err, implement the std::convert::From trait
 impl From<io::Error> for OxenError {

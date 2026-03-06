@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
+use uuid::Error;
 
 use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
@@ -48,7 +49,7 @@ pub async fn add(
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-) -> Result<ErrorFiles, OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
@@ -78,30 +79,33 @@ pub async fn add(
         workspace_id,
         directory,
         expanded_paths,
-        local_repo.clone().map(|local| LocalOrBase::Local(local.clone())).as_ref(),
+        local_repo
+            .clone()
+            .map(|local| LocalOrBase::Local(local.clone()))
+            .as_ref(),
         false,
     )
     .await;
 
     match upload_result {
         Ok(failed_to_upload) => {
-          print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
-          Ok(failed_to_upload)
+            print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
+            Ok(failed_to_upload)
         }
         error => error,
     }
 }
 
-fn print_add_result(workspace_id: &str, n_total: usize, failed_to_upload: &ErrorFiles) {
-  let n_fail = failed_to_upload.len();
-  if n_fail == 0 {
-    println!("🐂 oxen added {n_total} entries to workspace {workspace_id}");
-  } else {
-    let n_success = n_total - n_fail;
-    println!(
+fn print_add_result(workspace_id: &str, n_total: usize, failed_to_upload: &[ErrorFileInfo]) {
+    let n_fail = failed_to_upload.len();
+    if n_fail == 0 {
+        println!("🐂 oxen added {n_total} entries to workspace {workspace_id}");
+    } else {
+        let n_success = n_total - n_fail;
+        println!(
         "🐂 oxen added {n_success} entries to workspace {workspace_id} but 😱 failed to upload {n_fail} entries",
     );
-  }
+    }
 }
 
 pub struct AddResult {
@@ -154,7 +158,7 @@ pub async fn add_files(
     workspace_id: impl AsRef<str>,
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-) -> Result<ErrorFiles, OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
@@ -276,7 +280,7 @@ async fn upload_multiple_files(
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
     strict_errors: bool,
-) -> Result<ErrorFiles, OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if paths.is_empty() {
         return Ok(vec![]);
     }
@@ -327,7 +331,7 @@ async fn upload_multiple_files(
             }
             Err(err) => {
                 if strict_errors {
-                    return Err(OxenError::file_metadata_error(path, err))
+                    return Err(OxenError::file_metadata_error(path, err));
                 }
                 log::warn!("Failed to get metadata for file {path:?}: {err}");
                 continue;
@@ -367,10 +371,10 @@ async fn upload_multiple_files(
             Err(err) => {
                 let msg = format!("Failed to upload large file {path:?}");
                 log::error!("{msg}: {err}");
-                failed_to_upload.push(ErrorFile {
+                failed_to_upload.push(ErrorFileInfo {
                     hash: hash,
                     path: Some(path),
-                    error: Arc::new(err.context(msg)),
+                    error: msg,
                 });
             }
         }
@@ -391,7 +395,6 @@ async fn upload_multiple_files(
 
     Ok(failed_to_upload)
 }
-
 
 pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
@@ -730,21 +733,10 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                             .map(|f| ErrorFileInfo {
                                                 hash: f.hash.clone(),
                                                 path: Some(f.path.clone()),
-                                                error: error_message,
+                                                error: error_message.clone(),
                                             })
                                     );
                                     Err(final_error)
-                                    // let shared_error = Arc::new(final_error);
-                                    // err_files.extend(
-                                    //     files_to_stage
-                                    //         .iter()
-                                    //         .map(|f| ErrorFile {
-                                    //             hash: f.hash.clone(),
-                                    //             path: Some(f.path.clone()),
-                                    //             error: shared_error.clone(),
-                                    //         })
-                                    // );
-                                    // shared_error
                                 }
                             }
                         }.await;

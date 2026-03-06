@@ -320,7 +320,6 @@ pub fn remove_dir_with_db_manager(
 ) -> Result<(), OxenError> {
     let empty_path = PathBuf::new();
     let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
-    // let err_files: Vec<ErrorFileInfo> = vec![];
 
     let result = with_staged_db_manager(repo, |staged_db_manager| {
         // Walk the tree, collecting every node under the dir

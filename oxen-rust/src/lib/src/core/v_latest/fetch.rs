@@ -980,7 +980,7 @@ async fn download_small_entries(
         .map(|chunk| {
             let mut content_ids: Vec<(String, PathBuf)> = vec![];
             for e in chunk {
-                content_ids.push((e.hash(), e.path().to_owned()));
+                content_ids.push((e.hash().to_string(), e.path().to_owned()));
             }
             (remote_repo.to_owned(), content_ids, dst.as_ref().to_owned())
         })
