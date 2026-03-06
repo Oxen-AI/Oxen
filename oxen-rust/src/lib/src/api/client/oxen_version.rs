@@ -1,7 +1,7 @@
 use crate::api::client;
 use crate::error::OxenError;
-use crate::view::oxen_version::OxenVersionResponse;
 use crate::view::StatusMessage;
+use crate::view::oxen_version::OxenVersionResponse;
 
 pub async fn get_remote_version(scheme: &str, host: &str) -> Result<String, OxenError> {
     let url = format!("{scheme}://{host}/api/version");

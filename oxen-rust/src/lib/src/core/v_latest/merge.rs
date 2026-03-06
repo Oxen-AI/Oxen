@@ -1037,12 +1037,11 @@ pub async fn find_merge_conflicts(
                 .get_by_path(entry_path)?
                 .and_then(|node| node.file().ok());
 
-            if lca_base_node.is_some() {
-                if let Some(parent) = entry_path.parent() {
-                    if let Some(dir_node) = lca_commit_tree.get_by_path(parent)? {
-                        shared_hashes.remove(&dir_node.hash);
-                    }
-                }
+            if lca_base_node.is_some()
+                && let Some(parent) = entry_path.parent()
+                && let Some(dir_node) = lca_commit_tree.get_by_path(parent)?
+            {
+                shared_hashes.remove(&dir_node.hash);
             }
 
             if restore::should_restore_file(repo, lca_base_node, merge_file_node, entry_path)? {
@@ -1064,30 +1063,30 @@ pub async fn find_merge_conflicts(
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
 
             // If it's a tabular file, we also need to stage the schema
-            if util::fs::is_tabular(&entry.path) {
-                if let Some(schema) = repositories::data_frames::schemas::get_by_path(
+            if util::fs::is_tabular(&entry.path)
+                && let Some(schema) = repositories::data_frames::schemas::get_by_path(
                     repo,
                     &merge_commits.merge,
                     &entry.path,
-                )? {
-                    for field in schema.fields {
-                        if let Some(metadata) = field.metadata {
-                            let _ = repositories::data_frames::schemas::add_column_metadata(
-                                repo,
-                                &entry.path,
-                                &field.name,
-                                &metadata,
-                            )?;
-                        }
-                    }
-
-                    if let Some(metadata) = schema.metadata {
-                        let _ = repositories::data_frames::schemas::add_schema_metadata(
+                )?
+            {
+                for field in schema.fields {
+                    if let Some(metadata) = field.metadata {
+                        let _ = repositories::data_frames::schemas::add_column_metadata(
                             repo,
                             &entry.path,
+                            &field.name,
                             &metadata,
                         )?;
                     }
+                }
+
+                if let Some(metadata) = schema.metadata {
+                    let _ = repositories::data_frames::schemas::add_schema_metadata(
+                        repo,
+                        &entry.path,
+                        &metadata,
+                    )?;
                 }
             }
         }

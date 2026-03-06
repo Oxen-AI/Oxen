@@ -1189,12 +1189,14 @@ mod tests {
                     assert!(user_b_repo.path.join(dir_2).join(file_5).exists());
                     assert!(user_b_repo.path.join(dir_3).exists());
                     assert!(user_b_repo.path.join(dir_3).join(subdir).exists());
-                    assert!(user_b_repo
-                        .path
-                        .join(dir_3)
-                        .join(subdir)
-                        .join(subfile)
-                        .exists());
+                    assert!(
+                        user_b_repo
+                            .path
+                            .join(dir_3)
+                            .join(subdir)
+                            .join(subfile)
+                            .exists()
+                    );
 
                     Ok(())
                 })
@@ -1613,8 +1615,8 @@ mod tests {
     you do not want to overwrite when pulling from the remote
     */
     #[tokio::test]
-    async fn test_pull_does_not_overwrite_modified_files_after_remote_modification(
-    ) -> Result<(), OxenError> {
+    async fn test_pull_does_not_overwrite_modified_files_after_remote_modification()
+    -> Result<(), OxenError> {
         // Push the Remote Repo
         test::run_select_data_sync_remote("README.md", |_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
@@ -1676,8 +1678,8 @@ mod tests {
     Regardless, the local file should not be overwritten
     */
     #[tokio::test]
-    async fn test_pull_does_not_overwrite_modified_files_before_remote_modification(
-    ) -> Result<(), OxenError> {
+    async fn test_pull_does_not_overwrite_modified_files_before_remote_modification()
+    -> Result<(), OxenError> {
         // Push the Remote Repo
         test::run_select_data_sync_remote("README.md", |_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
@@ -1748,8 +1750,8 @@ mod tests {
     Modify a different file on the remote, and modify the readme locally, and make sure that the local readme is not overwritten
     */
     #[tokio::test]
-    async fn test_pull_does_not_overwrite_modified_files_after_modifying_different_file(
-    ) -> Result<(), OxenError> {
+    async fn test_pull_does_not_overwrite_modified_files_after_modifying_different_file()
+    -> Result<(), OxenError> {
         // Push the Remote Repo
         test::run_select_data_sync_remote("README.md", |_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
@@ -1817,8 +1819,8 @@ mod tests {
     Remove the README.md on the remote, and modify the readme locally, and make sure that the local readme is not overwritten
     */
     #[tokio::test]
-    async fn test_pull_does_not_overwrite_modified_files_after_removing_file(
-    ) -> Result<(), OxenError> {
+    async fn test_pull_does_not_overwrite_modified_files_after_removing_file()
+    -> Result<(), OxenError> {
         // Push the Remote Repo
         test::run_select_data_sync_remote("README.md", |_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();

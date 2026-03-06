@@ -46,13 +46,13 @@ pub use crate::model::remote_branch::RemoteBranch;
 // Entry (TODO: These should just be nodes in the tree)
 pub use crate::model::content_type::ContentType;
 pub use crate::model::diff::diff_entry::DiffEntry;
+pub use crate::model::entry::ContentHashable;
 pub use crate::model::entry::commit_entry::CommitEntry;
 pub use crate::model::entry::entry_data_type::EntryDataType;
 pub use crate::model::entry::metadata_entry::MetadataEntry;
 pub use crate::model::entry::mod_entry::ModEntry;
 pub use crate::model::entry::remote_entry::RemoteEntry;
 pub use crate::model::entry::staged_entry::{StagedEntry, StagedEntryStatus};
-pub use crate::model::entry::ContentHashable;
 
 // Merge
 pub use crate::model::merge_conflict::EntryMergeConflict;
@@ -74,8 +74,8 @@ pub use crate::model::remote::Remote;
 // Data Frame
 pub use crate::model::diff::data_frame_diff::DataFrameDiff;
 
-pub use crate::model::data_frame::schema::staged_schema::StagedSchema;
 pub use crate::model::data_frame::schema::Schema;
+pub use crate::model::data_frame::schema::staged_schema::StagedSchema;
 
 // Workspace
 pub use crate::model::workspace::Workspace;

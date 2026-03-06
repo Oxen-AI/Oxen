@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merge_conflict::MergeConflict;
 use crate::model::Commit;
+use crate::model::merge_conflict::MergeConflict;
 use crate::model::{Branch, LocalRepository};
 
 #[derive(Debug)]
@@ -721,8 +721,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs(
-    ) -> Result<(), OxenError> {
+    async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs()
+    -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
@@ -771,8 +771,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq(
-    ) -> Result<(), OxenError> {
+    async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq()
+    -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 

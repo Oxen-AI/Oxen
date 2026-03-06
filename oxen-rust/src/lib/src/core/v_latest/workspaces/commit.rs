@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::BufReader;
 
@@ -267,7 +267,7 @@ async fn export_tabular_data_frames(
                     // need a better way to distinguish
                     let mut node_path = PathBuf::from(file_node.name());
                     if !node_path.starts_with(&dir_path)
-                        || (dir_path == PathBuf::from("") && node_path.components().count() == 1)
+                        || (dir_path == Path::new("") && node_path.components().count() == 1)
                     {
                         node_path = dir_path.join(node_path);
                     }
@@ -348,13 +348,12 @@ async fn compute_staged_merkle_tree_node(
             &workspace.workspace_repo,
             path,
         )
+        && let Some(GenericMetadata::MetadataTabular(metadata)) = &mut metadata
     {
-        if let Some(GenericMetadata::MetadataTabular(metadata)) = &mut metadata {
-            metadata
-                .tabular
-                .schema
-                .update_metadata_from_schema(&staged_schema);
-        }
+        metadata
+            .tabular
+            .schema
+            .update_metadata_from_schema(&staged_schema);
     }
 
     // Compute the metadata hash and combined hash

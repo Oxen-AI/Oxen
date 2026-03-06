@@ -107,11 +107,13 @@ impl StorageOpts {
             match backend.as_str() {
                 "local" => {
                     if storage_backend_bucket.is_some() {
-                        return Err(OxenError::basic_str("Error: storage-backend-bucket should not be set when storage-backend is local"));
+                        return Err(OxenError::basic_str(
+                            "Error: storage-backend-bucket should not be set when storage-backend is local",
+                        ));
                     }
-                    if storage_backend_path.is_some() {
+                    if let Some(storage_path) = storage_backend_path {
                         let local_storage_opts = Some(LocalStorageOpts {
-                            path: Some(PathBuf::from(storage_backend_path.unwrap())),
+                            path: Some(PathBuf::from(storage_path)),
                         });
                         Ok(Some(StorageOpts {
                             type_: "local".to_string(),

@@ -3,9 +3,9 @@ use dotenv::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
+use liboxen::model::User;
 use liboxen::model::merkle_tree::merkle_tree_node_cache;
 use liboxen::model::metadata::metadata_image::ImgResize;
-use liboxen::model::User;
 
 use liboxen::util;
 
@@ -26,7 +26,7 @@ extern crate lru;
 
 use actix_web::http::KeepAlive;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
-use actix_web::{web, App, HttpServer};
+use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
 use thiserror::Error;
 
@@ -34,8 +34,8 @@ use middleware::RequestIdMiddleware;
 
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
 use liboxen::model::metadata::{
-    generic_metadata::GenericMetadata, MetadataAudio, MetadataDir, MetadataImage, MetadataTabular,
-    MetadataText, MetadataVideo,
+    MetadataAudio, MetadataDir, MetadataImage, MetadataTabular, MetadataText, MetadataVideo,
+    generic_metadata::GenericMetadata,
 };
 use liboxen::model::{Commit, CommitStats, RepoNew};
 use liboxen::view::commit::CommitTreeValidationResponse;
@@ -423,7 +423,9 @@ async fn main() -> Result<(), ServerError> {
         } => {
             log::debug!("Saving to sync dir: {sync_dir:?}");
             let token = add_user(&email, &name, output.as_path(), &sync_dir)?;
-            println!("User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`");
+            println!(
+                "User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`"
+            );
             Ok(())
         }
     }

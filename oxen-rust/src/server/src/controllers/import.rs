@@ -1,5 +1,5 @@
 use actix_multipart::Multipart;
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,8 +12,8 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::core::v_latest::workspaces::files::decompress_zip;
 use liboxen::error::OxenError;
-use liboxen::model::file::TempFilePathNew;
 use liboxen::model::NewCommitBody;
+use liboxen::model::file::TempFilePathNew;
 use liboxen::repositories;
 use liboxen::view::{CommitResponse, StatusMessage};
 
@@ -460,7 +460,7 @@ mod tests {
 
     use liboxen::error::OxenError;
 
-    use actix_web::{web, App};
+    use actix_web::{App, web};
     use std::path::PathBuf;
 
     #[actix_web::test]

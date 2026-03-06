@@ -51,15 +51,15 @@ pub fn list_unmigrated(
                     name: repo_name.to_string(),
                     min_version: None,
                 });
-            } else if let Ok(repo_last_migration) = std::fs::read_to_string(&repo_last_migration) {
-                if repo_last_migration <= migration_tstamp {
-                    log::debug!("Repo migration file found for {repo_name} is out of date");
-                    result.push(RepositoryListView {
-                        namespace: namespace.clone(),
-                        name: repo_name.to_string(),
-                        min_version: None,
-                    });
-                }
+            } else if let Ok(repo_last_migration) = std::fs::read_to_string(&repo_last_migration)
+                && repo_last_migration <= migration_tstamp
+            {
+                log::debug!("Repo migration file found for {repo_name} is out of date");
+                result.push(RepositoryListView {
+                    namespace: namespace.clone(),
+                    name: repo_name.to_string(),
+                    min_version: None,
+                });
             }
         }
     }

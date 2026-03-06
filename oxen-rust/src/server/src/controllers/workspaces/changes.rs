@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, path_param, PageNumQuery};
+use crate::params::{PageNumQuery, app_data, path_param};
 
 use liboxen::constants;
 use liboxen::repositories;
@@ -8,7 +8,7 @@ use liboxen::util;
 use liboxen::view::remote_staged_status::RemoteStagedStatus;
 use liboxen::view::{RemoteStagedStatusResponse, StatusMessage, StatusMessageDescription};
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 
 use std::path::PathBuf;
 

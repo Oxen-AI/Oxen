@@ -1,16 +1,16 @@
 //! # API Client - For interacting with repositories on a remote machine
 //!
 
-use crate::config::runtime_config::runtime::Runtime;
 use crate::config::AuthConfig;
 use crate::config::RuntimeConfig;
+use crate::config::runtime_config::runtime::Runtime;
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
-use crate::view::http;
 use crate::view::OxenResponse;
+use crate::view::http;
 pub use reqwest::Url;
-use reqwest::{header, Client, ClientBuilder, IntoUrl};
+use reqwest::{Client, ClientBuilder, IntoUrl, header};
 use std::time;
 
 pub mod branches;
@@ -239,12 +239,11 @@ fn parse_status_and_message(
         http::STATUS_ERROR => {
             log::debug!("Status error: {status}");
 
-            if let Some(msg) = response_msg_override {
-                if let Some(response_type) = response_type {
-                    if response.desc_or_msg() == response_type {
-                        return Err(OxenError::basic_str(msg));
-                    }
-                }
+            if let Some(msg) = response_msg_override
+                && let Some(response_type) = response_type
+                && response.desc_or_msg() == response_type
+            {
+                return Err(OxenError::basic_str(msg));
             }
 
             Err(OxenError::basic_str(response.full_err_msg()))

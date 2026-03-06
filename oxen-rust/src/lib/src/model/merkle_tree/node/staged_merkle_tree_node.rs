@@ -1,4 +1,4 @@
-use crate::model::{merkle_tree::node::MerkleTreeNode, StagedEntryStatus};
+use crate::model::{StagedEntryStatus, merkle_tree::node::MerkleTreeNode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Display;
@@ -37,10 +37,10 @@ impl Eq for StagedMerkleTreeNode {}
 
 impl PartialEq for StagedMerkleTreeNode {
     fn eq(&self, other: &Self) -> bool {
-        if let Ok(path) = self.node.maybe_path() {
-            if let Ok(other_path) = other.node.maybe_path() {
-                return path == other_path;
-            }
+        if let Ok(path) = self.node.maybe_path()
+            && let Ok(other_path) = other.node.maybe_path()
+        {
+            return path == other_path;
         }
 
         self.node.hash == other.node.hash

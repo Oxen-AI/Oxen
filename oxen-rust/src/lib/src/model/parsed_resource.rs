@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use utoipa::ToSchema;
 
-use super::{workspace::WorkspaceView, Branch, Commit, Workspace};
+use super::{Branch, Commit, Workspace, workspace::WorkspaceView};
 
 /// Internal model
 #[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]

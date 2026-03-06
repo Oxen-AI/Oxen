@@ -5,16 +5,16 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, parse_resource, path_param};
 
 use actix_multipart::Multipart;
-use actix_web::{web, Error, HttpRequest, HttpResponse};
+use actix_web::{Error, HttpRequest, HttpResponse, web};
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
-use async_zip::base::write::ZipFileWriter;
 use async_zip::Compression;
+use async_zip::base::write::ZipFileWriter;
 use flate2::read::GzDecoder;
 use futures_util::{StreamExt, TryStreamExt as _};
 use liboxen::error::OxenError;
-use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::LocalRepository;
+use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
@@ -535,59 +535,59 @@ pub async fn save_multiparts(
             continue;
         };
 
-        if let Some(name) = content_disposition.get_name() {
-            if name == "file[]" || name == "file" {
-                // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-                let upload_filehash = content_disposition.get_filename().map_or_else(
-                    || {
-                        Err(actix_web::error::ErrorBadRequest(
-                            "Missing hash in multipart request",
-                        ))
-                    },
-                    |fhash_os_str| Ok(fhash_os_str.to_string()),
-                )?;
-                log::debug!("upload file_hash: {upload_filehash:?}");
+        if let Some(name) = content_disposition.get_name()
+            && (name == "file[]" || name == "file")
+        {
+            // The file hash is passed in as the filename. In version store, the file hash is the identifier.
+            let upload_filehash = content_disposition.get_filename().map_or_else(
+                || {
+                    Err(actix_web::error::ErrorBadRequest(
+                        "Missing hash in multipart request",
+                    ))
+                },
+                |fhash_os_str| Ok(fhash_os_str.to_string()),
+            )?;
+            log::debug!("upload file_hash: {upload_filehash:?}");
 
-                let is_gzipped = field
-                    .content_type()
-                    .map(|mime| {
-                        mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
-                    })
-                    .unwrap_or(false);
+            let is_gzipped = field
+                .content_type()
+                .map(|mime| {
+                    mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
+                })
+                .unwrap_or(false);
 
-                // Read the bytes from the stream
-                let mut field_bytes = Vec::new();
-                while let Some(chunk) = field.try_next().await? {
-                    field_bytes.extend_from_slice(&chunk);
+            // Read the bytes from the stream
+            let mut field_bytes = Vec::new();
+            while let Some(chunk) = field.try_next().await? {
+                field_bytes.extend_from_slice(&chunk);
+            }
+
+            let mut reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
+                // async decompression
+                let cursor = std::io::Cursor::new(field_bytes);
+                let buf_reader = BufReader::new(cursor);
+                Box::new(GzipDecoder::new(buf_reader))
+            } else {
+                let cursor = std::io::Cursor::new(field_bytes);
+                Box::new(cursor)
+            };
+
+            match version_store
+                .store_version_from_reader(&upload_filehash, &mut reader)
+                .await
+            {
+                Ok(_) => {
+                    log::info!("Successfully stored version for hash: {upload_filehash}");
                 }
-
-                let mut reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
-                    // async decompression
-                    let cursor = std::io::Cursor::new(field_bytes);
-                    let buf_reader = BufReader::new(cursor);
-                    Box::new(GzipDecoder::new(buf_reader))
-                } else {
-                    let cursor = std::io::Cursor::new(field_bytes);
-                    Box::new(cursor)
-                };
-
-                match version_store
-                    .store_version_from_reader(&upload_filehash, &mut reader)
-                    .await
-                {
-                    Ok(_) => {
-                        log::info!("Successfully stored version for hash: {upload_filehash}");
-                    }
-                    Err(e) => {
-                        log::error!("Failed to store version for hash {upload_filehash}: {e}");
-                        record_error_file(
-                            &mut err_files,
-                            upload_filehash.clone(),
-                            None,
-                            format!("Failed to store version: {e}"),
-                        );
-                        continue;
-                    }
+                Err(e) => {
+                    log::error!("Failed to store version for hash {upload_filehash}: {e}");
+                    record_error_file(
+                        &mut err_files,
+                        upload_filehash.clone(),
+                        None,
+                        format!("Failed to store version: {e}"),
+                    );
+                    continue;
                 }
             }
         }
@@ -617,9 +617,9 @@ mod tests {
     use crate::controllers;
     use crate::test;
     use actix_multipart::test::create_form_data_payload_and_headers;
-    use actix_web::{web, web::Bytes, App};
-    use flate2::write::GzEncoder;
+    use actix_web::{App, web, web::Bytes};
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;

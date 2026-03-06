@@ -50,7 +50,10 @@ pub fn df_to_str(df: &DataFrame) -> String {
 pub fn df_to_pager(df: &DataFrame, opts: &DFOpts) -> Result<Pager, OxenError> {
     let height = df.height();
     let max_rows = height + 10;
-    env::set_var("POLARS_FMT_MAX_ROWS", max_rows.to_string());
+    // Safety: We do not expect any concurrent usage of this environment variable.
+    unsafe {
+        env::set_var("POLARS_FMT_MAX_ROWS", max_rows.to_string());
+    }
 
     let page_size: usize = opts.page_size.unwrap_or(10);
     let start: usize = if let Some(page) = opts.page {
@@ -81,7 +84,10 @@ pub fn df_to_pager(df: &DataFrame, opts: &DFOpts) -> Result<Pager, OxenError> {
     if start > height {
         write_to_pager(&mut output, first_line)?;
         write_to_pager(&mut output, first_line)?;
-        env::set_var("POLARS_FMT_MAX_ROWS", "10");
+        // Safety: We do not expect any concurrent usage of this environment variable.
+        unsafe {
+            env::set_var("POLARS_FMT_MAX_ROWS", "10");
+        }
         return Ok(output);
     }
 
@@ -97,7 +103,10 @@ pub fn df_to_pager(df: &DataFrame, opts: &DFOpts) -> Result<Pager, OxenError> {
     }
 
     write_to_pager(&mut output, first_line)?;
-    env::set_var("POLARS_FMT_MAX_ROWS", "10");
+    // Safety: We do not expect any concurrent usage of this environment variable.
+    unsafe {
+        env::set_var("POLARS_FMT_MAX_ROWS", "10");
+    }
 
     Ok(output)
 }

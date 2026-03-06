@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::entries::ResourceVersion;
 use super::StatusMessage;
+use super::entries::ResourceVersion;
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct FileMetadata {

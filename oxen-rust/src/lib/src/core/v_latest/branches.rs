@@ -186,12 +186,12 @@ pub async fn checkout_subtrees(
 
         let maybe_from_commit = repositories::commits::head_commit_maybe(repo)?;
 
-        let from_root = if maybe_from_commit.is_some() {
-            log::debug!("from id: {:?}", maybe_from_commit.as_ref().unwrap().id);
+        let from_root = if let Some(from_commit) = &maybe_from_commit {
+            log::debug!("from id: {:?}", from_commit.id);
             log::debug!("to id: {:?}", to_commit.id);
             repositories::tree::get_root_with_children_and_partial_nodes(
                 repo,
-                maybe_from_commit.as_ref().unwrap(),
+                from_commit,
                 Some(&target_hashes),
                 None,
                 Some(&mut shared_hashes),
@@ -228,9 +228,9 @@ pub async fn checkout_subtrees(
             ));
         }
 
-        if from_root.is_some() {
+        if let Some(root) = from_root {
             log::debug!("Cleanup_removed_files");
-            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
+            cleanup_removed_files(repo, &root, &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
@@ -273,10 +273,10 @@ pub async fn checkout_commit(
 ) -> Result<(), OxenError> {
     log::debug!("checkout_commit to {to_commit} from {from_commit:?}");
 
-    if let Some(from_commit) = from_commit {
-        if from_commit.id == to_commit.id {
-            return Ok(());
-        }
+    if let Some(from_commit) = from_commit
+        && from_commit.id == to_commit.id
+    {
+        return Ok(());
     }
 
     // Fetch entries if needed
@@ -364,9 +364,9 @@ pub async fn set_working_repo_to_commit(
     }
 
     // Cleanup files if checking out fr om another commit
-    if maybe_from_commit.is_some() {
+    if let Some(from_tree) = from_tree {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes).await?;
+        cleanup_removed_files(repo, &from_tree, &mut progress, &mut hashes).await?;
     }
 
     for file_to_restore in results.files_to_restore {

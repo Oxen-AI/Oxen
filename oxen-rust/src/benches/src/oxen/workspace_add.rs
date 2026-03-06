@@ -1,4 +1,4 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use liboxen::api;
 use liboxen::command;
 use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
@@ -46,7 +46,8 @@ async fn setup_repo_for_workspace_add_benchmark(
     dir_size: usize,
     data_path: Option<String>,
 ) -> Result<(LocalRepository, RemoteRepository, Vec<PathBuf>), OxenError> {
-    println!("setup_repo_for_workspace_add_benchmark got repo_size {repo_size}, num_files_to_add {num_files_to_add_in_benchmark}, and dir_size {dir_size}",
+    println!(
+        "setup_repo_for_workspace_add_benchmark got repo_size {repo_size}, num_files_to_add {num_files_to_add_in_benchmark}, and dir_size {dir_size}",
     );
     // Generate Uuid to ensure the data is pushed to a new remote
     let remote_id = Uuid::new_v4().to_string();
@@ -208,7 +209,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 b.to_async(&rt).iter(|| async {
                     api::client::workspaces::files::add(
                         &remote_repo,
-                        &workspace.id,
+                        &workspace.id.as_str(),
                         "",
                         files.clone(),
                         &None,

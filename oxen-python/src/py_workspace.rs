@@ -200,7 +200,7 @@ impl PyWorkspace {
             email: user.email,
         };
         let workspace_id = self.get_identifier();
-        let commit = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let commit = api::client::workspaces::commit(
                 &self.repo.repo,
                 &branch_name,
@@ -209,8 +209,6 @@ impl PyWorkspace {
             )
             .await?;
             Ok(PyCommit { commit })
-        });
-
-        commit
+        })
     }
 }

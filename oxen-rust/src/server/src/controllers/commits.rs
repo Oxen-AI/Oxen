@@ -1,7 +1,7 @@
 use liboxen::constants;
 use liboxen::constants::COMMITS_DIR;
-use liboxen::constants::DIRS_DIR;
 use liboxen::constants::DIR_HASHES_DIR;
+use liboxen::constants::DIRS_DIR;
 use liboxen::constants::HISTORY_DIR;
 use liboxen::constants::VERSION_FILE_NAME;
 
@@ -12,10 +12,10 @@ use liboxen::opts::PaginateOpts;
 use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
+use liboxen::view::MerkleHashesResponse;
 use liboxen::view::branch::BranchName;
 use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
-use liboxen::view::MerkleHashesResponse;
 use liboxen::view::{
     CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
     StatusMessage,
@@ -25,15 +25,15 @@ use os_path::OsPath;
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::parse_resource;
 use crate::params::PageNumQuery;
+use crate::params::parse_resource;
 use crate::params::{app_data, path_param};
 
-use actix_web::{web, Error, HttpRequest, HttpResponse};
+use actix_web::{Error, HttpRequest, HttpResponse, web};
 use async_compression::tokio::bufread::GzipDecoder;
 use bytesize::ByteSize;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures_util::stream::StreamExt as _;
 use serde::Deserialize;
 use std::fs::OpenOptions;
@@ -767,13 +767,11 @@ pub async fn upload_chunk(
     let chunk_file = tmp_dir.join(format!("chunk_{chunk_num:016}"));
 
     // mkdir if !exists
-    if !tmp_dir.exists() {
-        if let Err(err) = util::fs::create_dir_all(&tmp_dir) {
-            log::error!("upload_chunk could not complete chunk upload, mkdir failed: {err:?}");
-            return Ok(
-                HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
-            );
-        }
+    if !tmp_dir.exists()
+        && let Err(err) = util::fs::create_dir_all(&tmp_dir)
+    {
+        log::error!("upload_chunk could not complete chunk upload, mkdir failed: {err:?}");
+        return Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()));
     }
 
     // Read bytes from body
@@ -898,16 +896,19 @@ async fn check_if_upload_complete_and_unpack(
             }
         } else {
             match filename {
-                Some(filename) => {
-                    match unpack_to_file(&files, repo, &filename) {
-                        Ok(_) => {
-                            log::debug!("check_if_upload_complete_and_unpack unpacked {} files successfully", files.len());
-                        }
-                        Err(err) => {
-                            log::error!("check_if_upload_complete_and_unpack could not unpack compressed data {err:?}");
-                        }
+                Some(filename) => match unpack_to_file(&files, repo, &filename) {
+                    Ok(_) => {
+                        log::debug!(
+                            "check_if_upload_complete_and_unpack unpacked {} files successfully",
+                            files.len()
+                        );
                     }
-                }
+                    Err(err) => {
+                        log::error!(
+                            "check_if_upload_complete_and_unpack could not unpack compressed data {err:?}"
+                        );
+                    }
+                },
                 None => {
                     log::error!(
                         "check_if_upload_complete_and_unpack must supply filename if !compressed"

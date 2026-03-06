@@ -33,10 +33,7 @@ pub async fn checkout(
             Some(paths_vec) => paths_vec, // If Some(vec), take the inner vector
             None => vec![Path::new("").to_path_buf()],
         };
-        let depth = match repo.depth() {
-            Some(d) => d,
-            None => i32::MAX,
-        }; //TODO: make repo depth not an option so that we use depth from the repo consistently.
+        let depth = repo.depth().unwrap_or(i32::MAX); //TODO: make repo depth not an option so that we use depth from the repo consistently.
         repositories::branches::checkout_subtrees_to_commit(repo, &commit, &subtree_paths, depth)
             .await?;
         repositories::branches::set_head(repo, value)?;
@@ -1104,8 +1101,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_checkout_conflicts_on_uncommitted_deletion_of_modified_file(
-    ) -> Result<(), OxenError> {
+    async fn test_checkout_conflicts_on_uncommitted_deletion_of_modified_file()
+    -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Write and commit a file
             let hello_file = repo.path.join("hello.txt");

@@ -54,9 +54,9 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
 
 #[cfg(test)]
 mod tests {
-    use crate::model::metadata::generic_metadata::GenericMetadata;
-    use crate::model::metadata::MetadataVideo;
     use crate::model::EntryDataType;
+    use crate::model::metadata::MetadataVideo;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::repositories;
     use crate::test;
 

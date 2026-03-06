@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use duckdb::arrow::array::RecordBatch;
 use duckdb::ToSql;
+use duckdb::arrow::array::RecordBatch;
 use polars::frame::DataFrame;
 use rocksdb::DB;
 use serde_json::Value;

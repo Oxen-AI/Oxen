@@ -46,7 +46,9 @@ pub async fn clone_repo(
     local_repo.save()?;
 
     if remote_repo.is_empty {
-        println!("The remote repository is empty. Oxen has configured the local repository, but there are no files yet.");
+        println!(
+            "The remote repository is empty. Oxen has configured the local repository, but there are no files yet."
+        );
         return Ok(local_repo);
     }
 
@@ -142,7 +144,9 @@ pub async fn clone_repo_remote_mode(
     local_repo.save()?;
 
     if remote_repo.is_empty {
-        println!("The remote repository is empty. Oxen has configured the local repository, but there are no files yet.");
+        println!(
+            "The remote repository is empty. Oxen has configured the local repository, but there are no files yet."
+        );
         return Ok(local_repo);
     }
 

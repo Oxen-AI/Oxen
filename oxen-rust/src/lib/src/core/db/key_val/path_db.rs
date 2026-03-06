@@ -1,6 +1,6 @@
 use crate::error::OxenError;
 use indicatif::ProgressBar;
-use serde::{de, Serialize};
+use serde::{Serialize, de};
 
 use os_path::OsPath;
 use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode};
@@ -283,12 +283,16 @@ where
     // Ugh this is so hacky...should be using a real database for the entries.
     let start_page = if page == 0 { 0 } else { page - 1 };
     let mut start_idx = start_page * page_size;
-    log::debug!("list_entry_page_with_offset(1) page: {page}, page_size: {page_size}, offset: {offset} start_idx: {start_idx} start_page: {start_page}");
+    log::debug!(
+        "list_entry_page_with_offset(1) page: {page}, page_size: {page_size}, offset: {offset} start_idx: {start_idx} start_page: {start_page}"
+    );
 
     if start_idx >= offset {
         start_idx -= offset;
     }
-    log::debug!("list_entry_page_with_offset(2) page: {page}, page_size: {page_size}, offset: {offset} start_idx: {start_idx} start_page: {start_page}");
+    log::debug!(
+        "list_entry_page_with_offset(2) page: {page}, page_size: {page_size}, offset: {offset} start_idx: {start_idx} start_page: {start_page}"
+    );
 
     // The iterator doesn't technically have a skip method as far as I can tell
     // so we are just going to manually do it

@@ -1,7 +1,7 @@
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
-use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::MetadataDir;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MetadataEntry, ParsedResource,
 };

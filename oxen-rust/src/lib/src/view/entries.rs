@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use crate::model::{
+    Branch, Commit, CommitEntry, EntryDataType, MerkleHash, ParsedResource, RemoteEntry,
     entry::metadata_entry::{MetadataEntry, WorkspaceMetadataEntry},
     metadata::MetadataDir,
     parsed_resource::ParsedResourceView,
-    Branch, Commit, CommitEntry, EntryDataType, MerkleHash, ParsedResource, RemoteEntry,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

@@ -1,7 +1,7 @@
 use crate::api;
 use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
-use crate::constants::{max_retries, AVG_CHUNK_SIZE};
+use crate::constants::{AVG_CHUNK_SIZE, max_retries};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
@@ -15,13 +15,13 @@ use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
 
 use crate::core::progress::push_progress::PushProgress;
 use async_compression::tokio::bufread::GzipDecoder;
-use flate2::write::GzEncoder;
 use flate2::Compression;
-use futures_util::stream::FuturesUnordered;
+use flate2::write::GzEncoder;
 use futures_util::StreamExt;
-use http::header::CONTENT_LENGTH;
+use futures_util::stream::FuturesUnordered;
 use http::Method;
-use rand::{thread_rng, Rng};
+use http::header::CONTENT_LENGTH;
+use rand::{Rng, thread_rng};
 use tokio_tar::Archive;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -619,14 +619,12 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
         for path in paths {
             let relative_path = util::fs::path_relative_to_dir(&path, &repo_or_base_path)?;
             // Skip adding files already present in tree
-            if let Some((ref head_commit, local_repo)) = head_commit_local_repo_maybe {
-                if let Some(file_node) =
+            if let Some((ref head_commit, local_repo)) = head_commit_local_repo_maybe
+                && let Some(file_node) =
                     repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
-                {
-                    if !util::fs::is_modified_from_node(&path, &file_node)? {
-                        continue;
-                    }
-                }
+                && !util::fs::is_modified_from_node(&path, &file_node)?
+            {
+                continue;
             }
 
             // if it's not the first try

@@ -4,9 +4,9 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::error::OxenError;
 
+use liboxen::view::StatusMessage;
 use liboxen::view::entries::EMetadataEntry;
 use liboxen::view::entry_metadata::EMetadataEntryResponseView;
-use liboxen::view::StatusMessage;
 use liboxen::{current_function, repositories};
 
 use actix_web::{HttpRequest, HttpResponse};

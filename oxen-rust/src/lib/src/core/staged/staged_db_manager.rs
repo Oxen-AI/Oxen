@@ -11,17 +11,17 @@ use indicatif::ProgressBar;
 use lru::LruCache;
 use parking_lot::Mutex;
 use rmp_serde::Serializer;
-use rocksdb::{IteratorMode, DB};
+use rocksdb::{DB, IteratorMode};
 use serde::Serialize;
 
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::error::OxenError;
+use crate::model::LocalRepository;
+use crate::model::StagedEntryStatus;
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
 };
-use crate::model::LocalRepository;
-use crate::model::StagedEntryStatus;
 use crate::util;
 
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
@@ -370,7 +370,7 @@ impl StagedDBManager {
                             let path = util::fs::path_relative_to_dir(path, &repo.path)?;
                             let db_path = PathBuf::from(key);
                             log::debug!("considering rm db_path: {db_path:?} for path: {path:?}");
-                            if db_path.starts_with(&path) && path != PathBuf::from("") {
+                            if db_path.starts_with(&path) && path != Path::new("") {
                                 let mut parent = db_path.parent().unwrap_or(Path::new(""));
                                 self.delete_entry_with_lock(&db_path, Some(&db_w))?;
                                 while parent != Path::new("") {

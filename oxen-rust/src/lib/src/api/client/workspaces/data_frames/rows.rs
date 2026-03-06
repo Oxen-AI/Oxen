@@ -70,7 +70,9 @@ pub async fn update(
     match response {
         Ok(val) => Ok(val),
         Err(err) => {
-            let err = format!("api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            let err = format!(
+                "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+            );
             Err(OxenError::basic_str(err))
         }
     }
@@ -101,7 +103,9 @@ pub async fn delete(
     match response {
         Ok(val) => Ok(val.data_frame.view.to_df().await),
         Err(err) => {
-            let err = format!("api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+            let err = format!(
+                "api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+            );
             Err(OxenError::basic_str(err))
         }
     }
@@ -138,7 +142,9 @@ pub async fn add(
             match response {
                 Ok(val) => Ok((val.data_frame.view.to_df().await, val.row_id)),
                 Err(err) => {
-                    let err = format!("api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+                    let err = format!(
+                        "api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+                    );
                     Err(OxenError::basic_str(err))
                 }
             }
@@ -180,7 +186,9 @@ pub async fn restore_row(
             match response {
                 Ok(val) => Ok(val),
                 Err(err) => {
-                    let err = format!("api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+                    let err = format!(
+                        "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+                    );
                     Err(OxenError::basic_str(err))
                 }
             }
@@ -222,7 +230,9 @@ pub async fn batch_update(
             match response {
                 Ok(val) => Ok(val),
                 Err(err) => {
-                    let err = format!("api::staging::batch_update error parsing response from {url}\n\nErr {err:?} \n\n{body}");
+                    let err = format!(
+                        "api::staging::batch_update error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+                    );
                     Err(OxenError::basic_str(err))
                 }
             }

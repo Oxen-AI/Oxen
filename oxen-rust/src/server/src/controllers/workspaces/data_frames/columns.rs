@@ -6,8 +6,8 @@ use crate::params::{app_data, path_param};
 
 use actix_web::{HttpRequest, HttpResponse};
 use liboxen::error::StringError;
-use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::model::Schema;
+use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
 use liboxen::view::data_frames::columns::{
@@ -17,7 +17,7 @@ use liboxen::view::json_data_frame_view::JsonDataFrameColumnResponse;
 use liboxen::view::{
     JsonDataFrameView, JsonDataFrameViews, StatusMessage, StatusMessageDescription,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
