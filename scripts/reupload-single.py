@@ -96,7 +96,7 @@ def main(
     if not repo.exists():
         print(f"Repository '{repo}' not found on remote. Creating...")
         repo.create(empty=True, is_public=True)
-        print(f"Created repository '{args.repo}'.")
+        print(f"Created repository '{repo_name}'.")
 
     fails = [f for f in all_files if not f.is_relative_to(parent)]
     if len(fails) > 0:
@@ -182,39 +182,48 @@ Examples:
 
     args = parser.parse_args()
 
+    # Pull all arguments into named, typed variables
+    arg_host: str | None = args.host
+    arg_scheme: str | None = args.scheme
+    arg_repo: str = args.repo
+    arg_branch: str = args.branch
+    arg_message: str = args.message
+    arg_dry_run: bool = args.dry_run
+    arg_parent: Path = args.parent
+    arg_files: list[Path] = args.files
+
     # Default scheme: http for localhost/127.0.0.1, https otherwise
-    if args.scheme is None:
-        host_name = (args.host or "").split(":")[0]
+    if arg_scheme is None:
+        host_name = (arg_host or "").split(":")[0]
         if host_name in ("localhost", "127.0.0.1"):
-            args.scheme = "http"
+            arg_scheme = "http"
         else:
-            args.scheme = "https"
+            arg_scheme = "https"
 
     # Collect all file paths, verifying each exists
-    missing = [f for f in args.files if not f.exists()]
+    missing = [f for f in arg_files if not f.exists()]
     if missing:
         for f in missing:
             print(f"Error: file does not exist: {f}")
         sys.exit(1)
-    all_files: list[Path] = [f.resolve() for f in args.files]
+    all_files: list[Path] = [f.resolve() for f in arg_files]
     if not all_files:
         print("No files found. Nothing to do.")
         sys.exit(1)
 
-    args.message = args.message.strip()
-    if len(args.message) == 0:
+    arg_message = arg_message.strip()
+    if len(arg_message) == 0:
         print("Error: cannot have empty commit --message")
         sys.exit(1)
 
-    message_template = args.message
     exit_code = main(
-        repo_name=args.repo,
-        scheme=args.scheme,
-        host=args.host,
-        branch=args.branch,
-        parent=args.parent.resolve(),
+        repo_name=arg_repo,
+        scheme=arg_scheme,
+        host=arg_host,
+        branch=arg_branch,
+        parent=arg_parent.resolve(),
         all_files=all_files,
-        message=args.message,
-        dry_run=args.dry_run,
+        message=arg_message,
+        dry_run=arg_dry_run,
     )
     sys.exit(exit_code)

@@ -490,19 +490,29 @@ Examples:
 
     args = parser.parse_args()
 
-    target = Path(args.target)
+    # Pull all arguments into named, typed variables
+    arg_target: str = args.target
+    arg_max_depth: int | None = args.max_depth
+    arg_distribution: str = args.distribution
+    arg_dist_params: list[str] | None = args.dist_params
+    arg_seed: int | None = args.seed
+    arg_dry_run: bool = args.dry_run
+    arg_save_plan: str | None = args.save_plan
+    arg_from_plan: str | None = args.from_plan
+
+    target = Path(arg_target)
     if not target.is_dir():
         print(f"Error: '{target}' is not a directory or does not exist.")
         sys.exit(1)
 
     # --max-depth is required unless --from-plan is given
-    if args.from_plan is None and args.max_depth is None:
+    if arg_from_plan is None and arg_max_depth is None:
         parser.error("--max-depth is required when not using --from-plan")
 
     # Set up RNG and Faker
-    rng = _make_rng(args.seed)
-    if args.seed is not None:
-        Faker.seed(args.seed)
+    rng = _make_rng(arg_seed)
+    if arg_seed is not None:
+        Faker.seed(arg_seed)
     faker = Faker()
 
     # Scan for all files
@@ -518,8 +528,8 @@ Examples:
     print(f"Found {len(all_files)} files in '{target}'.\n")
 
     # Build the tree — either from a saved plan or by generating a new one
-    if args.from_plan:
-        plan_path = Path(args.from_plan)
+    if arg_from_plan:
+        plan_path = Path(arg_from_plan)
         if not plan_path.is_file():
             print(f"Error: Plan file '{plan_path}' does not exist.")
             sys.exit(1)
@@ -531,17 +541,17 @@ Examples:
         DIST_DEFAULTS: dict[str, dict[str, float]] = {
             "lognorm": {"s": 0.5, "scale": 8},
         }
-        dist_params = parse_dist_params(args.dist_params)
-        if not dist_params and args.distribution in DIST_DEFAULTS:
-            dist_params = DIST_DEFAULTS[args.distribution]
+        dist_params = parse_dist_params(arg_dist_params)
+        if not dist_params and arg_distribution in DIST_DEFAULTS:
+            dist_params = DIST_DEFAULTS[arg_distribution]
 
-        frozen_dist = validate_distribution(args.distribution, dist_params)
-        tree = build_tree(all_files, 0, args.max_depth, frozen_dist, rng, faker)
+        frozen_dist = validate_distribution(arg_distribution, dist_params)
+        tree = build_tree(all_files, 0, arg_max_depth, frozen_dist, rng, faker)
 
     # Save the plan if requested
-    if args.save_plan:
+    if arg_save_plan:
         plan_out = tree_to_plan(tree)
-        save_path = Path(args.save_plan)
+        save_path = Path(arg_save_plan)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         with open(save_path, "w") as f:
             json.dump(plan_out, f, indent=2)
@@ -565,7 +575,7 @@ Examples:
     )
     print(f"  Depth histogram:   {stats['depth_histogram']}")
 
-    if args.dry_run:
+    if arg_dry_run:
         print("\n(dry-run) No files were moved.")
         return
 

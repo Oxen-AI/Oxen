@@ -124,15 +124,25 @@ Examples:
 
     args = parser.parse_args()
 
-    # Default scheme: http for localhost/127.0.0.1, https otherwise
-    if args.scheme is None:
-        host_name = (args.host or "").split(":")[0]
-        if host_name in ("localhost", "127.0.0.1"):
-            args.scheme = "http"
-        else:
-            args.scheme = "https"
+    # Pull all arguments into named, typed variables
+    arg_host: str | None = args.host
+    arg_scheme: str | None = args.scheme
+    arg_repo: str = args.repo
+    arg_branch: str = args.branch
+    arg_directory: str = args.directory
+    arg_batch_size: int = args.batch_size
+    arg_message: str | None = args.message
+    arg_dry_run: bool = args.dry_run
 
-    directory = Path(args.directory)
+    # Default scheme: http for localhost/127.0.0.1, https otherwise
+    if arg_scheme is None:
+        host_name = (arg_host or "").split(":")[0]
+        if host_name in ("localhost", "127.0.0.1"):
+            arg_scheme = "http"
+        else:
+            arg_scheme = "https"
+
+    directory = Path(arg_directory)
     if not directory.is_dir():
         print(f"Error: '{directory}' is not a directory or does not exist.")
         sys.exit(1)
@@ -145,25 +155,25 @@ Examples:
         sys.exit(0)
 
     total_files = len(all_files)
-    batch_size = args.batch_size
+    batch_size: int = arg_batch_size
     batches = list(batch_iter(all_files, batch_size))
     total_batches = len(batches)
 
-    message_template = args.message or "batch {batch}/{total_batches}"
+    message_template: str = arg_message or "batch {batch}/{total_batches}"
 
     # Print plan
     print("\nUpload plan:")
-    print(f"  Repository:    {args.repo}")
-    if args.host:
-        print(f"  Host:          {args.scheme}://{args.host}")
-    print(f"  Branch:        {args.branch}")
+    print(f"  Repository:    {arg_repo}")
+    if arg_host:
+        print(f"  Host:          {arg_scheme}://{arg_host}")
+    print(f"  Branch:        {arg_branch}")
     print(f"  Source:        {directory}")
     print(f"  Total files:   {total_files:,}")
     print(f"  Batch size:    {batch_size:,}")
     print(f"  Total batches: {total_batches}")
     print()
 
-    if args.dry_run:
+    if arg_dry_run:
         for i, batch in enumerate(batches, 1):
             msg = message_template.format(batch=i, total_batches=total_batches)
             print(f'  Batch {i}/{total_batches}: {len(batch):,} files — "{msg}"')
@@ -171,15 +181,15 @@ Examples:
         return
 
     # Connect to the remote repo, creating it if it doesn't exist
-    if args.host:
-        repo = RemoteRepo(args.repo, host=args.host, scheme=args.scheme)
+    if arg_host:
+        repo = RemoteRepo(arg_repo, host=arg_host, scheme=arg_scheme)
     else:
-        repo = RemoteRepo(args.repo, scheme=args.scheme)
+        repo = RemoteRepo(arg_repo, scheme=arg_scheme)
 
     if not repo.exists():
-        print(f"Repository '{args.repo}' not found on remote. Creating...")
+        print(f"Repository '{arg_repo}' not found on remote. Creating...")
         repo.create(empty=True, is_public=True)
-        print(f"Created repository '{args.repo}'.")
+        print(f"Created repository '{arg_repo}'.")
 
     overall_start = time.time()
 
@@ -190,7 +200,7 @@ Examples:
         batch_start = time.time()
 
         # Create a fresh workspace for this batch
-        workspace = Workspace(repo, args.branch)
+        workspace = Workspace(repo, arg_branch)
 
         # Add all files in the batch, preserving directory structure relative
         # to the source directory.

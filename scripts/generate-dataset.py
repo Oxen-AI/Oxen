@@ -697,71 +697,84 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
     args = parser.parse_args()
 
+    # Pull all arguments into named, typed variables
+    arg_total_size: int | None = args.total_size
+    arg_num_files: int | None = args.num_files
+    arg_avg_file_size: int | None = args.avg_file_size
+    arg_num_dirs: int | None = args.num_dirs
+    arg_files_per_dir: int | None = args.files_per_dir
+    arg_target: str = args.target
+    arg_type: FileType = args.type
+    arg_workers: int | None = args.workers
+    arg_seed: int | None = args.seed
+    arg_dry_run: bool = args.dry_run
+    arg_distribution: str | None = args.distribution
+    arg_dist_params: list[str] | None = args.dist_params
+    arg_tier: list[str] | None = args.tier
+
     # Validate --tier mutual exclusivity
-    if args.tier is not None:
+    if arg_tier is not None:
         tier_exclusive = {
-            "--num-files": args.num_files,
-            "--total-size": args.total_size,
-            "--avg-file-size": args.avg_file_size,
-            "--distribution": args.distribution,
-            "--dist-params": args.dist_params,
+            "--num-files": arg_num_files,
+            "--total-size": arg_total_size,
+            "--avg-file-size": arg_avg_file_size,
+            "--distribution": arg_distribution,
+            "--dist-params": arg_dist_params,
         }
         conflicts = [name for name, val in tier_exclusive.items() if val is not None]
         if conflicts:
             parser.error(f"--tier cannot be used with {', '.join(conflicts)}")
 
     # Validate distribution arguments
-    if args.dist_params is not None and args.distribution is None:
+    if arg_dist_params is not None and arg_distribution is None:
         parser.error("--dist-params requires --distribution")
-    if args.distribution is not None:
-        if args.num_files is None and args.total_size is None:
+    if arg_distribution is not None:
+        if arg_num_files is None and arg_total_size is None:
             parser.error("--distribution requires either --num-files or --total-size")
-        if args.num_files is not None and args.total_size is not None:
+        if arg_num_files is not None and arg_total_size is not None:
             parser.error(
                 "--num-files and --total-size cannot both be used with --distribution"
             )
-        if args.avg_file_size is not None:
+        if arg_avg_file_size is not None:
             parser.error("--avg-file-size cannot be used with --distribution")
-        if args.type == "image":
+        if arg_type == "image":
             parser.error("--type image cannot be used with --distribution")
 
     # Set random seed if provided
-    if args.seed is not None:
-        random.seed(args.seed)
-        Faker.seed(args.seed)
+    if arg_seed is not None:
+        random.seed(arg_seed)
+        Faker.seed(arg_seed)
 
     # Determine file sizes: tier mode, distribution mode, or fixed-size mode
     tiers: list[Tier] | None = None
     tier_tasks: list[tuple[FileType, int]] | None = None  # (file_type, size) per file
 
-    if args.tier is not None:
+    if arg_tier is not None:
         # Tier mode: parse each tier, sample sizes, combine and shuffle
-        tiers = [parse_tier(t, args.type) for t in args.tier]
+        tiers = [parse_tier(t, arg_type) for t in arg_tier]
         tier_tasks = []
         for i, tier in enumerate(tiers):
-            tier_seed = args.seed + i if args.seed is not None else None
+            tier_seed = arg_seed + i if arg_seed is not None else None
             sizes = sample_file_sizes(tier.frozen_dist, tier.num, tier_seed)
             tier_tasks.extend((tier.file_type, s) for s in sizes)
         random.shuffle(tier_tasks)
         file_sizes = [s for _, s in tier_tasks]
         num_files = len(file_sizes)
 
-    elif args.distribution is not None:
-        dist_params = parse_dist_params(args.dist_params)
-        frozen_dist = validate_distribution(args.distribution, dist_params)
-        if args.num_files is not None:
-            num_files = args.num_files
-            file_sizes = sample_file_sizes(frozen_dist, num_files, args.seed)
+    elif arg_distribution is not None:
+        dist_params = parse_dist_params(arg_dist_params)
+        frozen_dist = validate_distribution(arg_distribution, dist_params)
+        if arg_num_files is not None:
+            num_files = arg_num_files
+            file_sizes = sample_file_sizes(frozen_dist, num_files, arg_seed)
         else:
-            file_sizes = sample_file_sizes_until(
-                frozen_dist, args.total_size, args.seed
-            )
+            file_sizes = sample_file_sizes_until(frozen_dist, arg_total_size, arg_seed)
             num_files = len(file_sizes)
 
     else:
         # Special handling for image type
-        if args.type == "image":
-            if args.avg_file_size is not None:
+        if arg_type == "image":
+            if arg_avg_file_size is not None:
                 print("Error: --avg-file-size cannot be specified for image type.")
                 print(
                     "Image size is determined by the image dimensions, content, and compression."
@@ -772,23 +785,21 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
             print("Computing average image size by generating test samples...")
             computed_avg_size = compute_avg_image_size(num_samples=10)
             print(f"Computed average image size: {format_size(computed_avg_size)}\n")
-            args.avg_file_size = computed_avg_size
+            arg_avg_file_size = computed_avg_size
 
         # Validate and calculate parameters
         num_files, file_size = validate_parameters(
-            total_size=args.total_size,
-            num_files=args.num_files,
-            avg_file_size=args.avg_file_size,
+            total_size=arg_total_size,
+            num_files=arg_num_files,
+            avg_file_size=arg_avg_file_size,
         )
         file_sizes = [file_size] * num_files
 
     # Validate and calculate directory parameters
-    num_dirs = validate_directory_parameters(
-        num_files, args.num_dirs, args.files_per_dir
-    )
+    num_dirs = validate_directory_parameters(num_files, arg_num_dirs, arg_files_per_dir)
 
     # Create target directory structure
-    target = Path(args.target)
+    target = Path(arg_target)
     target.mkdir(parents=True, exist_ok=True)
 
     # Warn if target directory has existing files
@@ -836,7 +847,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
             if tier_tasks is not None:
                 file_type, size = tier_tasks[file_counter]
             else:
-                file_type = args.type
+                file_type = arg_type
                 size = file_sizes[file_counter]
             ext = extensions[file_type]
             file_name = f"file_{file_counter + 1:0{file_padding}d}.{ext}"
@@ -846,7 +857,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
 
     # Choose executor type and worker count based on file type
     # Tier mode disallows images, so always use threads
-    use_threadpool_exe: bool = tiers is not None or args.type != "image"
+    use_threadpool_exe: bool = tiers is not None or arg_type != "image"
 
     if use_threadpool_exe:
         executor_class = ThreadPoolExecutor
@@ -856,7 +867,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         executor_class = ProcessPoolExecutor
         executor_type = "processes"
 
-    if args.workers is None:
+    if arg_workers is None:
         n_cpus = os.cpu_count()
         if n_cpus is None:
             raise ValueError(
@@ -867,7 +878,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         else:
             max_workers = n_cpus
     else:
-        max_workers = args.workers
+        max_workers = arg_workers
 
     # Display generation plan
     print("\nGeneration Plan:")
@@ -879,7 +890,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
                 sample_file_sizes(
                     tier.frozen_dist,
                     tier.num,
-                    args.seed + i if args.seed is not None else None,
+                    arg_seed + i if arg_seed is not None else None,
                 )
             )
             print(f"  Tier {i + 1}: {tier.num} {tier.file_type} files")
@@ -895,11 +906,11 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         print(f"  Total files: {num_files}")
         print(f"  Total size: ~{format_size(int(all_sizes.sum()))}")
 
-    elif args.distribution is not None:
-        print(f"  File type: {args.type}")
+    elif arg_distribution is not None:
+        print(f"  File type: {arg_type}")
         print(f"  Number of files: {num_files}")
         sizes_arr = np.array(file_sizes)
-        print(f"  Distribution: {args.distribution}")
+        print(f"  Distribution: {arg_distribution}")
         print(f"  Dist params: {dist_params}")
         print(f"  File size min: {format_size(int(sizes_arr.min()))}")
         print(f"  File size max: {format_size(int(sizes_arr.max()))}")
@@ -909,7 +920,7 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         print(f"  Total size: ~{format_size(int(sizes_arr.sum()))}")
 
     else:
-        print(f"  File type: {args.type}")
+        print(f"  File type: {arg_type}")
         print(f"  Number of files: {num_files}")
         print(f"  File size: {format_size(file_sizes[0])}")
         print(f"  Total size: ~{format_size(num_files * file_sizes[0])}")
@@ -919,12 +930,12 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
     print(f"  Workers: {max_workers} {executor_type}")
     print()
 
-    if args.dry_run:
+    if arg_dry_run:
         print("(dry-run) No files were generated.")
         return
 
     # Generate files in parallel using appropriate executor for workload type
-    needs_text: bool = args.type == "text" or (
+    needs_text: bool = arg_type == "text" or (
         tiers is not None and any(t.file_type == "text" for t in tiers)
     )
     if needs_text:
