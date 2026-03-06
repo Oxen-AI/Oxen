@@ -33,8 +33,6 @@ impl PartialEq for Entry {
 impl Eq for Entry {}
 
 impl Entry {
-    const EMPTY: &str = "";
-
     pub fn commit_id(&self) -> &str {
         match self {
             Entry::CommitEntry(entry) => &entry.commit_id,

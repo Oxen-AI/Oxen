@@ -21,7 +21,6 @@ use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, Versi
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
 use mime;
 use std::io::Read as StdRead;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::BufReader;
 use tokio::io::{AsyncRead, AsyncWriteExt};
@@ -579,12 +578,13 @@ pub async fn save_multiparts(
                         log::info!("Successfully stored version for hash: {upload_filehash}");
                     }
                     Err(e) => {
-                        let msg = format!("Failed to store version for hash {upload_filehash}");
-                        log::error!("{msg}: {e}");
+                        let msg =
+                            format!("Failed to store version for hash {upload_filehash}: {e:?}");
+                        log::error!("{msg}");
                         err_files.push(ErrorFileInfo {
-                            hash: filehash,
-                            path: filepath,
-                            error: Arc::new(e),
+                            hash: upload_filehash,
+                            path: None,
+                            error: msg,
                         });
                         continue;
                     }

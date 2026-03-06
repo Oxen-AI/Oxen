@@ -21,7 +21,6 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
-use uuid::Error;
 
 use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
