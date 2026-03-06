@@ -18,6 +18,7 @@ pub mod py_remote_repo;
 pub mod py_repo;
 pub mod py_schema;
 pub mod py_staged_data;
+pub mod py_types;
 pub mod py_user;
 pub mod py_workspace;
 pub mod py_workspace_data_frame;
@@ -61,6 +62,7 @@ fn oxen(m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_schema::PySchema>()?;
     m.add_class::<py_staged_data::PyStagedData>()?;
     m.add_class::<py_user::PyUser>()?;
+    m.add_class::<py_types::PyErrorFileInfo>()?;
     m.add_class::<py_workspace::PyWorkspace>()?;
     m.add_class::<py_workspace_data_frame::PyColumn>()?;
     m.add_class::<py_workspace_data_frame::PyWorkspaceDataFrame>()?;
