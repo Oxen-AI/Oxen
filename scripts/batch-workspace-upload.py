@@ -195,7 +195,12 @@ Examples:
         # Add all files in the batch, preserving directory structure relative
         # to the source directory.
         print("  Adding files...")
-        workspace.add_files(directory.parent, batch)
+        failed_to_add = workspace.add_files(directory.parent, batch)
+
+        if len(failed_to_add) != 0:
+            print(f"ERROR: failed to add these {len(failed_to_add)} files:")
+            for i, error in enumerate(failed_to_add):
+                print(f"\t[{i + 1}] {error.path} ({error.hash}): {error.error}")
 
         status = workspace.status()
         if status.is_clean():
