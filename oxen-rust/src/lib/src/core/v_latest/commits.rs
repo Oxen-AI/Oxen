@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::Path;
 
 use glob::Pattern;
@@ -479,17 +480,45 @@ fn mark_ancestors_visited(
     Ok(())
 }
 
+/// Wrapper to order commits by timestamp descending in a BinaryHeap (max-heap).
+/// Ties are broken by commit id for deterministic ordering.
+struct TimestampedCommit(Commit);
+
+impl PartialEq for TimestampedCommit {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.timestamp == other.0.timestamp && self.0.id == other.0.id
+    }
+}
+
+impl Eq for TimestampedCommit {}
+
+impl PartialOrd for TimestampedCommit {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TimestampedCommit {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .timestamp
+            .cmp(&other.0.timestamp)
+            .then_with(|| self.0.id.cmp(&other.0.id))
+    }
+}
+
 fn traverse_commits(
     config: CommitTraversalConfig,
     mut results: Option<&mut Vec<Commit>>,
 ) -> Result<usize, OxenError> {
     let mut count = 0;
-    let mut stack: Vec<Commit> = vec![config.head_commit];
+    let mut heap = BinaryHeap::new();
+    heap.push(TimestampedCommit(config.head_commit));
     let end_idx = config.skip + config.limit;
     let can_early_exit = config.known_total_count.is_some();
     let collect_results = results.is_some();
 
-    while let Some(commit) = stack.pop() {
+    while let Some(TimestampedCommit(commit)) = heap.pop() {
         if config.visited.contains(&commit.id) {
             continue;
         }
@@ -524,7 +553,7 @@ fn traverse_commits(
             continue;
         }
 
-        // Process commit in pre-order (newest-first)
+        // Process commit (globally newest-first via max-heap)
         if count >= config.skip
             && count < end_idx
             && let Some(ref mut res) = results
@@ -543,20 +572,13 @@ fn traverse_commits(
             break;
         }
 
-        // Push children to stack (sorted so newest is processed first)
-        let mut parent_commits: Vec<Commit> = Vec::new();
+        // Add parents to the heap
         for parent_id in commit.parent_ids.clone() {
             let parent_id = parent_id.parse()?;
-            if let Some(c) = get_by_hash(config.repo, &parent_id)? {
-                parent_commits.push(c);
-            }
-        }
-
-        // Sort by timestamp ascending, so when we push to stack, newest is on top
-        parent_commits.sort_by_key(|c| c.timestamp);
-        for parent_commit in parent_commits {
-            if !config.visited.contains(&parent_commit.id) {
-                stack.push(parent_commit);
+            if let Some(c) = get_by_hash(config.repo, &parent_id)?
+                && !config.visited.contains(&c.id)
+            {
+                heap.push(TimestampedCommit(c));
             }
         }
     }
