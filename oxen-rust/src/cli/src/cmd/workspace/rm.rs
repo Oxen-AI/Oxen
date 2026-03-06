@@ -5,7 +5,7 @@ use clap::{Arg, ArgGroup, ArgMatches, Command};
 
 use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
 
-use crate::cmd::{RunCmd, rm::rm_args};
+use crate::cmd::RunCmd;
 pub const NAME: &str = "rm";
 pub struct WorkspaceRmCmd;
 
@@ -22,7 +22,19 @@ impl RunCmd for WorkspaceRmCmd {
             Err(_) => false,
         };
 
-        rm_args()
+        Command::new(NAME)
+            .about("Removes the specified files from the index")
+            .arg(
+                Arg::new("files")
+                    .required(true)
+                    .action(clap::ArgAction::Append),
+            )
+            .arg(
+                Arg::new("staged")
+                    .long("staged")
+                    .help("Removes the file from the staging area.")
+                    .action(clap::ArgAction::SetTrue),
+            )
             .arg(
                 Arg::new("workspace-id")
                     .long("workspace-id")
@@ -42,13 +54,6 @@ impl RunCmd for WorkspaceRmCmd {
                     .args(["workspace-id", "workspace-name"])
                     .required(!is_remote_repo),
             )
-            .arg(
-                Arg::new("directory")
-                    .long("directory")
-                    .short('d')
-                    .help("The destination directory to add the workspace to")
-                    .default_value("."),
-            )
             .arg_required_else_help(true)
     }
 
@@ -62,19 +67,17 @@ impl RunCmd for WorkspaceRmCmd {
 
         let repository = LocalRepository::from_current_dir()?;
 
-        let (workspace_identifier, _directory) = if repository.is_remote_mode() {
-            (&repository.workspace_name.clone().unwrap(), ".")
+        let workspace_identifier = if repository.is_remote_mode() {
+            &repository.workspace_name.clone().unwrap()
         } else {
-            let directory = args.get_one::<String>("directory").unwrap(); // safe to unwrap because we have a default value
-
             let workspace_name = args.get_one::<String>("workspace-name");
             let workspace_id = args.get_one::<String>("workspace-id");
             match workspace_id {
-                Some(id) => (id, directory.as_str()),
+                Some(id) => id,
                 None => {
                     // If no ID is provided, try to get the workspace by name
                     if let Some(name) = workspace_name {
-                        (name, directory.as_str())
+                        name
                     } else {
                         return Err(OxenError::basic_str(
                             "Either workspace-id or workspace-name must be provided.",
@@ -99,7 +102,6 @@ impl RunCmd for WorkspaceRmCmd {
             ));
         }
 
-        // TODO: Use directory
         if args.get_flag("staged") {
             api::client::workspaces::files::rm_files_from_staged(
                 &repository,
