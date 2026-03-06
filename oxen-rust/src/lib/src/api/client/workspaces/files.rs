@@ -29,6 +29,8 @@ use crate::util::hasher;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
+use crate::api::client::versions::calculate_file_size_hash;
+
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
 const WORKSPACE_ADD_LIMIT: u64 = 100_000_000;
@@ -46,13 +48,13 @@ pub async fn add(
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-) -> Result<(), OxenError> {
+) -> Result<ErrorFiles, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
     // If no paths provided, return early
     if paths.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
 
     // Parse glob paths
@@ -69,44 +71,37 @@ pub async fn add(
     // TODO: add a progress bar
     // TODO: need to handle error files and not display the `oxen added` message if files weren't added
 
-    match match local_repo {
-        Some(local_repo) => {
-            let local = LocalOrBase::Local(local_repo.clone());
-            upload_multiple_files(
-                remote_repo,
-                workspace_id,
-                directory,
-                expanded_paths.clone(),
-                Some(&local),
-                false,
-            )
-            .await
-        }
-        None => {
-            upload_multiple_files(
-                remote_repo,
-                workspace_id,
-                directory,
-                expanded_paths.clone(),
-                None,
-                false,
-            )
-            .await
-        }
-    } {
-        Ok(()) => {
-            println!(
-                "🐂 oxen added {} entries to workspace {}",
-                expanded_paths.len(),
-                workspace_id
-            );
-        }
-        Err(e) => {
-            return Err(e);
-        }
-    }
+    let n_expected_uploads = expanded_paths.len();
 
-    Ok(())
+    let upload_result = upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        directory,
+        expanded_paths,
+        local_repo.clone().map(|local| LocalOrBase::Local(local.clone())).as_ref(),
+        false,
+    )
+    .await;
+
+    match upload_result {
+        Ok(failed_to_upload) => {
+          print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
+          Ok(failed_to_upload)
+        }
+        error => error,
+    }
+}
+
+fn print_add_result(workspace_id: &str, n_total: usize, failed_to_upload: &ErrorFiles) {
+  let n_fail = failed_to_upload.len();
+  if n_fail == 0 {
+    println!("🐂 oxen added {n_total} entries to workspace {workspace_id}");
+  } else {
+    let n_success = n_total - n_fail;
+    println!(
+        "🐂 oxen added {n_success} entries to workspace {workspace_id} but 😱 failed to upload {n_fail} entries",
+    );
+  }
 }
 
 pub struct AddResult {
@@ -159,7 +154,7 @@ pub async fn add_files(
     workspace_id: impl AsRef<str>,
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-) -> Result<(), OxenError> {
+) -> Result<ErrorFiles, OxenError> {
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
@@ -183,7 +178,7 @@ pub async fn add_files(
 
     let base_dir_enum = LocalOrBase::Base(base_dir);
 
-    let n_paths_uploaded = paths.len();
+    let n_expected_uploads = paths.len();
     match upload_multiple_files(
         remote_repo,
         workspace_id,
@@ -196,15 +191,12 @@ pub async fn add_files(
     )
     .await
     {
-        Ok(()) => {
-            println!("🐂 oxen added {n_paths_uploaded} entries to workspace {workspace_id}");
+        Ok(failed_to_upload) => {
+            print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
+            Ok(failed_to_upload)
         }
-        Err(e) => {
-            return Err(e);
-        }
+        error => error,
     }
-
-    Ok(())
 }
 
 pub async fn add_bytes(
@@ -286,7 +278,7 @@ async fn upload_multiple_files(
     strict_errors: bool,
 ) -> Result<ErrorFiles, OxenError> {
     if paths.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
 
     let workspace_id = workspace_id.as_ref();
@@ -313,11 +305,10 @@ async fn upload_multiple_files(
         };
 
         if !path.exists() {
-            let msg = format!("File does not exist: {path:?}");
             if strict_errors {
-                return Err(OxenError::basic_str(msg));
+                return Err(OxenError::path_does_not_exist(path));
             }
-            log::warn!("{msg}");
+            log::error!("[skip] Cannot upload! File does not exist: {path:?}");
             continue;
         }
 
@@ -335,11 +326,10 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                let msg = format!("Failed to get metadata for file {path:?}: {err}");
                 if strict_errors {
-                    return Err(OxenError::basic_str(msg));
+                    return Err(OxenError::file_metadata_error(path, err))
                 }
-                log::warn!("{msg}");
+                log::warn!("Failed to get metadata for file {path:?}: {err}");
                 continue;
             }
         }
@@ -360,6 +350,8 @@ async fn upload_multiple_files(
             Some(LocalOrBase::Local(_)) | None => directory.to_path_buf(),
         };
 
+        let (file_size, hash) = calculate_file_size_hash(&path)?;
+
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
@@ -375,10 +367,10 @@ async fn upload_multiple_files(
             Err(err) => {
                 let msg = format!("Failed to upload large file {path:?}");
                 log::error!("{msg}: {err}");
-                failed_to_upload.push(ErrorFileInfo {
-                    hash: hash.clone(),
+                failed_to_upload.push(ErrorFile {
+                    hash: hash,
                     path: Some(path),
-                    error: OxenError::Context(Box::new(err), msg),
+                    error: Arc::new(err.context(msg)),
                 });
             }
         }
@@ -395,10 +387,28 @@ async fn upload_multiple_files(
     )
     .await?;
 
-    Ok(())
+    failed_to_upload.extend(err_files_small_upload);
+
+    Ok(failed_to_upload)
 }
 
-type ErrorFiles = Vec<ErrorFileInfo>;
+#[derive(Debug)]
+pub(crate) struct ErrorFile {
+    pub hash: String,
+    pub path: Option<PathBuf>,
+    pub error: Arc<OxenError>,
+}
+
+impl From<ErrorFileInfo> for ErrorFile {
+    fn from(other: ErrorFileInfo) -> Self {
+        ErrorFile {
+            hash: other.hash,
+            path: other.path,
+            error: Arc::new(OxenError::basic_str(other.error)),
+        }
+    }
+}
+
 
 pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
@@ -407,7 +417,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
-) -> Result<ErrorFiles, OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if small_files.is_empty() {
         return Ok(vec![]);
     }
@@ -623,7 +633,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                         .await;
 
                         if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                            errors.lock().push(e);
                         }
                     }
                 }
@@ -710,15 +720,14 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
                                             if !staging_err_files.is_empty() {
                                                 let mut err_files = err_files_clone.lock();
-                                                err_files.extend(staging_err_files.clone());
+                                                err_files.extend(staging_err_files);
                                             }
                                         }
                                         // If staging failed, cancel the operation
                                         Err(e) => {
-                                            log::error!("failed to stage files to workspace: {e}");
-                                            return Err(OxenError::basic_str(format!(
-                                                "failed to stage to workspace: {e}"
-                                            )));
+                                            let msg = format!("failed to stage files to workspace");
+                                            log::error!("{msg}: {e}");
+                                            return Err(e.context(msg));
                                         }
                                     }
 
@@ -727,27 +736,38 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 // If uploading the version files fails, cancel the operation
                                 Err(e) => {
                                     let mut err_files = err_files_clone.lock();
+                                    let msg = format!("Failed to upload version files to workspace.");
+                                    log::error!("{msg}: {e}");
+
+                                    let final_error = e.context(msg);
+                                    let error_message = format!("{final_error:?}");
                                     err_files.extend(
                                         files_to_stage
                                             .iter()
                                             .map(|f| ErrorFileInfo {
                                                 hash: f.hash.clone(),
                                                 path: Some(f.path.clone()),
-                                                error: e,
+                                                error: error_message,
                                             })
-                                            .collect::<Vec<ErrorFileInfo>>()
                                     );
-
-                                    log::error!("failed to upload version files to workspace: {e}");
-                                    Err(OxenError::basic_str(format!(
-                                        "failed to upload version files to workspace: {e}"
-                                    )))
+                                    Err(final_error)
+                                    // let shared_error = Arc::new(final_error);
+                                    // err_files.extend(
+                                    //     files_to_stage
+                                    //         .iter()
+                                    //         .map(|f| ErrorFile {
+                                    //             hash: f.hash.clone(),
+                                    //             path: Some(f.path.clone()),
+                                    //             error: shared_error.clone(),
+                                    //         })
+                                    // );
+                                    // shared_error
                                 }
                             }
                         }.await;
 
                         if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                            errors.lock().push(e);
                         }
                     }
                 }
@@ -762,9 +782,12 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let mutex = match Arc::try_unwrap(err_files) {
         Ok(mutex) => mutex,
         Err(e) => {
-            let err = format!("Couldn't acquire mutex guard for err_files: {e:?}");
-            log::error!("{err}");
-            return Err(OxenError::basic_str(&err));
+            // TODO: delete me soon! This only exists because this upload implementation is bad.
+            //       it uses shared memory to communicate when it should just return errors
+            //       either from futures directly or via an error channel.
+            let msg = format!("Couldn't acquire mutex guard for err_files: {e:?}");
+            log::error!("{msg}");
+            return Err(OxenError::basic_str(msg));
         }
     };
 

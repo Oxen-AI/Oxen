@@ -2,6 +2,7 @@ use crate::api;
 use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
 use crate::api::client::retry;
+use crate::api::client::workspaces::files::ErrorFile;
 use crate::constants::{max_retries, AVG_CHUNK_SIZE};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
@@ -472,7 +473,7 @@ pub async fn multipart_batch_upload_with_retry(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
-    let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
+    let mut files_to_retry: Vec<ErrorFile> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
     let max_retries = max_retries();
@@ -507,11 +508,11 @@ pub async fn multipart_batch_upload(
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
-    files_to_retry: Vec<ErrorFileInfo>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    files_to_retry: Vec<ErrorFile>,
+) -> Result<Vec<ErrorFile>, OxenError> {
     let version_store = local_repo.version_store()?;
     let mut form = reqwest::multipart::Form::new();
-    let mut err_files: Vec<ErrorFileInfo> = vec![];
+    let mut err_files: Vec<ErrorFile> = vec![];
 
     // if it's the first try, we don't have any files to retry
     let retry_hashes: HashSet<String> = if files_to_retry.is_empty() {
@@ -524,23 +525,25 @@ pub async fn multipart_batch_upload(
         let file_hash = entry.hash();
 
         // if it's not the first try and the file is not in the retry list, skip
-        if !files_to_retry.is_empty() && !retry_hashes.contains(&file_hash) {
+        if !files_to_retry.is_empty() && !retry_hashes.contains(file_hash) {
             continue;
         }
 
-        let data = version_store.get_version(&file_hash).await?;
+        let data = version_store.get_version(file_hash).await?;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         std::io::copy(&mut data.as_slice(), &mut encoder)?;
         let compressed_bytes = match encoder.finish() {
             Ok(bytes) => bytes,
             Err(e) => {
                 log::error!("Failed to finish gzip for file {}: {}", &file_hash, e);
-                err_files.push(ErrorFileInfo {
+                err_files.push(ErrorFile {
                     hash: file_hash.to_string(),
                     path: None,
-                    error: OxenError::Context(
-                        Box::new(e.into()),
-                        format!("Failed to finish gzip for file {}", &file_hash),
+                    error: Arc::new(
+                      OxenError::Context(
+                          Box::new(e.into()),
+                          format!("Failed to finish gzip for file {}", &file_hash),
+                      )
                     ),
                 });
                 continue;
@@ -564,7 +567,7 @@ pub async fn multipart_batch_upload(
     let body = client::parse_json_body(&url, response).await?;
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
 
-    err_files.extend(response.err_files);
+    err_files.extend(response.err_files.into_iter().map(|f| f.into()));
 
     Ok(err_files)
 }
@@ -664,13 +667,18 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
                     Err(e) => {
                         log::error!("Failed to finish gzip for file {}: {}", &hash, e);
                         // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
+                        // err_files.push(ErrorFile {
+                        //     hash: hash.clone(),
+                        //     path: None,
+                        //     error: Arc::new(OxenError::Context(
+                        //         Box::new(e.into()),
+                        //         format!("Failed to finish gzip for file {}", &hash),
+                        //     )),
+                        // });
                         err_files.push(ErrorFileInfo {
                             hash: hash.clone(),
                             path: None,
-                            error: OxenError::Context(
-                                Box::new(e.into()),
-                                format!("Failed to finish gzip for file {}", &hash),
-                            ),
+                            error: format!("Failed to finish gzip for file {}: {e:?}", &hash),
                         });
                         continue;
                     }
@@ -697,7 +705,7 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
 
     Ok(UploadResult {
         files_to_add,
-        err_files,
+        err_files: err_files,
     })
 }
 
@@ -797,7 +805,7 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     Ok(upload_result.err_files)
 }
 
-fn calculate_file_size_hash(file_path: &Path) -> Result<(u64, String), OxenError> {
+pub(crate) fn calculate_file_size_hash(file_path: &Path) -> Result<(u64, String), OxenError> {
     let Ok(metadata) = file_path.metadata() else {
         return Err(OxenError::path_does_not_exist(file_path));
     };

@@ -584,7 +584,7 @@ pub async fn save_multiparts(
                         err_files.push(ErrorFileInfo {
                             hash: filehash,
                             path: filepath,
-                            error: e,
+                            error: Arc::new(e),
                         });
                         continue;
                     }

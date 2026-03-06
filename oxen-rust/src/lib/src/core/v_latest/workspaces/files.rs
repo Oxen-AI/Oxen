@@ -124,10 +124,10 @@ pub fn add_version_files(
                     err_files.push(ErrorFileInfo {
                         hash: item.hash.clone(),
                         path: Some(item.path.clone()),
-                        error: OxenError::Context(
+                        error: Arc::new(OxenError::Context(
                             Box::new(e),
                             "Failed to add file to staged db.".into(),
-                        ),
+                        )),
                     });
                     continue;
                 }

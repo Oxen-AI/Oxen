@@ -1,7 +1,11 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+use crate::api::client::workspaces::files::ErrorFile;
+use crate::error::OxenError;
 
 use super::entries::ResourceVersion;
 use super::StatusMessage;
@@ -40,7 +44,17 @@ pub struct ErrorFileInfo {
     pub hash: String,
     #[schema(value_type = Option<String>)]
     pub path: Option<PathBuf>,
-    pub error: OxenError,
+    pub error: String,
+}
+
+impl From<ErrorFile> for ErrorFileInfo {
+    fn from(other: ErrorFile) -> Self {
+        ErrorFileInfo {
+            hash: other.hash,
+            path: other.path,
+            error: format!("{}", other.error),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

@@ -186,7 +186,7 @@ impl fmt::Display for OxenError {
             OxenUpdateRequired(e) | Basic(e) | ThumbnailingNotEnabled(e) => write!(f, "{e}"),
             PathIsNotInCommit(c, p) => write!(f, "Path '{p}' is not present in commit '{c}'."),
             CommitDoesNotExist(c) => write!(f, "Commit '{c}' does not exist in repository."),
-            Context(e, context) => write!(f, "{context}: {}", e.as_ref()),
+            Context(e, context) => write!(f, "{context}: {}", e),
             InvalidRepoName(name) => write!(
                 f,
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
@@ -199,6 +199,12 @@ impl fmt::Display for OxenError {
 }
 
 impl OxenError {
+
+    // Add context to an OxenError, converting it into a `Context` variant.
+    pub(crate) fn context(self, context: String) -> Self {
+      OxenError::Context(Box::new(self), context)
+    }
+
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
     }
@@ -597,6 +603,7 @@ impl OxenError {
         OxenError::basic_str(err)
     }
 }
+
 
 // if you do not want to call .map_err, implement the std::convert::From trait
 impl From<io::Error> for OxenError {

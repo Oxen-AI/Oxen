@@ -675,31 +675,22 @@ pub async fn save_parts(
                     {
                         Ok(Ok((hash, data))) => (hash, data),
                         Ok(Err(e)) => {
-                            log::error!(
-                                "Failed to decompress data for file {}: {:?}",
-                                &upload_filename,
-                                e
-                            );
-                            record_error_file(
-                                &mut err_files,
-                                upload_filename.clone(),
-                                None,
-                                format!("Failed to decompress data: {e:?}"),
-                            );
+                            log::error!("Failed to decompress data for file {upload_filename}: {e:?}");
+                            err_files.push(ErrorFileInfo {
+                              hash: upload_filename.clone(),
+                              path: None,
+                              error: format!("Failed to decompress data: {e:?}"),
+                            });
                             continue;
                         }
                         Err(e) => {
-                            log::error!(
-                                "Failed to execute blocking decompression task for file {}: {}",
-                                &upload_filename,
-                                e
-                            );
-                            record_error_file(
-                                &mut err_files,
-                                upload_filename.clone(),
-                                None,
-                                format!("Failed to execute blocking decompression: {e}"),
-                            );
+                            log::error!("Failed to execute blocking decompression task for file {upload_filename}: {e}");
+                            err_files.push(ErrorFileInfo {
+                                hash: upload_filename.clone(),
+                                path: None,
+                                error: format!("Failed to execute blocking decompression: {e}"),
+                            });
+
                             continue;
                         }
                     };
@@ -721,12 +712,12 @@ pub async fn save_parts(
                             &upload_filehash,
                             e
                         );
-                        record_error_file(
-                            &mut err_files,
-                            upload_filehash.clone(),
-                            None,
-                            format!("Failed to store version: {e}"),
-                        );
+
+                        err_files.push(ErrorFileInfo {
+                            hash: upload_filehash.clone(),
+                            path: None,
+                            error: format!("Failed to store version: {e}"),
+                        });
                         continue;
                     }
                 }
@@ -752,21 +743,6 @@ fn remove_file_from_workspace(
     } else {
         Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
     }
-}
-
-// Record the error file info for retry
-fn record_error_file(
-    err_files: &mut Vec<ErrorFileInfo>,
-    filehash: String,
-    filepath: Option<PathBuf>,
-    error: String,
-) {
-    let info = ErrorFileInfo {
-        hash: filehash,
-        path: filepath,
-        error,
-    };
-    err_files.push(info);
 }
 
 #[cfg(test)]
