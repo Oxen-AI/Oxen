@@ -14,7 +14,7 @@ if [ -z "$REPO_PATH" ] || [ -z "$MIGRATION_NAME" ] || [ -z "$FILEPATH" ]; then
   exit 1
 fi
 
-echo "Received Arguments: $1, $2, $3"
+echo "Received Arguments: $REPO_PATH, $FILEPATH, $MIGRATION_NAME"
 
 if [[ "$REPO_PATH" == /* ]]; then
     ABSOLUTE_REPO_PATH="$REPO_PATH"
