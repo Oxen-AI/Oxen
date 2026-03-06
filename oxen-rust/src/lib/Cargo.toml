@@ -30,7 +30,6 @@ ffmpeg = ["thumbnails"]
 perf-logging = []
 
 [dependencies]
-actix-web = { workspace = true }
 approx = { workspace = true }
 arrow = { workspace = true }
 astral-tokio-tar = { workspace = true }

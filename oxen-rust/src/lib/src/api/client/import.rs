@@ -59,7 +59,7 @@ pub async fn upload_zip(
 #[cfg(test)]
 mod tests {
     use crate::test;
-    use actix_web::web::Bytes;
+    use bytes::Bytes;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
