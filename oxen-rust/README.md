@@ -250,28 +250,28 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use the following script to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
+You can use [the following script](./scripts/test-rust.sh) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
 
 ```bash
-scripts/test-rust
+scripts/test-rust.sh
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```bash
-scripts/test-rust --lib test_get_metadata_text_readme
+scripts/test-rust.sh --lib test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust --no-capture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust.sh --no-capture test_command_push_clone_pull_push
 ```
 
 To set a different test host you can set the `OXEN_TEST_HOST` environment variable
 
 ```bash
-env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust
+env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust.sh
 ```
 
 # Oxen Server

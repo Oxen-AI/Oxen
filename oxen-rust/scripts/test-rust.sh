@@ -60,7 +60,7 @@ SERVER_PID=$!
 
 # Give the server a moment to start
 wait_for_server() {
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if curl -s -o /dev/null --fail http://localhost:3001/api/health 2>/dev/null; then
       return 0
     fi
@@ -75,7 +75,7 @@ fi
 echo "==> oxen-server running (pid $SERVER_PID)."
 
 # ---------- 6. Run tests ----------
-echo "==> Running tests with 'cargo nextest run $@' ..."
+echo "==> Running tests with 'cargo nextest run $*' ..."
 cargo nextest run "$@"
 
 # cleanup handled via the trapped cleanup function

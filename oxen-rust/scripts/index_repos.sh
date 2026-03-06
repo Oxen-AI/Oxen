@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 ulimit -n 10240
 
 IN_FILE=$1
@@ -15,17 +17,18 @@ then
   exit 1
 fi
 
-while read repo; do
-  if [ -d $repo ]
+while read -r repo; do
+  if [ -d "$repo" ]
   then
     echo "Repo $repo already exists."
   else
     echo "Cloning $repo...."
 
-    oxen clone https://staging.hub.oxen.ai/ox/$repo --all
-    cd $repo
-    oxen config --set-remote origin https://$SYNC_SERVER/ox/$repo
-    oxen push origin main
-    cd ..
+    oxen clone "https://staging.hub.oxen.ai/ox/$repo" --all
+    (
+      cd "$repo" || exit
+      oxen config --set-remote origin "https://$SYNC_SERVER/ox/$repo"
+      oxen push origin main
+    )
   fi
-done < $IN_FILE
+done < "$IN_FILE"

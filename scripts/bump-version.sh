@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Version bumping script to update version across Rust and Python codebases
 # Usage:
 #   ./scripts/bump-version.sh <version>  - Set specific version
@@ -11,7 +11,7 @@ set -e
 
 # Get current version from the main Cargo.toml
 get_current_version() {
-    echo $(cd oxen-rust/src/lib && cargo pkgid | cut -f2 -d@)
+    (cd oxen-rust/src/lib && cargo pkgid | cut -f2 -d@)
 }
 
 # Parse and validate semver format
@@ -95,26 +95,22 @@ echo "" >&2
 
 # Update the workspace Cargo.toml file
 echo "Updating workspace Cargo.toml file..." >&2
-for file in oxen-rust/Cargo.toml ; do
-  # Only update the [workspace.package] version line, not dependency versions
-  if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
-  else
-    sed -i '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
-  fi
-  echo "  ✓ $file" >&2
-done
+# Only update the [workspace.package] version line, not dependency versions
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-rust/Cargo.toml
+else
+  sed -i '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-rust/Cargo.toml
+fi
+echo "  ✓ oxen-rust/Cargo.toml" >&2
 
 # Update the readme
 echo "Updating the rust readme..." >&2
-for file in oxen-rust/README.md ; do
-  if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' 's/server:.* /server:'"$VERSION"' /' "$file"
-  else
-    sed -i 's/server:.* /server:'"$VERSION"' /' "$file"
-  fi
-  echo "  ✓ $file" >&2
-done
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' 's/server:.* /server:'"$VERSION"' /' oxen-rust/README.md
+else
+  sed -i 's/server:.* /server:'"$VERSION"' /' oxen-rust/README.md
+fi
+echo "  ✓ oxen-rust/README.md" >&2
 
 # Update pyproject.toml
 echo "Updating pyproject.toml..." >&2

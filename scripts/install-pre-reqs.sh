@@ -28,7 +28,7 @@ TOOL_VERSIONS_FILE="$REPO_ROOT/tool-versions.env"
 if [ ! -f "$TOOL_VERSIONS_FILE" ]; then
     echo "ERROR: $TOOL_VERSIONS_FILE not found"; exit 1
 fi
-# shellcheck source=../tool-versions.env
+# shellcheck disable=SC1090,SC1091
 . "$TOOL_VERSIONS_FILE"
 
 OS="$(uname -s)"
