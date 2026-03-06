@@ -127,7 +127,7 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 /// Unstage files
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/restore",
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes",
     description = "Unstage files from a workspace. Accepts both files and directories.",
     tag = "Workspace Files",
     params(
