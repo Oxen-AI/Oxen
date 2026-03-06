@@ -1162,6 +1162,13 @@ mod tests {
             // feature_only.txt should exist on feature branch
             assert!(new_file.exists());
 
+            // Delete a different (untracked) file before switching branches
+            let untracked_file = repo.path.join("untracked.txt");
+            util::fs::write_to_path(&untracked_file, "I will be deleted")?;
+            assert!(untracked_file.exists());
+            std::fs::remove_file(&untracked_file)?;
+            assert!(!untracked_file.exists());
+
             // Checkout main — feature_only.txt should be removed
             repositories::checkout(&repo, &main_branch.name).await?;
             assert!(
@@ -1238,7 +1245,7 @@ mod tests {
 
             let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Feature branch: common.txt + extra.txt + subdir/nested.txt
+            // Feature branch: common.txt + extra.txt + subdir/nested.txt + datadir/a.txt + datadir/b.txt
             let branch_name = "feature/extras";
             repositories::branches::create_checkout(&repo, branch_name)?;
             let extra_file = repo.path.join("extra.txt");
@@ -1247,10 +1254,16 @@ mod tests {
             std::fs::create_dir_all(&subdir)?;
             let nested_file = subdir.join("nested.txt");
             util::fs::write_to_path(&nested_file, "nested content")?;
+            let datadir = repo.path.join("datadir");
+            std::fs::create_dir_all(&datadir)?;
+            let data_a = datadir.join("a.txt");
+            let data_b = datadir.join("b.txt");
+            util::fs::write_to_path(&data_a, "data a")?;
+            util::fs::write_to_path(&data_b, "data b")?;
             repositories::add(&repo, &repo.path).await?;
             repositories::commit(&repo, "Add extra files")?;
 
-            // Checkout main — extra files should be removed
+            // Checkout main — extra files and directories should be removed
             repositories::checkout(&repo, &main_branch.name).await?;
             assert!(common_file.exists(), "common.txt should exist on main");
             assert!(!extra_file.exists(), "extra.txt should NOT exist on main");
@@ -1258,8 +1271,9 @@ mod tests {
                 !nested_file.exists(),
                 "subdir/nested.txt should NOT exist on main"
             );
+            assert!(!datadir.exists(), "datadir/ should NOT exist on main");
 
-            // Checkout feature again — all files should come back
+            // Checkout feature again — all files and directories should come back
             repositories::checkout(&repo, branch_name).await?;
             assert!(common_file.exists(), "common.txt should exist on feature");
             assert!(
@@ -1269,6 +1283,18 @@ mod tests {
             assert!(
                 nested_file.exists(),
                 "subdir/nested.txt should be restored on feature"
+            );
+            assert!(
+                datadir.is_dir(),
+                "datadir/ should be restored as a directory on feature"
+            );
+            assert!(
+                data_a.exists(),
+                "datadir/a.txt should be restored on feature"
+            );
+            assert!(
+                data_b.exists(),
+                "datadir/b.txt should be restored on feature"
             );
 
             // And back to main once more
@@ -1280,6 +1306,10 @@ mod tests {
             assert!(
                 !nested_file.exists(),
                 "subdir/nested.txt should be removed again on main"
+            );
+            assert!(
+                !datadir.exists(),
+                "datadir/ should be removed again on main"
             );
 
             Ok(())
@@ -1338,6 +1368,35 @@ mod tests {
                 "new_feature.txt should exist on feature branch"
             );
 
+            // Now test re-checking out the same branch after uncommitted deletion.
+            // Delete the models directory again (uncommitted) while on feature branch.
+            std::fs::remove_dir_all(&dir)?;
+            assert!(!dir.exists(), "models/ should be deleted");
+
+            // Re-checkout the same branch is a no-op ("Already on branch"),
+            // so the uncommitted deletion is preserved.
+            repositories::checkout(&repo, branch_name).await?;
+            assert!(
+                !dir.exists(),
+                "models/ should remain deleted — same-branch checkout is a no-op"
+            );
+
+            // But checking out main and back to feature should restore it
+            repositories::checkout(&repo, &main_branch.name).await?;
+            repositories::checkout(&repo, branch_name).await?;
+            assert!(
+                dir.exists(),
+                "models/ directory should be restored after round-trip checkout"
+            );
+            assert!(
+                model_file.exists(),
+                "models/model.bin should be restored after round-trip checkout"
+            );
+            assert!(
+                config_file.exists(),
+                "models/config.json should be restored after round-trip checkout"
+            );
+
             Ok(())
         })
         .await
@@ -1347,8 +1406,8 @@ mod tests {
     // (same hash) as a different file on the target branch, checkout should
     // still remove it if it doesn't exist on the target branch.
     #[tokio::test]
-    async fn test_checkout_removes_duplicate_content_file_at_different_path(
-    ) -> Result<(), OxenError> {
+    async fn test_checkout_removes_duplicate_content_file_at_different_path()
+    -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Main branch: file1.txt with some content
             let file1 = repo.path.join("file1.txt");
@@ -1396,8 +1455,8 @@ mod tests {
     // common_nodes, and the code returns Ok(()) — silently skipping the
     // entire subtree restoration.
     #[tokio::test]
-    async fn test_checkout_restores_directory_when_file_exists_at_same_path(
-    ) -> Result<(), OxenError> {
+    async fn test_checkout_restores_directory_when_file_exists_at_same_path()
+    -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // -- main branch: "data/" is a directory with two files --
             let dir = repo.path.join("data");
