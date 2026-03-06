@@ -71,6 +71,7 @@ wait_for_server() {
 
 if ! wait_for_server || ! kill -0 "$SERVER_PID" 2>/dev/null; then
   echo "ERROR: oxen-server failed to start."
+	exit 1
 fi
 echo "==> oxen-server running (pid $SERVER_PID)."
 
