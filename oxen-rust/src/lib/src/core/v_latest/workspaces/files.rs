@@ -162,7 +162,7 @@ pub async fn remove_files_from_staged_db(
     let mut err_files = vec![];
 
     for path in paths {
-        match delete(workspace, &path) {
+        match unstage(workspace, &path) {
             Ok(_) => {}
             Err(e) => {
                 log::debug!("Error removing file path {path:?}: {e:?}");
@@ -174,7 +174,7 @@ pub async fn remove_files_from_staged_db(
     Ok(err_files)
 }
 
-pub fn delete(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     let workspace_repo = &workspace.workspace_repo;
     let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
     with_staged_db_manager(workspace_repo, |staged_db_manager| {

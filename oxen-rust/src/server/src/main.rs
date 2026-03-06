@@ -131,13 +131,14 @@ const DEFAULT_OXEN_CLIENT_REQUEST_TIMEOUT_SECS: u64 = 600;
         crate::controllers::workspaces::delete,
         crate::controllers::workspaces::mergeability,
         crate::controllers::workspaces::commit,
-        // Files (Workspace)
+        // Workspaces - changes
+        crate::controllers::workspaces::changes::unstage,
+        crate::controllers::workspaces::changes::unstage_many,
+        // Workspaces - files
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
-        crate::controllers::workspaces::files::delete,
         crate::controllers::workspaces::files::rm_files,
-        crate::controllers::workspaces::files::rm_files_from_staged,
         // Branches
         crate::controllers::branches::index,
         crate::controllers::branches::show,
