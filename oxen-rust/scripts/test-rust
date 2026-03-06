@@ -103,7 +103,7 @@ fi
 echo "==> oxen-server running on port ${OXEN_PORT} (pid $SERVER_PID)."
 
 # ---------- 6. Run tests ----------
-echo "==> Running tests with 'cargo nextest run $@' ..."
+echo "==> Running tests with 'OXEN_TEST_HOST=${OXEN_TEST_HOST} cargo nextest run $@' ..."
 cargo nextest run "$@"
 
 # cleanup handled via the trapped cleanup function
