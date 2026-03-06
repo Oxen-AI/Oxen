@@ -63,7 +63,7 @@ SERVER_PID=$!
 # Give the server a moment to start
 wait_for_server() {
   for i in $(seq 1 30); do
-    if curl -s -o /dev/null --fail http://localhost:3001/api/health 2>/dev/null; then
+    if curl -s -o /dev/null --fail http://localhost:3000/api/health 2>/dev/null; then
       return 0
     fi
     sleep 0.5
@@ -73,6 +73,7 @@ wait_for_server() {
 
 if ! wait_for_server || ! kill -0 "$SERVER_PID" 2>/dev/null; then
   echo "ERROR: oxen-server failed to start."
+  exit 1
 fi
 echo "==> oxen-server running (pid $SERVER_PID)."
 
