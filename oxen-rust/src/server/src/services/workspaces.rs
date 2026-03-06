@@ -25,8 +25,12 @@ pub fn workspace() -> Scope {
                     web::get().to(controllers::workspaces::changes::list),
                 )
                 .route(
+                    "/changes",
+                    web::delete().to(controllers::workspaces::changes::unstage_many),
+                )
+                .route(
                     "/changes/{path:.*}",
-                    web::delete().to(controllers::workspaces::files::delete),
+                    web::delete().to(controllers::workspaces::changes::unstage),
                 )
                 .route(
                     "/versions/{directory:.*}",
@@ -37,10 +41,10 @@ pub fn workspace() -> Scope {
                     "/versions",
                     web::delete().to(controllers::workspaces::files::rm_files),
                 )
-                // TODO: consolidate with files::delete
+                // DEPRECATED: use DELETE /changes instead
                 .route(
                     "/staged",
-                    web::delete().to(controllers::workspaces::files::rm_files_from_staged),
+                    web::delete().to(controllers::workspaces::changes::unstage_many),
                 )
                 .route(
                     "/files/{path:.*}",
@@ -61,7 +65,7 @@ pub fn workspace() -> Scope {
                 // DEPRECATED: use DELETE /changes/{path:.*} instead
                 .route(
                     "/files/{path:.*}",
-                    web::delete().to(controllers::workspaces::files::delete),
+                    web::delete().to(controllers::workspaces::changes::unstage),
                 )
                 .route(
                     "/validate",
