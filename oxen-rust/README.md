@@ -268,11 +268,13 @@ To run with all debug output and run a specific test
 env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust --no-capture test_command_push_clone_pull_push
 ```
 
-To set a different test host you can set the `OXEN_TEST_HOST` environment variable
+To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
 ```bash
-env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust
+env OXEN_PORT=4000 scripts/test-rust
 ```
+
+The script will select a random free port in [3000, 6000] if `OXEN_PORT` is unset.
 
 # Oxen Server
 
