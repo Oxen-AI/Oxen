@@ -39,7 +39,6 @@ def test_workspace_add_dir(celeba_remote_repo_one_image_pushed, shared_datadir):
 
 
 def test_workspace_add_many(celeba_remote_repo_one_image_pushed, shared_datadir):
-
     _, remote_repo = celeba_remote_repo_one_image_pushed
     workspace = Workspace(remote_repo, "main", "test-workspace")
 
