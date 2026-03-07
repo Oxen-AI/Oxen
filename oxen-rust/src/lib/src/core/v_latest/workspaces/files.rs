@@ -1,4 +1,4 @@
-use actix_web::{Error, web};
+use bytes::BytesMut;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -309,7 +309,7 @@ async fn fetch_file(
 
     // handle download stream
     let mut stream = response.bytes_stream();
-    let mut buffer = web::BytesMut::new();
+    let mut buffer = BytesMut::new();
     let mut save_path = PathBuf::new();
     let mut bytes_downloaded: u64 = 0;
 
@@ -405,7 +405,7 @@ pub async fn save_stream(
     workspace: &Workspace,
     filepath: &PathBuf,
     chunk: Vec<u8>,
-) -> Result<PathBuf, Error> {
+) -> Result<PathBuf, OxenError> {
     // This function append and save file chunk
     log::debug!(
         "liboxen::workspace::files::save_stream writing {} bytes to file",
@@ -430,17 +430,20 @@ pub async fn save_stream(
 
     let full_dir_cpy = full_dir.clone();
 
-    let mut file = web::block(move || {
+    let mut file = tokio::task::spawn_blocking(move || {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(full_dir_cpy)
     })
-    .await??;
+    .await
+    .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
 
     log::debug!("liboxen::workspace::files::save_stream is writing to file: {file:?}");
 
-    web::block(move || file.write_all(&chunk).map(|_| file)).await??;
+    tokio::task::spawn_blocking(move || file.write_all(&chunk).map(|_| file))
+        .await
+        .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
 
     Ok(full_dir)
 }

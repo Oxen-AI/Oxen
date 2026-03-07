@@ -121,7 +121,7 @@ tar = "0.4.44"
 tempfile = "3.8.0"
 thiserror = "2.0.18"
 thumbnails = "0.2.1"
-time = { version = "0.3.28", features = ["serde"] }
+time = { version = "0.3.28", features = ["serde", "formatting"] }
 tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-console = "0.1.13"
 tokio-stream = "0.1.17"
