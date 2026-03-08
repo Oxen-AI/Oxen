@@ -5,37 +5,63 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
-/// Initialize tracing with JSON file output and the `tracing-log` bridge.
+/// Initialize tracing with the `tracing-log` bridge.
 ///
-/// Captures all existing `log::` calls as tracing events via `tracing_log::LogTracer`.
-/// Writes JSON-formatted logs to rolling daily files under `~/.oxen/logs/`.
-/// Filter level is controlled by the `OXEN_LOG` env var (default: `info`).
+/// **Stderr** (always): human-readable formatted output, like `env_logger`.
 ///
-/// Returns a `WorkerGuard` that **must** be held in a named binding for the
-/// lifetime of the application — dropping it flushes the non-blocking writer.
-pub fn init_tracing(app_name: &str) -> WorkerGuard {
+/// **File** (opt-in via `OXEN_LOG_FILE`): JSON-per-line output to a rolling
+/// daily log file. The env var accepts:
+///   - A directory path — rolling files are written there (e.g. `/var/log/oxen`)
+///   - `"1"` or `"true"` — uses the default directory `~/.oxen/logs/`
+///
+/// Filter level is controlled by `OXEN_LOG` (default: `info`). The filter
+/// applies to both stderr and file output.
+///
+/// Returns `Some(WorkerGuard)` when file logging is active. The caller
+/// **must** hold the guard in a named binding for the lifetime of the
+/// application — dropping it flushes the non-blocking writer. When file
+/// logging is not enabled, returns `None`.
+pub fn init_tracing(app_name: &str) -> Option<WorkerGuard> {
     // Bridge: forward all `log::` calls into tracing
     tracing_log::LogTracer::init().ok();
 
-    let log_dir = log_directory();
-    std::fs::create_dir_all(&log_dir).ok();
-
-    let file_appender = tracing_appender::rolling::daily(&log_dir, app_name);
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-
     let env_filter = EnvFilter::try_from_env("OXEN_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // Optionally set up JSON file logging
+    let log_file_setting = std::env::var("OXEN_LOG_FILE").ok();
+    let (json_layer, guard) = if let Some(ref value) = log_file_setting {
+        let log_dir = if value == "1" || value.eq_ignore_ascii_case("true") {
+            log_directory()
+        } else {
+            PathBuf::from(value)
+        };
+
+        std::fs::create_dir_all(&log_dir).ok();
+        let file_appender = tracing_appender::rolling::daily(&log_dir, app_name);
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+        let layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(non_blocking)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_file(true)
+            .with_line_number(true);
+
+        (Some(layer), Some(guard))
+    } else {
+        (None, None)
+    };
+
+    // Always: human-readable stderr output
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(true);
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(non_blocking)
-                .with_target(true)
-                .with_thread_ids(true)
-                .with_file(true)
-                .with_line_number(true),
-        )
+        .with(json_layer)
+        .with(stderr_layer)
         .init();
 
     guard
