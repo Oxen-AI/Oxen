@@ -45,6 +45,7 @@ impl RunCmd for LogCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_log_total").increment(1);
         // Look up from the current dir for .oxen directory
         let repo = LocalRepository::from_current_dir()?;
 

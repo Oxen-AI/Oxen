@@ -56,6 +56,7 @@ impl RunCmd for MigrateCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_migrate_total").increment(1);
         // Parse Args
         let migrations = migrations();
 

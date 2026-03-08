@@ -38,6 +38,7 @@ impl RunCmd for InfoCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_info_total").increment(1);
         // Parse args
         let path = args.get_one::<String>("path").map(PathBuf::from);
         let revision = args.get_one::<String>("revision").map(String::from);

@@ -27,14 +27,18 @@ use crate::opts::StorageOpts;
 /// # Ok(())
 /// # }
 /// ```
+#[tracing::instrument(skip(path))]
 pub fn init(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
+    metrics::counter!("oxen_repo_init_init_total").increment(1);
     init_with_version(path, MIN_OXEN_VERSION)
 }
 
+#[tracing::instrument(skip(path), fields(version = %version))]
 pub fn init_with_version(
     path: impl AsRef<Path>,
     version: MinOxenVersion,
 ) -> Result<LocalRepository, OxenError> {
+    metrics::counter!("oxen_repo_init_init_with_version_total").increment(1);
     let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -42,18 +46,22 @@ pub fn init_with_version(
     }
 }
 
+#[tracing::instrument(skip(path, storage_opts))]
 pub async fn init_with_storage_opts(
     path: impl AsRef<Path>,
     storage_opts: Option<StorageOpts>,
 ) -> Result<LocalRepository, OxenError> {
+    metrics::counter!("oxen_repo_init_init_with_storage_opts_total").increment(1);
     init_with_version_and_storage_opts(path, MIN_OXEN_VERSION, storage_opts).await
 }
 
+#[tracing::instrument(skip(path, storage_opts), fields(version = %version))]
 pub async fn init_with_version_and_storage_opts(
     path: impl AsRef<Path>,
     version: MinOxenVersion,
     storage_opts: Option<StorageOpts>,
 ) -> Result<LocalRepository, OxenError> {
+    metrics::counter!("oxen_repo_init_init_with_version_and_storage_opts_total").increment(1);
     let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),

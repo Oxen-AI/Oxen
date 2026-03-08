@@ -35,6 +35,7 @@ impl RunCmd for LoadCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_load_total").increment(1);
         // Match on both SRC_PATH and DEST_PATH
         let src_path_str = args.get_one::<String>("SRC_PATH").expect("required");
         let dest_path_str = args.get_one::<String>("DEST_PATH").expect("required");

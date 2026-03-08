@@ -39,6 +39,7 @@ impl RunCmd for AddCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_add_total").increment(1);
         // Parse Args
         let paths: Vec<PathBuf> = args
             .get_many::<String>("files")

@@ -85,6 +85,7 @@ impl RunCmd for CloneCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_clone_total").increment(1);
         // Parse Args
         let url = args.get_one::<String>("URL").expect("required");
         let all = args.get_flag("all");

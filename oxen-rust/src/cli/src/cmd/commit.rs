@@ -41,6 +41,7 @@ impl RunCmd for CommitCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_commit_total").increment(1);
         let message = match args.get_one::<String>("message") {
             Some(msg) => msg.clone(),
             None => get_message_from_editor(UserConfig::get().ok().as_ref())?,

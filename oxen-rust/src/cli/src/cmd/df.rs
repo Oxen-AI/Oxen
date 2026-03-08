@@ -240,6 +240,7 @@ impl RunCmd for DFCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_df_total").increment(1);
         // Parse Args
         let mut opts = DFCmd::parse_df_args(args);
         let Some(path) = args.get_one::<String>("PATH") else {

@@ -7,6 +7,7 @@ use liboxen::view::StatusMessage;
 use serde::Serialize;
 
 /// Check Oxen server status
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/version",
@@ -17,11 +18,14 @@ use serde::Serialize;
     )
 )]
 pub async fn index(_req: HttpRequest) -> HttpResponse {
+    metrics::counter!("oxen_server_oxen_version_index_total").increment(1);
     let response = StatusMessage::resource_found();
     HttpResponse::Ok().json(response)
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn min_version(_req: HttpRequest) -> HttpResponse {
+    metrics::counter!("oxen_server_oxen_version_min_version_total").increment(1);
     let response = OxenVersionResponse {
         status: StatusMessage::resource_found(),
         version: MIN_OXEN_VERSION.to_string(),
@@ -36,7 +40,9 @@ struct ResolveResponse {
     pub repository_api_url: String,
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn resolve(req: HttpRequest) -> HttpResponse {
+    metrics::counter!("oxen_server_oxen_version_resolve_total").increment(1);
     let app_data = app_data(&req).unwrap();
 
     let namespace: Option<&str> = req.match_info().get("namespace");

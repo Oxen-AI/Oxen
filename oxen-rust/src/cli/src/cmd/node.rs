@@ -56,6 +56,7 @@ impl RunCmd for NodeCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_node_total").increment(1);
         // Find the repository
         let repository = LocalRepository::from_current_dir()?;
 

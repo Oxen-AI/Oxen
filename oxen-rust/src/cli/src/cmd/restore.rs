@@ -51,6 +51,7 @@ impl RunCmd for RestoreCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_restore_total").increment(1);
         let repository = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repository)?;
         let paths: Vec<PathBuf> = args

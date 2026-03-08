@@ -15,7 +15,9 @@ use crate::view::workspaces::{ListWorkspaceResponseView, WorkspaceResponseWithSt
 use crate::view::workspaces::{NewWorkspace, WorkspaceResponse};
 use crate::view::{StatusMessage, WorkspaceResponseView};
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn list(remote_repo: &RemoteRepository) -> Result<Vec<WorkspaceResponse>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_list_total").increment(1);
     let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
@@ -30,10 +32,12 @@ pub async fn list(remote_repo: &RemoteRepository) -> Result<Vec<WorkspaceRespons
     }
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id))]
 pub async fn get(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
 ) -> Result<Option<WorkspaceResponse>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_get_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}"))?;
     let client = client::new_for_url(&url)?;
@@ -48,10 +52,12 @@ pub async fn get(
     Ok(workspace)
 }
 
+#[tracing::instrument(skip(remote_repo, name))]
 pub async fn get_by_name(
     remote_repo: &RemoteRepository,
     name: impl AsRef<str>,
 ) -> Result<Option<WorkspaceResponse>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_get_by_name_total").increment(1);
     let name = name.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, &format!("/workspaces?name={name}"))?;
     let client = client::new_for_url(&url)?;
@@ -78,20 +84,24 @@ pub async fn get_by_name(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, branch_name, workspace_id))]
 pub async fn create(
     remote_repo: &RemoteRepository,
     branch_name: impl AsRef<str>,
     workspace_id: impl AsRef<str>,
 ) -> Result<WorkspaceResponseWithStatus, OxenError> {
+    metrics::counter!("oxen_client_workspaces_create_total").increment(1);
     create_with_path(remote_repo, branch_name, workspace_id, Path::new("/"), None).await
 }
 
+#[tracing::instrument(skip(remote_repo, branch_name, workspace_id, workspace_name))]
 pub async fn create_with_name(
     remote_repo: &RemoteRepository,
     branch_name: impl AsRef<str>,
     workspace_id: impl AsRef<str>,
     workspace_name: impl AsRef<str>,
 ) -> Result<WorkspaceResponseWithStatus, OxenError> {
+    metrics::counter!("oxen_client_workspaces_create_with_name_total").increment(1);
     let workspace_name = workspace_name.as_ref().to_string();
     create_with_path(
         remote_repo,
@@ -103,6 +113,7 @@ pub async fn create_with_name(
     .await
 }
 
+#[tracing::instrument(skip(remote_repo, branch_name, workspace_id, path))]
 pub async fn create_with_path(
     remote_repo: &RemoteRepository,
     branch_name: impl AsRef<str>,
@@ -110,6 +121,7 @@ pub async fn create_with_path(
     path: impl AsRef<Path>,
     workspace_name: Option<String>,
 ) -> Result<WorkspaceResponseWithStatus, OxenError> {
+    metrics::counter!("oxen_client_workspaces_create_with_path_total").increment(1);
     let branch_name = branch_name.as_ref();
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
@@ -145,10 +157,12 @@ pub async fn create_with_path(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id))]
 pub async fn delete(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
 ) -> Result<WorkspaceResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_delete_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let url = api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}"))?;
     log::debug!("delete workspace {url}\n");
@@ -167,7 +181,9 @@ pub async fn delete(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn clear(remote_repo: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_clear_total").increment(1);
     let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
     log::debug!("clear workspaces {url}\n");
 

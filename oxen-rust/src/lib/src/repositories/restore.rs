@@ -46,7 +46,9 @@ use crate::opts::RestoreOpts;
 /// # Ok(())
 /// # }
 /// ```
+#[tracing::instrument(skip(repo, opts), fields(repo_path = %repo.path.display()))]
 pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_restore_restore_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::restore::restore(repo, opts).await,

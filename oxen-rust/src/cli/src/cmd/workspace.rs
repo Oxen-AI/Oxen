@@ -67,6 +67,7 @@ impl RunCmd for WorkspaceCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_workspace_total").increment(1);
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {

@@ -76,6 +76,7 @@ impl RunCmd for BranchCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_branch_total").increment(1);
         // Find the repository
         let repo = LocalRepository::from_current_dir()?;
 

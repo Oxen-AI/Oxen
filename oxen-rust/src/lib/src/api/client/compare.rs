@@ -14,6 +14,7 @@ use crate::view::{CompareEntriesResponse, JsonDataFrameViewResponse};
 use serde_json::json;
 
 // TODO this should probably be cpath
+#[tracing::instrument(skip(remote_repo, keys, compare, display))]
 #[allow(clippy::too_many_arguments)]
 pub async fn create_compare(
     remote_repo: &RemoteRepository,
@@ -26,6 +27,7 @@ pub async fn create_compare(
     compare: Vec<TabularCompareTargetBody>,
     display: Vec<TabularCompareTargetBody>,
 ) -> Result<CompareTabular, OxenError> {
+    metrics::counter!("oxen_client_compare_create_compare_total").increment(1);
     let req_body = TabularCompareBody {
         compare_id: compare_id.to_string(),
         left: TabularCompareResourceBody {
@@ -58,6 +60,7 @@ pub async fn create_compare(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, keys, compare, display))]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_compare(
     remote_repo: &RemoteRepository,
@@ -70,6 +73,7 @@ pub async fn update_compare(
     compare: Vec<TabularCompareTargetBody>,
     display: Vec<TabularCompareTargetBody>,
 ) -> Result<CompareTabular, OxenError> {
+    metrics::counter!("oxen_client_compare_update_compare_total").increment(1);
     let req_body = TabularCompareBody {
         compare_id: compare_id.to_string(),
         left: TabularCompareResourceBody {
@@ -106,10 +110,12 @@ pub async fn update_compare(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn get_derived_compare_df(
     remote_repo: &RemoteRepository,
     compare_id: &str,
 ) -> Result<JsonDataFrameView, OxenError> {
+    metrics::counter!("oxen_client_compare_get_derived_compare_df_total").increment(1);
     // TODO: Factor out this basehead - not actually using it but needs to sync w/ routes on server
     let uri = format!("/compare/data_frames/{compare_id}/diff/main..main");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -128,11 +134,13 @@ pub async fn get_derived_compare_df(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn commits(
     remote_repo: &RemoteRepository,
     base_commit_id: &MerkleHash,
     head_commit_id: &MerkleHash,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_compare_commits_total").increment(1);
     let base_commit_id = base_commit_id.to_string();
     let head_commit_id = head_commit_id.to_string();
     let uri = format!("/compare/commits/{base_commit_id}..{head_commit_id}");
@@ -150,11 +158,13 @@ pub async fn commits(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn dir_tree(
     remote_repo: &RemoteRepository,
     base_commit_id: &MerkleHash,
     head_commit_id: &MerkleHash,
 ) -> Result<Vec<DirDiffTreeSummary>, OxenError> {
+    metrics::counter!("oxen_client_compare_dir_tree_total").increment(1);
     let base_commit_id = base_commit_id.to_string();
     let head_commit_id = head_commit_id.to_string();
     let uri = format!("/compare/dir_tree/{base_commit_id}..{head_commit_id}");
@@ -172,11 +182,13 @@ pub async fn dir_tree(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn entries(
     remote_repo: &RemoteRepository,
     base_commit_id: &MerkleHash,
     head_commit_id: &MerkleHash,
 ) -> Result<CompareEntries, OxenError> {
+    metrics::counter!("oxen_client_compare_entries_total").increment(1);
     let base_commit_id = base_commit_id.to_string();
     let head_commit_id = head_commit_id.to_string();
     let uri = format!("/compare/entries/{base_commit_id}..{head_commit_id}");

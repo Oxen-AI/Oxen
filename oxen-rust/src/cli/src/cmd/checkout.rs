@@ -42,6 +42,7 @@ impl RunCmd for CheckoutCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_checkout_total").increment(1);
         // Find the repository
         let repo = LocalRepository::from_current_dir()?;
 

@@ -33,6 +33,7 @@ use utoipa::ToSchema;
 const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 /// Get version file metadata
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/versions/{version_id}/metadata",
@@ -49,6 +50,7 @@ const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
     )
 )]
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_metadata_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -72,7 +74,9 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 }
 
 // Clean corrupted version files for the remote repo
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_clean_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -88,6 +92,7 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
 // TODO: Refactor places that call /file/{resource:*} to use this new version store download endpoint
 /// Download version file
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/versions/{resource}",
@@ -113,6 +118,7 @@ pub async fn download(
     req: HttpRequest,
     query: web::Query<ImgResize>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_download_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -165,6 +171,7 @@ pub async fn download(
 }
 
 /// Batch download version files
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/versions/batch-download",
@@ -188,6 +195,7 @@ pub async fn batch_download(
     req: HttpRequest,
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_batch_download_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -476,6 +484,7 @@ pub struct UploadVersionFile {
 }
 
 /// Batch upload version files
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/versions",
@@ -501,6 +510,8 @@ pub async fn batch_upload(
     req: HttpRequest,
     payload: Multipart,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_batch_upload_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -509,6 +520,8 @@ pub async fn batch_upload(
     let err_files = save_multiparts(payload, &repo).await?;
     log::debug!("batch upload complete with err_files: {}", err_files.len());
 
+    metrics::histogram!("oxen_server_versions_batch_upload_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {
         status: StatusMessage::resource_created(),
         err_files,

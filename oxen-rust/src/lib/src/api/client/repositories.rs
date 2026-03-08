@@ -36,7 +36,9 @@ impl fmt::Display for ActionEventState {
 }
 
 /// Gets remote "origin" that is set on the local repo
+#[tracing::instrument(skip(repo))]
 pub async fn get_default_remote(repo: &LocalRepository) -> Result<RemoteRepository, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_default_remote_total").increment(1);
     let remote = repo
         .get_remote(DEFAULT_REMOTE_NAME)
         .ok_or(OxenError::remote_not_set(DEFAULT_REMOTE_NAME))?;
@@ -48,44 +50,54 @@ pub async fn get_default_remote(repo: &LocalRepository) -> Result<RemoteReposito
     Ok(remote_repo)
 }
 
+#[tracing::instrument(skip(repo))]
 pub async fn get_by_remote_repo(
     repo: &RemoteRepository,
 ) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_remote_repo_total").increment(1);
     get_by_remote(&repo.remote).await
 }
 
 /// Attempts to find a repo by name on the remote "origin". For example ox/CatDog
+#[tracing::instrument(skip(name))]
 pub async fn get_by_name_default(
     name: impl AsRef<str>,
 ) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_name_default_total").increment(1);
     get_by_name_host_and_remote(name, DEFAULT_HOST, DEFAULT_SCHEME, DEFAULT_REMOTE_NAME).await
 }
 
+#[tracing::instrument(skip(name, host, scheme))]
 pub async fn get_by_name_and_host(
     name: impl AsRef<str>,
     host: impl AsRef<str>,
     scheme: impl AsRef<str>,
 ) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_name_and_host_total").increment(1);
     get_by_name_host_and_remote(name, host, scheme, DEFAULT_REMOTE_NAME).await
 }
 
+#[tracing::instrument(skip(name, host, scheme))]
 pub async fn get_by_name_host_and_scheme(
     name: impl AsRef<str>,
     host: impl AsRef<str>,
     scheme: impl AsRef<str>,
 ) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_name_host_and_scheme_total").increment(1);
     let name = name.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme.as_ref());
     log::debug!("get_by_name_host_and_scheme({name}) remote url: {url}");
     get_by_url(&url).await
 }
 
+#[tracing::instrument(skip(name, host, scheme, remote))]
 pub async fn get_by_name_host_and_remote(
     name: impl AsRef<str>,
     host: impl AsRef<str>,
     scheme: impl AsRef<str>,
     remote: impl AsRef<str>,
 ) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_name_host_and_remote_total").increment(1);
     let name = name.as_ref();
     let scheme = scheme.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme);
@@ -97,12 +109,16 @@ pub async fn get_by_name_host_and_remote(
     get_by_remote(&remote).await
 }
 
+#[tracing::instrument(skip(repo))]
 pub async fn exists(repo: &RemoteRepository) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_client_repositories_exists_total").increment(1);
     let repo = get_by_remote_repo(repo).await?;
     Ok(repo.is_some())
 }
 
+#[tracing::instrument]
 pub async fn get_by_url(url: &str) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_url_total").increment(1);
     let remote = Remote {
         name: String::from(DEFAULT_REMOTE_NAME),
         url: url.to_string(),
@@ -110,7 +126,9 @@ pub async fn get_by_url(url: &str) -> Result<Option<RemoteRepository>, OxenError
     get_by_remote(&remote).await
 }
 
+#[tracing::instrument(skip(remote))]
 pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_by_remote_total").increment(1);
     let url = api::endpoint::url_from_remote(remote, "")?;
     log::debug!("get_by_remote url: {url}");
 
@@ -136,9 +154,11 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
     }
 }
 
+#[tracing::instrument(skip(remote))]
 pub async fn get_repo_data_by_remote(
     remote: &Remote,
 ) -> Result<Option<RepositoryDataTypesView>, OxenError> {
+    metrics::counter!("oxen_client_repositories_get_repo_data_by_remote_total").increment(1);
     log::debug!("api::client::repositories::get_repo_data_by_remote({remote:?})");
     let url = api::endpoint::url_from_remote(remote, "")?;
     log::debug!("api::client::repositories::get_repo_data_by_remote url: {url}");
@@ -174,7 +194,9 @@ pub async fn get_repo_data_by_remote(
     }
 }
 
+#[tracing::instrument(skip(repo))]
 pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> {
+    metrics::counter!("oxen_client_repositories_create_empty_total").increment(1);
     let namespace = repo.namespace.as_ref();
     let repo_name = repo.name.as_ref();
     let host = repo.host();
@@ -216,7 +238,9 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
     }
 }
 
+#[tracing::instrument(skip(repo_new))]
 pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
+    metrics::counter!("oxen_client_repositories_create_total").increment(1);
     let host = repo_new.host();
     let scheme = repo_new.scheme();
     let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
@@ -259,12 +283,14 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
     }
 }
 
+#[tracing::instrument(skip(repo_new, files))]
 pub async fn create_repo_with_files(
     repo_new: RepoNew,
     user_email: &str,
     user_name: &str,
     files: Vec<FileNew>,
 ) -> Result<RemoteRepository, OxenError> {
+    metrics::counter!("oxen_client_repositories_create_repo_with_files_total").increment(1);
     let host = repo_new.host();
     let scheme = repo_new.scheme();
     let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
@@ -320,10 +346,12 @@ pub async fn create_repo_with_files(
     }
 }
 
+#[tracing::instrument(skip(repository, repo_new))]
 pub async fn create_from_local(
     repository: &LocalRepository,
     mut repo_new: RepoNew,
 ) -> Result<RemoteRepository, OxenError> {
+    metrics::counter!("oxen_client_repositories_create_from_local_total").increment(1);
     let host = repo_new.host();
     let url = api::endpoint::url_from_host(&host, "");
     repo_new.root_commit = repositories::commits::root_commit_maybe(repository)?;
@@ -361,7 +389,9 @@ pub async fn create_from_local(
     }
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_repositories_delete_total").increment(1);
     let url = repository.api_url()?;
 
     let client = client::new_for_url(&url)?;
@@ -381,7 +411,9 @@ pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, Oxen
     }
 }
 
+#[tracing::instrument]
 pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_repositories_delete_from_url_total").increment(1);
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.delete(&url).send().await {
         let body = client::parse_json_body(&url, res).await?;
@@ -399,10 +431,12 @@ pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
     }
 }
 
+#[tracing::instrument(skip(repository), fields(to_namespace))]
 pub async fn transfer_namespace(
     repository: &RemoteRepository,
     to_namespace: &str,
 ) -> Result<RemoteRepository, OxenError> {
+    metrics::counter!("oxen_client_repositories_transfer_namespace_total").increment(1);
     let url = api::endpoint::url_from_repo(repository, "/transfer")?;
     let params = serde_json::to_string(&NamespaceView {
         namespace: to_namespace.to_string(),
@@ -447,61 +481,83 @@ pub async fn transfer_namespace(
     }
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn pre_clone(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_pre_clone_total").increment(1);
     let action_name = CLONE;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn post_clone(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_post_clone_total").increment(1);
     let action_name = CLONE;
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn pre_upload(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_pre_upload_total").increment(1);
     let action_name = UPLOAD;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn post_upload(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_post_upload_total").increment(1);
     let action_name = UPLOAD;
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn pre_download(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_pre_download_total").increment(1);
     let action_name = DOWNLOAD;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn post_download(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_post_download_total").increment(1);
     let action_name = DOWNLOAD;
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn pre_pull(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_pre_pull_total").increment(1);
     let action_name = PULL;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn post_pull(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_post_pull_total").increment(1);
     let action_name = PULL;
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn pre_fetch(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_pre_fetch_total").increment(1);
     let action_name = FETCH;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn post_fetch(repository: &RemoteRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_post_fetch_total").increment(1);
     let action_name = FETCH;
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
+#[tracing::instrument(skip(repository, branch))]
 pub async fn pre_push(
     repository: &RemoteRepository,
     branch: &Branch,
     commit_id: &str,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_pre_push_total").increment(1);
     let action_name = PUSH;
     let body = json!({
         "branch": {
@@ -518,11 +574,13 @@ pub async fn pre_push(
     .await
 }
 
+#[tracing::instrument(skip(repository, branch))]
 pub async fn post_push(
     repository: &RemoteRepository,
     branch: &Branch,
     commit_id: &str,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_repositories_post_push_total").increment(1);
     let action_name = PUSH;
     let body = json!({
         "branch": {

@@ -32,6 +32,7 @@ impl RunCmd for FetchCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_fetch_total").increment(1);
         let repository = LocalRepository::from_current_dir()?;
         let (scheme, host) = get_scheme_and_host_from_repo(&repository)?;
 

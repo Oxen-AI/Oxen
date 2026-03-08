@@ -12,10 +12,12 @@ use actix_web::{web, HttpRequest, HttpResponse};
 
 use std::path::PathBuf;
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn list_root(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_list_root_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -49,10 +51,12 @@ pub async fn list_root(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn list(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_list_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -86,7 +90,9 @@ pub async fn list(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_delete_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

@@ -46,6 +46,7 @@ impl RunCmd for RemoteModeCmd {
     // Note: Currently, you can't run `oxen remote-mode status` or other subcommand from the command line
     // They're only accessible via their aliases in remote-mode repos
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_remote_mode_total").increment(1);
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {

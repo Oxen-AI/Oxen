@@ -63,6 +63,7 @@ impl RunCmd for StatusCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_status_total").increment(1);
         let skip = args
             .get_one::<String>("skip")
             .expect("Must supply skip")

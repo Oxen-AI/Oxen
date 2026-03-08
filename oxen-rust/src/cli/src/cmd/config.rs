@@ -99,6 +99,7 @@ impl RunCmd for ConfigCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_config_total").increment(1);
         // Non-Repo Dependent
         if let Some(name) = args.get_one::<String>("name") {
             match self.set_user_name(name) {

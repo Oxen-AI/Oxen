@@ -59,6 +59,7 @@ impl RunCmd for TreeCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_tree_total").increment(1);
         // Parse Args
         let depth = args
             .get_one::<String>("depth")

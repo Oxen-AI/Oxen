@@ -10,12 +10,14 @@ use crate::view::json_data_frame_view::JsonDataFrameColumnResponse;
 
 use crate::model::RemoteRepository;
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn create(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     data: String,
 ) -> Result<DataFrame, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_columns_create_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -53,12 +55,14 @@ pub async fn create(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn delete(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     column_name: &str,
 ) -> Result<DataFrame, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_columns_delete_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -93,6 +97,7 @@ pub async fn delete(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn update(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -100,6 +105,7 @@ pub async fn update(
     column_name: &str,
     data: String,
 ) -> Result<JsonDataFrameColumnResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_columns_update_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -139,6 +145,7 @@ pub async fn update(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, metadata))]
 pub async fn add_column_metadata(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -146,6 +153,8 @@ pub async fn add_column_metadata(
     column_name: &str,
     metadata: serde_json::Value,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_columns_add_column_metadata_total")
+        .increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"

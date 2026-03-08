@@ -26,10 +26,12 @@ pub struct ChunkQuery {
 }
 
 // Deprecated. Only kept to support older clients before v0.37.2
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn download_data_from_version_paths(
     req: HttpRequest,
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_entries_download_data_from_version_paths_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -95,10 +97,12 @@ pub async fn download_data_from_version_paths(
 }
 
 /// Download a chunk of a larger file
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn download_chunk(
     req: HttpRequest,
     query: web::Query<ChunkQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_entries_download_chunk_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -127,10 +131,12 @@ pub async fn download_chunk(
     Ok(HttpResponse::Ok().body(chunk))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn list_tabular(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_entries_list_tabular_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

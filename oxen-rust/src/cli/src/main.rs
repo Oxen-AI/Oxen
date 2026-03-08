@@ -43,7 +43,8 @@ fn main() -> ExitCode {
 }
 
 async fn async_main() -> ExitCode {
-    util::logging::init_logging();
+    let _tracing_guard = util::telemetry::init_tracing("oxen");
+    util::telemetry::init_metrics_noop();
 
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![
         Box::new(cmd::AddCmd),

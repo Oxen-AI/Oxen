@@ -17,7 +17,9 @@ use liboxen::view::{
     JsonDataFrameView, JsonDataFrameViews, StatusMessage, StatusMessageDescription,
 };
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rows_create_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -85,7 +87,9 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rows_get_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -128,7 +132,9 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rows_update_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -187,7 +193,9 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     }))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rows_delete_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -224,7 +232,9 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     }))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rows_restore_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -267,7 +277,9 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     }))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rows_batch_update_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;

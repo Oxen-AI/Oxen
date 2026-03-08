@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use utoipa;
 
 /// List repositories
+#[tracing::instrument(skip_all, fields(namespace))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}",
@@ -42,6 +43,7 @@ use utoipa;
     )
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_index_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
 
@@ -63,6 +65,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// Get repository details
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}",
@@ -78,6 +81,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     )
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_show_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -120,6 +124,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 }
 
 /// Get repository stats
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/stats",
@@ -135,6 +140,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     )
 )]
 pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_stats_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace: Option<&str> = req.match_info().get("namespace");
@@ -179,6 +185,7 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// Update repository size
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/size",
@@ -194,6 +201,7 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     )
 )]
 pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_update_size_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -205,6 +213,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
 }
 
 /// Get repository size
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/size",
@@ -220,6 +229,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     )
 )]
 pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_get_size_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -230,6 +240,7 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 }
 
 /// Create repository
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     post,
     path = "/api/repos",
@@ -259,6 +270,7 @@ pub async fn create(
     req: HttpRequest,
     mut payload: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_create_total").increment(1);
     let app_data = app_data(&req)?;
 
     if let Some(content_type) = req.headers().get("Content-Type") {
@@ -491,6 +503,7 @@ async fn handle_multipart_creation(
 }
 
 /// Delete repository
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}",
@@ -506,6 +519,7 @@ async fn handle_multipart_creation(
     )
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_delete_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -524,6 +538,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 }
 
 /// Transfer repository namespace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     patch,
     path = "/api/repos/{namespace}/{repo_name}/transfer",
@@ -550,6 +565,7 @@ pub async fn transfer_namespace(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_repositories_transfer_namespace_total").increment(1);
     let app_data = app_data(&req)?;
     // Parse body
     let from_namespace = path_param(&req, "namespace")?;

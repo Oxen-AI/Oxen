@@ -9,12 +9,14 @@ use crate::view::json_data_frame_view::{JsonDataFrameRowResponse, VecBatchUpdate
 
 use crate::model::RemoteRepository;
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn get(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     row_id: &str,
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rows_get_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -40,6 +42,7 @@ pub async fn get(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn update(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -47,6 +50,7 @@ pub async fn update(
     row_id: &str,
     data: String,
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rows_update_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -76,12 +80,14 @@ pub async fn update(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn delete(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     row_id: &str,
 ) -> Result<DataFrame, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rows_delete_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -107,12 +113,14 @@ pub async fn delete(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn add(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     data: String,
 ) -> Result<(DataFrame, Option<String>), OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rows_add_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -150,12 +158,14 @@ pub async fn add(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn restore_row(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     row_id: &str,
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rows_restore_row_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -192,12 +202,14 @@ pub async fn restore_row(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn batch_update(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     data: String,
 ) -> Result<VecBatchUpdateResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rows_batch_update_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"

@@ -57,6 +57,7 @@ impl RunCmd for PushCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_push_total").increment(1);
         // Parse args
         let remote = args
             .get_one::<String>("REMOTE")

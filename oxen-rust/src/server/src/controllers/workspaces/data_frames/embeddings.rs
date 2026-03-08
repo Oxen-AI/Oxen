@@ -14,7 +14,9 @@ use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
 use liboxen::view::{JsonDataFrameViews, StatusMessage, StatusMessageDescription};
 
 /// Get the embedding status for a data frame
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_embeddings_get_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -39,7 +41,9 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_embeddings_neighbors_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -142,7 +146,9 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
 }
 
 /// Index a column to enable nearest neighbors search
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn post(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_embeddings_post_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;

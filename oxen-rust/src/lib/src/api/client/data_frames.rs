@@ -10,12 +10,14 @@ use crate::view::commit::CommitResponse;
 use crate::view::data_frames::FromDirectoryRequest;
 use crate::view::{JsonDataFrameViewResponse, StatusMessage};
 
+#[tracing::instrument(skip(remote_repo, path, opts))]
 pub async fn get(
     remote_repo: &RemoteRepository,
     commit_or_branch: &str,
     path: impl AsRef<Path>,
     opts: DFOpts,
 ) -> Result<JsonDataFrameViewResponse, OxenError> {
+    metrics::counter!("oxen_client_data_frames_get_total").increment(1);
     let path_str = util::fs::to_unix_str(path);
     let query_str = opts.to_http_query_params();
     let uri = format!("/data_frames/{commit_or_branch}/{path_str}?{query_str}");
@@ -38,11 +40,13 @@ pub async fn get(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path))]
 pub async fn index(
     remote_repo: &RemoteRepository,
     commit_or_branch: &str,
     path: impl AsRef<Path>,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_data_frames_index_total").increment(1);
     let path_str = path.as_ref().to_str().unwrap();
     let uri = format!("/data_frames/index/{commit_or_branch}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -64,12 +68,14 @@ pub async fn index(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path, request))]
 pub async fn from_directory(
     remote_repo: &RemoteRepository,
     commit_or_branch: &str,
     path: impl AsRef<Path>,
     request: FromDirectoryRequest,
 ) -> Result<CommitResponse, OxenError> {
+    metrics::counter!("oxen_client_data_frames_from_directory_total").increment(1);
     let path_str = util::fs::to_unix_str(path);
     let uri = format!("/data_frames/from_directory/{commit_or_branch}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

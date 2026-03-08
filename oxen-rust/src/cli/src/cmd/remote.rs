@@ -25,6 +25,7 @@ impl RunCmd for RemoteCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_remote_total").increment(1);
         let verbose = args.get_flag("verbose");
         if verbose {
             self.list_remotes_verbose()?;

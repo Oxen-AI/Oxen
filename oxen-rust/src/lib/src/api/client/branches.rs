@@ -11,10 +11,12 @@ use crate::view::{
 use serde_json::json;
 use std::path::Path;
 
+#[tracing::instrument(skip(repository, branch_name))]
 pub async fn get_by_name(
     repository: &RemoteRepository,
     branch_name: impl AsRef<str>,
 ) -> Result<Option<Branch>, OxenError> {
+    metrics::counter!("oxen_client_branches_get_by_name_total").increment(1);
     let branch_name = branch_name.as_ref();
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
@@ -32,11 +34,13 @@ pub async fn get_by_name(
 }
 
 /// Create a new branch from an existing branch
+#[tracing::instrument(skip(repository, new_name, from_name))]
 pub async fn create_from_branch(
     repository: &RemoteRepository,
     new_name: impl AsRef<str>,
     from_name: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_client_branches_create_from_branch_total").increment(1);
     let new_name = new_name.as_ref();
     let from_name = from_name.as_ref();
 
@@ -57,11 +61,13 @@ pub async fn create_from_branch(
 
 /// Create a new remote branch from a commit
 /// The commit must already exist on the remote
+#[tracing::instrument(skip(repository, new_name, commit))]
 pub async fn create_from_commit(
     repository: &RemoteRepository,
     new_name: impl AsRef<str>,
     commit: &Commit,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_client_branches_create_from_commit_total").increment(1);
     let new_name = new_name.as_ref();
 
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
@@ -79,11 +85,13 @@ pub async fn create_from_commit(
     Ok(response.branch)
 }
 
+#[tracing::instrument(skip(repository, new_name, commit_id))]
 pub async fn create_from_commit_id(
     repository: &RemoteRepository,
     new_name: impl AsRef<str>,
     commit_id: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_client_branches_create_from_commit_id_total").increment(1);
     let new_name = new_name.as_ref();
     let commit_id = commit_id.as_ref();
 
@@ -103,7 +111,9 @@ pub async fn create_from_commit_id(
 }
 
 /// List all branches on the remote
+#[tracing::instrument(skip(repository))]
 pub async fn list(repository: &RemoteRepository) -> Result<Vec<Branch>, OxenError> {
+    metrics::counter!("oxen_client_branches_list_total").increment(1);
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
 
     let client = client::new_for_url(&url)?;
@@ -114,11 +124,13 @@ pub async fn list(repository: &RemoteRepository) -> Result<Vec<Branch>, OxenErro
 }
 
 /// Update a remote branch to point to a new commit
+#[tracing::instrument(skip(repository, branch_name, commit))]
 pub async fn update(
     repository: &RemoteRepository,
     branch_name: impl AsRef<str>,
     commit: &Commit,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_client_branches_update_total").increment(1);
     let branch_name = branch_name.as_ref();
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
@@ -133,12 +145,14 @@ pub async fn update(
 }
 
 // Creates a merge commit between two commits on the server if possible, returning the commit
+#[tracing::instrument(skip(repository))]
 pub async fn maybe_create_merge(
     repository: &RemoteRepository,
     branch_name: &str,
     local_head_id: &str,
     remote_head_id: &str, // Remote head pre-push - merge target
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_client_branches_maybe_create_merge_total").increment(1);
     let uri = format!("/branches/{branch_name}/merge");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("api::client::branches::maybe_create_merge url: {url}");
@@ -157,11 +171,13 @@ pub async fn maybe_create_merge(
 }
 
 /// # Delete a remote branch
+#[tracing::instrument(skip(repo, remote, branch_name))]
 pub async fn delete_remote(
     repo: &LocalRepository,
     remote: impl AsRef<str>,
     branch_name: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_client_branches_delete_remote_total").increment(1);
     if let Some(remote) = repo.get_remote(&remote) {
         if let Some(remote_repo) = api::client::repositories::get_by_remote(&remote).await? {
             if let Some(branch) =
@@ -180,10 +196,12 @@ pub async fn delete_remote(
     }
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn delete(
     repository: &RemoteRepository,
     branch_name: &str,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_branches_delete_total").increment(1);
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("Deleting branch: {url}");
@@ -194,10 +212,12 @@ pub async fn delete(
     Ok(response)
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn lock(
     repository: &RemoteRepository,
     branch_name: &str,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_branches_lock_total").increment(1);
     let uri = format!("/branches/{branch_name}/lock");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("Locking branch: {url}");
@@ -208,10 +228,12 @@ pub async fn lock(
     Ok(response)
 }
 
+#[tracing::instrument(skip(repository))]
 pub async fn unlock(
     repository: &RemoteRepository,
     branch_name: &str,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_branches_unlock_total").increment(1);
     let uri = format!("/branches/{branch_name}/unlock");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("Unlocking branch: {url}");
@@ -222,12 +244,14 @@ pub async fn unlock(
     Ok(response)
 }
 
+#[tracing::instrument(skip(repository, page_opts))]
 pub async fn list_entry_versions(
     repository: &RemoteRepository,
     branch_name: &str,
     path: &Path,
     page_opts: &PaginateOpts,
 ) -> Result<PaginatedEntryVersions, OxenError> {
+    metrics::counter!("oxen_client_branches_list_entry_versions_total").increment(1);
     let path_str = path.to_string_lossy();
     let uri = format!(
         "/branches/{branch_name}/versions/{path_str}?page={}&page_size={}",

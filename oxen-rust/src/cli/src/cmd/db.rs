@@ -39,6 +39,7 @@ impl RunCmd for DbCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_db_total").increment(1);
         // Parse Args
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {

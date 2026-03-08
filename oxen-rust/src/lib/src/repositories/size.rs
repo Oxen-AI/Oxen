@@ -37,7 +37,9 @@ impl fmt::Display for RepoSizeFile {
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_size_update_size_total").increment(1);
     let path = repo_size_path(repo);
     let size = match util::fs::read_from_path(&path) {
         Ok(content) => match serde_json::from_str::<RepoSizeFile>(&content) {
@@ -93,7 +95,9 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
     Ok(())
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn get_size(repo: &LocalRepository) -> Result<RepoSizeFile, OxenError> {
+    metrics::counter!("oxen_repo_size_get_size_total").increment(1);
     let path = repo_size_path(repo);
     let size = util::fs::read_from_path(&path);
     match size {
@@ -109,6 +113,8 @@ pub fn get_size(repo: &LocalRepository) -> Result<RepoSizeFile, OxenError> {
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn repo_size_path(repo: &LocalRepository) -> PathBuf {
+    metrics::counter!("oxen_repo_size_repo_size_path_total").increment(1);
     util::fs::oxen_hidden_dir(&repo.path).join("repo_size.toml")
 }

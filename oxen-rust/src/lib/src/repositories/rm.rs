@@ -13,7 +13,9 @@ use crate::{core, util};
 use std::path::PathBuf;
 
 /// Removes the path from the index
+#[tracing::instrument(skip(repo, opts), fields(repo_path = %repo.path.display()))]
 pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_rm_rm_total").increment(1);
     log::debug!("Rm with opts: {opts:?}");
 
     let path = &opts.path;

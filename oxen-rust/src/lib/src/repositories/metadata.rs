@@ -21,7 +21,9 @@ pub mod text;
 pub mod video;
 
 /// Returns the metadata given a file path
+#[tracing::instrument(skip(path))]
 pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_metadata_get_total").increment(1);
     let path = path.as_ref();
     let base_name = path.file_name().ok_or(OxenError::file_has_no_name(path))?;
     let size = get_file_size(path)?;
@@ -47,7 +49,9 @@ pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
 }
 
 /// Returns the metadata given a file path
+#[tracing::instrument(skip(path))]
 pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_metadata_from_path_total").increment(1);
     let path = path.as_ref();
     let base_name = path.file_name().ok_or(OxenError::file_has_no_name(path))?;
     let size = get_file_size(path)?;
@@ -74,11 +78,13 @@ pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
     })
 }
 
+#[tracing::instrument(skip(_repo, node), fields(repo_path = %_repo.path.display(), commit_id = %commit.id))]
 pub fn from_file_node(
     _repo: &LocalRepository,
     node: &FileNode,
     commit: &Commit,
 ) -> Result<MetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_metadata_from_file_node_total").increment(1);
     Ok(MetadataEntry {
         filename: node.name().to_string(),
         hash: node.hash().to_string(),
@@ -102,11 +108,13 @@ pub fn from_file_node(
     })
 }
 
+#[tracing::instrument(skip(_repo, node), fields(repo_path = %_repo.path.display(), commit_id = %commit.id))]
 pub fn from_dir_node(
     _repo: &LocalRepository,
     node: &DirNode,
     commit: &Commit,
 ) -> Result<MetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_metadata_from_dir_node_total").increment(1);
     Ok(MetadataEntry {
         filename: node.name().to_string(),
         hash: node.hash().to_string(),
@@ -124,11 +132,13 @@ pub fn from_dir_node(
 }
 
 /// Returns metadata with latest commit information. Less efficient than get().
+#[tracing::instrument(skip(repo, entry_path, data_path), fields(repo_path = %repo.path.display()))]
 pub fn get_cli(
     repo: &LocalRepository,
     entry_path: impl AsRef<Path>,
     data_path: impl AsRef<Path>,
 ) -> Result<CLIMetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_metadata_get_cli_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::metadata::get_cli(repo, entry_path, data_path),
@@ -136,16 +146,20 @@ pub fn get_cli(
 }
 
 /// Returns the file size in bytes.
+#[tracing::instrument(skip(path))]
 pub fn get_file_size(path: impl AsRef<Path>) -> Result<u64, OxenError> {
+    metrics::counter!("oxen_repo_metadata_get_file_size_total").increment(1);
     let metadata = util::fs::metadata(path.as_ref())?;
     Ok(metadata.len())
 }
 
+#[tracing::instrument(skip(path))]
 pub fn get_file_metadata_with_extension(
     path: impl AsRef<Path>,
     data_type: &EntryDataType,
     extension: &str,
 ) -> Result<Option<GenericMetadata>, OxenError> {
+    metrics::counter!("oxen_repo_metadata_get_file_metadata_with_extension_total").increment(1);
     match data_type {
         // dir should not be passed in here
         EntryDataType::Dir => Ok(Some(GenericMetadata::MetadataDir(MetadataDir::new(vec![])))),
@@ -189,10 +203,12 @@ pub fn get_file_metadata_with_extension(
 }
 
 /// Returns metadata based on data_type
+#[tracing::instrument(skip(path))]
 pub fn get_file_metadata(
     path: impl AsRef<Path>,
     data_type: &EntryDataType,
 ) -> Result<Option<GenericMetadata>, OxenError> {
+    metrics::counter!("oxen_repo_metadata_get_file_metadata_total").increment(1);
     let path = path.as_ref();
     get_file_metadata_with_extension(path, data_type, &util::fs::file_extension(path))
 }

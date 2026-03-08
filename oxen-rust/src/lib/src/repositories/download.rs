@@ -13,12 +13,14 @@ use crate::model::MetadataEntry;
 use crate::model::RemoteRepository;
 use crate::repositories::LocalRepository;
 
+#[tracing::instrument(skip(repo, remote_path, local_path, revision))]
 pub async fn download(
     repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_download_download_total").increment(1);
     // Ping server telling it we are about to download
     api::client::repositories::pre_download(repo).await?;
     api::client::entries::download_entry(
@@ -33,12 +35,14 @@ pub async fn download(
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo, entry, remote_path, local_path))]
 pub async fn download_dir(
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_download_download_dir_total").increment(1);
     match remote_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -50,6 +54,7 @@ pub async fn download_dir(
     Ok(())
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, entry, remote_path, local_path), fields(repo_path = %local_repo.path.display()))]
 pub async fn download_dir_to_repo(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -57,6 +62,7 @@ pub async fn download_dir_to_repo(
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_download_download_dir_to_repo_total").increment(1);
     match remote_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {

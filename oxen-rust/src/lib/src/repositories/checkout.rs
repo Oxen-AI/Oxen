@@ -14,66 +14,83 @@ use crate::{repositories, util};
 /// # Checkout a branch or commit id
 /// This switches HEAD to point to the branch name or commit id,
 /// it also updates all the local files to be from the commit that this branch references
+#[tracing::instrument(skip(repo, value), fields(repo_path = %repo.path.display()))]
 pub async fn checkout(
     repo: &LocalRepository,
     value: impl AsRef<str>,
 ) -> Result<Option<Branch>, OxenError> {
+    metrics::counter!("oxen_repo_checkout_checkout_total").increment(1);
+    let timer = std::time::Instant::now();
     let value = value.as_ref();
     log::debug!("--- CHECKOUT START {value} ----");
-    if repositories::branches::exists(repo, value)? {
+    let result = if repositories::branches::exists(repo, value)? {
         if repositories::branches::is_checked_out(repo, value) {
             println!("Already on branch {value}");
-            return repositories::branches::get_by_name(repo, value);
-        }
-
-        println!("Checkout branch: {value}");
-        let commit = repositories::revisions::get(repo, value)?
-            .ok_or(OxenError::revision_not_found(value.into()))?;
-        let subtree_paths = match repo.subtree_paths() {
-            Some(paths_vec) => paths_vec, // If Some(vec), take the inner vector
-            None => vec![Path::new("").to_path_buf()],
-        };
-        let depth = match repo.depth() {
-            Some(d) => d,
-            None => i32::MAX,
-        }; //TODO: make repo depth not an option so that we use depth from the repo consistently.
-        repositories::branches::checkout_subtrees_to_commit(repo, &commit, &subtree_paths, depth)
+            repositories::branches::get_by_name(repo, value)
+        } else {
+            println!("Checkout branch: {value}");
+            let commit = repositories::revisions::get(repo, value)?
+                .ok_or(OxenError::revision_not_found(value.into()))?;
+            let subtree_paths = match repo.subtree_paths() {
+                Some(paths_vec) => paths_vec, // If Some(vec), take the inner vector
+                None => vec![Path::new("").to_path_buf()],
+            };
+            let depth = match repo.depth() {
+                Some(d) => d,
+                None => i32::MAX,
+            }; //TODO: make repo depth not an option so that we use depth from the repo consistently.
+            repositories::branches::checkout_subtrees_to_commit(
+                repo,
+                &commit,
+                &subtree_paths,
+                depth,
+            )
             .await?;
-        repositories::branches::set_head(repo, value)?;
-        repositories::branches::get_by_name(repo, value)
+            repositories::branches::set_head(repo, value)?;
+            repositories::branches::get_by_name(repo, value)
+        }
     } else {
         // If we are already on the commit, do nothing
         if repositories::branches::is_checked_out(repo, value) {
             eprintln!("Commit already checked out {value}");
-            return Ok(None);
-        }
+            Ok(None)
+        } else {
+            let commit = repositories::revisions::get(repo, value)?
+                .ok_or(OxenError::revision_not_found(value.into()))?;
 
-        let commit = repositories::revisions::get(repo, value)?
-            .ok_or(OxenError::revision_not_found(value.into()))?;
-
-        let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
-        repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit)
+            let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
+            repositories::branches::checkout_commit_from_commit(
+                repo,
+                &commit,
+                &previous_head_commit,
+            )
             .await?;
-        repositories::branches::update(repo, value, &commit.id)?;
-        repositories::branches::set_head(repo, value)?;
+            repositories::branches::update(repo, value, &commit.id)?;
+            repositories::branches::set_head(repo, value)?;
 
-        if repo.is_remote_mode() {
-            // Set workspace_name to new branch name
-            let mut mut_repo = repo.clone();
-            mut_repo.set_workspace(value)?;
-            mut_repo.save()?;
+            if repo.is_remote_mode() {
+                // Set workspace_name to new branch name
+                let mut mut_repo = repo.clone();
+                mut_repo.set_workspace(value)?;
+                mut_repo.save()?;
+            }
+
+            Ok(None)
         }
-
-        Ok(None)
-    }
+    };
+    metrics::histogram!("oxen_repo_checkout_checkout_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
+    result
 }
 
 /// # Checkout a file and take their changes
 /// This overwrites the current file with the changes in the branch we are merging in
+#[tracing::instrument(skip(repo, path), fields(repo_path = %repo.path.display()))]
 pub async fn checkout_theirs(
     repo: &LocalRepository,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_checkout_checkout_theirs_total").increment(1);
     let conflicts = repositories::merge::list_conflicts(repo)?;
     log::debug!(
         "checkout_theirs {:?} conflicts.len() {}",
@@ -99,10 +116,12 @@ pub async fn checkout_theirs(
 
 /// # Checkout a file and take our changes
 /// This overwrites the current file with the changes we had in our current branch
+#[tracing::instrument(skip(repo, path), fields(repo_path = %repo.path.display()))]
 pub async fn checkout_ours(
     repo: &LocalRepository,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_checkout_checkout_ours_total").increment(1);
     let conflicts = repositories::merge::list_conflicts(repo)?;
     log::debug!(
         "checkout_ours {:?} conflicts.len() {}",
@@ -128,10 +147,12 @@ pub async fn checkout_ours(
 
 /// # Combine Conflicting Tabular Data Files
 /// This overwrites the current file with the changes in their file
+#[tracing::instrument(skip(repo, path), fields(repo_path = %repo.path.display()))]
 pub async fn checkout_combine<P: AsRef<Path>>(
     repo: &LocalRepository,
     path: P,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_checkout_checkout_combine_total").increment(1);
     let conflicts = repositories::merge::list_conflicts(repo)?;
 
     log::debug!(

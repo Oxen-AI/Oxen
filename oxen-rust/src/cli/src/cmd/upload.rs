@@ -73,6 +73,7 @@ impl RunCmd for UploadCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_upload_total").increment(1);
         let opts = UploadOpts {
             paths: args
                 .get_many::<String>("paths")

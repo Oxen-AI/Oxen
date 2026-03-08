@@ -376,8 +376,14 @@ async fn main() -> Result<(), ServerError> {
         Err(e) => log::debug!("Failed to load .env file: {e}"),
     }
 
-    util::logging::init_logging();
+    let _tracing_guard = util::telemetry::init_tracing("oxen-server");
     util::perf::init_perf_logging();
+
+    let metrics_port: u16 = env::var("OXEN_METRICS_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9090);
+    util::telemetry::init_metrics_prometheus(metrics_port);
 
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => PathBuf::from(dir),

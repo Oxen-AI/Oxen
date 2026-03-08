@@ -18,6 +18,7 @@ use liboxen::view::{
 use liboxen::{constants, repositories};
 
 /// List all branches
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -66,6 +67,7 @@ use liboxen::{constants, repositories};
     )
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_index_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -81,6 +83,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// Get an existing branch
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -97,6 +100,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     )
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_show_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -117,6 +121,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 }
 
 /// Create a new branch
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -141,6 +146,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     )
 )]
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_create_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -204,6 +210,7 @@ fn create_from_commit(
 }
 
 /// Delete a branch
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -220,6 +227,7 @@ fn create_from_commit(
     )
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_delete_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -237,6 +245,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 }
 
 /// Update a branch to a new commit
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
@@ -264,6 +273,7 @@ pub async fn update(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_update_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -282,6 +292,7 @@ pub async fn update(
 }
 
 /// Merge a commit into a branch
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/merge",
@@ -310,6 +321,8 @@ pub async fn maybe_create_merge(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_maybe_create_merge_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -339,6 +352,8 @@ pub async fn maybe_create_merge(
     .await?;
 
     // Return what will become the new head of the repo after push is complete.
+    metrics::histogram!("oxen_server_branches_maybe_create_merge_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     if let Some(merge_commit) = maybe_merge_commit {
         log::debug!("returning merge commit {merge_commit:?}");
         // Update branch head
@@ -358,6 +373,7 @@ pub async fn maybe_create_merge(
 }
 
 /// Get all versions of a file on a branch
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}/versions/{path}",
@@ -379,6 +395,7 @@ pub async fn list_entry_versions(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_branches_list_entry_versions_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

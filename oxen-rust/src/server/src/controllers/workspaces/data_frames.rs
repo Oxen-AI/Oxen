@@ -87,10 +87,12 @@ impl Stream for CleanupFileStream {
     }
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn get(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_get_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -216,7 +218,9 @@ pub async fn get(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_get_schema_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -268,10 +272,12 @@ fn determine_extension<'a>(opts: &'a DFOpts, file_path: &'a Path) -> &'a str {
 //   }
 // }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn download(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_download_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -397,10 +403,12 @@ fn df_not_indexed_response() -> WorkspaceJsonDataFrameViewResponse {
     }
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn download_streaming(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_download_streaming_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -468,10 +476,12 @@ pub async fn download_streaming(
         .streaming(stream))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn get_by_branch(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_get_by_branch_total").increment(1);
     let app_data = app_data(&req).unwrap();
 
     let namespace = path_param(&req, "namespace")?;
@@ -518,10 +528,12 @@ pub async fn get_by_branch(
     }))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn diff(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_diff_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -583,7 +595,9 @@ pub async fn diff(
     Ok(HttpResponse::Ok().json(resource))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_put_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -612,7 +626,9 @@ pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHtt
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_delete_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -630,7 +646,9 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_data_frames_rename_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

@@ -66,6 +66,7 @@ impl RunCmd for InitCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_init_total").increment(1);
         // Parse Args
         let default = String::from(".");
         let path = args.get_one::<String>("PATH").unwrap_or(&default);

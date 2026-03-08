@@ -13,25 +13,33 @@ use crate::repositories;
 use crate::{core, util};
 
 /// List all the local branches within a repo
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
+    metrics::counter!("oxen_repo_branch_list_total").increment(1);
     with_ref_manager(repo, |manager| manager.list_branches())
 }
 
 /// List all the local branches within a repo along with their head commits
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_with_commits(repo: &LocalRepository) -> Result<Vec<(Branch, Commit)>, OxenError> {
+    metrics::counter!("oxen_repo_branch_list_with_commits_total").increment(1);
     with_ref_manager(repo, |manager| manager.list_branches_with_commits())
 }
 
 /// Get a branch by name
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {
+    metrics::counter!("oxen_repo_branch_get_by_name_total").increment(1);
     with_ref_manager(repo, |manager| manager.get_branch_by_name(name))
 }
 
 /// Get branch by name or fall back the current
+#[tracing::instrument(skip(repo, branch_name), fields(repo_path = %repo.path.display()))]
 pub fn get_by_name_or_current(
     repo: &LocalRepository,
     branch_name: Option<impl AsRef<str>>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_get_by_name_or_current_total").increment(1);
     if let Some(branch_name) = branch_name {
         let branch_name = branch_name.as_ref();
         match repositories::branches::get_by_name(repo, branch_name)? {
@@ -50,12 +58,16 @@ pub fn get_by_name_or_current(
 }
 
 /// Get commit id from a branch by name
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn get_commit_id(repo: &LocalRepository, name: &str) -> Result<Option<String>, OxenError> {
+    metrics::counter!("oxen_repo_branch_get_commit_id_total").increment(1);
     with_ref_manager(repo, |manager| manager.get_commit_id_for_branch(name))
 }
 
 /// Check if a branch exists
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn exists(repo: &LocalRepository, name: &str) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_repo_branch_exists_total").increment(1);
     match get_by_name(repo, name)? {
         Some(_) => Ok(true),
         None => Ok(false),
@@ -63,28 +75,34 @@ pub fn exists(repo: &LocalRepository, name: &str) -> Result<bool, OxenError> {
 }
 
 /// Get the current branch
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn current_branch(repo: &LocalRepository) -> Result<Option<Branch>, OxenError> {
+    metrics::counter!("oxen_repo_branch_current_branch_total").increment(1);
     with_ref_manager(repo, |manager| manager.get_current_branch())
 }
 
 /// # Create a new branch from the head commit
 /// This creates a new pointer to the current commit with a name,
 /// it does not switch you to this branch, you still must call `checkout_branch`
+#[tracing::instrument(skip(repo, name), fields(repo_path = %repo.path.display()))]
 pub fn create_from_head(
     repo: &LocalRepository,
     name: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_create_from_head_total").increment(1);
     let name = name.as_ref();
     let head_commit = repositories::commits::head_commit(repo)?;
     with_ref_manager(repo, |manager| manager.create_branch(name, &head_commit.id))
 }
 
 /// # Create a local branch from a specific commit id
+#[tracing::instrument(skip(repo, name, commit_id), fields(repo_path = %repo.path.display()))]
 pub fn create(
     repo: &LocalRepository,
     name: impl AsRef<str>,
     commit_id: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_create_total").increment(1);
     let name = name.as_ref();
     let commit_id = commit_id.as_ref();
 
@@ -98,7 +116,9 @@ pub fn create(
 /// # Create a branch and check it out in one go
 /// This creates a branch with name,
 /// then switches HEAD to point to the branch
+#[tracing::instrument(skip(repo, name), fields(repo_path = %repo.path.display()))]
 pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_create_checkout_total").increment(1);
     let name = name.as_ref();
     let name = util::fs::linux_path_str(name);
     println!("Create and checkout branch: {name}");
@@ -112,11 +132,13 @@ pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<
 }
 
 /// Update the branch name to point to a commit id
+#[tracing::instrument(skip(repo, name, commit_id), fields(repo_path = %repo.path.display()))]
 pub fn update(
     repo: &LocalRepository,
     name: impl AsRef<str>,
     commit_id: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_update_total").increment(1);
     let name = name.as_ref();
     let commit_id = commit_id.as_ref();
     with_ref_manager(repo, |manager| {
@@ -131,7 +153,9 @@ pub fn update(
 }
 
 /// Delete a local branch
+#[tracing::instrument(skip(repo, name), fields(repo_path = %repo.path.display()))]
 pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_delete_total").increment(1);
     let name = name.as_ref();
     // Make sure they don't delete the current checked out branch
     if let Ok(Some(branch)) = current_branch(repo) {
@@ -151,7 +175,9 @@ pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, O
 
 /// # Force delete a local branch
 /// Caution! Will delete a local branch without checking if it has been merged or pushed.
+#[tracing::instrument(skip(repo, name), fields(repo_path = %repo.path.display()))]
 pub fn force_delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_branch_force_delete_total").increment(1);
     let name = name.as_ref();
     if let Ok(Some(branch)) = current_branch(repo) {
         if branch.name == name {
@@ -164,7 +190,9 @@ pub fn force_delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Bra
 }
 
 /// Check if a branch is checked out
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn is_checked_out(repo: &LocalRepository, name: &str) -> bool {
+    metrics::counter!("oxen_repo_branch_is_checked_out_total").increment(1);
     if let Ok(Some(current_branch)) = with_ref_manager(repo, |manager| manager.get_current_branch())
     {
         // If we are already on the branch, do nothing
@@ -176,11 +204,13 @@ pub fn is_checked_out(repo: &LocalRepository, name: &str) -> bool {
 }
 
 /// Checkout a branch
+#[tracing::instrument(skip(repo, name, from_commit), fields(repo_path = %repo.path.display()))]
 pub async fn checkout_branch_from_commit(
     repo: &LocalRepository,
     name: impl AsRef<str>,
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_branch_checkout_branch_from_commit_total").increment(1);
     let name = name.as_ref();
     log::debug!("checkout_branch {name}");
     match repo.min_version() {
@@ -190,12 +220,14 @@ pub async fn checkout_branch_from_commit(
 }
 
 /// Checkout a subtree from a commit
+#[tracing::instrument(skip(repo, subtree_paths), fields(repo_path = %repo.path.display(), commit_id = %to_commit.id, depth))]
 pub async fn checkout_subtrees_to_commit(
     repo: &LocalRepository,
     to_commit: &Commit,
     subtree_paths: &[PathBuf],
     depth: i32,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_branch_checkout_subtrees_to_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("checkout_subtree_from_commit not implemented for oxen v0.10.0")
@@ -207,18 +239,22 @@ pub async fn checkout_subtrees_to_commit(
 }
 
 /// Checkout a commit
+#[tracing::instrument(skip(repo, from_commit), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub async fn checkout_commit_from_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_branch_checkout_commit_from_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit).await,
     }
 }
 
+#[tracing::instrument(skip(repo, value), fields(repo_path = %repo.path.display()))]
 pub fn set_head(repo: &LocalRepository, value: impl AsRef<str>) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_branch_set_head_total").increment(1);
     log::debug!("set_head {}", value.as_ref());
     with_ref_manager(repo, |manager| {
         manager.set_head(value);
@@ -249,7 +285,9 @@ fn branch_has_been_merged(repo: &LocalRepository, name: &str) -> Result<bool, Ox
     })
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn rename_current_branch(repo: &LocalRepository, new_name: &str) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_branch_rename_current_branch_total").increment(1);
     if let Ok(Some(branch)) = current_branch(repo) {
         with_ref_manager(repo, |manager| {
             manager.rename_branch(&branch.name, new_name)?;
@@ -263,11 +301,13 @@ pub fn rename_current_branch(repo: &LocalRepository, new_name: &str) -> Result<(
 }
 
 // Traces through a branches history to list all unique versions of a file
+#[tracing::instrument(skip(local_repo), fields(repo_path = %local_repo.path.display()))]
 pub fn list_entry_versions_on_branch(
     local_repo: &LocalRepository,
     branch_name: &str,
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
+    metrics::counter!("oxen_repo_branch_list_entry_versions_on_branch_total").increment(1);
     let branch = repositories::branches::get_by_name(local_repo, branch_name)?
         .ok_or(OxenError::local_branch_not_found(branch_name))?;
     log::debug!(
@@ -285,11 +325,13 @@ pub fn list_entry_versions_on_branch(
     }
 }
 
+#[tracing::instrument(skip(repo, from_commit), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_branch_set_working_repo_to_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("set_working_repo_to_commit not implemented for oxen v0.10.0")

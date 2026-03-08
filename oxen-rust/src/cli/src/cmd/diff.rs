@@ -78,6 +78,7 @@ impl RunCmd for DiffCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_diff_total").increment(1);
         // Parse Args
         let opts = DiffCmd::parse_args(args);
         let output = opts.output.clone();

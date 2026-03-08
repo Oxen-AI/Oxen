@@ -28,11 +28,13 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 /// Returns the metadata given a file path
+#[tracing::instrument(skip(remote_repo, remote_path, revision))]
 pub async fn get_entry(
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<Option<EMetadataEntry>, OxenError> {
+    metrics::counter!("oxen_client_entries_get_entry_total").increment(1);
     let remote_path = remote_path.as_ref();
 
     let Some(response) =
@@ -43,12 +45,14 @@ pub async fn get_entry(
     Ok(Some(response.entry))
 }
 
+#[tracing::instrument(skip(remote_repo, path, revision))]
 pub async fn list_entries_with_type(
     remote_repo: &RemoteRepository,
     path: impl AsRef<Path>,
     revision: impl AsRef<str>,
     data_type: &EntryDataType,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
+    metrics::counter!("oxen_client_entries_list_entries_with_type_total").increment(1);
     let path = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = if path.is_empty() || path == "/" {
@@ -65,10 +69,12 @@ pub async fn list_entries_with_type(
     Ok(paginated_response.entries.entries)
 }
 
+#[tracing::instrument(skip(remote_repo, opts))]
 pub async fn upload_entries(
     remote_repo: &RemoteRepository,
     opts: &UploadOpts,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_upload_entries_total").increment(1);
     if opts.paths.is_empty() {
         return Err(OxenError::basic_str("No files to upload"));
     }
@@ -127,12 +133,14 @@ pub async fn upload_entries(
 
 /// Pings the remote server first to see if the entry exists
 /// and get the size before downloading
+#[tracing::instrument(skip(remote_repo, remote_path, local_path, revision))]
 pub async fn download_entry(
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_download_entry_total").increment(1);
     let remote_path = remote_path.as_ref();
     let download_path = util::fs::remove_leading_slash(remote_path);
 
@@ -188,12 +196,14 @@ pub async fn download_entry(
 }
 
 /// Get entry status in batch and download them to a specific local repo
+#[tracing::instrument(skip(local_repo, remote_repo, paths_to_download, revision))]
 pub async fn download_entries_to_repo(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     paths_to_download: &[(PathBuf, PathBuf)],
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_download_entries_to_repo_total").increment(1);
     let revision = revision.as_ref();
     for (local_path, remote_path) in paths_to_download.iter() {
         // TODO: Refactor to get the entries for all paths in one API call
@@ -251,6 +261,7 @@ pub async fn download_entries_to_repo(
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo, entry, remote_path, local_path, revision))]
 pub async fn download_file(
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
@@ -258,6 +269,7 @@ pub async fn download_file(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_download_file_total").increment(1);
     if entry.size > AVG_CHUNK_SIZE {
         download_large_entry(
             remote_repo,
@@ -272,12 +284,14 @@ pub async fn download_file(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, remote_path, dest, revision))]
 pub async fn download_small_entry(
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     dest: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_download_small_entry_total").increment(1);
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/file/{revision}/{path}");
@@ -322,12 +336,14 @@ pub async fn download_small_entry(
 }
 
 /// Download a file from the remote repository in parallel chunks
+#[tracing::instrument(skip(repo, remote_repo, remote_path, entry))]
 pub async fn pull_large_entry(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     entry: &Entry,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_pull_large_entry_total").increment(1);
     // Read chunks
     let chunk_size = AVG_CHUNK_SIZE;
     let total_size = entry.num_bytes();
@@ -535,6 +551,10 @@ async fn pull_entry_chunk(
 }
 
 /// Download a file from the remote repository in parallel chunks
+#[tracing::instrument(
+    skip(remote_repo, remote_path, local_path, revision),
+    fields(num_bytes)
+)]
 pub async fn download_large_entry(
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
@@ -542,6 +562,7 @@ pub async fn download_large_entry(
     revision: impl AsRef<str>,
     num_bytes: u64,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_entries_download_large_entry_total").increment(1);
     // Read chunks
     let chunk_size = AVG_CHUNK_SIZE;
     let total_size = num_bytes;
@@ -805,11 +826,13 @@ async fn download_entry_chunk(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, content_ids, dst))]
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     content_ids: &[(String, PathBuf)], // tuple of content id and entry path
     dst: &Path,
 ) -> Result<u64, OxenError> {
+    metrics::counter!("oxen_client_entries_download_data_from_version_paths_total").increment(1);
     let total_retries = constants::NUM_HTTP_RETRIES;
     let mut num_retries = 0;
 
@@ -835,11 +858,14 @@ pub async fn download_data_from_version_paths(
     Err(OxenError::basic_str(err))
 }
 
+#[tracing::instrument(skip(remote_repo, content_ids, dst))]
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     content_ids: &[(String, PathBuf)], // tuple of content id and entry path
     dst: impl AsRef<Path>,
 ) -> Result<u64, OxenError> {
+    metrics::counter!("oxen_client_entries_try_download_data_from_version_paths_total")
+        .increment(1);
     let dst = dst.as_ref();
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     for (content_id, _path) in content_ids.iter() {

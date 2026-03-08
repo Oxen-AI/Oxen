@@ -60,6 +60,7 @@ impl RunCmd for DownloadCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_download_total").increment(1);
         // Parse args
         let id = args
             .get_one::<String>("ID")

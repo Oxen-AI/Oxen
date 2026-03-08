@@ -48,6 +48,7 @@ impl RunCmd for RmCmd {
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_rm_total").increment(1);
         let paths: Vec<PathBuf> = args
             .get_many::<String>("files")
             .expect("Must supply files")

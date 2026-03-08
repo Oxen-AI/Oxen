@@ -13,6 +13,7 @@ use actix_web::{HttpRequest, HttpResponse};
 use utoipa;
 
 /// Get file metadata
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
@@ -30,6 +31,7 @@ use utoipa;
     )
 )]
 pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_metadata_file_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -100,6 +102,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 }
 
 /// Update file metadata
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/metadata/{resource}",
@@ -117,6 +120,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     )
 )]
 pub async fn update_metadata(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_metadata_update_metadata_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

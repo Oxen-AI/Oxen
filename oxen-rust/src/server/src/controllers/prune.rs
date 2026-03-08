@@ -35,10 +35,13 @@ pub struct PruneResponse {
 
 /// POST /prune
 /// Trigger a prune operation on the repository
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn prune(
     req: HttpRequest,
     body: web::Json<PruneRequest>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_prune_prune_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -51,7 +54,10 @@ pub async fn prune(
     log::info!("Prune requested for {namespace}/{repo_name} (dry_run: {dry_run})");
 
     // Run the prune operation
-    match repositories::prune::prune(&repository, dry_run).await {
+    let result = repositories::prune::prune(&repository, dry_run).await;
+    metrics::histogram!("oxen_server_prune_prune_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
+    match result {
         Ok(stats) => {
             let status_message = if dry_run {
                 "Prune dry-run completed successfully. No files were deleted.".to_string()

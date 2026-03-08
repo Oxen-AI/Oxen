@@ -44,6 +44,7 @@ impl RunCmd for LsCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_ls_total").increment(1);
         let repo = LocalRepository::from_current_dir()?;
 
         // Early exit for non-remote-mode repositories

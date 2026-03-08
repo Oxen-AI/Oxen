@@ -50,6 +50,7 @@ impl RunCmd for DeleteRemoteCmd {
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+        metrics::counter!("oxen_cli_delete_remote_total").increment(1);
         // Parse Args
         let Some(namespace_name) = args.get_one::<String>("name") else {
             return Err(OxenError::basic_str(
