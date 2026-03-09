@@ -19,7 +19,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::TryStreamExt as _;
 use liboxen::repositories::commits;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::BufReader;
@@ -256,6 +256,7 @@ pub async fn put(
         ))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    ensure_no_file_ancestors_in_tree(&repo, &commit, &resource.path, &resource.path)?;
     match upload_mode {
         MultipartUploadMode::SingleFile => {
             if resource.path.as_os_str().is_empty() {
@@ -275,7 +276,7 @@ pub async fn put(
         }
         MultipartUploadMode::Directory => {
             if node.as_ref().is_some_and(|n| n.is_file()) {
-                return Err(OxenHttpError::BasicError(
+                return Err(OxenHttpError::BadRequest(
                     format!(
                         "Target path must be a directory: {}",
                         resource.path.display()
@@ -304,9 +305,13 @@ pub async fn put(
             });
         }
         MultipartUploadMode::Directory => {
+            let normalized_target_dir =
+                normalize_relative_upload_path(&resource.path, true, "target directory")?;
             for temp_file in files_array_parts {
+                let normalized_file_path =
+                    normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
                 files.push(FileNew {
-                    path: resource.path.join(temp_file.path),
+                    path: normalized_target_dir.join(normalized_file_path),
                     contents: temp_file.contents,
                     user: user.clone(),
                 });
@@ -314,6 +319,10 @@ pub async fn put(
         }
     }
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    for file in &files {
+        ensure_no_file_ancestors_in_tree(&repo, &commit, &file.path, &resource.path)?;
+    }
 
     process_and_add_files(&repo, Some(&workspace), files.clone()).await?;
 
@@ -542,7 +551,7 @@ async fn handle_initial_put_empty_repo(
     let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
     let path = PathBuf::from(path_string);
 
-    let (name, email, _message, file_parts, files_array_parts) =
+    let (name, email, message, file_parts, files_array_parts) =
         parse_multipart_fields_for_repo(payload).await?;
     let upload_mode = resolve_upload_mode(&file_parts, &files_array_parts)?;
 
@@ -570,9 +579,13 @@ async fn handle_initial_put_empty_repo(
             });
         }
         MultipartUploadMode::Directory => {
+            let normalized_target_dir =
+                normalize_relative_upload_path(&path, true, "target directory")?;
             for temp_file in files_array_parts {
+                let normalized_file_path =
+                    normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
                 files.push(FileNew {
-                    path: path.join(temp_file.path),
+                    path: normalized_target_dir.join(normalized_file_path),
                     contents: temp_file.contents,
                     user: user.clone(),
                 });
@@ -587,7 +600,8 @@ async fn handle_initial_put_empty_repo(
 
     if !files.is_empty() {
         let user_ref = &files[0].user; // Use the user from the first file, since it's the same for all
-        commit = Some(commits::commit_with_user(repo, "Initial commit", user_ref)?);
+        let commit_message = message.unwrap_or_else(|| "Initial commit".to_string());
+        commit = Some(commits::commit_with_user(repo, &commit_message, user_ref)?);
         branches::create(repo, &branch_name, &commit.as_ref().unwrap().id)?;
     }
 
@@ -723,6 +737,71 @@ fn resolve_upload_mode(
     ))
 }
 
+fn normalize_relative_upload_path(
+    path: &Path,
+    allow_empty: bool,
+    path_label: &str,
+) -> Result<PathBuf, OxenHttpError> {
+    if path.is_absolute() {
+        return Err(OxenHttpError::BadRequest(
+            format!("Invalid {path_label}: absolute paths are not allowed").into(),
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(OxenHttpError::BadRequest(
+                    format!(
+                        "Invalid {path_label}: path traversal is not allowed: {}",
+                        path.display()
+                    )
+                    .into(),
+                ));
+            }
+        }
+    }
+
+    if !allow_empty && normalized.as_os_str().is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            format!("Invalid {path_label}: path cannot be empty").into(),
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn ensure_no_file_ancestors_in_tree(
+    repo: &liboxen::model::LocalRepository,
+    commit: &Commit,
+    path_to_check: &Path,
+    display_path: &Path,
+) -> Result<(), OxenHttpError> {
+    let mut ancestor = PathBuf::new();
+    let components: Vec<_> = path_to_check.components().collect();
+
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        ancestor.push(component.as_os_str());
+        if repositories::tree::get_node_by_path(repo, commit, &ancestor)?
+            .as_ref()
+            .is_some_and(|node| node.is_file())
+        {
+            return Err(OxenHttpError::BadRequest(
+                format!(
+                    "Target path must be a directory: {}",
+                    display_path.display()
+                )
+                .into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 async fn process_and_add_files(
     repo: &liboxen::model::LocalRepository,
     workspace: Option<&liboxen::repositories::workspaces::TemporaryWorkspace>,
@@ -741,9 +820,10 @@ async fn process_and_add_files(
             };
 
             if let Some(parent) = filepath.parent()
-                && !parent.exists() {
-                    util::fs::create_dir_all(parent)?;
-                }
+                && !parent.exists()
+            {
+                util::fs::create_dir_all(parent)?;
+            }
 
             match contents {
                 FileContents::Text(text) => {
@@ -766,8 +846,10 @@ async fn process_and_add_files(
 
 #[cfg(test)]
 mod tests {
+    use super::{ensure_no_file_ancestors_in_tree, normalize_relative_upload_path};
+    use crate::errors::OxenHttpError;
     use crate::test;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use actix_multipart_test::MultiPartFormDataBuilder;
     use actix_web::{App, body, web};
@@ -925,6 +1007,112 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_controllers_file_put_rejects_upload_beneath_existing_file()
+    -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-File-Ancestor-Put";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let existing_file = repo.path.join("pages/home/hero.md");
+        util::fs::create_dir_all(existing_file.parent().unwrap())?;
+        util::fs::write_to_path(&existing_file, "# Existing Hero")?;
+        repositories::add(&repo, &existing_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let upload_file = repo.path.join("image.png");
+        util::fs::write_to_path(&upload_file, "image-bytes")?;
+
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_file(upload_file, "file", "image/png", "image.png");
+        multipart_form_data_builder.with_text("name", "some_name");
+        multipart_form_data_builder.with_text("email", "some_email");
+        multipart_form_data_builder.with_text("message", "add image");
+        let (header, body) = multipart_form_data_builder.build();
+
+        let put_uri =
+            format!("/oxen/{namespace}/{repo_name}/file/main/pages/home/hero.md/image.png");
+        let put_req = actix_web::test::TestRequest::put()
+            .uri(&put_uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("resource", "main/pages/home/hero.md/image.png")
+            .param("repo_name", repo_name)
+            .insert_header(header)
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::put().to(controllers::file::put),
+                ),
+        )
+        .await;
+
+        let put_resp = actix_web::test::call_service(&app, put_req).await;
+        assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_file_put_empty_repo_preserves_commit_message() -> Result<(), OxenError>
+    {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Empty-Repo-Put";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let upload_file = repo.path.join("hero.md");
+        util::fs::write_to_path(&upload_file, "# Hero Content")?;
+
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_file(upload_file, "file", "text/markdown", "hero.md");
+        multipart_form_data_builder.with_text("name", "some_name");
+        multipart_form_data_builder.with_text("email", "some_email");
+        multipart_form_data_builder.with_text("message", "first upload message");
+        let (header, body) = multipart_form_data_builder.build();
+
+        let put_uri = format!("/oxen/{namespace}/{repo_name}/file/first-upload-branch/hero.md");
+        let put_req = actix_web::test::TestRequest::put()
+            .uri(&put_uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("resource", "first-upload-branch/hero.md")
+            .param("repo_name", repo_name)
+            .insert_header(header)
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::put().to(controllers::file::put),
+                ),
+        )
+        .await;
+
+        let put_resp = actix_web::test::call_service(&app, put_req).await;
+        assert_eq!(put_resp.status(), actix_web::http::StatusCode::OK);
+        let put_body = body::to_bytes(put_resp.into_body()).await.unwrap();
+        let put_body = std::str::from_utf8(&put_body).unwrap();
+        let put_resp: CommitResponse = serde_json::from_str(put_body)?;
+
+        assert_eq!(put_resp.commit.message, "first upload message");
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
     async fn test_controllers_file_put_files_array_to_directory() -> Result<(), OxenError> {
         liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
@@ -1048,6 +1236,62 @@ mod tests {
 
         let put_resp = actix_web::test::call_service(&app, put_req).await;
         assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_normalize_relative_upload_path_collapses_current_dir_components() {
+        let normalized =
+            normalize_relative_upload_path(Path::new("./pages/./home"), true, "target directory")
+                .unwrap();
+
+        assert_eq!(normalized, PathBuf::from("pages/home"));
+    }
+
+    #[test]
+    fn test_normalize_relative_upload_path_rejects_parent_dir_components() {
+        let err =
+            normalize_relative_upload_path(Path::new("../../outside.txt"), false, "uploaded file")
+                .unwrap_err();
+
+        assert!(matches!(err, OxenHttpError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_normalize_relative_upload_path_rejects_absolute_paths() {
+        let err =
+            normalize_relative_upload_path(Path::new("/tmp/outside.txt"), false, "uploaded file")
+                .unwrap_err();
+
+        assert!(matches!(err, OxenHttpError::BadRequest(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_ensure_no_file_ancestors_in_tree_rejects_existing_file_ancestor()
+    -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-File-Ancestor-Helper";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let existing_file = repo.path.join("pages/home/hero.md");
+        util::fs::create_dir_all(existing_file.parent().unwrap())?;
+        util::fs::write_to_path(&existing_file, "# Existing Hero")?;
+        repositories::add(&repo, &existing_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let err = ensure_no_file_ancestors_in_tree(
+            &repo,
+            &commit,
+            Path::new("pages/home/hero.md/image.png"),
+            Path::new("pages/home/hero.md/image.png"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, OxenHttpError::BadRequest(_)));
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
