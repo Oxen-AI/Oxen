@@ -53,7 +53,7 @@ ruff .
 
 1. Create a test file in `tests/` that imports the module and tests it.
 2. Implement or extend the rust wrappers in `src/py_*.rs`
-3. Make sure the rust module is linked `src/lib.rs`
+3. Make sure the rust module is linked `crates/lib.rs`
 4. Add the module to `python/oxen/__init__.py`
 5. If there is another python layer that needs to be added, or python docs that we want to generate, use `python/oxen/repo.py` as a reference for how it can interact with the rust modules.
 6. Run the tests end to end, to make sure you didn't leave out any steps.
