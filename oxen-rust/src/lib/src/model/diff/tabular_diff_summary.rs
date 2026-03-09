@@ -140,10 +140,12 @@ impl TabularDiffWrapper {
     ) -> Option<DataFrame> {
         match node {
             Some(node) => {
-                let version_store = repo.version_store().expect("version store not initialized");
+                let version_store = repo.version_store().expect(
+                    "invariant violation: version store not found in maybe_get_df_from_file_node",
+                );
                 let version_path = version_store
                     .get_version_path(&node.hash().to_string())
-                    .expect("version path not found");
+                    .expect("invariant violation: version path not found in maybe_get_df_from_file_node");
                 tabular::read_df_with_extension(version_path, node.extension(), &DFOpts::empty())
                     .await
                     .ok()
@@ -160,10 +162,10 @@ impl TabularDiffWrapper {
             Some(entry) => {
                 let version_store = repo
                     .version_store()
-                    .expect("version store missing in maybe_get_df_from_commit_entry");
-                let version_path = version_store
-                    .get_version_path(&entry.hash)
-                    .expect("version path not found");
+                    .expect("invariant violation: version store not found in maybe_get_df_from_commit_entry");
+                let version_path = version_store.get_version_path(&entry.hash).expect(
+                    "invariant violation: version path not found in maybe_get_df_from_commit_entry",
+                );
                 tabular::read_df(version_path, DFOpts::empty()).await.ok()
             }
             None => None,
