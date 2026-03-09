@@ -8,7 +8,7 @@ repos:
     hooks:
       - id: cargo-fmt-oxen-rust
         name: cargo fmt (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo fmt'
+        entry: bash -c 'cd oxen-rust && cargo fmt --all'
         language: system
         files: ^oxen-rust/.*\.rs$
         pass_filenames: false
@@ -22,7 +22,7 @@ repos:
 
       - id: cargo-clippy-oxen-rust
         name: cargo clippy (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo clippy --no-deps -- -D warnings'
+        entry: bash -c 'cd oxen-rust && cargo clippy --workspace --no-deps -- -D warnings'
         language: system
         files: ^oxen-rust/.*\.rs$
         pass_filenames: false
@@ -43,14 +43,28 @@ repos:
 
       - id: ruff-check
         name: ruff check (oxen-python)
-        entry: bash -c 'uvx ruff check oxen-python/'
+        entry: bash -c '. ./tool-versions.env && uvx ruff@"$RUFF_VERSION" check oxen-python/'
         language: system
         files: ^oxen-python/.*\.py$
         pass_filenames: false
 
       - id: ruff-format
         name: ruff format (oxen-python)
-        entry: bash -c 'uvx ruff format oxen-python/'
+        entry: bash -c '. ./tool-versions.env && uvx ruff@"$RUFF_VERSION" format oxen-python/'
         language: system
         files: ^oxen-python/.*\.py$
+        pass_filenames: false
+
+      - id: ruff-check-scripts
+        name: ruff check (scripts)
+        entry: bash -c 'uvx ruff check scripts/'
+        language: system
+        files: ^scripts/.*\.py$
+        pass_filenames: false
+
+      - id: ruff-format-scripts
+        name: ruff format (scripts)
+        entry: bash -c 'uvx ruff format scripts/'
+        language: system
+        files: ^scripts/.*\.py$
         pass_filenames: false

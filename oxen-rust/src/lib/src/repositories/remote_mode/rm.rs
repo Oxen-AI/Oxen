@@ -233,8 +233,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remote_mode_rm_dir_that_is_not_committed_should_throw_error(
-    ) -> Result<(), OxenError> {
+    async fn test_remote_mode_rm_dir_that_is_not_committed_should_throw_error()
+    -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 

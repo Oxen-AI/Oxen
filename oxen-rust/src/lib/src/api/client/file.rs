@@ -1,8 +1,8 @@
 use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
-use crate::model::commit::NewCommitBody;
 use crate::model::RemoteRepository;
+use crate::model::commit::NewCommitBody;
 use crate::view::CommitResponse;
 
 use bytes::{Bytes, BytesMut};
@@ -207,7 +207,7 @@ pub async fn delete_file(
 #[cfg(test)]
 mod tests {
 
-    use actix_web::web::Bytes;
+    use bytes::Bytes;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -375,10 +375,12 @@ mod tests {
             .await?;
 
             assert_eq!(delete_response.status.status_message, "resource_deleted");
-            assert!(delete_response
-                .commit
-                .message
-                .contains("Delete existing file from training data"));
+            assert!(
+                delete_response
+                    .commit
+                    .message
+                    .contains("Delete existing file from training data")
+            );
 
             // Pull the deletion
             repositories::pull(&local_repo).await?;
@@ -421,10 +423,12 @@ mod tests {
             .await?;
 
             assert_eq!(mv_response.status.status_message, "resource_updated");
-            assert!(mv_response
-                .commit
-                .message
-                .contains("Move file to new location"));
+            assert!(
+                mv_response
+                    .commit
+                    .message
+                    .contains("Move file to new location")
+            );
 
             // Pull the changes
             repositories::pull(&local_repo).await?;

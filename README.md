@@ -41,7 +41,9 @@ oxen commit "Adding 200k images and their corresponding annotations"
 oxen push origin main
 ```
 
-Oxen is comprised of a [command line interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for [Rust](https://github.com/Oxen-AI/Oxen) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
+Oxen is comprised of a [command line
+interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for
+[Rust](https://github.com/Oxen-AI/Oxen/tree/main/oxen-rust) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
 
 ## 🌾 What kind of data?
 
@@ -128,7 +130,20 @@ and [`oxen-python`'s build instructions](./oxen-python/README.md#build) for spec
 
 However, each codebase shares the same pre-requisites and pre-commit hooks.
 
-### Pre-Requisites
+### Prerequisites
+
+#### Automatic Install
+
+You should use [`./scripts/install-pre-reqs.sh`](./scripts/install-pre-reqs.sh) to automatically install the required development tools and toolchains for Rust and Python. Execute that as:
+
+```bash
+./scripts/install-pre-reqs.sh
+```
+
+It supports MacOS and Debian-based Linux distributions. If you have a different OS or distribution, or if you have some error with the install script, you can follow the manual installation steps below.
+
+#### Manual Installation
+
 Oxen is purely written in Rust 🦀. You should install the Rust toolchain with [`rustup`](https://www.rust-lang.org/tools/install).
 
 ```bash
@@ -147,6 +162,12 @@ You can install all of these at once with the following commands:
 ```bash
 cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
 cargo install --locked cargo-nextest
+```
+
+Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be installed on macOS with:
+
+```bash
+brew install cmake
 ```
 
 The [Python interface](./oxen-python/README.md) uses [`liboxen`](./oxen-rust/src/lib/) bindings provided by PyO3.

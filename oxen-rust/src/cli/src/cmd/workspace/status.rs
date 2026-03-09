@@ -4,12 +4,12 @@ use clap::{Arg, ArgMatches, Command};
 use liboxen::api;
 use liboxen::error;
 use liboxen::error::OxenError;
-use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::LocalRepository;
 use liboxen::model::RemoteRepository;
 use liboxen::model::StagedData;
 use liboxen::model::StagedEntry;
 use liboxen::model::StagedEntryStatus;
+use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::util;
 
 use std::collections::HashMap;
@@ -98,7 +98,9 @@ impl RunCmd for WorkspaceStatusCmd {
             None => match args.get_one::<String>("workspace") {
                 None => None,
                 something => {
-                    eprintln!("DEPRECATION WARNING: '--workspace' option has been renamed to '--workspace-id'. '--workspace' will be **REMOVED** in a future release!");
+                    eprintln!(
+                        "DEPRECATION WARNING: '--workspace' option has been renamed to '--workspace-id'. '--workspace' will be **REMOVED** in a future release!"
+                    );
                     something
                 }
             },
@@ -213,11 +215,10 @@ mod tests {
     use super::*;
     use liboxen::api;
     use liboxen::error::OxenError;
-    use liboxen::test;
 
     #[tokio::test]
     async fn test_workspace_status_by_name() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+        liboxen::test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let w_id = "test_workspace_id";
             let w_name = "my_test_workspace_name";
             let opts = StagedDataOpts {
@@ -239,7 +240,7 @@ mod tests {
                 &remote_repo,
                 w_name,
                 "",
-                test::test_img_file(),
+                liboxen::test::test_img_file(),
             )
             .await?;
             let status = WorkspaceStatusCmd::status(&remote_repo, w_name, ".", &opts).await?;

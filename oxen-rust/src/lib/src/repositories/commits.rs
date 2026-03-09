@@ -22,11 +22,11 @@ pub mod commit_writer;
 /// ```
 /// use liboxen::command;
 /// use liboxen::util;
-/// # use liboxen::test;
+/// #
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");
@@ -408,6 +408,7 @@ pub fn commit_history_is_complete(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::Path;
 
     use crate::error::OxenError;
@@ -416,7 +417,7 @@ mod tests {
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
-    use crate::test;
+
     use crate::util;
 
     use super::*;
@@ -1048,10 +1049,12 @@ mod tests {
             status.print();
 
             // Should find the untracked dir
-            assert!(status
-                .untracked_dirs
-                .iter()
-                .any(|(path, _)| *path == PathBuf::from("empty_dir")));
+            assert!(
+                status
+                    .untracked_dirs
+                    .iter()
+                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+            );
 
             // Add the empty dir
             repositories::add(&repo, &empty_dir).await?;

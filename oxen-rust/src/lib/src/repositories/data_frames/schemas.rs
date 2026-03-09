@@ -604,8 +604,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_schemas_add_column_to_committed_schema_after_changing_data(
-    ) -> Result<(), OxenError> {
+    async fn test_schemas_add_column_to_committed_schema_after_changing_data()
+    -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo

@@ -7,13 +7,13 @@ use crate::constants;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
-use crate::error::OxenError;
 use crate::error::NO_REPO_FOUND;
+use crate::error::OxenError;
+use crate::model::Commit;
+use crate::model::MetadataEntry;
 use crate::model::file::FileContents;
 use crate::model::merkle_tree;
 use crate::model::repository::local_repository::LocalRepositoryWithEntries;
-use crate::model::Commit;
-use crate::model::MetadataEntry;
 use crate::model::{LocalRepository, RepoNew};
 use crate::repositories;
 use crate::repositories::fork::FORK_STATUS_FILENAME;
@@ -154,10 +154,10 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> Vec<LocalRepository> {
         //     local_dir
         // );
 
-        if oxen_dir.exists() {
-            if let Ok(repository) = LocalRepository::from_dir(&local_dir) {
-                repos.push(repository);
-            }
+        if oxen_dir.exists()
+            && let Ok(repository) = LocalRepository::from_dir(&local_dir)
+        {
+            repos.push(repository);
         }
     }
 

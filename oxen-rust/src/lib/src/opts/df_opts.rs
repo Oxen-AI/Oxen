@@ -9,8 +9,8 @@ use crate::constants::{
 };
 use crate::core::df::filter::{self, DFFilterExp};
 use crate::error::OxenError;
-use crate::model::data_frame::schema::Field;
 use crate::model::Schema;
+use crate::model::data_frame::schema::Field;
 use utoipa::ToSchema;
 
 use super::{EmbeddingQueryOpts, PaginateOpts};
@@ -340,16 +340,8 @@ impl DFOpts {
         } else {
             Some(String::from("false"))
         };
-        let page = if self.page.is_some() {
-            Some(format!("{}", self.page.unwrap()))
-        } else {
-            None
-        };
-        let page_size = if self.page_size.is_some() {
-            Some(format!("{}", self.page_size.unwrap()))
-        } else {
-            None
-        };
+        let page = self.page.map(|p| format!("{}", p));
+        let page_size = self.page_size.map(|ps| format!("{}", ps));
 
         let params = vec![
             ("item", self.item.clone()),
@@ -390,7 +382,7 @@ impl DFOpts {
 impl DFOptView {
     pub fn from_opt<T: serde::Serialize>(name: &str, opt: &Option<T>) -> Self {
         let value = match opt {
-            Some(ref v) => serde_json::to_value(v).unwrap_or(Value::Null),
+            Some(v) => serde_json::to_value(v).unwrap_or(Value::Null),
             None => Value::Null,
         };
 

@@ -1,14 +1,13 @@
 use std::path::Path;
 
 use crate::core::staged::with_staged_db_manager;
-use crate::core::v_latest;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::FileNode;
-use crate::model::metadata::generic_metadata::GenericMetadata;
-use crate::model::metadata::MetadataTabular;
 use crate::model::Schema;
 use crate::model::StagedEntryStatus;
 use crate::model::Workspace;
+use crate::model::merkle_tree::node::FileNode;
+use crate::model::metadata::MetadataTabular;
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::repositories;
 
 /// Updates the staged schema by changing the column name from `before_column` to `after_column`
@@ -20,10 +19,11 @@ pub fn update_schema(
     before_column: &str,
     after_column: &str,
 ) -> Result<(), OxenError> {
-    let staged_schema = v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
-        &workspace.workspace_repo,
-        &path,
-    )?;
+    let staged_schema =
+        crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+            &workspace.workspace_repo,
+            &path,
+        )?;
     let ref_schema = if let Some(schema) = staged_schema {
         schema
     } else {

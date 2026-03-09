@@ -3,7 +3,7 @@ use time::OffsetDateTime;
 
 use crate::{
     core::versions::MinOxenVersion,
-    model::{merkle_tree::node::commit_node::TCommitNode, MerkleHash, MerkleTreeNodeType},
+    model::{MerkleHash, MerkleTreeNodeType, merkle_tree::node::commit_node::TCommitNode},
 };
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]

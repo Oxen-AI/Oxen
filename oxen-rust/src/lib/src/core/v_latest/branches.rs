@@ -61,10 +61,10 @@ impl CheckoutProgressBar {
 
 // Structs grouping related fields to reduce the number of arguments fed into the recursive functions
 
-// files_to_restore: files present in the target tree but not the from tree
-// cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
 struct CheckoutResult {
+    /// files_to_restore: files present in the target tree but not the from tree
     pub files_to_restore: Vec<FileToRestore>,
+    /// cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
     pub cannot_overwrite_entries: Vec<PathBuf>,
 }
 
@@ -77,29 +77,16 @@ impl CheckoutResult {
     }
 }
 
-// seen_files: HashMap of MerkleHashes and PathBufs, removing the need to check files against the target tree in r_remove_if_not_in_target
-// common_nodes: HashSet of the hashes of all the dirs and vnodes that are common between the trees, removing the need to look up dirs and vnodes in the recursive functions
 struct CheckoutHashes {
-    pub seen_hashes: HashSet<MerkleHash>,
+    /// seen_paths: HashSet of PathBufs seen while traversing the target tree, used in r_remove_if_not_in_target to identify files not in the target
     pub seen_paths: HashSet<PathBuf>,
+    /// common_nodes: HashSet of the hashes of all the dirs and vnodes that are common between the trees, removing the need to look up dirs and vnodes in the recursive functions
     pub common_nodes: HashSet<MerkleHash>,
 }
 
 impl CheckoutHashes {
-    // Not currently in use
-    /*
-    pub fn new() -> Self {
-        CheckoutHashes {
-            seen_hashes: HashSet::new(),
-            seen_paths: HashSet::new(),
-            common_nodes: HashSet::new(),
-        }
-    }
-    */
-
     pub fn from_hashes(common_nodes: HashSet<MerkleHash>) -> Self {
         CheckoutHashes {
-            seen_hashes: HashSet::new(),
             seen_paths: HashSet::new(),
             common_nodes,
         }
@@ -199,12 +186,12 @@ pub async fn checkout_subtrees(
 
         let maybe_from_commit = repositories::commits::head_commit_maybe(repo)?;
 
-        let from_root = if maybe_from_commit.is_some() {
-            log::debug!("from id: {:?}", maybe_from_commit.as_ref().unwrap().id);
+        let from_root = if let Some(from_commit) = &maybe_from_commit {
+            log::debug!("from id: {:?}", from_commit.id);
             log::debug!("to id: {:?}", to_commit.id);
             repositories::tree::get_root_with_children_and_partial_nodes(
                 repo,
-                maybe_from_commit.as_ref().unwrap(),
+                from_commit,
                 Some(&target_hashes),
                 None,
                 Some(&mut shared_hashes),
@@ -241,9 +228,9 @@ pub async fn checkout_subtrees(
             ));
         }
 
-        if from_root.is_some() {
+        if let Some(root) = from_root {
             log::debug!("Cleanup_removed_files");
-            cleanup_removed_files(repo, &from_root.unwrap(), &mut progress, &mut hashes).await?;
+            cleanup_removed_files(repo, &root, &mut progress, &mut hashes).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
@@ -286,10 +273,10 @@ pub async fn checkout_commit(
 ) -> Result<(), OxenError> {
     log::debug!("checkout_commit to {to_commit} from {from_commit:?}");
 
-    if let Some(from_commit) = from_commit {
-        if from_commit.id == to_commit.id {
-            return Ok(());
-        }
+    if let Some(from_commit) = from_commit
+        && from_commit.id == to_commit.id
+    {
+        return Ok(());
     }
 
     // Fetch entries if needed
@@ -377,9 +364,9 @@ pub async fn set_working_repo_to_commit(
     }
 
     // Cleanup files if checking out fr om another commit
-    if maybe_from_commit.is_some() {
+    if let Some(from_tree) = from_tree {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree.unwrap(), &mut progress, &mut hashes).await?;
+        cleanup_removed_files(repo, &from_tree, &mut progress, &mut hashes).await?;
     }
 
     for file_to_restore in results.files_to_restore {
@@ -462,14 +449,15 @@ fn r_remove_if_not_in_target(
     // Iterate through the from tree, removing files not present in the target tree
     match &from_node.node {
         EMerkleTreeNode::File(file_node) => {
-            // Only consider files not seen while traversing the target tree
-            if !hashes.seen_hashes.contains(&from_node.hash) {
-                let file_path = current_path.join(file_node.name());
-                let full_path = repo.path.join(&file_path);
-                //log::debug!("file_path: {file_path:?}");
+            let file_path = current_path.join(file_node.name());
+            let full_path = repo.path.join(&file_path);
 
-                // Before staging for removal, verify the path exists, doesn't refer to a different file in the target tree, and isn't modified
-                if full_path.exists() && !hashes.seen_paths.contains(&file_path) {
+            // Only consider files whose path is not in the target tree
+            // (using path-based check instead of hash-based, because different
+            // files at different paths can share the same content hash)
+            if !hashes.seen_paths.contains(&file_path) {
+                // Before staging for removal, verify the path exists and isn't modified
+                if full_path.exists() {
                     if util::fs::is_modified_from_node(&full_path, file_node)? {
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
@@ -480,10 +468,12 @@ fn r_remove_if_not_in_target(
 
                         paths_to_remove.push(full_path.clone());
                     }
-                // If in remote-mode, save original file contents to version_store
-                } else if full_path.exists() && repo.is_remote_mode() {
-                    files_to_store.push((from_node.hash, full_path.clone()))
                 }
+            } else if full_path.exists() && repo.is_remote_mode() {
+                // File exists in both trees at the same path — it may be overwritten
+                // during restore. Store the current version so future checkouts can
+                // restore it from the version store.
+                files_to_store.push((from_node.hash, full_path.clone()))
             }
         }
 
@@ -572,8 +562,7 @@ fn r_restore_missing_or_modified_files(
             let file_path = path.join(file_node.name());
             let full_path = repo.path.join(&file_path);
 
-            // Collect hash and path for matching in r_remove_if_not_in_target
-            hashes.seen_hashes.insert(target_node.hash);
+            // Collect path for matching in r_remove_if_not_in_target
             hashes.seen_paths.insert(file_path.clone());
             if !full_path.exists() {
                 // Before restoring, check if the user intentionally deleted this file
@@ -673,19 +662,32 @@ fn r_restore_missing_or_modified_files(
         }
         EMerkleTreeNode::Directory(dir_node) => {
             let dir_path = path.join(dir_node.name());
+            let full_dir_path = repo.path.join(&dir_path);
+            // If something exists at this path but is not a directory (e.g. the
+            // user replaced a dir with a file), remove it so restoration can proceed.
+            if full_dir_path.exists() && !full_dir_path.is_dir() {
+                std::fs::remove_file(&full_dir_path)?;
+            }
+
             // Early exit if the directory is the same in the from and target trees
-            if hashes.common_nodes.contains(&target_node.hash) {
+            // AND it still exists on disk as a directory (if deleted or replaced, we need to restore it)
+            if hashes.common_nodes.contains(&target_node.hash) && full_dir_path.is_dir() {
                 return Ok(());
             };
+
+            // If the directory doesn't exist on disk, we need to walk all vnodes
+            // (including shared ones) to restore all missing files
+            let walk_all = !full_dir_path.is_dir();
 
             let children = {
                 // Get vnodes for the from dir node
                 let dir_vnodes = &target_node.children;
 
                 // Only iterate through vnodes not shared between the trees
+                // unless walk_all is set (directory deleted from disk)
                 let mut unique_nodes = Vec::new();
                 for vnode in dir_vnodes {
-                    if !hashes.common_nodes.contains(&vnode.hash) {
+                    if walk_all || !hashes.common_nodes.contains(&vnode.hash) {
                         unique_nodes.extend(vnode.children.iter().cloned());
                     }
                 }

@@ -82,10 +82,9 @@ impl DataType {
                 if let Some(captures) = regex::Regex::new(r"^embedding\[(\d+)\]$")
                     .unwrap()
                     .captures(type_name)
+                    && let Some(size) = captures.get(1)
                 {
-                    if let Some(size) = captures.get(1) {
-                        return DataType::Embedding(size.as_str().parse::<usize>().unwrap());
-                    }
+                    return DataType::Embedding(size.as_str().parse::<usize>().unwrap());
                 }
                 log::error!("TODO: from_string unknown type {type_name}");
                 DataType::Unknown
@@ -303,11 +302,10 @@ impl DataType {
                 if let Some(captures) = regex::Regex::new(r"^FLOAT\[(\d+)\]$")
                     .unwrap()
                     .captures(type_name)
+                    && let Some(size) = captures.get(1)
                 {
-                    if let Some(size) = captures.get(1) {
-                        log::debug!("FLOAT[{}]", size.as_str());
-                        return DataType::Embedding(size.as_str().parse::<usize>().unwrap());
-                    }
+                    log::debug!("FLOAT[{}]", size.as_str());
+                    return DataType::Embedding(size.as_str().parse::<usize>().unwrap());
                 }
 
                 log::error!("TODO: from_sql unknown SQL type {}", s.as_ref());

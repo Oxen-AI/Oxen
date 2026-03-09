@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use clap::{Arg, Command};
 
 use liboxen::error::OxenError;
-use liboxen::model::data_frame::schema::Schema;
 use liboxen::model::LocalRepository;
+use liboxen::model::data_frame::schema::Schema;
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;

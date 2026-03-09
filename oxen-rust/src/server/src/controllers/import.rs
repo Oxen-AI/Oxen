@@ -1,5 +1,5 @@
 use actix_multipart::Multipart;
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,8 +12,8 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::core::v_latest::workspaces::files::decompress_zip;
 use liboxen::error::OxenError;
-use liboxen::model::file::TempFilePathNew;
 use liboxen::model::NewCommitBody;
+use liboxen::model::file::TempFilePathNew;
 use liboxen::repositories;
 use liboxen::view::{CommitResponse, StatusMessage};
 
@@ -450,16 +450,17 @@ async fn parse_multipart_fields_for_upload_zip(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use crate::app_data::OxenAppData;
-    use crate::{controllers, test};
+    use crate::controllers;
 
     use liboxen::view::CommitResponse;
     use liboxen::{repositories, util};
 
     use liboxen::error::OxenError;
 
-    use actix_web::{web, App};
+    use actix_web::{App, web};
     use std::path::PathBuf;
 
     #[actix_web::test]
@@ -469,7 +470,7 @@ mod tests {
             return Ok(());
         }
 
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
@@ -513,12 +514,8 @@ mod tests {
         let resp: CommitResponse = serde_json::from_str(body)?;
         assert_eq!(resp.status.status, "success");
 
-        let entry = repositories::entries::get_file(
-            &repo,
-            &resp.commit,
-            PathBuf::from("data/cats_vs_dogs.tsv"),
-        )?
-        .unwrap();
+        let entry =
+            repositories::entries::get_file(&repo, &resp.commit, "data/cats_vs_dogs.tsv")?.unwrap();
         let version_store = repo.version_store()?;
         let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         assert!(version_path.exists());
@@ -531,7 +528,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_controllers_file_import_text_file() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";

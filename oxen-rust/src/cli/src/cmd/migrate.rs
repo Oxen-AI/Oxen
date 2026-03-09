@@ -59,32 +59,32 @@ impl RunCmd for MigrateCmd {
         // Parse Args
         let migrations = migrations();
 
-        if let Some((direction, sub_matches)) = args.subcommand() {
-            if let Some((migration, sub_matches)) = sub_matches.subcommand() {
-                let migration = migrations
-                    .get(migration)
-                    .ok_or(OxenError::basic_str(format!(
-                        "Unknown migration: {migration}"
-                    )))?;
-                let path_str = sub_matches.get_one::<String>("PATH").expect("required");
-                let path = Path::new(path_str);
+        if let Some((direction, sub_matches)) = args.subcommand()
+            && let Some((migration, sub_matches)) = sub_matches.subcommand()
+        {
+            let migration = migrations
+                .get(migration)
+                .ok_or(OxenError::basic_str(format!(
+                    "Unknown migration: {migration}"
+                )))?;
+            let path_str = sub_matches.get_one::<String>("PATH").expect("required");
+            let path = Path::new(path_str);
 
-                let all = sub_matches.get_flag("all");
+            let all = sub_matches.get_flag("all");
 
-                if direction == "up" {
-                    let repo = LocalRepository::from_dir(path)?;
-                    if migration.is_needed(&repo)? {
-                        migration.up(path, all)?;
-                    } else {
-                        println!("Migration already applied: {}", migration.name());
-                    }
-                } else if direction == "down" {
-                    migration.down(path, all)?;
+            if direction == "up" {
+                let repo = LocalRepository::from_dir(path)?;
+                if migration.is_needed(&repo)? {
+                    migration.up(path, all)?;
                 } else {
-                    return Err(OxenError::basic_str(format!(
-                        "Unknown direction: {direction}"
-                    )));
+                    println!("Migration already applied: {}", migration.name());
                 }
+            } else if direction == "down" {
+                migration.down(path, all)?;
+            } else {
+                return Err(OxenError::basic_str(format!(
+                    "Unknown direction: {direction}"
+                )));
             }
         }
 

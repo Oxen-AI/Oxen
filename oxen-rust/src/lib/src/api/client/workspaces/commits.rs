@@ -2,8 +2,8 @@ use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, NewCommitBody, RemoteRepository};
-use crate::view::merge::{Mergeable, MergeableResponse};
 use crate::view::CommitResponse;
+use crate::view::merge::{Mergeable, MergeableResponse};
 
 pub async fn mergeability(
     remote_repo: &RemoteRepository,

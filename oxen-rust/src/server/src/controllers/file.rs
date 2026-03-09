@@ -4,18 +4,18 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
+use liboxen::model::Commit;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew};
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
-use liboxen::model::Commit;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::view::{CommitResponse, StatusMessage};
 
 use actix_multipart::Multipart;
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::TryStreamExt as _;
 use liboxen::repositories::commits;
 use serde::Deserialize;
@@ -672,10 +672,11 @@ async fn process_and_add_files(
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
     use std::path::PathBuf;
 
     use actix_multipart_test::MultiPartFormDataBuilder;
-    use actix_web::{web, App};
+    use actix_web::{App, web};
     use liboxen::view::CommitResponse;
 
     use liboxen::error::OxenError;
@@ -684,11 +685,10 @@ mod tests {
 
     use crate::app_data::OxenAppData;
     use crate::controllers;
-    use crate::test;
 
     #[actix_web::test]
     async fn test_controllers_file_put() -> Result<(), OxenError> {
-        test::init_test_env();
+        liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";

@@ -13,9 +13,9 @@ use simdutf8::compat::from_utf8;
 use std::collections::HashSet;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::Cursor;
+use std::io::prelude::*;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -31,11 +31,11 @@ use crate::constants::TREE_DIR;
 use crate::constants::VERSION_FILE_NAME;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::Commit;
+use crate::model::MerkleHash;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::metadata::metadata_video::VideoThumbnail;
-use crate::model::Commit;
-use crate::model::MerkleHash;
 use crate::model::{CommitEntry, EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
@@ -383,10 +383,10 @@ pub fn count_lines(
         reader.consume(len);
     }
 
-    if let Some(last_byte) = last_buf.last() {
-        if last_byte == &b'\n' {
-            line_count -= 1;
-        }
+    if let Some(last_byte) = last_buf.last()
+        && last_byte == &b'\n'
+    {
+        line_count -= 1;
     }
 
     if opts.with_chars {
@@ -845,14 +845,11 @@ pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
 pub fn is_tabular_from_extension(data_path: impl AsRef<Path>, file_path: impl AsRef<Path>) -> bool {
     let data_path = data_path.as_ref();
     let file_path = file_path.as_ref();
-    if has_ext(file_path, "json") {
-        // check if the first character in the file is '['
-        // if so it is just a json array we can treat as tabular
-        if let Ok(c) = read_first_byte_from_file(data_path) {
-            if "[" == c.to_string() {
-                return true;
-            }
-        }
+    if has_ext(file_path, "json")
+        && let Ok(c) = read_first_byte_from_file(data_path)
+        && "[" == c.to_string()
+    {
+        return true;
     }
 
     has_tabular_extension(file_path)
@@ -1165,7 +1162,7 @@ pub fn recursive_eligible_files(dir: &Path) -> Vec<PathBuf> {
                 if !path.is_dir() {
                     files.push(path);
 
-                    if files.len() % mod_idx == 0 {
+                    if files.len().is_multiple_of(mod_idx) {
                         log::debug!("Got {} files", files.len());
                         mod_idx *= 2;
                     }
@@ -1329,10 +1326,10 @@ pub fn rlist_files_in_dir(dir: &Path) -> Vec<PathBuf> {
 
 pub fn is_in_oxen_hidden_dir(path: &Path) -> bool {
     for component in path.components() {
-        if let Some(path_str) = component.as_os_str().to_str() {
-            if path_str.eq(constants::OXEN_HIDDEN_DIR) {
-                return true;
-            }
+        if let Some(path_str) = component.as_os_str().to_str()
+            && path_str.eq(constants::OXEN_HIDDEN_DIR)
+        {
+            return true;
         }
     }
     false
@@ -1735,22 +1732,24 @@ pub async fn resize_cache_image_version_store(
         }
     };
 
-    let resized_img = if resize.width.is_some() && resize.height.is_some() {
+    let resized_img = if let Some(resize_width) = resize.width
+        && let Some(resize_height) = resize.height
+    {
         img.resize_exact(
-            resize.width.unwrap(),
-            resize.height.unwrap(),
+            resize_width,
+            resize_height,
             image::imageops::FilterType::Lanczos3,
         )
-    } else if resize.width.is_some() {
+    } else if let Some(resize_width) = resize.width {
         img.resize(
-            resize.width.unwrap(),
-            resize.width.unwrap(),
+            resize_width,
+            resize_width,
             image::imageops::FilterType::Lanczos3,
         )
-    } else if resize.height.is_some() {
+    } else if let Some(resize_height) = resize.height {
         img.resize(
-            resize.height.unwrap(),
-            resize.height.unwrap(),
+            resize_height,
+            resize_height,
             image::imageops::FilterType::Lanczos3,
         )
     } else {
@@ -1884,7 +1883,7 @@ pub fn handle_video_thumbnail(
         );
         Err(OxenError::thumbnailing_not_enabled(
             "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
-             Build with --features ffmpeg to enable this functionality.",
+             Build with --features liboxen/ffmpeg to enable this functionality.",
         ))
     }
 
@@ -2275,14 +2274,16 @@ def add(a, b):
             let test_id_file = repo.path.join("test_id.txt");
             let test_id_file_no_ext = repo.path.join("test_id");
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("text")
                     .join("test_id.txt"),
                 &test_id_file,
             )?;
             util::fs::copy(
-                Path::new("data")
+                test::REPO_ROOT
+                    .join("data")
                     .join("test")
                     .join("text")
                     .join("test_id.txt"),
@@ -2309,10 +2310,12 @@ def add(a, b):
             assert_eq!(
                 EntryDataType::Tabular,
                 util::fs::file_data_type(
-                    &Path::new("data")
+                    test::REPO_ROOT
+                        .join("data")
                         .join("test")
                         .join("json")
                         .join("tabular.json")
+                        .as_path()
                 )
             );
 

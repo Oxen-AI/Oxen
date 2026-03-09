@@ -1,8 +1,7 @@
-use criterion::{black_box, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box};
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
-use liboxen::opts::FetchOpts;
 use liboxen::repositories;
 use liboxen::test::create_or_clear_remote_repo;
 use liboxen::util;
@@ -20,7 +19,7 @@ fn generate_random_string(len: usize) -> String {
         .collect()
 }
 
-fn write_file_for_fetch_benchmark(
+fn write_file_for_download_benchmark(
     file_path: &Path,
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
@@ -38,17 +37,19 @@ fn write_file_for_fetch_benchmark(
     Ok(())
 }
 
-async fn setup_repo_for_fetch_benchmark(
+async fn setup_repo_for_download_benchmark(
     base_dir: &Path,
     repo_size: usize,
-    num_files_to_fetch_in_benchmark: usize,
+    num_files_to_download_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
 ) -> Result<(LocalRepository, RemoteRepository, PathBuf), OxenError> {
     println!(
-        "setup_repo_for_fetch_benchmark got repo_size {repo_size}, num_files_to_fetch {num_files_to_fetch_in_benchmark}, and dir_size {dir_size}",
+        "setup_repo_for_download_benchmark got repo_size {repo_size}, num_files_to_download {num_files_to_download_in_benchmark}, and dir_size {dir_size}",
     );
-    let repo_dir = base_dir.join(format!("repo_{num_files_to_fetch_in_benchmark}_{dir_size}"));
+    let repo_dir = base_dir.join(format!(
+        "repo_{num_files_to_download_in_benchmark}_{dir_size}"
+    ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
@@ -97,19 +98,19 @@ async fn setup_repo_for_fetch_benchmark(
                 - (max_large_file_ratio - min_large_file_ratio) * normalized_log_repo_size;
         }
 
-        for i in repo_size..(repo_size + num_files_to_fetch_in_benchmark) {
+        for i in repo_size..(repo_size + num_files_to_download_in_benchmark) {
             let dir_idx = rng.gen_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
             let file_path = dir.join(format!("file_{i}.txt"));
-            write_file_for_fetch_benchmark(&file_path, large_file_percentage)?;
+            write_file_for_download_benchmark(&file_path, large_file_percentage)?;
         }
 
         files_dir
     };
 
     repositories::add(&repo, black_box(&files_dir)).await?;
-    repositories::commit(&repo, "Prepare test files for fetch benchmark")?;
+    repositories::commit(&repo, "Prepare test files for download benchmark")?;
     repositories::push(&repo).await?;
 
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -117,15 +118,15 @@ async fn setup_repo_for_fetch_benchmark(
     Ok((repo, remote_repo, repo_dir))
 }
 
-pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
-    let base_dir = PathBuf::from("data/test/benches/fetch");
+pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
+    let base_dir = PathBuf::from("data/test/benches/download");
     if base_dir.exists() {
         util::fs::remove_dir_all(&base_dir).unwrap();
     }
     util::fs::create_dir_all(&base_dir).unwrap();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut group = c.benchmark_group("fetch");
+    let mut group = c.benchmark_group("download");
     group.sample_size(iters.unwrap_or(10));
     let params = [
         (1000, 20),
@@ -136,12 +137,12 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
         (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_fetch = repo_size / 10;
+        let num_files_to_download = repo_size / 10;
         let (repo, remote_repo, repo_dir) = rt
-            .block_on(setup_repo_for_fetch_benchmark(
+            .block_on(setup_repo_for_download_benchmark(
                 &base_dir,
                 repo_size,
-                num_files_to_fetch,
+                num_files_to_download,
                 dir_size,
                 data.clone(),
             ))
@@ -149,15 +150,15 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
 
         group.bench_with_input(
             BenchmarkId::new(
-                format!("{num_files_to_fetch}_files_in_{dir_size}dirs"),
-                format!("{:?}", (num_files_to_fetch, dir_size)),
+                format!("{num_files_to_download}k_files_in_{dir_size}dirs"),
+                format!("{:?}", (num_files_to_download, dir_size)),
             ),
-            &(num_files_to_fetch, dir_size),
+            &(num_files_to_download, dir_size),
             |b, _| {
                 b.to_async(&rt).iter_batched(
                     || {
                         let iter_dir =
-                            repo_dir.join(format!("run-{}", rand::thread_rng().gen::<u64>()));
+                            repo_dir.join(format!("run-{}", rand::thread_rng().r#gen::<u64>()));
 
                         // Create a clean local repo without the files
                         let oxen_hidden_path = util::fs::oxen_hidden_dir(&iter_dir);
@@ -173,15 +174,10 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
                         local_repo.set_depth(repo.depth());
 
                         local_repo.save().unwrap();
-
-                        let mut fetch_opts = FetchOpts::new();
-                        let subtrees = local_repo.subtree_paths();
-                        fetch_opts.subtree_paths = subtrees;
-
-                        (local_repo.clone(), fetch_opts, iter_dir.clone())
+                        (&remote_repo, iter_dir)
                     },
-                    |(local_repo, fetch_opts, _iter_dir)| async move {
-                        repositories::fetch_all(&local_repo, &fetch_opts)
+                    |(remote_repo, iter_dir)| async move {
+                        repositories::download(remote_repo, Path::new("files"), &iter_dir, "main")
                             .await
                             .unwrap();
                     },

@@ -134,17 +134,19 @@ pub fn update(
 pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
     let name = name.as_ref();
     // Make sure they don't delete the current checked out branch
-    if let Ok(Some(branch)) = current_branch(repo) {
-        if branch.name == name {
-            let err = format!("Err: Cannot delete current checked out branch '{name}'");
-            return Err(OxenError::basic_str(err));
-        }
+    if let Ok(Some(branch)) = current_branch(repo)
+        && branch.name == name
+    {
+        let err = format!("Err: Cannot delete current checked out branch '{name}'");
+        return Err(OxenError::basic_str(err));
     }
 
     if branch_has_been_merged(repo, name)? {
         with_ref_manager(repo, |manager| manager.delete_branch(name))
     } else {
-        let err = format!("Err: The branch '{name}' is not fully merged.\nIf you are sure you want to delete it, run 'oxen branch -D {name}'.");
+        let err = format!(
+            "Err: The branch '{name}' is not fully merged.\nIf you are sure you want to delete it, run 'oxen branch -D {name}'."
+        );
         Err(OxenError::basic_str(err))
     }
 }
@@ -153,11 +155,11 @@ pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, O
 /// Caution! Will delete a local branch without checking if it has been merged or pushed.
 pub fn force_delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
     let name = name.as_ref();
-    if let Ok(Some(branch)) = current_branch(repo) {
-        if branch.name == name {
-            let err = format!("Err: Cannot delete current checked out branch '{name}'");
-            return Err(OxenError::basic_str(err));
-        }
+    if let Ok(Some(branch)) = current_branch(repo)
+        && branch.name == name
+    {
+        let err = format!("Err: Cannot delete current checked out branch '{name}'");
+        return Err(OxenError::basic_str(err));
     }
 
     with_ref_manager(repo, |manager| manager.delete_branch(name))

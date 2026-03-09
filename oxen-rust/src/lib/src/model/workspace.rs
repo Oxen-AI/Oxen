@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACES_DIR, WORKSPACE_CONFIG};
+use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_CONFIG, WORKSPACES_DIR};
 use crate::model::{Commit, LocalRepository};
 use crate::util;
 

@@ -3,8 +3,8 @@ use clap::{Arg, ArgMatches, Command};
 
 use glob::glob;
 use liboxen::error::OxenError;
-use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::LocalRepository;
+use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::repositories;
 use std::collections::HashSet;
 use std::path::PathBuf;

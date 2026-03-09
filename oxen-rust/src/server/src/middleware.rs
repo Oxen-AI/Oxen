@@ -1,12 +1,24 @@
 use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
 };
 use futures_util::future::LocalBoxFuture;
-use std::future::{ready, Ready};
+use liboxen::request_context::REQUEST_ID;
+use std::future::{Ready, ready};
+// Oxen request Id
+pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
 
-use liboxen::constants::OXEN_REQUEST_ID;
-use liboxen::request_context::{extract_or_generate_request_id, REQUEST_ID};
+pub fn extract_or_generate_request_id(headers: &actix_web::http::header::HeaderMap) -> String {
+    headers
+        .get(OXEN_REQUEST_ID)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(generate_request_id)
+}
+
+pub fn generate_request_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
 
 /// Middleware factory for request ID injection
 pub struct RequestIdMiddleware;
@@ -69,5 +81,56 @@ where
                 Ok(res)
             },
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liboxen::request_context::get_request_id;
+
+    #[tokio::test]
+    async fn test_request_id_task_local() {
+        let request_id = generate_request_id();
+
+        REQUEST_ID
+            .scope(
+                std::cell::RefCell::new(Some(request_id.clone())),
+                async move {
+                    assert_eq!(get_request_id(), Some(request_id));
+                },
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_no_request_id() {
+        // Outside scope, should return None
+        assert_eq!(get_request_id(), None);
+    }
+
+    #[test]
+    fn test_extract_request_id_from_header() {
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(OXEN_REQUEST_ID),
+            HeaderValue::from_static("test-id-123"),
+        );
+
+        let id = extract_or_generate_request_id(&headers);
+        assert_eq!(id, "test-id-123");
+    }
+
+    #[test]
+    fn test_generate_request_id_when_missing() {
+        use actix_web::http::header::HeaderMap;
+
+        let headers = HeaderMap::new();
+        let id = extract_or_generate_request_id(&headers);
+
+        // Should be valid UUID format
+        assert_eq!(id.len(), 36); // UUID length with hyphens
     }
 }

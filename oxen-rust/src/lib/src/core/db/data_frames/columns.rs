@@ -7,8 +7,8 @@ use rocksdb::DB;
 use crate::core::db;
 use crate::core::db::data_frames::column_changes_db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::model::data_frame::schema::DataType;
 use crate::model::Schema;
+use crate::model::data_frame::schema::DataType;
 use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 use crate::view::data_frames::{ColumnChange, DataFrameColumnChange};
 use crate::{constants::TABLE_NAME, error::OxenError};
@@ -65,17 +65,14 @@ pub fn record_column_change(
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(column_changes_path))?;
 
-    if operation == "deleted" {
-        if let Some(column) = &column_before {
-            if let Some(previous_change) =
-                column_changes_db::get_data_frame_column_change(&db, &column.column_name)?
-            {
-                if previous_change.operation == "added" {
-                    // If we're deleting a previously added column, just remove the change
-                    return revert_column_changes(&db, &column.column_name);
-                }
-            }
-        }
+    if operation == "deleted"
+        && let Some(column) = &column_before
+        && let Some(previous_change) =
+            column_changes_db::get_data_frame_column_change(&db, &column.column_name)?
+        && previous_change.operation == "added"
+    {
+        // If we're deleting a previously added column, just remove the change
+        return revert_column_changes(&db, &column.column_name);
     }
 
     let change = DataFrameColumnChange {

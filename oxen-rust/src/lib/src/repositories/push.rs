@@ -13,14 +13,14 @@ use crate::opts::PushOpts;
 ///
 /// ```
 /// # use liboxen::api;
-/// # use liboxen::test;
+/// #
 /// use liboxen::command;
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_push");
 /// let mut repo = repositories::init(base_dir)?;
@@ -887,8 +887,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tree_cannot_push_when_remote_is_many_commits_ahead_tree_conflicts(
-    ) -> Result<(), OxenError> {
+    async fn test_tree_cannot_push_when_remote_is_many_commits_ahead_tree_conflicts()
+    -> Result<(), OxenError> {
         // Push the Remote Repo
         test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
@@ -1114,14 +1114,18 @@ mod tests {
             let dir_entries =
                 api::client::dir::list(&remote_repo, &commit.id, &path, page, page_size).await?;
             // check to make sure we only have the images directory and not the train directory
-            assert!(!dir_entries
-                .entries
-                .iter()
-                .any(|entry| entry.filename() == "train"));
-            assert!(dir_entries
-                .entries
-                .iter()
-                .any(|entry| entry.filename() == "images"));
+            assert!(
+                !dir_entries
+                    .entries
+                    .iter()
+                    .any(|entry| entry.filename() == "train")
+            );
+            assert!(
+                dir_entries
+                    .entries
+                    .iter()
+                    .any(|entry| entry.filename() == "images")
+            );
 
             // Add a single new file
             let new_file = local_repo.path.join("new_file.txt");
@@ -1133,10 +1137,12 @@ mod tests {
             let dir_entries =
                 api::client::dir::list(&remote_repo, &commit.id, &path, page, page_size).await?;
             // make sure we have the new file
-            assert!(dir_entries
-                .entries
-                .iter()
-                .any(|entry| entry.filename() == "new_file.txt"));
+            assert!(
+                dir_entries
+                    .entries
+                    .iter()
+                    .any(|entry| entry.filename() == "new_file.txt")
+            );
 
             Ok(remote_repo)
         })
@@ -1161,15 +1167,19 @@ mod tests {
                 api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                     .await?;
             // make sure we have the new file
-            assert!(dir_entries
-                .entries
-                .iter()
-                .any(|entry| entry.filename() == "README2.md"));
+            assert!(
+                dir_entries
+                    .entries
+                    .iter()
+                    .any(|entry| entry.filename() == "README2.md")
+            );
             // make sure we don't have the old file
-            assert!(!dir_entries
-                .entries
-                .iter()
-                .any(|entry| entry.filename() == "README.md"));
+            assert!(
+                !dir_entries
+                    .entries
+                    .iter()
+                    .any(|entry| entry.filename() == "README.md")
+            );
 
             Ok(remote_repo)
         })
@@ -1208,10 +1218,12 @@ A: Oxen.ai is a great tool for this! It can handle any size dataset, and is opti
                     api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                         .await?;
 
-                assert!(dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "ANOTHER_FILE.md"));
+                assert!(
+                    dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "ANOTHER_FILE.md")
+                );
 
                 Ok(())
             })
@@ -1262,10 +1274,12 @@ A: Checkout Oxen.ai
                 println!("dir_entries: {dir_entries:?}");
 
                 // Make sure we have the new file
-                assert!(dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "README.md"));
+                assert!(
+                    dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "README.md")
+                );
 
                 Ok(())
             })
@@ -1314,10 +1328,12 @@ A: Checkout Oxen.ai
                 )
                 .await?;
 
-                assert!(dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "new_data.tsv"));
+                assert!(
+                    dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "new_data.tsv")
+                );
 
                 // Make sure the root directory is in tact
                 // TODO: HERE'S THE ISSUE! And I think it has to do with push? I wasn't wholly sure what the point of the ancestor bs was before, but this is the best bet
@@ -1325,10 +1341,12 @@ A: Checkout Oxen.ai
                     api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                         .await?;
 
-                assert!(root_dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "README.md"));
+                assert!(
+                    root_dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "README.md")
+                );
 
                 Ok(())
             })
@@ -1398,18 +1416,24 @@ A: Checkout Oxen.ai
                 )
                 .await?;
 
-                assert!(dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "new_partial_data_1.tsv"));
-                assert!(dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "new_partial_data_2.tsv"));
-                assert!(dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "existing_file.tsv"));
+                assert!(
+                    dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "new_partial_data_1.tsv")
+                );
+                assert!(
+                    dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "new_partial_data_2.tsv")
+                );
+                assert!(
+                    dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "existing_file.tsv")
+                );
 
                 let metadata_entry = dir_entries
                     .entries
@@ -1445,10 +1469,12 @@ A: Checkout Oxen.ai
                     api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                         .await?;
 
-                assert!(root_dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "README.md"));
+                assert!(
+                    root_dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "README.md")
+                );
 
                 // Verify that the original repo structure is intact
                 let classification_dir_entries = api::client::dir::list(
@@ -1466,10 +1492,12 @@ A: Checkout Oxen.ai
                     api::client::dir::list(&remote_repo, &commit.id, &PathBuf::from(""), 1, 100)
                         .await?;
 
-                assert!(root_dir_entries
-                    .entries
-                    .iter()
-                    .any(|entry| entry.filename() == "README.md"));
+                assert!(
+                    root_dir_entries
+                        .entries
+                        .iter()
+                        .any(|entry| entry.filename() == "README.md")
+                );
 
                 Ok(())
             })
@@ -1491,7 +1519,7 @@ A: Checkout Oxen.ai
 
             // Generate random data of exactly AVG_CHUNK_SIZE bytes
             let mut rng = rand::thread_rng();
-            let random_data: Vec<u8> = (0..AVG_CHUNK_SIZE).map(|_| rng.gen::<u8>()).collect();
+            let random_data: Vec<u8> = (0..AVG_CHUNK_SIZE).map(|_| rng.r#gen::<u8>()).collect();
 
             // Write the data to the file
             util::fs::write_data(&file_path, &random_data)?;
@@ -1705,7 +1733,7 @@ A: Checkout Oxen.ai
 
             println!("Generating 100MB random data...");
             let mut rng = rand::thread_rng();
-            let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen::<u8>()).collect();
+            let random_data: Vec<u8> = (0..file_size).map(|_| rng.r#gen::<u8>()).collect();
 
             // Write the data to the file
             util::fs::write_data(&file_path, &random_data)?;

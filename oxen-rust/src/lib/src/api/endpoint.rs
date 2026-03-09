@@ -77,8 +77,8 @@ pub fn url_from_remote(remote: &Remote, uri: &str) -> Result<String, OxenError> 
 
             let mut remote_url = parsed_url.to_string();
             remote_url.pop(); // to_string adds a trailing slash we don't want
-                              // log::info!("url_from_remote new_path: {}", new_path);
-                              // log::info!("url_from_remote remote_url: {}", remote_url);
+            // log::info!("url_from_remote new_path: {}", new_path);
+            // log::info!("url_from_remote remote_url: {}", remote_url);
             Ok(format!("{remote_url}{new_path}"))
         }
         Err(e) => {

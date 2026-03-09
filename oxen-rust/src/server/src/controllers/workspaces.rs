@@ -1,6 +1,6 @@
 use crate::errors::{OxenHttpError, WorkspaceBranch};
 use crate::helpers::get_repo;
-use crate::params::{app_data, path_param, NameParam};
+use crate::params::{NameParam, app_data, path_param};
 
 use liboxen::constants::INITIAL_COMMIT_MSG;
 use liboxen::error::OxenError;
@@ -12,7 +12,7 @@ use liboxen::view::{
     CommitResponse, StatusMessage, StatusMessageDescription, WorkspaceResponseView,
 };
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use utoipa;
 
 pub mod changes;

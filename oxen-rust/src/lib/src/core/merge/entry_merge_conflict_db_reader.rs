@@ -1,7 +1,7 @@
 use crate::error::OxenError;
 use crate::model::merge_conflict::EntryMergeConflict;
 
-use rocksdb::{IteratorMode, DB};
+use rocksdb::{DB, IteratorMode};
 use std::path::Path;
 use std::str;
 

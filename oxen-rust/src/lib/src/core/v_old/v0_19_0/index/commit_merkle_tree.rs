@@ -74,7 +74,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let mut node_path = path.as_ref().to_path_buf();
-        if node_path == PathBuf::from(".") {
+        if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
         log::debug!("Read path {node_path:?} in commit {commit:?} depth: {depth}");
@@ -601,6 +601,7 @@ impl CommitMerkleTree {
 
 #[cfg(test)]
 mod tests {
+    use crate::test;
 
     use std::path::PathBuf;
 
@@ -609,8 +610,8 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::MerkleTreeNodeType;
     use crate::repositories;
-    use crate::test;
-    use crate::test::add_n_files_m_dirs;
+
+    use test::add_n_files_m_dirs;
 
     #[tokio::test]
     async fn test_load_dir_nodes_v0_19_0() -> Result<(), OxenError> {

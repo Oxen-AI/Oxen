@@ -1,12 +1,12 @@
 use crate::core::progress::pull_progress::PullProgress;
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::CommitEntry;
 use crate::model::LocalRepository;
 use crate::model::MetadataEntry;
 use crate::model::RemoteRepository;
+use crate::model::entry::commit_entry::Entry;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::{api, repositories};
 use std::path::Path;
 use std::sync::Arc;

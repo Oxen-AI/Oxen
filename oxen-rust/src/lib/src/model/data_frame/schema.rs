@@ -93,10 +93,10 @@ impl Schema {
             self.metadata = Some(metadata.to_owned());
         }
         for field in schema.fields.iter() {
-            if let Some(f) = self.fields.iter_mut().find(|f| f.name == field.name) {
-                if field.metadata.is_some() {
-                    f.metadata.clone_from(&field.metadata);
-                }
+            if let Some(f) = self.fields.iter_mut().find(|f| f.name == field.name)
+                && field.metadata.is_some()
+            {
+                f.metadata.clone_from(&field.metadata);
             }
         }
         self.hash = Schema::hash_fields(&self.fields);

@@ -1,10 +1,10 @@
 use crate::constants::DEFAULT_BRANCH_NAME;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::DataTypeStat;
 use crate::model::EntryDataType;
 use crate::model::LocalRepository;
 use crate::model::RepoStats;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::repositories;
 use std::collections::HashMap;
 use std::str::FromStr;

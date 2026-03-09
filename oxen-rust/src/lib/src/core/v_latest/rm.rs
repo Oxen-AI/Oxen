@@ -1,8 +1,8 @@
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db;
 use crate::error::OxenError;
-use crate::model::staged_data::StagedDataOpts;
 use crate::model::LocalRepository;
+use crate::model::staged_data::StagedDataOpts;
 use crate::opts::RmOpts;
 use crate::repositories;
 use crate::util;
@@ -16,8 +16,8 @@ use rocksdb::IteratorMode;
 use tokio::time::Duration;
 
 use crate::core::staged::with_staged_db_manager;
-use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::core::v_latest::add::CumulativeStats;
+use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
@@ -90,7 +90,7 @@ fn remove_staged_recursively_inner(
                         let path = util::fs::path_relative_to_dir(path, &repo.path)?;
                         let db_path = PathBuf::from(key);
                         log::debug!("considering rm db_path: {db_path:?} for path: {path:?}");
-                        if db_path.starts_with(&path) && path != PathBuf::from("") {
+                        if db_path.starts_with(&path) && path != Path::new("") {
                             let mut parent = db_path.parent().unwrap_or(Path::new(""));
                             remove_staged_entry(&db_path, staged_db)?;
                             while parent != Path::new("") {
@@ -322,7 +322,7 @@ pub fn remove_dir_with_db_manager(
     let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
     // let err_files: Vec<ErrorFileInfo> = vec![];
 
-    let result = with_staged_db_manager(repo, |staged_db_manager| {
+    with_staged_db_manager(repo, |staged_db_manager| {
         // Walk the tree, collecting every node under the dir
         let nodes = root_dir.list_files_and_dirs()?;
         let parent_path = root_path.parent().unwrap_or(&empty_path);
@@ -330,7 +330,7 @@ pub fn remove_dir_with_db_manager(
         for (path, node) in nodes {
             let path = parent_path.join(path);
             let corrected_node = match &node.node {
-                EMerkleTreeNode::File(ref file_node) => {
+                EMerkleTreeNode::File(file_node) => {
                     let mut file_node = file_node.clone();
                     file_node.set_name(&path.to_string_lossy());
                     MerkleTreeNode {
@@ -341,7 +341,7 @@ pub fn remove_dir_with_db_manager(
                     }
                 }
 
-                EMerkleTreeNode::Directory(ref dir_node) => {
+                EMerkleTreeNode::Directory(dir_node) => {
                     let mut dir_node = dir_node.clone();
                     dir_node.set_name(path.to_string_lossy());
                     MerkleTreeNode {
@@ -395,9 +395,7 @@ pub fn remove_dir_with_db_manager(
                 Err(e)
             }
         }
-    });
-
-    result
+    })
 }
 
 // Stages the file_node as removed, and all its parents in the repo as modified
@@ -756,7 +754,7 @@ fn r_process_remove_dir(
             return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
-            )))
+            )));
         }
     }
 

@@ -39,9 +39,9 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataAudio, OxenError> 
 
 #[cfg(test)]
 mod tests {
-    use crate::model::metadata::generic_metadata::GenericMetadata;
-    use crate::model::metadata::MetadataAudio;
     use crate::model::EntryDataType;
+    use crate::model::metadata::MetadataAudio;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::repositories;
     use crate::test;
 

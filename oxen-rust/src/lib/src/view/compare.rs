@@ -11,8 +11,8 @@ use crate::model::data_frame::schema::Field;
 use crate::model::diff::tabular_diff::{TabularDiffDupes, TabularSchemaDiff};
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
 use crate::model::{Commit, DiffEntry, Schema};
-use crate::view::message::{MessageLevel, OxenMessage};
 use crate::view::Pagination;
+use crate::view::message::{MessageLevel, OxenMessage};
 
 use super::schema::SchemaWithPath;
 use super::{JsonDataFrame, JsonDataFrameViews, StatusMessage};
@@ -200,7 +200,10 @@ impl CompareDupes {
         OxenMessage {
             level: MessageLevel::Warning,
             title: "Duplicate keys".to_owned(),
-            description: format!("This compare contains rows with duplicate keys. Results may be unexpected if keys are intended to be unique.\nLeft df duplicates: {}\nRight df duplicates: {}\n", self.left, self.right),
+            description: format!(
+                "This compare contains rows with duplicate keys. Results may be unexpected if keys are intended to be unique.\nLeft df duplicates: {}\nRight df duplicates: {}\n",
+                self.left, self.right
+            ),
         }
     }
 }

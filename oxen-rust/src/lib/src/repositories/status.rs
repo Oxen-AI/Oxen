@@ -23,10 +23,10 @@ use crate::model::{LocalRepository, StagedData};
 /// use liboxen::command;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 ///
 /// let base_dir = Path::new("repo_dir_status_1");
 /// // Initialize empty repo
@@ -46,10 +46,10 @@ use crate::model::{LocalRepository, StagedData};
 /// use liboxen::util;
 /// # use liboxen::error::OxenError;
 /// # use std::path::Path;
-/// # use liboxen::test;
+/// #
 ///
 /// # fn main() -> Result<(), OxenError> {
-/// # test::init_test_env();
+/// # liboxen::test::init_test_env();
 ///
 /// let base_dir = Path::new("repo_dir_status_2");
 /// // Initialize empty repo
@@ -97,12 +97,13 @@ pub fn status_from_dir(
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
-    use crate::model::staged_data::StagedDataOpts;
     use crate::model::StagedEntryStatus;
+    use crate::model::staged_data::StagedDataOpts;
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
+
     use crate::util;
 
     use std::collections::HashSet;
@@ -176,8 +177,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_status_shows_intermediate_directory_if_file_added(
-    ) -> Result<(), OxenError> {
+    async fn test_command_status_shows_intermediate_directory_if_file_added()
+    -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Add a deep file
             repositories::add(
@@ -241,9 +242,11 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&one_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&one_shot_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -277,9 +280,11 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&one_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&one_shot_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -315,9 +320,11 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&labels_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&labels_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -358,15 +365,19 @@ mod tests {
 
             // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
-            assert!(repo_status
-                .modified_files
-                .contains(&two_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .modified_files
+                    .contains(&two_shot_relative_path.to_path_buf())
+            );
 
             // Make sure we can see the staged file
             assert_eq!(repo_status.staged_files.len(), 1);
-            assert!(repo_status
-                .staged_files
-                .contains_key(&one_shot_relative_path.to_path_buf()));
+            assert!(
+                repo_status
+                    .staged_files
+                    .contains_key(&one_shot_relative_path.to_path_buf())
+            );
 
             Ok(())
         })
@@ -740,19 +751,40 @@ mod tests {
             let repo_path = &repo.path;
             let train_dir = repo_path.join("train");
             util::fs::create_dir_all(&train_dir)?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/cat_1.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/dog_1.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/cat_2.jpg"))?;
-            let _ = test::add_img_file_to_dir(&train_dir, Path::new("data/test/images/dog_2.jpg"))?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/cat_1.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/dog_1.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/cat_2.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &train_dir,
+                test::REPO_ROOT.join("data/test/images/dog_2.jpg").as_path(),
+            )?;
 
             let test_dir = repo_path.join("test");
             util::fs::create_dir_all(&test_dir)?;
-            let _ = test::add_img_file_to_dir(&test_dir, Path::new("data/test/images/cat_3.jpg"))?;
-            let _ = test::add_img_file_to_dir(&test_dir, Path::new("data/test/images/dog_3.jpg"))?;
+            let _ = test::add_img_file_to_dir(
+                &test_dir,
+                test::REPO_ROOT.join("data/test/images/cat_3.jpg").as_path(),
+            )?;
+            let _ = test::add_img_file_to_dir(
+                &test_dir,
+                test::REPO_ROOT.join("data/test/images/dog_3.jpg").as_path(),
+            )?;
 
             let valid_dir = repo_path.join("valid");
             util::fs::create_dir_all(&valid_dir)?;
-            let _ = test::add_img_file_to_dir(&valid_dir, Path::new("data/test/images/dog_4.jpg"))?;
+            let _ = test::add_img_file_to_dir(
+                &valid_dir,
+                test::REPO_ROOT.join("data/test/images/dog_4.jpg").as_path(),
+            )?;
 
             let base_file_1 = test::add_txt_file_to_dir(repo_path, "Hello 1")?;
             let _base_file_2 = test::add_txt_file_to_dir(repo_path, "Hello 2")?;
@@ -841,9 +873,11 @@ mod tests {
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);
-            assert!(status
-                .modified_files
-                .contains(&PathBuf::from("annotations/train/one_shot.csv")));
+            assert!(
+                status
+                    .modified_files
+                    .contains(&PathBuf::from("annotations/train/one_shot.csv"))
+            );
 
             Ok(())
         })
