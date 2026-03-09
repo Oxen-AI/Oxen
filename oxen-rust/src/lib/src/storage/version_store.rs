@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,7 +7,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use image::DynamicImage;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::Stream;
 
 use crate::constants;
@@ -28,24 +27,6 @@ pub struct StorageConfig {
     #[serde(default)]
     pub settings: HashMap<String, String>,
 }
-
-/// Trait for async read and seek operations
-pub trait AsyncReadSeek: AsyncRead + AsyncSeek + Send + Sync + Unpin {}
-
-/// Implement AsyncReadSeek for any type that implements both AsyncRead and AsyncSeek
-impl<T: AsyncRead + AsyncSeek + Send + Sync + Unpin> AsyncReadSeek for T {}
-
-/// Trait for async write operations
-pub trait AsyncWriteSeek: AsyncWrite + AsyncSeek + Send + Sync + Unpin {}
-
-/// Implement AsyncWriteSeek for any type that implements both AsyncWrite and AsyncSeek
-impl<T: AsyncWrite + AsyncSeek + Send + Sync + Unpin> AsyncWriteSeek for T {}
-
-/// Trait for sync read and seek operations
-pub trait ReadSeek: Read + Seek + Send + Sync {}
-
-/// Implement ReadSeek for any type that implements both Read and Seek
-impl<T: Read + Seek + Send + Sync> ReadSeek for T {}
 
 /// Trait defining operations for version file storage backends
 #[async_trait]
