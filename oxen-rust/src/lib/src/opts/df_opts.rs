@@ -356,6 +356,7 @@ impl DFOpts {
             ("sql", self.sql.clone()),
             ("take", self.take.clone()),
             ("unique", self.unique.clone()),
+            ("unique_count", self.unique_count.clone()),
             (
                 "output",
                 self.output
