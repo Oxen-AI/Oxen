@@ -28,15 +28,13 @@ use crate::constants::CONTENT_IS_VALID;
 use crate::constants::HISTORY_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::TREE_DIR;
-use crate::constants::VERSION_FILE_NAME;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::metadata::metadata_video::VideoThumbnail;
-use crate::model::{CommitEntry, EntryDataType, LocalRepository};
+use crate::model::{EntryDataType, LocalRepository};
 use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
@@ -149,126 +147,12 @@ pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
         .join("data")
 }
 
-pub fn version_path(repo: &LocalRepository, entry: &CommitEntry) -> PathBuf {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => version_path_from_hash_and_file_v0_10_0(
-            &repo.path,
-            entry.hash.clone(),
-            entry.filename(),
-        ),
-        _ => version_path_from_hash_and_file(&repo.path, entry.hash.clone(), entry.filename()),
-    }
-}
-
-pub fn version_path_from_hash_and_filename(
-    repo: &LocalRepository,
-    hash: impl AsRef<str>,
-    filename: impl AsRef<Path>,
-) -> PathBuf {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            version_path_from_hash_and_file_v0_10_0(&repo.path, hash, filename)
-        }
-        _ => version_path_from_hash_and_file(&repo.path, hash, filename),
-    }
-}
-
-pub fn version_path_from_node(
-    repo: &LocalRepository,
-    file_hash: impl AsRef<str>,
-    path: impl AsRef<Path>,
-) -> PathBuf {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            version_path_from_hash_and_file_v0_10_0(&repo.path, file_hash, path)
-        }
-        _ => version_path_from_hash_and_file(&repo.path, file_hash, path),
-    }
-}
-
-pub fn version_path_from_hash(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            version_path_from_hash_and_file_v0_10_0(&repo.path, hash, PathBuf::new())
-        }
-        _ => version_path_from_hash_and_file(&repo.path, hash, PathBuf::new()),
-    }
-}
-
-pub fn version_path_from_hash_and_file_v0_10_0(
-    dst: impl AsRef<Path>,
-    hash: impl AsRef<str>,
-    filename: impl AsRef<Path>,
-) -> PathBuf {
-    let hash = hash.as_ref();
-    let filename = filename.as_ref();
-    let version_dir = version_dir_from_hash(dst, hash);
-    // log::debug!(
-    //     "version_path_from_hash_and_file version_dir {:?}",
-    //     version_dir
-    // );
-    let extension = extension_from_path(filename);
-    version_dir.join(format!("{VERSION_FILE_NAME}.{extension}"))
-}
-
-pub fn version_path_from_hash_and_file(
-    dst: impl AsRef<Path>,
-    hash: impl AsRef<str>,
-    filename: impl AsRef<Path>,
-) -> PathBuf {
-    let hash = hash.as_ref();
-    let filename = filename.as_ref();
-    let version_dir = version_dir_from_hash(dst, hash);
-    // log::debug!(
-    //     "version_path_from_hash_and_file version_dir {:?}",
-    //     version_dir
-    // );
-    let extension = extension_from_path(filename);
-    if extension.is_empty() {
-        version_dir.join(VERSION_FILE_NAME)
-    } else {
-        // backwards compatibility
-        let path = version_dir.join(format!("{VERSION_FILE_NAME}.{extension}"));
-        if path.exists() {
-            // Older files have the extension in the filename
-            path
-        } else {
-            // Newer files do not have the extension in the filename
-            version_dir.join(VERSION_FILE_NAME)
-        }
-    }
-}
-
-pub fn version_path_from_schema_hash(dst: impl AsRef<Path>, hash: String) -> PathBuf {
-    // Save schemas as path with no extension
-    let version_dir = version_dir_from_hash(dst, hash);
-    version_dir.join(VERSION_FILE_NAME)
-}
-
 pub fn extension_from_path(path: &Path) -> String {
     if let Some(ext) = path.extension() {
         String::from(ext.to_str().unwrap_or(""))
     } else {
         String::from("")
     }
-}
-
-pub fn version_dir_from_hash(dst: impl AsRef<Path>, hash: impl AsRef<str>) -> PathBuf {
-    let hash = hash.as_ref();
-    let topdir = &hash[..2];
-    let subdir = &hash[2..];
-    oxen_hidden_dir(dst.as_ref())
-        .join(constants::VERSIONS_DIR)
-        .join(constants::FILES_DIR)
-        .join(topdir)
-        .join(subdir)
-}
-
-pub fn object_dir_suffix_from_hash(_dst: impl AsRef<Path>, hash: String) -> PathBuf {
-    let topdir = &hash[..2];
-    let subdir = &hash[2..];
-
-    PathBuf::from(topdir).join(subdir)
 }
 
 pub fn read_bytes_from_path(path: impl AsRef<Path>) -> Result<Vec<u8>, OxenError> {
@@ -2200,7 +2084,8 @@ mod tests {
                 last_modified_seconds: 0,
                 last_modified_nanoseconds: 0,
             };
-            let path = util::fs::version_path(&repo, &entry);
+            let version_store = repo.version_store()?;
+            let path = version_store.get_version_path(&entry.hash)?;
             let versions_dir = util::fs::oxen_hidden_dir(&repo.path).join(constants::VERSIONS_DIR);
             let relative_path = util::fs::path_relative_to_dir(path, versions_dir)?;
             assert_eq!(

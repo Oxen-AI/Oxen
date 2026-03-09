@@ -170,7 +170,8 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// Get the path to a version file (sync operation)
     ///
     /// # Arguments
-    /// * `hash` - The content hash of the version to retrieve
+    /// * `hash` - The content hash of the version file to compute the path for
+    // TODO: See if we can make this infallible
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError>;
 
     /// Copy a version to a destination path
@@ -209,7 +210,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     fn storage_settings(&self) -> HashMap<String, String>;
 }
 
-// This only creates a version store struct, it does not initialize it
+/// This only creates a version store struct, it does not initialize it
 pub fn create_version_store(
     repo_dir: &Path,
     storage_opts: &StorageOpts,

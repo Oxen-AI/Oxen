@@ -8,7 +8,6 @@ use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{CommitEntry, DataFrameSize, LocalRepository};
 use crate::opts::DFOpts;
-use crate::util;
 
 // THE DIFFERENCE BETWEEN WRAPPER AND SUMMARY IS JUST THE KEY NAME IN THE JSON RESPONSE
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
@@ -141,7 +140,10 @@ impl TabularDiffWrapper {
     ) -> Option<DataFrame> {
         match node {
             Some(node) => {
-                let version_path = util::fs::version_path_from_hash(repo, node.hash().to_string());
+                let version_store = repo.version_store().expect("version store not initialized");
+                let version_path = version_store
+                    .get_version_path(&node.hash().to_string())
+                    .expect("version path not found");
                 tabular::read_df_with_extension(version_path, node.extension(), &DFOpts::empty())
                     .await
                     .ok()
@@ -156,7 +158,12 @@ impl TabularDiffWrapper {
     ) -> Option<DataFrame> {
         match entry {
             Some(entry) => {
-                let version_path = util::fs::version_path(repo, entry);
+                let version_store = repo
+                    .version_store()
+                    .expect("version store missing in maybe_get_df_from_commit_entry");
+                let version_path = version_store
+                    .get_version_path(&entry.hash)
+                    .expect("version path not found");
                 tabular::read_df(version_path, DFOpts::empty()).await.ok()
             }
             None => None,
