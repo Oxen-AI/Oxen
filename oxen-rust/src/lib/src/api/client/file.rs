@@ -20,32 +20,15 @@ pub async fn put_file(
 ) -> Result<CommitResponse, OxenError> {
     let branch = branch.as_ref();
     let directory = directory.as_ref();
-    let file_path = file_path.as_ref();
-    let uri = format!("/file/{branch}/{directory}");
-    log::debug!("put_file {uri:?}, file_path {file_path:?}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    let file_part = Part::file(file_path).await?;
-    let file_part = if let Some(file_name) = file_name {
-        file_part.file_name(file_name.as_ref().to_string())
-    } else {
-        file_part
-    };
-    let mut form = Form::new().part("files[]", file_part);
-
-    if let Some(body) = commit_body {
-        form = form.text("name", body.author);
-        form = form.text("email", body.email);
-        form = form.text("message", body.message);
-    }
-
-    let req = client.put(&url).multipart(form);
-
-    let res = req.send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: CommitResponse = serde_json::from_str(&body)?;
-    Ok(response)
+    put_multipart_file(
+        remote_repo,
+        format!("/file/{branch}/{directory}"),
+        "files[]",
+        file_path,
+        file_name,
+        commit_body,
+    )
+    .await
 }
 
 pub async fn put_file_to_path(
@@ -58,32 +41,55 @@ pub async fn put_file_to_path(
 ) -> Result<CommitResponse, OxenError> {
     let branch = branch.as_ref();
     let file_path_on_repo = file_path_on_repo.as_ref();
+    put_multipart_file(
+        remote_repo,
+        format!("/file/{branch}/{file_path_on_repo}"),
+        "file",
+        file_path,
+        file_name,
+        commit_body,
+    )
+    .await
+}
+
+async fn put_multipart_file(
+    remote_repo: &RemoteRepository,
+    uri: String,
+    field_name: &'static str,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
     let file_path = file_path.as_ref();
-    let uri = format!("/file/{branch}/{file_path_on_repo}");
-    log::debug!("put_file_to_path {uri:?}, file_path {file_path:?}");
+    log::debug!("put_multipart_file {uri:?}, file_path {file_path:?}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
     let client = client::new_for_url(&url)?;
-    let file_part = Part::file(file_path).await?;
-    let file_part = if let Some(file_name) = file_name {
-        file_part.file_name(file_name.as_ref().to_string())
-    } else {
-        file_part
-    };
-    let mut form = Form::new().part("file", file_part);
 
+    let file_part = make_file_part(file_path, file_name).await?;
+    let form = apply_commit_body(Form::new().part(field_name, file_part), commit_body);
+    let res = client.put(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    serde_json::from_str(&body).map_err(Into::into)
+}
+
+async fn make_file_part(
+    file_path: &Path,
+    file_name: Option<impl AsRef<str>>,
+) -> Result<Part, OxenError> {
+    let file_part = Part::file(file_path).await?;
+    Ok(match file_name {
+        Some(file_name) => file_part.file_name(file_name.as_ref().to_string()),
+        None => file_part,
+    })
+}
+
+fn apply_commit_body(mut form: Form, commit_body: Option<NewCommitBody>) -> Form {
     if let Some(body) = commit_body {
         form = form.text("name", body.author);
         form = form.text("email", body.email);
         form = form.text("message", body.message);
     }
-
-    let req = client.put(&url).multipart(form);
-
-    let res = req.send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: CommitResponse = serde_json::from_str(&body)?;
-    Ok(response)
+    form
 }
 
 pub async fn get_file(
