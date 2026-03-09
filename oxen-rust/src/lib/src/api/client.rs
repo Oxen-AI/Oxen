@@ -6,7 +6,6 @@ use crate::config::RuntimeConfig;
 use crate::config::runtime_config::runtime::Runtime;
 use crate::constants;
 use crate::error::OxenError;
-use crate::model::RemoteRepository;
 use crate::view::OxenResponse;
 use crate::view::http;
 pub use reqwest::Url;
@@ -29,6 +28,7 @@ pub mod metadata;
 pub mod oxen_version;
 pub mod prune;
 pub mod repositories;
+pub mod retry;
 pub mod revisions;
 pub mod schemas;
 pub mod stats;
@@ -48,73 +48,100 @@ pub fn get_scheme_and_host_from_url<U: IntoUrl>(url: U) -> Result<(String, Strin
     Ok((parsed_url.scheme().to_owned(), host_str))
 }
 
-// TODO: we probably want to create a pool of clients instead of constructing a
-// new one for each request so we can take advantage of keep-alive
+// Note: reqwest::Client already maintains an internal HTTP connection pool with keep-alive.
+// The 3 upload paths that matter most (push, version chunks, workspace files) already share
+// clients via Arc<Client>. A global per-host cache (OnceCell + RwLock<HashMap>) would add
+// complexity for little gain since per-request client overhead for metadata/query paths is minimal.
 pub fn new_for_url<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    new_for_host(host, true)
+    new_for_host(&host, true)
 }
 
 pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    new_for_host(host, false)
+    new_for_host(&host, false)
 }
 
-fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
-    match builder_for_host(host.as_ref(), should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::timeout()))
-        .build()
-    {
-        Ok(client) => Ok(client),
-        Err(reqwest_err) => Err(OxenError::HTTP(reqwest_err)),
-    }
+/// Has connection timeout and TCP keep-alives, but also imposes a per-request timeout.
+/// NOT SUITABLE FOR LONG-LIVED TRANSFERS! Use `new_for_url_transfer` instead.
+fn new_for_host(host: &str, should_add_user_agent: bool) -> Result<Client, OxenError> {
+    builder_for_host(
+        host,
+        should_add_user_agent,
+        time::Duration::from_secs(constants::connect_timeout()),
+        time::Duration::from_secs(constants::tcp_keepalive()),
+        time::Duration::from_secs(20),
+    )?
+    .timeout(time::Duration::from_secs(constants::timeout()))
+    .build()
+    .map_err(OxenError::HTTP)
 }
 
-pub fn new_for_remote_repo(remote_repo: &RemoteRepository) -> Result<Client, OxenError> {
-    let (_scheme, host) = get_scheme_and_host_from_url(remote_repo.url())?;
-    new_for_host(host, true)
-}
-
-pub fn builder_for_remote_repo(remote_repo: &RemoteRepository) -> Result<ClientBuilder, OxenError> {
-    let (_scheme, host) = get_scheme_and_host_from_url(remote_repo.url())?;
-    builder_for_host(host, true)
-}
-
-pub fn builder_for_url<U: IntoUrl>(url: U) -> Result<ClientBuilder, OxenError> {
+/// Create a client for long-lived transfers (uploads/downloads).
+/// No overall timeout; uses connect_timeout + tcp_keepalive + HTTP/2 keep-alive
+/// to detect hung connections without capping total transfer time.
+pub fn new_for_url_transfer<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    builder_for_host(host, true)
+    builder_for_host(
+        &host,
+        true,
+        time::Duration::from_secs(constants::connect_timeout()),
+        time::Duration::from_secs(constants::tcp_keepalive()),
+        time::Duration::from_secs(20),
+    )?
+    .build()
+    .map_err(OxenError::HTTP)
 }
 
-fn builder_for_host<S: AsRef<str>>(
-    host: S,
+fn new_for_host_transfer(host: &str) -> Result<Client, OxenError> {
+    builder_for_host(
+        host,
+        true,
+        time::Duration::from_secs(constants::connect_timeout()),
+        time::Duration::from_secs(constants::tcp_keepalive()),
+        time::Duration::from_secs(20),
+    )?
+    .build()
+    .map_err(OxenError::HTTP)
+}
+
+fn builder_for_host(
+    host: &str,
     should_add_user_agent: bool,
+    connect_timeout: time::Duration,
+    keep_alive_interval: time::Duration,
+    http2_keep_alive_timeout: time::Duration,
 ) -> Result<ClientBuilder, OxenError> {
-    let builder = if should_add_user_agent {
-        builder()
-    } else {
-        Ok(builder_no_user_agent())
-    };
+    let mut builder = Client::builder();
+
+    if should_add_user_agent {
+        let user_agent = build_user_agent()?;
+        builder = builder.user_agent(user_agent);
+    }
+
+    builder = builder
+        .connect_timeout(connect_timeout)
+        .tcp_keepalive(keep_alive_interval)
+        .http2_keep_alive_interval(keep_alive_interval)
+        .http2_keep_alive_timeout(http2_keep_alive_timeout);
 
     // If auth_config.toml isn't found, return without authorizing
     let config = match AuthConfig::get() {
         Ok(config) => config,
         Err(e) => {
-            log::debug!(
-                "Error getting config: {}. No auth token found for host {}",
-                e,
-                host.as_ref()
-            );
-            return builder;
+            log::debug!("Error getting config: {e}. No auth token found for host {host}");
+            return Ok(builder);
         }
     };
-    if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
-        log::debug!("Setting auth token for host: {}", host.as_ref());
+
+    if let Some(auth_token) = config.auth_token_for_host(host) {
+        log::debug!("Setting auth token for host: {}", host);
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
             Err(e) => {
                 log::debug!("Invalid header value: {e}");
-                return Err(OxenError::basic_str(
+                return Err(OxenError::authentication(
                     "Error setting request auth. Please check your Oxen config.",
                 ));
             }
@@ -122,20 +149,13 @@ fn builder_for_host<S: AsRef<str>>(
         auth_value.set_sensitive(true);
         let mut headers = header::HeaderMap::new();
         headers.insert(header::AUTHORIZATION, auth_value);
-        Ok(builder?.default_headers(headers))
+
+        builder = builder.default_headers(headers);
     } else {
-        log::trace!("No auth token found for host: {}", host.as_ref());
-        builder
+        log::trace!("No auth token found for host: {host}");
     }
-}
 
-fn builder() -> Result<ClientBuilder, OxenError> {
-    let user_agent = build_user_agent()?;
-    Ok(Client::builder().user_agent(user_agent))
-}
-
-fn builder_no_user_agent() -> ClientBuilder {
-    Client::builder()
+    Ok(builder)
 }
 
 fn build_user_agent() -> Result<String, OxenError> {
