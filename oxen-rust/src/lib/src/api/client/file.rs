@@ -32,6 +32,44 @@ pub async fn put_file(
     } else {
         file_part
     };
+    let mut form = Form::new().part("files[]", file_part);
+
+    if let Some(body) = commit_body {
+        form = form.text("name", body.author);
+        form = form.text("email", body.email);
+        form = form.text("message", body.message);
+    }
+
+    let req = client.put(&url).multipart(form);
+
+    let res = req.send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    let response: CommitResponse = serde_json::from_str(&body)?;
+    Ok(response)
+}
+
+pub async fn put_file_to_path(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    file_path_on_repo: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let file_path_on_repo = file_path_on_repo.as_ref();
+    let file_path = file_path.as_ref();
+    let uri = format!("/file/{branch}/{file_path_on_repo}");
+    log::debug!("put_file_to_path {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    let file_part = Part::file(file_path).await?;
+    let file_part = if let Some(file_name) = file_name {
+        file_part.file_name(file_name.as_ref().to_string())
+    } else {
+        file_part
+    };
     let mut form = Form::new().part("file", file_part);
 
     if let Some(body) = commit_body {
@@ -280,6 +318,72 @@ mod tests {
 
             // // Check that the file exists in the local repo after pulling
             let file_path_in_repo = local_repo.path.join(directory_name).join("test.jpeg");
+            assert!(file_path_in_repo.exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_update_file_to_full_path() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let file_path_on_repo = "test_data/test_full_path.jpeg";
+            let file_path = test::test_img_file();
+            let commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Update file test full path".to_string(),
+            };
+
+            let response = api::client::file::put_file_to_path(
+                &remote_repo,
+                branch_name,
+                file_path_on_repo,
+                &file_path,
+                Some("ignored-name.jpeg"),
+                Some(commit_body),
+            )
+            .await?;
+
+            assert_eq!(response.status.status_message, "resource_created");
+
+            repositories::pull(&local_repo).await?;
+            let file_path_in_repo = local_repo.path.join(file_path_on_repo);
+            assert!(file_path_in_repo.exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_update_file_to_full_path_on_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_configured_remote_repo_test(|local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let file_path_on_repo = "test_data/test_full_path.jpeg";
+            let file_path = test::test_img_file();
+            let commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Update file test full path".to_string(),
+            };
+
+            let response = api::client::file::put_file_to_path(
+                &remote_repo,
+                branch_name,
+                file_path_on_repo,
+                &file_path,
+                Some("ignored-name.jpeg"),
+                Some(commit_body),
+            )
+            .await?;
+            assert_eq!(response.status.status_message, "resource_created");
+
+            repositories::pull(&local_repo).await?;
+            repositories::checkout(&local_repo, branch_name).await?;
+            let file_path_in_repo = local_repo.path.join(file_path_on_repo);
             assert!(file_path_in_repo.exists());
 
             Ok(remote_repo)
