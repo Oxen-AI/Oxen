@@ -578,7 +578,251 @@ def generate_file(args: tuple[Path, FileType, int]) -> Path:
     return path
 
 
-def main():
+def main(
+    *,
+    total_size: int | None,
+    num_files: int | None,
+    avg_file_size: int | None,
+    num_dirs: int | None,
+    files_per_dir: int | None,
+    target: str,
+    file_type: FileType,
+    workers: int | None,
+    seed: int | None,
+    dry_run: bool,
+    distribution: str | None,
+    dist_params: list[str] | None,
+    tier: list[str] | None,
+) -> None:
+    # Set random seed if provided
+    if seed is not None:
+        random.seed(seed)
+        Faker.seed(seed)
+
+    # Determine file sizes: tier mode, distribution mode, or fixed-size mode
+    tiers: list[Tier] | None = None
+    tier_tasks: list[tuple[FileType, int]] | None = None  # (file_type, size) per file
+
+    if tier is not None:
+        # Tier mode: parse each tier, sample sizes, combine and shuffle
+        tiers = [parse_tier(t, file_type) for t in tier]
+        tier_tasks = []
+        for i, t in enumerate(tiers):
+            tier_seed = seed + i if seed is not None else None
+            sizes = sample_file_sizes(t.frozen_dist, t.num, tier_seed)
+            tier_tasks.extend((t.file_type, s) for s in sizes)
+        random.shuffle(tier_tasks)
+        file_sizes = [s for _, s in tier_tasks]
+        num_files = len(file_sizes)
+
+    elif distribution is not None:
+        parsed_dist_params = parse_dist_params(dist_params)
+        frozen_dist = validate_distribution(distribution, parsed_dist_params)
+        if num_files is not None:
+            file_sizes = sample_file_sizes(frozen_dist, num_files, seed)
+        else:
+            file_sizes = sample_file_sizes_until(frozen_dist, total_size, seed)
+            num_files = len(file_sizes)
+
+    else:
+        # Special handling for image type
+        if file_type == "image":
+            if avg_file_size is not None:
+                print("Error: --avg-file-size cannot be specified for image type.")
+                print(
+                    "Image size is determined by the image dimensions, content, and compression."
+                )
+                sys.exit(1)
+
+            # Compute average image size by generating test samples
+            print("Computing average image size by generating test samples...")
+            computed_avg_size = compute_avg_image_size(num_samples=10)
+            print(f"Computed average image size: {format_size(computed_avg_size)}\n")
+            avg_file_size = computed_avg_size
+
+        # Validate and calculate parameters
+        num_files, file_size = validate_parameters(
+            total_size=total_size,
+            num_files=num_files,
+            avg_file_size=avg_file_size,
+        )
+        file_sizes = [file_size] * num_files
+
+    # Validate and calculate directory parameters
+    resolved_num_dirs = validate_directory_parameters(num_files, num_dirs, files_per_dir)
+
+    # Create target directory structure
+    target_path = Path(target)
+    target_path.mkdir(parents=True, exist_ok=True)
+
+    # Warn if target directory has existing files
+    existing_files = list(target_path.rglob("*"))
+    existing_files = [f for f in existing_files if f.is_file()]
+    if existing_files:
+        print(
+            f"Warning: Target directory contains {len(existing_files)} existing files."
+        )
+        response = input("Continue and potentially overwrite files? [y/N]: ")
+        if response.lower() not in ["y", "yes"]:
+            print("Aborted.")
+            sys.exit(0)
+
+    # Extension lookup
+    extensions: Mapping[FileType, FileExtension] = {
+        "text": "txt",
+        "image": "png",
+        "binary": "bin",
+    }
+
+    # Calculate files per directory
+    files_in_dir = num_files // resolved_num_dirs
+    extra_files = num_files % resolved_num_dirs
+
+    # Determine padding width for file and directory names based on counts
+    file_padding = len(str(num_files))
+    dir_padding = len(str(resolved_num_dirs))
+
+    # Build list of files to generate
+    file_tasks: list[tuple[Path, FileType, int]] = []
+    file_counter = 0
+
+    for dir_idx in range(resolved_num_dirs):
+        if resolved_num_dirs > 1:
+            dir_path = target_path / f"dir_{dir_idx + 1:0{dir_padding}d}"
+            dir_path.mkdir(exist_ok=True)
+        else:
+            dir_path = target_path
+
+        # Distribute extra files to first directories
+        num_files_in_dir = files_in_dir + (1 if dir_idx < extra_files else 0)
+
+        for file_idx in range(num_files_in_dir):
+            if tier_tasks is not None:
+                ft, size = tier_tasks[file_counter]
+            else:
+                ft = file_type
+                size = file_sizes[file_counter]
+            ext = extensions[ft]
+            file_name = f"file_{file_counter + 1:0{file_padding}d}.{ext}"
+            file_path = dir_path / file_name
+            file_tasks.append((file_path, ft, size))
+            file_counter += 1
+
+    # Choose executor type and worker count based on file type
+    # Tier mode disallows images, so always use threads
+    use_threadpool_exe: bool = tiers is not None or file_type != "image"
+
+    if use_threadpool_exe:
+        executor_class = ThreadPoolExecutor
+        executor_type: Literal["threads", "processes"] = "threads"
+    else:
+        # Image generation is CPU-bound, use ProcessPoolExecutor
+        executor_class = ProcessPoolExecutor
+        executor_type = "processes"
+
+    if workers is None:
+        n_cpus = os.cpu_count()
+        if n_cpus is None:
+            raise ValueError(
+                "Cannot determine the number of CPUs. Please specify a worker count manually via --workers"
+            )
+        if use_threadpool_exe:
+            max_workers: int = n_cpus * 4
+        else:
+            max_workers = n_cpus
+    else:
+        max_workers = workers
+
+    # Display generation plan
+    print("\nGeneration Plan:")
+    print(f"  Target: {target_path}")
+    if tiers is not None:
+        all_sizes = np.array(file_sizes)
+        for i, t in enumerate(tiers):
+            tier_sizes = np.array(
+                sample_file_sizes(
+                    t.frozen_dist,
+                    t.num,
+                    seed + i if seed is not None else None,
+                )
+            )
+            print(f"  Tier {i + 1}: {t.num} {t.file_type} files")
+            print(
+                f"    Distribution: {t.dist_name}({', '.join(f'{k}={v}' for k, v in t.dist_params.items())})"
+            )
+            print(
+                f"    Size range: {format_size(int(tier_sizes.min()))} – {format_size(int(tier_sizes.max()))}"
+            )
+            print(
+                f"    Mean / median: {format_size(int(tier_sizes.mean()))} / {format_size(int(np.median(tier_sizes)))}"
+            )
+        print(f"  Total files: {num_files}")
+        print(f"  Total size: ~{format_size(int(all_sizes.sum()))}")
+
+    elif distribution is not None:
+        print(f"  File type: {file_type}")
+        print(f"  Number of files: {num_files}")
+        sizes_arr = np.array(file_sizes)
+        print(f"  Distribution: {distribution}")
+        print(f"  Dist params: {parsed_dist_params}")
+        print(f"  File size min: {format_size(int(sizes_arr.min()))}")
+        print(f"  File size max: {format_size(int(sizes_arr.max()))}")
+        print(f"  File size mean: {format_size(int(sizes_arr.mean()))}")
+        print(f"  File size median: {format_size(int(np.median(sizes_arr)))}")
+        print(f"  File size std: {format_size(int(sizes_arr.std()))}")
+        print(f"  Total size: ~{format_size(int(sizes_arr.sum()))}")
+
+    else:
+        print(f"  File type: {file_type}")
+        print(f"  Number of files: {num_files}")
+        print(f"  File size: {format_size(file_sizes[0])}")
+        print(f"  Total size: ~{format_size(num_files * file_sizes[0])}")
+
+    print(f"  Directories: {resolved_num_dirs}")
+    print(f"  Files per directory: ~{num_files // resolved_num_dirs}")
+    print(f"  Workers: {max_workers} {executor_type}")
+    print()
+
+    if dry_run:
+        print("(dry-run) No files were generated.")
+        return
+
+    # Generate files in parallel using appropriate executor for workload type
+    needs_text: bool = file_type == "text" or (
+        tiers is not None and any(t.file_type == "text" for t in tiers)
+    )
+    if needs_text:
+        print("Initializing text pool...", flush=True)
+        # Initialize text pool in main thread (threads share memory)
+        global TEXT_POOL
+        TEXT_POOL = init_text_pool(pool_size_mb=25)
+
+    print("Starting generation...", flush=True)
+    # Calculate chunksize with a reasonable cap to avoid excessive buffering
+    chunksize = max(1, min(10000, num_files // (max_workers * 4)))
+
+    start_time = time.time()
+    with executor_class(max_workers=max_workers) as executor:
+        with tqdm(
+            total=num_files,
+            desc="Generating files",
+            unit="file",
+            unit_scale=False,
+            smoothing=0.1,
+        ) as pbar:
+            for _ in executor.map(generate_file, file_tasks, chunksize=chunksize):
+                pbar.update(1)
+    elapsed_time = time.time() - start_time
+
+    # Show completion statistics
+    files_per_sec = num_files / elapsed_time if elapsed_time > 0 else 0
+    print(f"\n✓ Dataset generated successfully in {target_path}")
+    print(
+        f"  Generated {num_files:,} files in {elapsed_time:.1f}s ({files_per_sec:.1f} files/sec)"
+    )
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate test datasets with configurable parameters.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -740,234 +984,18 @@ Multi-tier datasets (--tier is repeatable, mutually exclusive with --num-files/-
         if arg_type == "image":
             parser.error("--type image cannot be used with --distribution")
 
-    # Set random seed if provided
-    if arg_seed is not None:
-        random.seed(arg_seed)
-        Faker.seed(arg_seed)
-
-    # Determine file sizes: tier mode, distribution mode, or fixed-size mode
-    tiers: list[Tier] | None = None
-    tier_tasks: list[tuple[FileType, int]] | None = None  # (file_type, size) per file
-
-    if arg_tier is not None:
-        # Tier mode: parse each tier, sample sizes, combine and shuffle
-        tiers = [parse_tier(t, arg_type) for t in arg_tier]
-        tier_tasks = []
-        for i, tier in enumerate(tiers):
-            tier_seed = arg_seed + i if arg_seed is not None else None
-            sizes = sample_file_sizes(tier.frozen_dist, tier.num, tier_seed)
-            tier_tasks.extend((tier.file_type, s) for s in sizes)
-        random.shuffle(tier_tasks)
-        file_sizes = [s for _, s in tier_tasks]
-        num_files = len(file_sizes)
-
-    elif arg_distribution is not None:
-        dist_params = parse_dist_params(arg_dist_params)
-        frozen_dist = validate_distribution(arg_distribution, dist_params)
-        if arg_num_files is not None:
-            num_files = arg_num_files
-            file_sizes = sample_file_sizes(frozen_dist, num_files, arg_seed)
-        else:
-            file_sizes = sample_file_sizes_until(frozen_dist, arg_total_size, arg_seed)
-            num_files = len(file_sizes)
-
-    else:
-        # Special handling for image type
-        if arg_type == "image":
-            if arg_avg_file_size is not None:
-                print("Error: --avg-file-size cannot be specified for image type.")
-                print(
-                    "Image size is determined by the image dimensions, content, and compression."
-                )
-                sys.exit(1)
-
-            # Compute average image size by generating test samples
-            print("Computing average image size by generating test samples...")
-            computed_avg_size = compute_avg_image_size(num_samples=10)
-            print(f"Computed average image size: {format_size(computed_avg_size)}\n")
-            arg_avg_file_size = computed_avg_size
-
-        # Validate and calculate parameters
-        num_files, file_size = validate_parameters(
-            total_size=arg_total_size,
-            num_files=arg_num_files,
-            avg_file_size=arg_avg_file_size,
-        )
-        file_sizes = [file_size] * num_files
-
-    # Validate and calculate directory parameters
-    num_dirs = validate_directory_parameters(num_files, arg_num_dirs, arg_files_per_dir)
-
-    # Create target directory structure
-    target = Path(arg_target)
-    target.mkdir(parents=True, exist_ok=True)
-
-    # Warn if target directory has existing files
-    existing_files = list(target.rglob("*"))
-    existing_files = [f for f in existing_files if f.is_file()]
-    if existing_files:
-        print(
-            f"Warning: Target directory contains {len(existing_files)} existing files."
-        )
-        response = input("Continue and potentially overwrite files? [y/N]: ")
-        if response.lower() not in ["y", "yes"]:
-            print("Aborted.")
-            sys.exit(0)
-
-    # Extension lookup
-    extensions: Mapping[FileType, FileExtension] = {
-        "text": "txt",
-        "image": "png",
-        "binary": "bin",
-    }
-
-    # Calculate files per directory
-    files_per_dir = num_files // num_dirs
-    extra_files = num_files % num_dirs
-
-    # Determine padding width for file and directory names based on counts
-    file_padding = len(str(num_files))
-    dir_padding = len(str(num_dirs))
-
-    # Build list of files to generate
-    file_tasks: list[tuple[Path, FileType, int]] = []
-    file_counter = 0
-
-    for dir_idx in range(num_dirs):
-        if num_dirs > 1:
-            dir_path = target / f"dir_{dir_idx + 1:0{dir_padding}d}"
-            dir_path.mkdir(exist_ok=True)
-        else:
-            dir_path = target
-
-        # Distribute extra files to first directories
-        num_files_in_dir = files_per_dir + (1 if dir_idx < extra_files else 0)
-
-        for file_idx in range(num_files_in_dir):
-            if tier_tasks is not None:
-                file_type, size = tier_tasks[file_counter]
-            else:
-                file_type = arg_type
-                size = file_sizes[file_counter]
-            ext = extensions[file_type]
-            file_name = f"file_{file_counter + 1:0{file_padding}d}.{ext}"
-            file_path = dir_path / file_name
-            file_tasks.append((file_path, file_type, size))
-            file_counter += 1
-
-    # Choose executor type and worker count based on file type
-    # Tier mode disallows images, so always use threads
-    use_threadpool_exe: bool = tiers is not None or arg_type != "image"
-
-    if use_threadpool_exe:
-        executor_class = ThreadPoolExecutor
-        executor_type: Literal["threads", "processes"] = "threads"
-    else:
-        # Image generation is CPU-bound, use ProcessPoolExecutor
-        executor_class = ProcessPoolExecutor
-        executor_type = "processes"
-
-    if arg_workers is None:
-        n_cpus = os.cpu_count()
-        if n_cpus is None:
-            raise ValueError(
-                "Cannot determine the number of CPUs. Please specify a worker count manually via --workers"
-            )
-        if use_threadpool_exe:
-            max_workers: int = n_cpus * 4
-        else:
-            max_workers = n_cpus
-    else:
-        max_workers = arg_workers
-
-    # Display generation plan
-    print("\nGeneration Plan:")
-    print(f"  Target: {target}")
-    if tiers is not None:
-        all_sizes = np.array(file_sizes)
-        for i, tier in enumerate(tiers):
-            tier_sizes = np.array(
-                sample_file_sizes(
-                    tier.frozen_dist,
-                    tier.num,
-                    arg_seed + i if arg_seed is not None else None,
-                )
-            )
-            print(f"  Tier {i + 1}: {tier.num} {tier.file_type} files")
-            print(
-                f"    Distribution: {tier.dist_name}({', '.join(f'{k}={v}' for k, v in tier.dist_params.items())})"
-            )
-            print(
-                f"    Size range: {format_size(int(tier_sizes.min()))} – {format_size(int(tier_sizes.max()))}"
-            )
-            print(
-                f"    Mean / median: {format_size(int(tier_sizes.mean()))} / {format_size(int(np.median(tier_sizes)))}"
-            )
-        print(f"  Total files: {num_files}")
-        print(f"  Total size: ~{format_size(int(all_sizes.sum()))}")
-
-    elif arg_distribution is not None:
-        print(f"  File type: {arg_type}")
-        print(f"  Number of files: {num_files}")
-        sizes_arr = np.array(file_sizes)
-        print(f"  Distribution: {arg_distribution}")
-        print(f"  Dist params: {dist_params}")
-        print(f"  File size min: {format_size(int(sizes_arr.min()))}")
-        print(f"  File size max: {format_size(int(sizes_arr.max()))}")
-        print(f"  File size mean: {format_size(int(sizes_arr.mean()))}")
-        print(f"  File size median: {format_size(int(np.median(sizes_arr)))}")
-        print(f"  File size std: {format_size(int(sizes_arr.std()))}")
-        print(f"  Total size: ~{format_size(int(sizes_arr.sum()))}")
-
-    else:
-        print(f"  File type: {arg_type}")
-        print(f"  Number of files: {num_files}")
-        print(f"  File size: {format_size(file_sizes[0])}")
-        print(f"  Total size: ~{format_size(num_files * file_sizes[0])}")
-
-    print(f"  Directories: {num_dirs}")
-    print(f"  Files per directory: ~{num_files // num_dirs}")
-    print(f"  Workers: {max_workers} {executor_type}")
-    print()
-
-    if arg_dry_run:
-        print("(dry-run) No files were generated.")
-        return
-
-    # Generate files in parallel using appropriate executor for workload type
-    needs_text: bool = arg_type == "text" or (
-        tiers is not None and any(t.file_type == "text" for t in tiers)
+    main(
+        total_size=arg_total_size,
+        num_files=arg_num_files,
+        avg_file_size=arg_avg_file_size,
+        num_dirs=arg_num_dirs,
+        files_per_dir=arg_files_per_dir,
+        target=arg_target,
+        file_type=arg_type,
+        workers=arg_workers,
+        seed=arg_seed,
+        dry_run=arg_dry_run,
+        distribution=arg_distribution,
+        dist_params=arg_dist_params,
+        tier=arg_tier,
     )
-    if needs_text:
-        print("Initializing text pool...", flush=True)
-        # Initialize text pool in main thread (threads share memory)
-        global TEXT_POOL
-        TEXT_POOL = init_text_pool(pool_size_mb=25)
-
-    print("Starting generation...", flush=True)
-    # Calculate chunksize with a reasonable cap to avoid excessive buffering
-    chunksize = max(1, min(10000, num_files // (max_workers * 4)))
-
-    start_time = time.time()
-    with executor_class(max_workers=max_workers) as executor:
-        with tqdm(
-            total=num_files,
-            desc="Generating files",
-            unit="file",
-            unit_scale=False,
-            smoothing=0.1,
-        ) as pbar:
-            for _ in executor.map(generate_file, file_tasks, chunksize=chunksize):
-                pbar.update(1)
-    elapsed_time = time.time() - start_time
-
-    # Show completion statistics
-    files_per_sec = num_files / elapsed_time if elapsed_time > 0 else 0
-    print(f"\n✓ Dataset generated successfully in {target}")
-    print(
-        f"  Generated {num_files:,} files in {elapsed_time:.1f}s ({files_per_sec:.1f} files/sec)"
-    )
-
-
-if __name__ == "__main__":
-    main()

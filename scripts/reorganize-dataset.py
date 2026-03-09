@@ -416,7 +416,124 @@ def remove_empty_dirs(root: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-def main():
+def main(
+    *,
+    target: str,
+    max_depth: int | None,
+    distribution: str,
+    dist_params: list[str] | None,
+    seed: int | None,
+    dry_run: bool,
+    save_plan: str | None,
+    from_plan: str | None,
+) -> None:
+    target_path = Path(target)
+    if not target_path.is_dir():
+        print(f"Error: '{target_path}' is not a directory or does not exist.")
+        sys.exit(1)
+
+    # Set up RNG and Faker
+    rng = _make_rng(seed)
+    if seed is not None:
+        Faker.seed(seed)
+    faker = Faker()
+
+    # Scan for all files
+    all_files = sorted([f for f in target_path.rglob("*") if f.is_file()])
+    if not all_files:
+        print("No files found in target directory.")
+        sys.exit(0)
+
+    # Shuffle for organic assignment (seeded)
+    py_rng = rng.permutation(len(all_files))
+    all_files = [all_files[i] for i in py_rng]
+
+    print(f"Found {len(all_files)} files in '{target_path}'.\n")
+
+    # Build the tree — either from a saved plan or by generating a new one
+    if from_plan:
+        plan_path = Path(from_plan)
+        if not plan_path.is_file():
+            print(f"Error: Plan file '{plan_path}' does not exist.")
+            sys.exit(1)
+        with open(plan_path) as f:
+            plan = json.load(f)
+        tree = plan_to_tree(plan, all_files)
+    else:
+        # Apply default dist-params when none given and distribution is the default
+        DIST_DEFAULTS: dict[str, dict[str, float]] = {
+            "lognorm": {"s": 0.5, "scale": 8},
+        }
+        parsed_dist_params = parse_dist_params(dist_params)
+        if not parsed_dist_params and distribution in DIST_DEFAULTS:
+            parsed_dist_params = DIST_DEFAULTS[distribution]
+
+        frozen_dist = validate_distribution(distribution, parsed_dist_params)
+        tree = build_tree(all_files, 0, max_depth, frozen_dist, rng, faker)
+
+    # Save the plan if requested
+    if save_plan:
+        plan_out = tree_to_plan(tree)
+        save_path = Path(save_plan)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, "w") as f:
+            json.dump(plan_out, f, indent=2)
+        print(f"Plan saved to '{save_path}'.\n")
+
+    # Print tree structure
+    print("Planned tree structure:")
+    print(f"└── {target_path.name}/  ({len(tree.files)} files)")
+    for i, child in enumerate(tree.children):
+        print_tree(child, "    ", i == len(tree.children) - 1)
+
+    # Print summary stats
+    stats = collect_stats(tree)
+    print("\nSummary:")
+    print(f"  Total directories: {stats['total_dirs']}")
+    print(f"  Total files:       {stats['total_files']}")
+    print(
+        f"  Files per dir:     min={stats['min_files_per_dir']}, "
+        f"max={stats['max_files_per_dir']}, "
+        f"mean={stats['mean_files_per_dir']:.1f}"
+    )
+    print(f"  Depth histogram:   {stats['depth_histogram']}")
+
+    if dry_run:
+        print("\n(dry-run) No files were moved.")
+        return
+
+    # Build move plan
+    moves = flatten_moves(tree, target_path)
+    if not moves:
+        print("\nNo moves needed — files are already in place.")
+        return
+
+    print(f"\nMoving {len(moves)} files...")
+    start_time = time.time()
+
+    # Create all needed directories first
+    new_dirs: set[Path] = set()
+    for _, new_path in moves:
+        new_dirs.add(new_path.parent)
+    for d in sorted(new_dirs):
+        d.mkdir(parents=True, exist_ok=True)
+    dirs_created = sum(1 for d in new_dirs if d != target_path)
+
+    # Execute moves
+    for old_path, new_path in tqdm(moves, desc="Moving files", unit="file"):
+        shutil.move(str(old_path), str(new_path))
+
+    # Clean up empty directories
+    removed = remove_empty_dirs(target_path)
+
+    elapsed = time.time() - start_time
+    print(f"\nDone in {elapsed:.1f}s.")
+    print(f"  Files moved:         {len(moves)}")
+    print(f"  Directories created: {dirs_created}")
+    print(f"  Empty dirs removed:  {removed}")
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Reorganize a flat directory of files into an organic nested tree.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -500,115 +617,17 @@ Examples:
     arg_save_plan: str | None = args.save_plan
     arg_from_plan: str | None = args.from_plan
 
-    target = Path(arg_target)
-    if not target.is_dir():
-        print(f"Error: '{target}' is not a directory or does not exist.")
-        sys.exit(1)
-
     # --max-depth is required unless --from-plan is given
     if arg_from_plan is None and arg_max_depth is None:
         parser.error("--max-depth is required when not using --from-plan")
 
-    # Set up RNG and Faker
-    rng = _make_rng(arg_seed)
-    if arg_seed is not None:
-        Faker.seed(arg_seed)
-    faker = Faker()
-
-    # Scan for all files
-    all_files = sorted([f for f in target.rglob("*") if f.is_file()])
-    if not all_files:
-        print("No files found in target directory.")
-        sys.exit(0)
-
-    # Shuffle for organic assignment (seeded)
-    py_rng = rng.permutation(len(all_files))
-    all_files = [all_files[i] for i in py_rng]
-
-    print(f"Found {len(all_files)} files in '{target}'.\n")
-
-    # Build the tree — either from a saved plan or by generating a new one
-    if arg_from_plan:
-        plan_path = Path(arg_from_plan)
-        if not plan_path.is_file():
-            print(f"Error: Plan file '{plan_path}' does not exist.")
-            sys.exit(1)
-        with open(plan_path) as f:
-            plan = json.load(f)
-        tree = plan_to_tree(plan, all_files)
-    else:
-        # Apply default dist-params when none given and distribution is the default
-        DIST_DEFAULTS: dict[str, dict[str, float]] = {
-            "lognorm": {"s": 0.5, "scale": 8},
-        }
-        dist_params = parse_dist_params(arg_dist_params)
-        if not dist_params and arg_distribution in DIST_DEFAULTS:
-            dist_params = DIST_DEFAULTS[arg_distribution]
-
-        frozen_dist = validate_distribution(arg_distribution, dist_params)
-        tree = build_tree(all_files, 0, arg_max_depth, frozen_dist, rng, faker)
-
-    # Save the plan if requested
-    if arg_save_plan:
-        plan_out = tree_to_plan(tree)
-        save_path = Path(arg_save_plan)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(save_path, "w") as f:
-            json.dump(plan_out, f, indent=2)
-        print(f"Plan saved to '{save_path}'.\n")
-
-    # Print tree structure
-    print("Planned tree structure:")
-    print(f"└── {target.name}/  ({len(tree.files)} files)")
-    for i, child in enumerate(tree.children):
-        print_tree(child, "    ", i == len(tree.children) - 1)
-
-    # Print summary stats
-    stats = collect_stats(tree)
-    print("\nSummary:")
-    print(f"  Total directories: {stats['total_dirs']}")
-    print(f"  Total files:       {stats['total_files']}")
-    print(
-        f"  Files per dir:     min={stats['min_files_per_dir']}, "
-        f"max={stats['max_files_per_dir']}, "
-        f"mean={stats['mean_files_per_dir']:.1f}"
+    main(
+        target=arg_target,
+        max_depth=arg_max_depth,
+        distribution=arg_distribution,
+        dist_params=arg_dist_params,
+        seed=arg_seed,
+        dry_run=arg_dry_run,
+        save_plan=arg_save_plan,
+        from_plan=arg_from_plan,
     )
-    print(f"  Depth histogram:   {stats['depth_histogram']}")
-
-    if arg_dry_run:
-        print("\n(dry-run) No files were moved.")
-        return
-
-    # Build move plan
-    moves = flatten_moves(tree, target)
-    if not moves:
-        print("\nNo moves needed — files are already in place.")
-        return
-
-    print(f"\nMoving {len(moves)} files...")
-    start_time = time.time()
-
-    # Create all needed directories first
-    new_dirs: set[Path] = set()
-    for _, new_path in moves:
-        new_dirs.add(new_path.parent)
-    for d in sorted(new_dirs):
-        d.mkdir(parents=True, exist_ok=True)
-    dirs_created = sum(1 for d in new_dirs if d != target)
-
-    # Execute moves
-    for old_path, new_path in tqdm(moves, desc="Moving files", unit="file"):
-        shutil.move(str(old_path), str(new_path))
-
-    # Clean up empty directories
-    removed = remove_empty_dirs(target)
-
-    elapsed = time.time() - start_time
-    print(f"\nDone in {elapsed:.1f}s.")
-    print(f"  Files moved:         {len(moves)}")
-    print(f"  Directories created: {dirs_created}")
-    print(f"  Empty dirs removed:  {removed}")
-
-
-if __name__ == "__main__":
-    main()

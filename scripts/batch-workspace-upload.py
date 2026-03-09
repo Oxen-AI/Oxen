@@ -60,7 +60,109 @@ def batch_iter(items: list, size: int):
         yield items[i : i + size]
 
 
-def main():
+def main(
+    *,
+    host: str | None,
+    scheme: str,
+    repo_name: str,
+    branch: str,
+    directory: str,
+    batch_size: int,
+    message: str | None,
+    dry_run: bool,
+) -> None:
+    directory_path = Path(directory)
+    if not directory_path.is_dir():
+        print(f"Error: '{directory_path}' is not a directory or does not exist.")
+        sys.exit(1)
+
+    # Collect all file paths
+    print(f"Scanning '{directory_path}' for files...")
+    all_files = collect_file_paths(directory_path)
+    if not all_files:
+        print("No files found. Nothing to do.")
+        sys.exit(0)
+
+    total_files = len(all_files)
+    batches = list(batch_iter(all_files, batch_size))
+    total_batches = len(batches)
+
+    message_template: str = message or "batch {batch}/{total_batches}"
+
+    # Print plan
+    print("\nUpload plan:")
+    print(f"  Repository:    {repo_name}")
+    if host:
+        print(f"  Host:          {scheme}://{host}")
+    print(f"  Branch:        {branch}")
+    print(f"  Source:        {directory_path}")
+    print(f"  Total files:   {total_files:,}")
+    print(f"  Batch size:    {batch_size:,}")
+    print(f"  Total batches: {total_batches}")
+    print()
+
+    if dry_run:
+        for i, batch in enumerate(batches, 1):
+            msg = message_template.format(batch=i, total_batches=total_batches)
+            print(f'  Batch {i}/{total_batches}: {len(batch):,} files — "{msg}"')
+        print("\n(dry-run) No files were uploaded.")
+        return
+
+    # Connect to the remote repo, creating it if it doesn't exist
+    if host:
+        repo = RemoteRepo(repo_name, host=host, scheme=scheme)
+    else:
+        repo = RemoteRepo(repo_name, scheme=scheme)
+
+    if not repo.exists():
+        print(f"Repository '{repo_name}' not found on remote. Creating...")
+        repo.create(empty=True, is_public=True)
+        print(f"Created repository '{repo_name}'.")
+
+    overall_start = time.time()
+
+    for i, batch in enumerate(batches, 1):
+        msg = message_template.format(batch=i, total_batches=total_batches)
+        print(f"--- Batch {i}/{total_batches} ({len(batch):,} files) ---")
+
+        batch_start = time.time()
+
+        # Create a fresh workspace for this batch
+        workspace = Workspace(repo, branch)
+
+        # Add all files in the batch, preserving directory structure relative
+        # to the source directory.
+        print("  Adding files...")
+        failed_to_add = workspace.add_files(directory_path.parent, batch)
+
+        if len(failed_to_add) != 0:
+            print(f"ERROR: failed to add these {len(failed_to_add)} files:")
+            for i, error in enumerate(failed_to_add):
+                print(f"\t[{i + 1}] {error.path} ({error.hash}): {error.error}")
+
+        status = workspace.status()
+        if status.is_clean():
+            batch_elapsed = time.time() - batch_start
+            print(
+                f"  Workspace is clean. Skipping commit. (batch elapsed: {batch_elapsed:.1f}s)"
+            )
+            continue
+
+        # Commit the workspace
+        print(f'  Committing: "{msg}"')
+        commit = workspace.commit(msg)
+        batch_elapsed = time.time() - batch_start
+
+        print(f"  Commit {commit.id} ({batch_elapsed:.1f}s)")
+        print()
+
+    overall_elapsed = time.time() - overall_start
+    print(
+        f"Done. {total_files:,} files uploaded in {total_batches} batches ({overall_elapsed:.1f}s total)."
+    )
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Upload a directory to a remote Oxen repo in batched workspace commits.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -142,97 +244,13 @@ Examples:
         else:
             arg_scheme = "https"
 
-    directory = Path(arg_directory)
-    if not directory.is_dir():
-        print(f"Error: '{directory}' is not a directory or does not exist.")
-        sys.exit(1)
-
-    # Collect all file paths
-    print(f"Scanning '{directory}' for files...")
-    all_files = collect_file_paths(directory)
-    if not all_files:
-        print("No files found. Nothing to do.")
-        sys.exit(0)
-
-    total_files = len(all_files)
-    batch_size: int = arg_batch_size
-    batches = list(batch_iter(all_files, batch_size))
-    total_batches = len(batches)
-
-    message_template: str = arg_message or "batch {batch}/{total_batches}"
-
-    # Print plan
-    print("\nUpload plan:")
-    print(f"  Repository:    {arg_repo}")
-    if arg_host:
-        print(f"  Host:          {arg_scheme}://{arg_host}")
-    print(f"  Branch:        {arg_branch}")
-    print(f"  Source:        {directory}")
-    print(f"  Total files:   {total_files:,}")
-    print(f"  Batch size:    {batch_size:,}")
-    print(f"  Total batches: {total_batches}")
-    print()
-
-    if arg_dry_run:
-        for i, batch in enumerate(batches, 1):
-            msg = message_template.format(batch=i, total_batches=total_batches)
-            print(f'  Batch {i}/{total_batches}: {len(batch):,} files — "{msg}"')
-        print("\n(dry-run) No files were uploaded.")
-        return
-
-    # Connect to the remote repo, creating it if it doesn't exist
-    if arg_host:
-        repo = RemoteRepo(arg_repo, host=arg_host, scheme=arg_scheme)
-    else:
-        repo = RemoteRepo(arg_repo, scheme=arg_scheme)
-
-    if not repo.exists():
-        print(f"Repository '{arg_repo}' not found on remote. Creating...")
-        repo.create(empty=True, is_public=True)
-        print(f"Created repository '{arg_repo}'.")
-
-    overall_start = time.time()
-
-    for i, batch in enumerate(batches, 1):
-        msg = message_template.format(batch=i, total_batches=total_batches)
-        print(f"--- Batch {i}/{total_batches} ({len(batch):,} files) ---")
-
-        batch_start = time.time()
-
-        # Create a fresh workspace for this batch
-        workspace = Workspace(repo, arg_branch)
-
-        # Add all files in the batch, preserving directory structure relative
-        # to the source directory.
-        print("  Adding files...")
-        failed_to_add = workspace.add_files(directory.parent, batch)
-
-        if len(failed_to_add) != 0:
-            print(f"ERROR: failed to add these {len(failed_to_add)} files:")
-            for i, error in enumerate(failed_to_add):
-                print(f"\t[{i + 1}] {error.path} ({error.hash}): {error.error}")
-
-        status = workspace.status()
-        if status.is_clean():
-            batch_elapsed = time.time() - batch_start
-            print(
-                f"  Workspace is clean. Skipping commit. (batch elapsed: {batch_elapsed:.1f}s)"
-            )
-            continue
-
-        # Commit the workspace
-        print(f'  Committing: "{msg}"')
-        commit = workspace.commit(msg)
-        batch_elapsed = time.time() - batch_start
-
-        print(f"  Commit {commit.id} ({batch_elapsed:.1f}s)")
-        print()
-
-    overall_elapsed = time.time() - overall_start
-    print(
-        f"Done. {total_files:,} files uploaded in {total_batches} batches ({overall_elapsed:.1f}s total)."
+    main(
+        host=arg_host,
+        scheme=arg_scheme,
+        repo_name=arg_repo,
+        branch=arg_branch,
+        directory=arg_directory,
+        batch_size=arg_batch_size,
+        message=arg_message,
+        dry_run=arg_dry_run,
     )
-
-
-if __name__ == "__main__":
-    main()
