@@ -91,7 +91,7 @@ pub async fn list(
     Ok(HttpResponse::Ok().json(response))
 }
 
-/// Delete a previously staged file from the workspace (unstage the file)
+/// Unstage a file from the workspace
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes/{path}",
@@ -126,7 +126,7 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
 /// Unstage files
 #[utoipa::path(
-    post,
+    delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes",
     description = "Unstage files from a workspace. Accepts both files and directories.",
     tag = "Workspace Files",
@@ -137,12 +137,12 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     ),
     request_body(
         content = Vec<String>,
-        description = "List of paths to restore/unstage from the workspace staging area",
+        description = "List of paths to unstage from the workspace staging area",
         example = json!(["images/train/revert_me.jpg", "data/config.json"])
     ),
     responses(
-        (status = 200, description = "Files restored from staging", body = StatusMessage),
-        (status = 206, description = "Some files could not be restored (returns paths of files not found)", body = FilePathsResponse),
+        (status = 200, description = "Files unstaged from staging", body = StatusMessage),
+        (status = 206, description = "Some files could not be unstaged (returns paths of files not found)", body = FilePathsResponse),
         (status = 404, description = "Workspace not found")
     )
 )]
@@ -156,7 +156,7 @@ pub async fn unstage_many(
     let workspace_id = path_param(&req, "workspace_id")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let version_store = repo.version_store()?;
-    log::debug!("rm_files_from_staged found repo {repo_name}, workspace_id {workspace_id}");
+    log::debug!("unstage_many found repo {repo_name}, workspace_id {workspace_id}");
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
