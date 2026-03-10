@@ -61,7 +61,7 @@ pub async fn upload_zip(
                 commit_msg,
             );
 
-            let client = client::new_for_url(&url)?;
+            let client = client::new_for_url_transfer(&url)?;
             let response = client.post(&url).multipart(form).send().await?;
             let body = client::parse_json_body(&url, response).await?;
             let response: crate::view::CommitResponse = serde_json::from_str(&body)

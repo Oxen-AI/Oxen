@@ -33,7 +33,7 @@ pub async fn put_file(
         let file_name_str = file_name_str.clone();
         let commit_body = commit_body.clone();
         async move {
-            let client = client::new_for_url(&url)?;
+            let client = client::new_for_url_transfer(&url)?;
             let file_part = Part::file(file_path).await?;
             let file_part = if let Some(ref name) = file_name_str {
                 file_part.file_name(name.clone())
