@@ -85,7 +85,6 @@ pub async fn add(
             .clone()
             .map(|local| LocalOrBase::Local(local.clone()))
             .as_ref(),
-        false,
     )
     .await;
 
@@ -193,7 +192,6 @@ pub async fn add_files(
         //    for a single API call.
         paths,
         Some(&base_dir_enum),
-        true,
     )
     .await
     {
@@ -278,7 +276,6 @@ async fn upload_multiple_files(
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
-    strict_errors: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if paths.is_empty() {
         return Ok(vec![]);
@@ -310,17 +307,8 @@ async fn upload_multiple_files(
         };
 
         if !path.exists() {
-            let msg = format!("File does not exist: {path:?}");
-            if strict_errors {
-                return Err(OxenError::basic_str(msg));
-            }
-            log::warn!("{msg}");
-            failed_to_upload.push(ErrorFileInfo {
-                hash: String::new(),
-                path: Some(path),
-                error: msg,
-            });
-            continue;
+            log::debug!("Path does not exist: {path:?}");
+            return Err(OxenError::path_does_not_exist(path));
         }
 
         match path.metadata() {
@@ -337,17 +325,8 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                let msg = format!("Failed to get metadata for file {path:?}: {err}");
-                if strict_errors {
-                    return Err(OxenError::basic_str(msg));
-                }
-                log::warn!("{msg}");
-                failed_to_upload.push(ErrorFileInfo {
-                    hash: String::new(),
-                    path: Some(path),
-                    error: msg,
-                });
-                continue;
+                log::debug!("Failed to get metadata for file {path:?}: {err}");
+                return Err(OxenError::file_metadata_error(path, err));
             }
         }
     }
