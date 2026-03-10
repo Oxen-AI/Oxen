@@ -142,7 +142,8 @@ def generate_dir_name(
         )
         range_number = 1.0 - range_compound_word - single_word
         assert 0 <= range_number <= 1, f"{range_number=} must be between 0 and 1"
-        assert np.isclose(range_number + range_compound_word + single_word), (
+        total = range_number + range_compound_word + single_word
+        assert np.isclose(total, 1.0), (
             f"Proportions for single_word={single_word}, compound_word={range_compound_word}, number_word={range_number} must be between 0 and 1 and all sum to 1"
         )
 
@@ -268,18 +269,44 @@ def build_tree(
 # ---------------------------------------------------------------------------
 
 
-def flatten_moves(node: DirNode, parent_path: Path) -> list[tuple[Path, Path]]:
-    """Convert the tree into a flat list of (old_path, new_path) pairs."""
+def flatten_moves(
+    node: DirNode,
+    parent_path: Path,
+    _reserved: dict[Path, set[str]] | None = None,
+) -> list[tuple[Path, Path]]:
+    """Convert the tree into a flat list of (old_path, new_path) pairs.
+
+    Detects basename collisions within each target directory and appends a
+    numeric disambiguator (``_2``, ``_3``, …) to the stem so that no two
+    destination paths are identical.
+    """
+    if _reserved is None:
+        _reserved = {}
+
     moves = []
     current = parent_path / node.name if node.name != "." else parent_path
 
+    if current not in _reserved:
+        _reserved[current] = set()
+    used = _reserved[current]
+
     for old_file in node.files:
-        new_file = current / old_file.name
+        base = old_file.name
+        if base in used:
+            # Disambiguate: append increasing suffix to the stem
+            stem = old_file.stem
+            suffix = old_file.suffix
+            counter = 2
+            while f"{stem}_{counter}{suffix}" in used:
+                counter += 1
+            base = f"{stem}_{counter}{suffix}"
+        used.add(base)
+        new_file = current / base
         if old_file != new_file:
             moves.append((old_file, new_file))
 
     for child in node.children:
-        moves.extend(flatten_moves(child, current))
+        moves.extend(flatten_moves(child, current, _reserved))
 
     return moves
 

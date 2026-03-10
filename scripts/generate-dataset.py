@@ -649,7 +649,9 @@ def main(
         file_sizes = [file_size] * num_files
 
     # Validate and calculate directory parameters
-    resolved_num_dirs = validate_directory_parameters(num_files, num_dirs, files_per_dir)
+    resolved_num_dirs = validate_directory_parameters(
+        num_files, num_dirs, files_per_dir
+    )
 
     # Create target directory structure
     target_path = Path(target)

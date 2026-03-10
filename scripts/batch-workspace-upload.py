@@ -120,6 +120,7 @@ def main(
         print(f"Created repository '{repo_name}'.")
 
     overall_start = time.time()
+    all_failures: list = []
 
     for i, batch in enumerate(batches, 1):
         msg = message_template.format(batch=i, total_batches=total_batches)
@@ -133,12 +134,21 @@ def main(
         # Add all files in the batch, preserving directory structure relative
         # to the source directory.
         print("  Adding files...")
-        failed_to_add = workspace.add_files(directory_path.parent, batch)
+        result = workspace.add_files(directory_path, batch)
 
-        if len(failed_to_add) != 0:
-            print(f"ERROR: failed to add these {len(failed_to_add)} files:")
-            for i, error in enumerate(failed_to_add):
-                print(f"\t[{i + 1}] {error.path} ({error.hash}): {error.error}")
+        # Handle add_files returning None, a list, or any iterable
+        batch_failures: list = []
+        if result is not None:
+            try:
+                batch_failures = list(result)
+            except TypeError:
+                batch_failures = []
+
+        if batch_failures:
+            print(f"ERROR: failed to add these {len(batch_failures)} files:")
+            for j, error in enumerate(batch_failures):
+                print(f"\t[{j + 1}] {error.path} ({error.hash}): {error.error}")
+            all_failures.extend(batch_failures)
 
         status = workspace.status()
         if status.is_clean():
@@ -157,9 +167,13 @@ def main(
         print()
 
     overall_elapsed = time.time() - overall_start
+    successful = total_files - len(all_failures)
     print(
-        f"Done. {total_files:,} files uploaded in {total_batches} batches ({overall_elapsed:.1f}s total)."
+        f"Done. {successful:,}/{total_files:,} files uploaded in {total_batches} batches "
+        f"({len(all_failures):,} failed, {overall_elapsed:.1f}s total)."
     )
+    if all_failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

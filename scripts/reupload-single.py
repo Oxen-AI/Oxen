@@ -8,11 +8,12 @@
 # ///
 
 """
-Upload a directory of files to a remote Oxen repository in batches.
+Upload an explicit list of files to a remote Oxen repository in a single operation.
 
-For each batch, creates a new workspace, adds the files via add_files,
-commits the workspace, then moves on to the next batch. Repeats until
-every file in the source directory has been committed.
+Creates one workspace, adds all specified files via a single add_files call,
+and commits the workspace. Unlike batch-workspace-upload.py, this script does
+not batch or iterate — it performs exactly one add and one commit for the
+provided file list.
 """
 
 import argparse
