@@ -1,0 +1,49 @@
+## Fresh Build
+
+No `target/` directory present before running commands.
+
+### Workspace
+Before any changes:
+```
+cargo build --workspace  1336.46s user 137.43s system 668% cpu 3:40.40 total
+```
+
+After changes:
+```
+...
+```
+
+### Tests
+Before any changes:
+```
+cargo build --workspace --tests  314.31s user 29.90s system 435% cpu 1:19.10 total
+```
+
+After changes:
+```
+```
+
+## Oxen-Only Changes
+
+Changes only made to the local crates. A full `target/` directory from a previous build.
+
+### Workspace
+Before any changes:
+```
+cargo build --workspace  16.03s user 5.48s system 191% cpu 11.225 total
+```
+
+After changes:
+```
+```
+
+### Tests
+Before any changes:
+```
+cargo build --workspace --tests  33.13s user 8.02s system 291% cpu 14.100 total
+```
+
+After changes:
+```
+```
+
