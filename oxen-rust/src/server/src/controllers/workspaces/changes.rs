@@ -155,7 +155,6 @@ pub async fn unstage_many(
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let version_store = repo.version_store()?;
     log::debug!("unstage_many found repo {repo_name}, workspace_id {workspace_id}");
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -168,24 +167,23 @@ pub async fn unstage_many(
     let mut err_paths = vec![];
 
     for path in paths_to_remove {
-        let Some(staged_entry) =
-            with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-                // Try to read existing staged entry
-                staged_db_manager.read_from_staged_db(&path)
-            })?
-        else {
+        let is_staged = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+            staged_db_manager.read_from_staged_db(&path)
+        })?
+        .is_some();
+
+        if !is_staged {
             continue;
-        };
+        }
 
         match unstage_from_workspace(&repo, &workspace, &path) {
-            Ok(_) => {
-                // Also remove file contents from version store
-                version_store
-                    .delete_version(&staged_entry.node.hash.to_string())
-                    .await?;
-            }
+            // Note: we can't delete the version file here because it may be
+            // referenced elsewhere. In order to cleanup eagerly here we would
+            // need the staged DB to track whether the version was newly added
+            // or already existed.
+            Ok(_) => {}
             Err(e) => {
-                log::debug!("Failed to stage file {path:?} for removal: {e:?}");
+                log::debug!("Failed to unstage file {path:?}: {e:?}");
                 err_paths.push(path);
             }
         }
