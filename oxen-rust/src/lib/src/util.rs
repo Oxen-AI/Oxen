@@ -13,7 +13,6 @@ pub mod perf;
 pub mod progress_bar;
 pub mod read_progress;
 pub mod str;
-pub mod types;
 
 pub use crate::util::read_progress::ReadProgress;
 pub use paginate::{paginate, paginate_with_total};

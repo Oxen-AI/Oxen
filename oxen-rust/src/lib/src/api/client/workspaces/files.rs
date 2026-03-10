@@ -5,7 +5,6 @@ use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
-use crate::util::types::Complete;
 use crate::util::{self, concurrency};
 use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
 use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
@@ -44,20 +43,7 @@ pub struct UploadResult {
 ///
 /// When uploading many files, if most of them succeed, we don't want to treat the entire operation
 /// as an `Err`. Uploads can have partial success.
-pub type UploadRes = Complete<(), Vec<ErrorFileInfo>, OxenError>;
-
-/// Converts an UploadRes into a Result, where Ok contains all of the paths that failed to upload.
-/// If the operation was completely successful, Ok will contain an empty vector.
-impl From<UploadRes> for Result<Vec<ErrorFileInfo>, OxenError> {
-    fn from(value: UploadRes) -> Self {
-        match value {
-            Complete::Success(_) => Ok(vec![]),
-            Complete::Partial(err_files) => Ok(err_files),
-            Complete::Error(err) => Err(err),
-        }
-    }
-}
-
+pub type UploadFails = Vec<ErrorFileInfo>;
 
 // TODO: Test adding removed files
 pub async fn add(
@@ -66,14 +52,13 @@ pub async fn add(
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-) -> UploadRes {
-// ) -> Result<UploadFails, OxenError> {
+) -> Result<UploadFails, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
     // If no paths provided, return early
     if paths.is_empty() {
-        return UploadRes::Success(());
+        return Ok(vec![]);
     }
 
     // Parse glob paths
@@ -107,9 +92,9 @@ pub async fn add(
     match upload_result {
         Ok(failed_to_upload) => {
             print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
-            UploadRes::partial(failed_to_upload)
+            Ok(failed_to_upload)
         }
-        Err(error) => UploadRes::error(error),
+        error => error,
     }
 }
 
