@@ -33,10 +33,10 @@ pub async fn rm(
     }
 }
 
-pub fn delete(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::delete(workspace, path),
+        _ => core::v_latest::workspaces::files::unstage(workspace, path),
     }
 }
 
