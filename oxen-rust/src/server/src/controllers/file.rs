@@ -2,6 +2,12 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
 
+use actix_multipart::form::text::Text;
+use actix_multipart::form::{FieldReader, Limits, MultipartForm};
+use actix_multipart::{Field, MultipartError};
+use actix_web::{HttpRequest, HttpResponse, web};
+use futures_util::TryStreamExt as _;
+use futures_util::future::LocalBoxFuture;
 use liboxen::core::staged::with_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
@@ -10,14 +16,10 @@ use liboxen::model::file::{FileContents, FileNew, TempFileNew};
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
+use liboxen::repositories::commits;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::view::{CommitResponse, StatusMessage};
-
-use actix_multipart::Multipart;
-use actix_web::{HttpRequest, HttpResponse, web};
-use futures_util::TryStreamExt as _;
-use liboxen::repositories::commits;
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -26,35 +28,78 @@ use tokio::io::BufReader;
 use tokio_util::io::ReaderStream;
 use utoipa::ToSchema;
 
-#[derive(ToSchema, Deserialize)]
+#[derive(MultipartForm, ToSchema)]
 #[schema(
     title = "FileUploadBody",
-    description = "Body for uploading a file via multipart/form-data",
+    description = "Multipart form for uploading files. Use `file` for a single full-path upload, or `files[]` for uploading one or more files into a directory.",
     example = json!({
         "file": "<binary data>",
+        "files[]": ["<binary data>"],
         "message": "Adding a picture of a cow",
         "name": "bessie",
         "email": "bessie@oxen.ai"
     })
 )]
 pub struct FileUploadBody {
-    #[schema(value_type = String, format = Binary)]
-    pub file: Vec<u8>,
-    #[schema(example = "Adding a new image to the training set")]
-    pub message: Option<String>,
-    #[schema(example = "bessie")]
-    pub name: Option<String>,
-    #[schema(example = "bessie@oxen.ai")]
-    pub email: Option<String>,
+    #[schema(value_type = Option<String>, example = "bessie")]
+    name: Option<Text<String>>,
+    #[schema(value_type = Option<String>, example = "bessie@oxen.ai")]
+    email: Option<Text<String>>,
+    #[schema(value_type = Option<String>, example = "Adding a new image to the training set")]
+    message: Option<Text<String>>,
+    #[schema(value_type = Option<String>, format = Binary)]
+    file: Option<MultipartTempFileNew>,
+    #[multipart(rename = "files[]")]
+    #[schema(value_type = Vec<String>, format = Binary)]
+    files: Vec<MultipartTempFileNew>,
 }
 
-type ParsedMultipartRepoFields = (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Vec<TempFileNew>,
-    Vec<TempFileNew>,
-);
+impl FileUploadBody {
+    pub fn name(&self) -> Option<String> {
+        self.name.as_ref().map(|s| s.to_string())
+    }
+    pub fn email(&self) -> Option<String> {
+        self.email.as_ref().map(|s| s.to_string())
+    }
+    pub fn message(&self) -> Option<String> {
+        self.message.as_ref().map(|s| s.to_string())
+    }
+    pub fn file(&self) -> Option<&TempFileNew> {
+        self.file.as_ref().map(|f| &f.0)
+    }
+    pub fn files(&self) -> Vec<&TempFileNew> {
+        self.files.iter().map(|f| &f.0).collect()
+    }
+}
+
+/// Newtype wrapper around `TempFileNew` that implements actix-multipart's `FieldReader` trait,
+/// so it can be used directly in a `#[derive(MultipartForm)]` struct.
+#[derive(Debug)]
+pub struct MultipartTempFileNew(TempFileNew);
+
+impl<'t> FieldReader<'t> for MultipartTempFileNew {
+    type Future = LocalBoxFuture<'t, Result<Self, MultipartError>>;
+
+    fn read_field(_req: &'t HttpRequest, mut field: Field, limits: &'t mut Limits) -> Self::Future {
+        Box::pin(async move {
+            let filename = field
+                .content_disposition()
+                .and_then(|cd| cd.get_filename().map(sanitize_filename::sanitize))
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+            let mut contents = Vec::new();
+            while let Some(chunk) = field.try_next().await? {
+                limits.try_consume_limits(chunk.len(), true)?;
+                contents.extend_from_slice(&chunk);
+            }
+
+            Ok(MultipartTempFileNew(TempFileNew {
+                path: PathBuf::from(filename),
+                contents: FileContents::Binary(contents),
+            }))
+        })
+    }
+}
 
 /// Combined query parameters for file operations (image resize and video thumbnail)
 /// Since both ImgResize and VideoThumbnail share width/height fields, we combine them here
@@ -231,7 +276,7 @@ pub async fn get(
 )]
 pub async fn put(
     req: HttpRequest,
-    payload: Multipart,
+    MultipartForm(form): MultipartForm<FileUploadBody>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::put path {:?}", req.path());
     let app_data = app_data(&req)?;
@@ -241,15 +286,16 @@ pub async fn put(
 
     // If there's no head commit, handle initial upload
     if repositories::commits::head_commit_maybe(&repo)?.is_none() {
-        return handle_initial_put_empty_repo(req, payload, &repo).await;
+        return handle_initial_put_empty_repo(&req, form, &repo).await;
     }
 
-    let resource = match parse_resource(&req, &repo) {
-        Ok(res) => res,
-        Err(parse_err) => {
-            return Err(parse_err);
-        }
-    };
+    let name = form.name();
+    let email = form.email();
+    let message = form.message();
+    let file_parts = form.file();
+    let files_array_parts = form.files();
+
+    let resource = parse_resource(&req, &repo)?;
 
     // Resource must specify branch because we need to commit the workspace back to a branch
     let branch = resource
@@ -260,10 +306,8 @@ pub async fn put(
         ))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
-    let (name, email, message, file_parts, files_array_parts) =
-        parse_multipart_fields_for_repo(payload).await?;
     let upload_mode = resolve_upload_mode(
-        &file_parts,
+        file_parts,
         &files_array_parts,
         node.as_ref().is_some_and(|n| n.is_dir()),
     )?;
@@ -294,7 +338,7 @@ pub async fn put(
         &resource.path,
         upload_mode,
         file_parts,
-        files_array_parts,
+        &files_array_parts,
         &user,
     )?;
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
@@ -307,12 +351,11 @@ pub async fn put(
 
     // Commit workspace
     let commit_body = NewCommitBody {
-        author: name.clone().unwrap_or("".to_string()),
-        email: email.clone().unwrap_or("".to_string()),
-        message: message.clone().unwrap_or(format!(
-            "Auto-commit files to {}",
-            &resource.path.to_string_lossy()
-        )),
+        author: name.unwrap_or_default(),
+        email: email.unwrap_or_default(),
+        message: message.unwrap_or_else(|| {
+            format!("Auto-commit files to {}", &resource.path.to_string_lossy())
+        }),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
@@ -347,7 +390,7 @@ pub async fn put(
 )]
 pub async fn delete(
     req: HttpRequest,
-    payload: Multipart,
+    MultipartForm(form): MultipartForm<FileUploadBody>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::delete path {:?}", req.path());
     let app_data = app_data(&req)?;
@@ -368,9 +411,9 @@ pub async fn delete(
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let path = resource.path;
 
-    // Get the commit info from the payload
-    let (name, email, message, _file_parts, _files_array_parts) =
-        parse_multipart_fields_for_repo(payload).await?;
+    let name = form.name();
+    let email = form.email();
+    let message = form.message();
 
     log::debug!("file::delete creating workspace for commit: {commit}");
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
@@ -516,8 +559,8 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
 
 // Helper: when the repository has no commits yet, accept the upload as the first commit
 async fn handle_initial_put_empty_repo(
-    req: HttpRequest,
-    payload: Multipart,
+    req: &HttpRequest,
+    form: FileUploadBody,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
@@ -530,13 +573,17 @@ async fn handle_initial_put_empty_repo(
     let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
     let path = PathBuf::from(path_string);
 
-    let (name, email, message, file_parts, files_array_parts) =
-        parse_multipart_fields_for_repo(payload).await?;
-    let upload_mode = resolve_upload_mode(&file_parts, &files_array_parts, false)?;
+    let name = form.name();
+    let email = form.email();
+    let message = form.message();
+    let file_parts = form.file();
+    let files_array_parts = form.files();
 
-    let user = create_user_from_options(name.clone(), email.clone())?;
+    let upload_mode = resolve_upload_mode(file_parts, &files_array_parts, false)?;
+
+    let user = create_user_from_options(name, email)?;
     let files =
-        build_files_from_upload_parts(&path, upload_mode, file_parts, files_array_parts, &user)?;
+        build_files_from_upload_parts(&path, upload_mode, file_parts, &files_array_parts, &user)?;
 
     // If the user supplied files, add and commit them
     let mut commit: Option<Commit> = None;
@@ -556,86 +603,6 @@ async fn handle_initial_put_empty_repo(
     }))
 }
 
-async fn parse_multipart_fields_for_repo(
-    mut payload: Multipart,
-) -> actix_web::Result<ParsedMultipartRepoFields, OxenHttpError> {
-    let mut name: Option<String> = None;
-    let mut email: Option<String> = None;
-    let mut message: Option<String> = None;
-    let mut file_parts: Vec<TempFileNew> = vec![];
-    let mut files_array_parts: Vec<TempFileNew> = vec![];
-
-    while let Some(mut field) = payload
-        .try_next()
-        .await
-        .map_err(OxenHttpError::MultipartError)?
-    {
-        let disposition = field.content_disposition().ok_or(OxenHttpError::NotFound)?;
-        let field_name = disposition
-            .get_name()
-            .ok_or(OxenHttpError::NotFound)?
-            .to_string();
-
-        match field_name.as_str() {
-            "name" | "email" => {
-                let value = read_multipart_text_field(&mut field).await?;
-
-                if field_name == "name" {
-                    name = Some(value);
-                } else {
-                    email = Some(value);
-                }
-            }
-            "message" => {
-                message = Some(read_multipart_text_field(&mut field).await?);
-            }
-            "files[]" | "file" => {
-                let filename = disposition.get_filename().map_or_else(
-                    || uuid::Uuid::new_v4().to_string(),
-                    sanitize_filename::sanitize,
-                );
-
-                let mut contents = Vec::new();
-                while let Some(chunk) = field
-                    .try_next()
-                    .await
-                    .map_err(OxenHttpError::MultipartError)?
-                {
-                    contents.extend_from_slice(&chunk);
-                }
-
-                let temp_file = TempFileNew {
-                    path: PathBuf::from(&filename),
-                    contents: FileContents::Binary(contents),
-                };
-                if field_name == "file" {
-                    file_parts.push(temp_file);
-                } else {
-                    files_array_parts.push(temp_file);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok((name, email, message, file_parts, files_array_parts))
-}
-
-async fn read_multipart_text_field(
-    field: &mut actix_multipart::Field,
-) -> Result<String, OxenHttpError> {
-    let mut bytes = Vec::new();
-    while let Some(chunk) = field
-        .try_next()
-        .await
-        .map_err(OxenHttpError::MultipartError)?
-    {
-        bytes.extend_from_slice(&chunk);
-    }
-
-    String::from_utf8(bytes).map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))
-}
-
 // Helper function for processing files and adding to repo/workspace
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum MultipartUploadMode {
@@ -645,21 +612,16 @@ enum MultipartUploadMode {
 }
 
 fn resolve_upload_mode(
-    file_parts: &[TempFileNew],
-    files_array_parts: &[TempFileNew],
+    file_parts: Option<&TempFileNew>,
+    files_array_parts: &[&TempFileNew],
     target_is_existing_directory: bool,
 ) -> Result<MultipartUploadMode, OxenHttpError> {
-    if !file_parts.is_empty() && !files_array_parts.is_empty() {
+    if file_parts.is_some() && !files_array_parts.is_empty() {
         return Err(OxenHttpError::BadRequest(
             "Ambiguous multipart payload: use either `file` or `files[]`, not both".into(),
         ));
     }
-    if file_parts.len() > 1 {
-        return Err(OxenHttpError::BadRequest(
-            "Invalid multipart payload: expected exactly one `file` part".into(),
-        ));
-    }
-    if file_parts.len() == 1 {
+    if file_parts.is_some() {
         if target_is_existing_directory {
             return Ok(MultipartUploadMode::DirectoryFromFile);
         }
@@ -677,8 +639,8 @@ fn resolve_upload_mode(
 fn build_files_from_upload_parts(
     target_path: &Path,
     upload_mode: MultipartUploadMode,
-    file_parts: Vec<TempFileNew>,
-    files_array_parts: Vec<TempFileNew>,
+    file_parts: Option<&TempFileNew>,
+    files_array_parts: &[&TempFileNew],
     user: &liboxen::model::User,
 ) -> Result<Vec<FileNew>, OxenHttpError> {
     match upload_mode {
@@ -692,7 +654,7 @@ fn build_files_from_upload_parts(
             let temp_file = take_single_file_part(file_parts)?;
             Ok(vec![FileNew {
                 path: target_path.to_path_buf(),
-                contents: temp_file.contents,
+                contents: temp_file.contents.clone(),
                 user: user.clone(),
             }])
         }
@@ -704,7 +666,7 @@ fn build_files_from_upload_parts(
                 normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
             Ok(vec![FileNew {
                 path: normalized_target_dir.join(normalized_file_path),
-                contents: temp_file.contents,
+                contents: temp_file.contents.clone(),
                 user: user.clone(),
             }])
         }
@@ -712,13 +674,13 @@ fn build_files_from_upload_parts(
             let normalized_target_dir =
                 normalize_relative_upload_path(target_path, true, "target directory")?;
             files_array_parts
-                .into_iter()
+                .iter()
                 .map(|temp_file| {
                     let normalized_file_path =
                         normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
                     Ok(FileNew {
                         path: normalized_target_dir.join(normalized_file_path),
-                        contents: temp_file.contents,
+                        contents: temp_file.contents.clone(),
                         user: user.clone(),
                     })
                 })
@@ -727,13 +689,10 @@ fn build_files_from_upload_parts(
     }
 }
 
-fn take_single_file_part(file_parts: Vec<TempFileNew>) -> Result<TempFileNew, OxenHttpError> {
-    file_parts
-        .into_iter()
-        .next()
-        .ok_or(OxenHttpError::BadRequest(
-            "Missing file data: expected one `file` part".into(),
-        ))
+fn take_single_file_part(file_part: Option<&TempFileNew>) -> Result<&TempFileNew, OxenHttpError> {
+    file_part.ok_or(OxenHttpError::BadRequest(
+        "Missing file data: expected one `file` part".into(),
+    ))
 }
 
 fn normalize_relative_upload_path(
