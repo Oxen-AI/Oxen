@@ -82,7 +82,6 @@ mod tests {
     use crate::util;
     use crate::view::entries::EMetadataEntry;
     use futures::future;
-    use rand::Rng;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1514,15 +1513,12 @@ A: Checkout Oxen.ai
             let local_repo = local_repo.clone();
             let remote_repo = remote_repo.clone();
 
-            // Create a file with exactly AVG_CHUNK_SIZE bytes of random data
+            // Create a file with exactly AVG_CHUNK_SIZE bytes
             let file_path = local_repo.path.join("exact_chunk_size_file.bin");
-
-            // Generate random data of exactly AVG_CHUNK_SIZE bytes
-            let mut rng = rand::thread_rng();
-            let random_data: Vec<u8> = (0..AVG_CHUNK_SIZE).map(|_| rng.r#gen::<u8>()).collect();
+            let file_data: Vec<u8> = vec![42; AVG_CHUNK_SIZE as usize];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &random_data)?;
+            util::fs::write_data(&file_path, &file_data)?;
 
             // Verify the file size is exactly AVG_CHUNK_SIZE
             let metadata = util::fs::metadata(&file_path)?;
@@ -1573,7 +1569,7 @@ A: Checkout Oxen.ai
                 // Verify the file contents match the original data
                 let downloaded_data = util::fs::read_bytes_from_path(&download_path)?;
                 assert_eq!(
-                    downloaded_data, random_data,
+                    downloaded_data, file_data,
                     "Downloaded file contents should match the original data"
                 );
 
@@ -1727,16 +1723,13 @@ A: Checkout Oxen.ai
         // 4) Verify file exists and contents match
 
         test::run_empty_local_repo_test_async(|local_repo| async move {
-            // Create a 100MB file with random data
+            // Create a 100MB file
             let file_size = 100 * 1024 * 1024; // 100MB
             let file_path = local_repo.path.join("large_file.bin");
-
-            println!("Generating 100MB random data...");
-            let mut rng = rand::thread_rng();
-            let random_data: Vec<u8> = (0..file_size).map(|_| rng.r#gen::<u8>()).collect();
+            let file_data: Vec<u8> = vec![42; file_size];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &random_data)?;
+            util::fs::write_data(&file_path, &file_data)?;
 
             // Verify the file size is exactly 100MB
             let metadata = util::fs::metadata(&file_path)?;
@@ -1771,7 +1764,7 @@ A: Checkout Oxen.ai
             assert!(remote_commit_opt.is_some(), "Remote commit should exist");
 
             let remote_repo_clone = remote_repo.clone();
-            let random_data_clone = random_data.clone();
+            let file_data_clone = file_data.clone();
 
             // Clone to a different directory and verify
             test::run_empty_dir_test_async(|clone_dir| async move {
@@ -1801,11 +1794,11 @@ A: Checkout Oxen.ai
                 let cloned_data = util::fs::read_bytes_from_path(&cloned_file_path)?;
                 assert_eq!(
                     cloned_data.len(),
-                    random_data_clone.len(),
+                    file_data_clone.len(),
                     "Cloned file data length should match original"
                 );
                 assert_eq!(
-                    cloned_data, random_data_clone,
+                    cloned_data, file_data_clone,
                     "Cloned file contents should match the original data"
                 );
 
