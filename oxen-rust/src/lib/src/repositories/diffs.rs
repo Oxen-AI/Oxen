@@ -661,8 +661,8 @@ pub async fn diff_tabular_file_and_file_node(
 ) -> Result<TabularDiff, OxenError> {
     let (df_1, df_2) = match file_node {
         Some(file_node) => {
-            let file_node_path =
-                util::fs::version_path_from_hash(repo, file_node.hash().to_string());
+            let version_store = repo.version_store()?;
+            let file_node_path = version_store.get_version_path(&file_node.hash().to_string())?;
             let df_1 = tabular::read_df_with_extension(
                 file_node_path,
                 file_node.extension(),
@@ -697,8 +697,9 @@ pub async fn diff_tabular_file_nodes(
 ) -> Result<TabularDiff, OxenError> {
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
-            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
-            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+            let version_store = repo.version_store()?;
+            let version_path_1 = version_store.get_version_path(&file_1.hash().to_string())?;
+            let version_path_2 = version_store.get_version_path(&file_2.hash().to_string())?;
             let df_1 = tabular::read_df_with_extension(
                 version_path_1,
                 file_1.extension(),
@@ -717,7 +718,8 @@ pub async fn diff_tabular_file_nodes(
             diff_dfs(&df_1, &df_2, keys, targets, display)
         }
         (Some(file_1), None) => {
-            let version_path_1 = util::fs::version_path_from_hash(repo, file_1.hash().to_string());
+            let version_store = repo.version_store()?;
+            let version_path_1 = version_store.get_version_path(&file_1.hash().to_string())?;
             let df_1 = tabular::read_df_with_extension(
                 version_path_1,
                 file_1.extension(),
@@ -731,7 +733,8 @@ pub async fn diff_tabular_file_nodes(
             diff_dfs(&df_1, &df_2, keys, targets, display)
         }
         (None, Some(file_2)) => {
-            let version_path_2 = util::fs::version_path_from_hash(repo, file_2.hash().to_string());
+            let version_store = repo.version_store()?;
+            let version_path_2 = version_store.get_version_path(&file_2.hash().to_string())?;
             let df_1 = tabular::new_df();
             let df_2 = tabular::read_df_with_extension(
                 version_path_2,

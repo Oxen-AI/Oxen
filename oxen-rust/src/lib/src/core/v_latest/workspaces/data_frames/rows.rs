@@ -22,7 +22,6 @@ use crate::model::diff::DiffResult;
 use crate::model::staged_row_status::StagedRowStatus;
 use crate::model::{Commit, LocalRepository, Workspace};
 use crate::repositories;
-use crate::util;
 use crate::view::JsonDataFrameView;
 
 use std::collections::HashMap;
@@ -275,8 +274,8 @@ pub async fn prepare_modified_or_removed_row(
     );
 
     // let scan_rows = 10000 as usize;
-    let committed_df_path =
-        util::fs::version_path_from_node(repo, commit_merkle_tree.hash.to_string(), path.as_ref());
+    let version_store = repo.version_store()?;
+    let committed_df_path = version_store.get_version_path(&commit_merkle_tree.hash.to_string())?;
 
     log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 
