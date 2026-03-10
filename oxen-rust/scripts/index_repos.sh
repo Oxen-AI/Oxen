@@ -22,14 +22,15 @@ while read -r repo; do
   if [ -d "$repo" ]
   then
     echo "Repo $repo already exists."
+
   else
     echo "Cloning $repo...."
-
     oxen clone "https://staging.hub.oxen.ai/ox/$repo" --all
-    (
-      cd "$repo" || exit
-      oxen config --set-remote origin "https://$SYNC_SERVER/ox/$repo"
-      oxen push origin main
-    )
+
+    cd "$repo"
+    oxen config --set-remote origin "https://$SYNC_SERVER/ox/$repo"
+    oxen push origin main
+    cd ..
+
   fi
 done < "$IN_FILE"

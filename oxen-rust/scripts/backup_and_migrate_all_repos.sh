@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_PATH=${1:-}
 MIGRATION_NAME=${2:-}
 
-if [[ "${ROOT_PATH}" == "" || "${MIGRATION_NAME}" == "" ]]; then
+if [[ -z "${ROOT_PATH}" ]] ||  [[ -z "${MIGRATION_NAME}" ]]; then
 	echo "Error: must provide root path as the 1st argument and the migration name as the 2nd"
 	exit 1
 fi
