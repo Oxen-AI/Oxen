@@ -36,7 +36,8 @@ class Workspace:
     workspace = Workspace(repo, "my-branch")
 
     # Add a file to the workspace
-    workspace.add("my-image.png")
+    failed_to_upload = workspace.add("my-image.png")
+    assert len(failed_to_upload) == 0
 
     # Print the status of the workspace
     status = workspace.status()
@@ -296,18 +297,3 @@ def _filepaths_from(path: Path) -> Iterator[Path]:
         for something_under in path.rglob("*"):
             if something_under.is_file():
                 yield something_under
-
-
-# def _assert_file_in_base(base_dir: Path, p: Path):
-#     """ValueError if `p` doesn't have `base_dir` as an ancesor or isn't a file.
-
-#     Assumes that `base_dir` (1) is a directory and (2) is a resolved path.
-#     """
-#     if not p.is_absolute():
-#         p = base_dir / p
-#     else:
-#         p = p.resolve()
-#         if not p.is_relative_to(base_dir):
-#             raise ValueError(f"Absolute path is not under base_dir ({base_dir}): {p}")
-#     if not p.is_file():
-#         raise ValueError(f"Path is not a file: {p}")
