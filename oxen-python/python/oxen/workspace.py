@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 
-from .oxen import PyCommit, PyWorkspace
+from .oxen import PyCommit, PyErrorFileInfo, PyWorkspace
 
 # Use TYPE_CHECKING for type hints to avoid runtime circular imports
 if TYPE_CHECKING:
@@ -137,7 +137,7 @@ class Workspace:
 
     def add(
         self, src: str | Iterable[str] | Path | Iterable[Path], dst: str = ""
-    ) -> None:
+    ) -> list[PyErrorFileInfo]:
         """
         Add files to the workspace.
 
@@ -151,6 +151,11 @@ class Workspace:
                 The path(s) to the local file(s) to be staged.
             dst: `str`
                 The path in the remote repo where the file(s) will be added.
+
+        Returns:
+            A list of `PyErrorFileInfo` for files that failed to upload.
+            An empty list means all files were uploaded successfully.
+            Each entry has `.hash`, `.path`, and `.error` attributes.
 
         Raises:
             ValueError if the provided input is not a valid filepath, an invalid
@@ -191,7 +196,7 @@ class Workspace:
         self,
         base_dir: str | Path,
         paths: Iterable[str] | Iterable[Path],
-    ) -> None:
+    ) -> list[PyErrorFileInfo]:
         """
         A workspace add that preserves relative paths of files that share a common base.
 
@@ -211,6 +216,11 @@ class Workspace:
             paths: `Iterable[str]` | `Iterable[Path]`
                 The file paths to add. Can be absolute or relative to the
                 base directory. Each path must point to an existing file.
+
+        Returns:
+            A list of `PyErrorFileInfo` for files that failed to upload.
+            An empty list means all files were uploaded successfully.
+            Each entry has `.hash`, `.path`, and `.error` attributes.
 
         Raises:
             PyOxenError: If no valid file paths are provided.

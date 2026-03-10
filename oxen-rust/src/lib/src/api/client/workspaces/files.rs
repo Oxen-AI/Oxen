@@ -295,6 +295,8 @@ async fn upload_multiple_files(
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
 
+    let mut failed_to_upload = vec![];
+
     // Group files by size
     for path in paths {
         // Adjustment for remote-mode repos
@@ -313,6 +315,11 @@ async fn upload_multiple_files(
                 return Err(OxenError::basic_str(msg));
             }
             log::warn!("{msg}");
+            failed_to_upload.push(ErrorFileInfo {
+                hash: String::new(),
+                path: Some(path),
+                error: msg,
+            });
             continue;
         }
 
@@ -335,6 +342,11 @@ async fn upload_multiple_files(
                     return Err(OxenError::basic_str(msg));
                 }
                 log::warn!("{msg}");
+                failed_to_upload.push(ErrorFileInfo {
+                    hash: String::new(),
+                    path: Some(path),
+                    error: msg,
+                });
                 continue;
             }
         }
@@ -342,8 +354,6 @@ async fn upload_multiple_files(
 
     let total_size = large_files_size + small_files_size;
     validate_upload_feasibility(remote_repo, workspace_id, total_size).await?;
-
-    let mut failed_to_upload = vec![];
 
     // Process large files individually with parallel upload
     for (path, _) in large_files {
