@@ -8,7 +8,9 @@ use std::io::Write;
 use crate::core;
 use crate::{constants::OXEN_HIDDEN_DIR, error::OxenError, model::LocalRepository, util};
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn save(repo: &LocalRepository, dst_path: &Path) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_save_save_total").increment(1);
     let output_path = if !dst_path.exists() {
         dst_path.to_path_buf()
     } else {

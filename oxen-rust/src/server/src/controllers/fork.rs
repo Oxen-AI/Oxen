@@ -8,6 +8,7 @@ use liboxen::view::StatusMessage;
 use liboxen::view::fork::ForkRequest;
 
 /// Fork a repository
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/fork",
@@ -31,6 +32,7 @@ pub async fn fork(
     req: HttpRequest,
     body: web::Json<ForkRequest>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_fork_fork_total").increment(1);
     log::debug!("Forking repository with request: {req:?}");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -65,6 +67,7 @@ pub async fn fork(
 }
 
 /// Fork Status
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/fork/status",
@@ -80,6 +83,7 @@ pub async fn fork(
     )
 )]
 pub async fn get_status(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_fork_get_status_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

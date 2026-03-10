@@ -38,10 +38,12 @@ pub struct ChunkParams {
     pub total_size: usize,
 }
 
+#[tracing::instrument(skip(repository, commit_id))]
 pub async fn get_by_id(
     repository: &RemoteRepository,
     commit_id: impl AsRef<str>,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_get_by_id_total").increment(1);
     let commit_id = commit_id.as_ref();
     let uri = format!("/commits/{commit_id}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
@@ -65,12 +67,14 @@ pub async fn get_by_id(
 }
 
 /// List commits for a file
+#[tracing::instrument(skip(remote_repo, revision, path, page_opts))]
 pub async fn list_commits_for_path(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
     path: impl AsRef<Path>,
     page_opts: &PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    metrics::counter!("oxen_client_commits_list_commits_for_path_total").increment(1);
     let revision = revision.as_ref();
     let path = path.as_ref();
     let path_str = path.to_string_lossy();
@@ -91,7 +95,9 @@ pub async fn list_commits_for_path(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn list_all(remote_repo: &RemoteRepository) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_list_all_total").increment(1);
     let mut all_commits: Vec<Commit> = Vec::new();
     let mut page_num = DEFAULT_PAGE_NUM;
     let page_size = 100;
@@ -129,10 +135,12 @@ pub async fn list_all(remote_repo: &RemoteRepository) -> Result<Vec<Commit>, Oxe
     Ok(all_commits)
 }
 
+#[tracing::instrument(skip(remote_repo, commits))]
 pub async fn list_missing_hashes(
     remote_repo: &RemoteRepository,
     commits: Vec<Commit>,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_list_missing_hashes_total").increment(1);
     let uri = "/commits/missing".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
@@ -164,11 +172,13 @@ pub async fn list_missing_hashes(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, base_commit), fields(head_commit_id))]
 pub async fn list_missing_files(
     remote_repo: &RemoteRepository,
     base_commit: Option<Commit>,
     head_commit_id: &str,
 ) -> Result<Vec<CommitEntry>, OxenError> {
+    metrics::counter!("oxen_client_commits_list_missing_files_total").increment(1);
     let url = match base_commit {
         Some(base_commit) => {
             let base_commit_id = base_commit.id;
@@ -193,10 +203,12 @@ pub async fn list_missing_files(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, commit_hashes))]
 pub async fn mark_commits_as_synced(
     remote_repo: &RemoteRepository,
     commit_hashes: HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_mark_commits_as_synced_total").increment(1);
     let uri = "/commits/mark_commits_as_synced".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
@@ -217,10 +229,12 @@ pub async fn mark_commits_as_synced(
     }
 }
 
+#[tracing::instrument(skip(remote_repo), fields(revision))]
 pub async fn list_commit_history(
     remote_repo: &RemoteRepository,
     revision: &str,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_list_commit_history_total").increment(1);
     let mut all_commits: Vec<Commit> = Vec::new();
     let mut page_num = DEFAULT_PAGE_NUM;
     let page_size = 100;
@@ -258,11 +272,13 @@ pub async fn list_commit_history(
     Ok(all_commits)
 }
 
+#[tracing::instrument(skip(remote_repo, page_opts), fields(revision))]
 pub async fn list_commit_history_paginated(
     remote_repo: &RemoteRepository,
     revision: &str,
     page_opts: &PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    metrics::counter!("oxen_client_commits_list_commit_history_paginated_total").increment(1);
     let page_num = page_opts.page_num;
     let page_size = page_opts.page_size;
     let uri = format!("/commits/history/{revision}?page={page_num}&page_size={page_size}");
@@ -313,9 +329,11 @@ async fn list_all_commits_paginated(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn root_commit_maybe(
     remote_repo: &RemoteRepository,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_root_commit_maybe_total").increment(1);
     let uri = "/commits/root".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("remote::commits::root_commit {url}");
@@ -336,23 +354,27 @@ pub async fn root_commit_maybe(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path), fields(commit_id))]
 pub async fn download_dir_hashes_from_commit(
     remote_repo: &RemoteRepository,
     commit_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    metrics::counter!("oxen_client_commits_download_dir_hashes_from_commit_total").increment(1);
     let uri = format!("/commits/{commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("calling download_dir_hashes_from_commit for commit {commit_id}");
     download_dir_hashes_from_url(url, path).await
 }
 
+#[tracing::instrument(skip(remote_repo, path), fields(base_commit_id, head_commit_id))]
 pub async fn download_base_head_dir_hashes(
     remote_repo: &RemoteRepository,
     base_commit_id: &str,
     head_commit_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    metrics::counter!("oxen_client_commits_download_base_head_dir_hashes_total").increment(1);
     let uri = format!("/commits/{base_commit_id}..{head_commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!(
@@ -361,10 +383,12 @@ pub async fn download_base_head_dir_hashes(
     download_dir_hashes_from_url(url, path).await
 }
 
+#[tracing::instrument(skip(url, path))]
 pub async fn download_dir_hashes_from_url(
     url: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    metrics::counter!("oxen_client_commits_download_dir_hashes_from_url_total").increment(1);
     let url = url.as_ref();
     log::debug!("{} downloading from {}", current_function!(), url);
     let client = client::new_for_url(url)?;
@@ -438,11 +462,13 @@ pub async fn download_dir_hashes_from_url(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path), fields(commit_id))]
 pub async fn download_dir_hashes_db_to_path(
     remote_repo: &RemoteRepository,
     commit_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    metrics::counter!("oxen_client_commits_download_dir_hashes_db_to_path_total").increment(1);
     let uri = format!("/commits/{commit_id}/commit_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("calling download_dir_hashes_db_to_path for commit {commit_id}");
@@ -512,10 +538,12 @@ pub async fn download_dir_hashes_db_to_path(
     }
 }
 
+#[tracing::instrument(skip(remote_repo), fields(commit_id))]
 pub async fn get_remote_parent(
     remote_repo: &RemoteRepository,
     commit_id: &str,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_get_remote_parent_total").increment(1);
     let uri = format!("/commits/{commit_id}/parents");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -534,12 +562,14 @@ pub async fn get_remote_parent(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, branch, commit_id))]
 pub async fn post_push_complete(
     remote_repo: &RemoteRepository,
     branch: &Branch,
     // we need to pass in the commit id because we might be pushing multiple commits from the same branch
     commit_id: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_post_push_complete_total").increment(1);
     use serde_json::json;
     let commit_id = commit_id.as_ref();
     let uri = format!("/commits/{commit_id}/complete");
@@ -569,10 +599,12 @@ pub async fn post_push_complete(
 }
 
 // Commits must be in oldest-to-newest-order
+#[tracing::instrument(skip(remote_repo, commits))]
 pub async fn bulk_post_push_complete(
     remote_repo: &RemoteRepository,
     commits: &Vec<Commit>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_bulk_post_push_complete_total").increment(1);
     use serde_json::json;
 
     let uri = "/commits/complete".to_string();
@@ -597,10 +629,12 @@ pub async fn bulk_post_push_complete(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, branch))]
 pub async fn get_commits_with_unsynced_dbs(
     remote_repo: &RemoteRepository,
     branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_get_commits_with_unsynced_dbs_total").increment(1);
     let revision = branch.commit_id.clone();
 
     let uri = format!("/commits/{revision}/db_status");
@@ -623,10 +657,12 @@ pub async fn get_commits_with_unsynced_dbs(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, branch))]
 pub async fn get_commits_with_unsynced_entries(
     remote_repo: &RemoteRepository,
     branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_client_commits_get_commits_with_unsynced_entries_total").increment(1);
     let commit_id = branch.commit_id.clone();
 
     let uri = format!("/commits/{commit_id}/entries_status");
@@ -649,12 +685,14 @@ pub async fn get_commits_with_unsynced_entries(
     }
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, commits))]
 pub async fn post_commits_to_server(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     commits: &Vec<UnsyncedCommitEntries>,
     branch_name: String,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_post_commits_to_server_total").increment(1);
     let mut commits_with_size: Vec<CommitWithBranchName> = Vec::new();
     for commit_with_entries in commits {
         let commit_history_dir = util::fs::oxen_hidden_dir(&local_repo.path)
@@ -684,11 +722,13 @@ pub async fn post_commits_to_server(
     Ok(())
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, commit))]
 pub async fn post_commit_dir_hashes_to_server(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     commit: &Commit,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_post_commit_dir_hashes_to_server_total").increment(1);
     let commit_dir = util::fs::oxen_hidden_dir(&local_repo.path)
         .join(HISTORY_DIR)
         .join(commit.id.clone());
@@ -731,11 +771,13 @@ pub async fn post_commit_dir_hashes_to_server(
     .await
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, commits))]
 pub async fn post_commits_dir_hashes_to_server(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     commits: &Vec<Commit>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_post_commits_dir_hashes_to_server_total").increment(1);
     let enc = GzEncoder::new(Vec::new(), Compression::default());
     let mut tar = tar::Builder::new(enc);
 
@@ -780,10 +822,12 @@ pub async fn post_commits_dir_hashes_to_server(
     .await
 }
 
+#[tracing::instrument(skip(remote_repo, commits))]
 pub async fn bulk_create_commit_obj_on_server(
     remote_repo: &RemoteRepository,
     commits: &Vec<CommitWithBranchName>,
 ) -> Result<ListCommitResponse, OxenError> {
+    metrics::counter!("oxen_client_commits_bulk_create_commit_obj_on_server_total").increment(1);
     let url = api::endpoint::url_from_repo(remote_repo, "/commits/bulk")?;
     log::debug!("bulk_create_commit_obj_on_server {url}\n{commits:?}");
 
@@ -805,6 +849,7 @@ pub async fn bulk_create_commit_obj_on_server(
     }
 }
 
+#[tracing::instrument(skip(client, remote_repo, buffer, bar), fields(is_compressed))]
 pub async fn post_data_to_server_with_client(
     client: &reqwest::Client,
     remote_repo: &RemoteRepository,
@@ -813,6 +858,7 @@ pub async fn post_data_to_server_with_client(
     filename: &Option<String>,
     bar: Arc<ProgressBar>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_post_data_to_server_with_client_total").increment(1);
     let chunk_size: usize = constants::AVG_CHUNK_SIZE as usize;
 
     if buffer.len() > chunk_size {
@@ -832,12 +878,17 @@ pub async fn post_data_to_server_with_client(
     Ok(())
 }
 
+#[tracing::instrument(skip(client, remote_repo, buffer, bar))]
 pub async fn upload_single_tarball_to_server_with_client_with_retry(
     client: &reqwest::Client,
     remote_repo: &RemoteRepository,
     buffer: &[u8],
     bar: Arc<ProgressBar>,
 ) -> Result<(), OxenError> {
+    metrics::counter!(
+        "oxen_client_commits_upload_single_tarball_to_server_with_client_with_retry_total"
+    )
+    .increment(1);
     let mut total_tries = 0;
 
     while total_tries < constants::NUM_HTTP_RETRIES {
@@ -943,6 +994,7 @@ async fn upload_data_to_server_in_chunks_with_client(
     Ok(())
 }
 
+#[tracing::instrument(skip(client, remote_repo, chunk, params), fields(hash, is_compressed))]
 pub async fn upload_data_chunk_to_server_with_retry(
     client: &reqwest::Client,
     remote_repo: &RemoteRepository,
@@ -952,6 +1004,8 @@ pub async fn upload_data_chunk_to_server_with_retry(
     is_compressed: bool,
     filename: &Option<String>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_commits_upload_data_chunk_to_server_with_retry_total")
+        .increment(1);
     let mut total_tries = 0;
     let mut last_error = String::from("");
     while total_tries < constants::NUM_HTTP_RETRIES {

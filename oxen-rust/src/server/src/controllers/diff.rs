@@ -36,6 +36,7 @@ use crate::params::{
 };
 
 /// List commits between two revisions
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
@@ -57,6 +58,7 @@ pub async fn commits(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_commits_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -94,6 +96,7 @@ pub async fn commits(
 }
 
 /// List file and directory entries changed between base and head
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/entries",
@@ -116,6 +119,7 @@ pub async fn entries(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_entries_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -179,6 +183,7 @@ pub async fn entries(
 }
 
 /// Get diff tree
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/tree",
@@ -195,6 +200,7 @@ pub async fn entries(
     )
 )]
 pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_dir_tree_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -225,6 +231,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 }
 
 /// List changed files
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/dir/{dir}/entries",
@@ -247,6 +254,7 @@ pub async fn dir_entries(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_dir_entries_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -310,6 +318,7 @@ pub async fn dir_entries(
 }
 
 /// Get file diff
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/file/{resource}",
@@ -332,6 +341,7 @@ pub async fn file(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_file_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -380,6 +390,7 @@ pub async fn file(
 }
 
 /// Create a tabular data frame diff
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames",
@@ -404,6 +415,7 @@ pub async fn create_df_diff(
     _query: web::Query<DFOptsQuery>,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_create_df_diff_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -487,6 +499,7 @@ pub async fn create_df_diff(
 }
 
 /// Update tabular data frame diff
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
@@ -511,6 +524,7 @@ pub async fn update_df_diff(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_update_df_diff_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -596,6 +610,7 @@ pub async fn update_df_diff(
 }
 
 /// Get a cached tabular data frame diff
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
@@ -620,6 +635,7 @@ pub async fn get_df_diff(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_get_df_diff_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -685,6 +701,7 @@ pub async fn get_df_diff(
 }
 
 /// Delete DF Diff
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}",
@@ -701,6 +718,7 @@ pub async fn get_df_diff(
     )
 )]
 pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_delete_df_diff_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -713,6 +731,7 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
 }
 
 /// Get Derived Data Frame
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/data_frames/{compare_id}/diff",
@@ -734,6 +753,7 @@ pub async fn get_derived_df(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_diff_get_derived_df_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

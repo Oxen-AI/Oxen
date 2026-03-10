@@ -10,6 +10,7 @@ use log;
 use utoipa;
 
 /// Get the latest revision of a resource
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/revisions/{resource}",
@@ -27,6 +28,7 @@ use utoipa;
     )
 )]
 pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_revisions_get_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

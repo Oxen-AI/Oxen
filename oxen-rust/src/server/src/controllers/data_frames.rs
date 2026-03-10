@@ -22,6 +22,7 @@ use utoipa;
 use uuid::Uuid;
 
 /// Get data frame slice
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}",
@@ -42,6 +43,7 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<DFOptsQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_data_frames_get_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -123,6 +125,7 @@ pub async fn get(
 }
 
 /// Start data frame indexing
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/{resource}/index",
@@ -140,6 +143,7 @@ pub async fn get(
     )
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_data_frames_index_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -176,6 +180,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// Create data frame from directory
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/data_frames/from_directory/{resource}",
@@ -208,6 +213,7 @@ pub async fn from_directory(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_data_frames_from_directory_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

@@ -51,18 +51,22 @@ pub struct UploadResult {
 }
 
 /// Check if a file exists in the remote repository by version id
+#[tracing::instrument(skip(repository))]
 pub async fn has_version(
     repository: &RemoteRepository,
     version_id: MerkleHash,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_client_versions_has_version_total").increment(1);
     Ok(get(repository, version_id).await?.is_some())
 }
 
 /// Get the size of a version
+#[tracing::instrument(skip(repository))]
 pub async fn get(
     repository: &RemoteRepository,
     version_id: MerkleHash,
 ) -> Result<Option<VersionFile>, OxenError> {
+    metrics::counter!("oxen_client_versions_get_total").increment(1);
     let uri = format!("/versions/{version_id}/metadata");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("api::client::versions::get {url}");
@@ -83,9 +87,11 @@ pub async fn get(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn clean(
     remote_repo: &RemoteRepository,
 ) -> Result<CleanCorruptedVersionsResponse, OxenError> {
+    metrics::counter!("oxen_client_versions_clean_total").increment(1);
     let uri = "/versions";
     let url = api::endpoint::url_from_repo(remote_repo, uri)?;
     log::debug!("api::client::versions::clean {url}");
@@ -105,6 +111,10 @@ pub async fn clean(
 
 /// Uploads a large file to the server in parallel and unpacks it in the versions directory
 /// Returns the `MultipartLargeFileUpload` struct for the created upload
+#[tracing::instrument(
+    skip(remote_repo, file_path, dst_dir, progress),
+    fields(file_size, hash)
+)]
 pub async fn parallel_large_file_upload(
     remote_repo: &RemoteRepository,
     file_path: impl AsRef<Path>,
@@ -113,6 +123,8 @@ pub async fn parallel_large_file_upload(
     entry: Option<Entry>,                 // entry is provided for push workflow
     progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
+    metrics::counter!("oxen_client_versions_parallel_large_file_upload_total").increment(1);
+    let timer = std::time::Instant::now();
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
 
     let mut upload =
@@ -132,7 +144,11 @@ pub async fn parallel_large_file_upload(
     .await?;
     let num_chunks = results.len();
     log::debug!("multipart_large_file_upload num_chunks: {num_chunks:?}");
-    complete_multipart_large_file_upload(remote_repo, upload, num_chunks, workspace_id).await
+    let result =
+        complete_multipart_large_file_upload(remote_repo, upload, num_chunks, workspace_id).await;
+    metrics::histogram!("oxen_client_versions_parallel_large_file_upload_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
+    result
 }
 
 /// Creates a new multipart large file upload
@@ -192,18 +208,33 @@ async fn create_multipart_large_file_upload(
 }
 
 /// Batch download
+#[tracing::instrument(skip(remote_repo, hashes, local_repo))]
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
+    metrics::counter!("oxen_client_versions_download_data_from_version_paths_total").increment(1);
+    let timer = std::time::Instant::now();
     let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
     let mut num_retries = 0;
 
     while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
-            Ok(val) => return Ok(val),
-            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
+            Ok(val) => {
+                metrics::histogram!(
+                    "oxen_client_versions_download_data_from_version_paths_duration_seconds"
+                )
+                .record(timer.elapsed().as_secs_f64());
+                return Ok(val);
+            }
+            Err(OxenError::Authentication(val)) => {
+                metrics::histogram!(
+                    "oxen_client_versions_download_data_from_version_paths_duration_seconds"
+                )
+                .record(timer.elapsed().as_secs_f64());
+                return Err(OxenError::Authentication(val));
+            }
             Err(err) => {
                 num_retries += 1;
                 // Exponentially back off
@@ -214,6 +245,8 @@ pub async fn download_data_from_version_paths(
         }
     }
 
+    metrics::histogram!("oxen_client_versions_download_data_from_version_paths_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     let err = format!(
         "Err: Failed to download {} files after {} retries",
         hashes.len(),
@@ -222,11 +255,14 @@ pub async fn download_data_from_version_paths(
     Err(OxenError::basic_str(err))
 }
 
+#[tracing::instrument(skip(remote_repo, hashes, local_repo))]
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
+    metrics::counter!("oxen_client_versions_try_download_data_from_version_paths_total")
+        .increment(1);
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     for hash in hashes.iter() {
         let line = format!("{hash}\n");
@@ -479,12 +515,15 @@ async fn complete_multipart_large_file_upload(
 /// Multipart batch upload with retry
 /// Uploads a batch of small files to the server in parallel and retries on failure
 /// Returns a list of files that failed to upload
+#[tracing::instrument(skip(local_repo, remote_repo, chunk, client))]
 pub async fn multipart_batch_upload_with_retry(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_versions_multipart_batch_upload_with_retry_total").increment(1);
+    let timer = std::time::Instant::now();
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
@@ -502,15 +541,19 @@ pub async fn multipart_batch_upload_with_retry(
             sleep(Duration::from_millis(wait_time as u64)).await;
         }
     }
-    if files_to_retry.is_empty() {
+    let result = if files_to_retry.is_empty() {
         Ok(())
     } else {
         Err(OxenError::basic_str(format!(
             "Failed to upload files: {files_to_retry:#?}"
         )))
-    }
+    };
+    metrics::histogram!("oxen_client_versions_multipart_batch_upload_with_retry_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
+    result
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, chunk, client, files_to_retry))]
 pub async fn multipart_batch_upload(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -518,6 +561,7 @@ pub async fn multipart_batch_upload(
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    metrics::counter!("oxen_client_versions_multipart_batch_upload_total").increment(1);
     let version_store = local_repo.version_store()?;
     let mut form = reqwest::multipart::Form::new();
     let mut err_files: Vec<ErrorFileInfo> = vec![];
@@ -575,6 +619,7 @@ pub async fn multipart_batch_upload(
     Ok(err_files)
 }
 
+#[tracing::instrument(skip(remote_repo, local_or_base, client, paths, result))]
 pub(crate) async fn workspace_multipart_batch_upload_versions(
     remote_repo: &RemoteRepository,
     local_or_base: Option<&LocalOrBase>,
@@ -582,6 +627,8 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
     paths: Vec<PathBuf>,
     result: UploadResult,
 ) -> Result<UploadResult, OxenError> {
+    metrics::counter!("oxen_client_versions_workspace_multipart_batch_upload_versions_total")
+        .increment(1);
     // save the errorred files info for retry
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     // keep track of the files hash
@@ -702,6 +749,7 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
     })
 }
 
+#[tracing::instrument(skip(remote_repo, client, form, files_to_retry, local_or_base))]
 pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
@@ -709,6 +757,10 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     files_to_retry: &mut Vec<FileWithHash>,
     local_or_base: Option<&LocalOrBase>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    metrics::counter!(
+        "oxen_client_versions_workspace_multipart_batch_upload_parts_with_retry_total"
+    )
+    .increment(1);
     log::debug!("Beginning workspace multipart batch upload");
     let uri = ("/versions").to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

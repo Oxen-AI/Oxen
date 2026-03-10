@@ -71,6 +71,7 @@ pub struct ListMissingFilesQuery {
 }
 
 /// List commits
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits",
@@ -86,6 +87,7 @@ pub struct ListMissingFilesQuery {
     )
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_index_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -96,6 +98,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// List commit history
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/history/{resource}",
@@ -116,6 +119,7 @@ pub async fn history(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_history_total").increment(1);
     let _perf = perf_guard!("commits::history_endpoint");
 
     let _perf_parse = perf_guard!("commits::history_parse_params");
@@ -186,6 +190,7 @@ pub async fn history(
 }
 
 /// List all commits
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/all",
@@ -205,6 +210,7 @@ pub async fn list_all(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_list_all_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -220,6 +226,7 @@ pub async fn list_all(
 }
 
 /// List missing commits
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/missing",
@@ -246,6 +253,7 @@ pub async fn list_missing(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_list_missing_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -276,6 +284,7 @@ pub async fn list_missing(
 }
 
 /// List missing files from commits
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/missing_files",
@@ -295,6 +304,7 @@ pub async fn list_missing_files(
     req: HttpRequest,
     query: web::Query<ListMissingFilesQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_list_missing_files_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -323,6 +333,7 @@ pub async fn list_missing_files(
 }
 
 /// Mark commits as synced
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/synced",
@@ -348,6 +359,7 @@ pub async fn mark_commits_as_synced(
     req: HttpRequest,
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_mark_commits_as_synced_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -377,6 +389,7 @@ pub async fn mark_commits_as_synced(
 }
 
 /// Get commit
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}",
@@ -393,6 +406,7 @@ pub async fn mark_commits_as_synced(
     )
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_show_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -408,6 +422,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 }
 
 /// Get a commit's parents
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/parents",
@@ -424,6 +439,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     )
 )]
 pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_parents_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -439,6 +455,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
 }
 
 /// Download commits DB
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits_db",
@@ -456,6 +473,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
 pub async fn download_commits_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_download_commits_db_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -488,6 +506,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
 }
 
 /// Download dir hashes DB
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{base_head}/dir_hashes_db",
@@ -507,6 +526,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
 pub async fn download_dir_hashes_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_download_dir_hashes_db_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -538,6 +558,7 @@ pub async fn download_dir_hashes_db(
 }
 
 /// Download commit entries DB
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/commit_entries_db",
@@ -556,6 +577,7 @@ pub async fn download_dir_hashes_db(
 pub async fn download_commit_entries_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_download_commit_entries_db_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -650,6 +672,7 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
 }
 
 /// Upload commit
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits",
@@ -679,6 +702,7 @@ pub async fn create(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_create_total").increment(1);
     log::debug!("Got commit data: {body}");
 
     let app_data = app_data(&req)?;
@@ -722,6 +746,7 @@ pub async fn create(
 }
 
 /// Upload data chunk
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload_chunk",
@@ -746,6 +771,7 @@ pub async fn upload_chunk(
     mut chunk: web::Payload,                   // the chunk of the file body,
     query: web::Query<ChunkedDataUploadQuery>, // gives the file
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_upload_chunk_total").increment(1);
     log::debug!("in upload_chunk controller");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -1000,6 +1026,7 @@ async fn unpack_compressed_data(
 }
 
 /// Upload commits DB
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload",
@@ -1022,6 +1049,8 @@ pub async fn upload(
     req: HttpRequest,
     mut body: web::Payload, // the actual file body
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_upload_total").increment(1);
+    let timer = std::time::Instant::now();
     log::debug!("in regular upload controller");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -1055,10 +1084,13 @@ pub async fn upload(
     unpack_entry_tarball_async(&repo, &bytes).await?;
     // });
 
+    metrics::histogram!("oxen_server_commits_upload_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
 /// Notify upload complete
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/complete",
@@ -1075,6 +1107,7 @@ pub async fn upload(
     )
 )]
 pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
+    metrics::counter!("oxen_server_commits_complete_total").increment(1);
     let app_data = req.app_data::<OxenAppData>().unwrap();
     // name to the repo, should be in url path so okay to unwrap
     let namespace: &str = req.match_info().get("namespace").unwrap();
@@ -1114,6 +1147,7 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
 }
 
 /// Upload commit tree
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/upload_tree",
@@ -1137,6 +1171,8 @@ pub async fn upload_tree(
     req: HttpRequest,
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_upload_tree_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -1166,6 +1202,8 @@ pub async fn upload_tree(
 
     unpack_tree_tarball(&tmp_dir, &bytes).await?;
 
+    metrics::histogram!("oxen_server_commits_upload_tree_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_found(),
         commit: server_head_commit.to_owned(),
@@ -1173,6 +1211,7 @@ pub async fn upload_tree(
 }
 
 /// Get root commit
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/root",
@@ -1187,6 +1226,7 @@ pub async fn upload_tree(
     )
 )]
 pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_commits_root_commit_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;

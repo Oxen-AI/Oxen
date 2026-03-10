@@ -12,7 +12,9 @@ use liboxen::error::OxenError;
 use liboxen::view::entries::ResourceVersion;
 use liboxen::view::{ListSchemaResponse, StatusMessage};
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_schemas_list_or_get_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;

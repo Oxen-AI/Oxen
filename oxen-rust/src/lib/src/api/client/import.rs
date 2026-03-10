@@ -6,6 +6,15 @@ use crate::model::RemoteRepository;
 use std::path::Path;
 
 /// Upload a ZIP file that gets extracted into the workspace directory
+#[tracing::instrument(skip(
+    remote_repo,
+    branch_name,
+    directory,
+    zip_path,
+    name,
+    email,
+    commit_message
+))]
 pub async fn upload_zip(
     remote_repo: &RemoteRepository,
     branch_name: impl AsRef<str>,
@@ -15,6 +24,8 @@ pub async fn upload_zip(
     email: impl AsRef<str>,
     commit_message: Option<impl AsRef<str>>,
 ) -> Result<crate::model::Commit, OxenError> {
+    metrics::counter!("oxen_client_import_upload_zip_total").increment(1);
+    let timer = std::time::Instant::now();
     let branch_name = branch_name.as_ref();
     let directory = directory.as_ref();
     let zip_path = zip_path.as_ref();
@@ -53,6 +64,8 @@ pub async fn upload_zip(
     let response: crate::view::CommitResponse = serde_json::from_str(&body)
         .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
 
+    metrics::histogram!("oxen_client_import_upload_zip_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     Ok(response.commit)
 }
 

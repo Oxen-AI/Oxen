@@ -25,10 +25,12 @@ use crate::view::{MerkleHashesResponse, StatusMessage};
 use crate::{api, util};
 
 /// Check if a node exists in the remote repository merkle tree by hash
+#[tracing::instrument(skip(repository))]
 pub async fn has_node(
     repository: &RemoteRepository,
     node_id: MerkleHash,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_client_tree_has_node_total").increment(1);
     let uri = format!("/tree/nodes/hash/{node_id}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("api::client::tree::has_node {url}");
@@ -51,12 +53,14 @@ pub async fn has_node(
 }
 
 /// Upload a node to the remote repository merkle tree
+#[tracing::instrument(skip(local_repo, remote_repo, nodes, progress))]
 pub async fn create_nodes(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     nodes: HashSet<MerkleHash>,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_tree_create_nodes_total").increment(1);
     // Compress the node
     log::debug!("create_nodes starting compression");
     // OPT: Try Compression::fast();
@@ -109,11 +113,13 @@ pub async fn create_nodes(
 }
 
 /// Download a node from the remote repository merkle tree by hash
+#[tracing::instrument(skip(local_repo, remote_repo))]
 pub async fn download_node(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     node_id: &MerkleHash,
 ) -> Result<MerkleTreeNode, OxenError> {
+    metrics::counter!("oxen_client_tree_download_node_total").increment(1);
     let node_hash_str = node_id.to_string();
     let uri = format!("/tree/nodes/hash/{node_hash_str}/download");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -134,11 +140,13 @@ pub async fn download_node(
 }
 
 /// Download a node and all its children from the remote repository merkle tree by hash
+#[tracing::instrument(skip(local_repo, remote_repo))]
 pub async fn download_node_with_children(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     node_id: &MerkleHash,
 ) -> Result<MerkleTreeNode, OxenError> {
+    metrics::counter!("oxen_client_tree_download_node_with_children_total").increment(1);
     let node_hash_str = node_id.to_string();
     let uri = format!("/tree/nodes/hash/{node_hash_str}/download");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -159,10 +167,12 @@ pub async fn download_node_with_children(
 }
 
 /// Downloads the full merkle tree from the remote repository
+#[tracing::instrument(skip(local_repo, remote_repo))]
 pub async fn download_tree(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_tree_download_tree_total").increment(1);
     let uri = "/tree/download".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -176,11 +186,13 @@ pub async fn download_tree(
 }
 
 /// Downloads a tree from the remote repository merkle tree by hash
+#[tracing::instrument(skip(local_repo, remote_repo))]
 pub async fn download_tree_from(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     hash: &MerkleHash,
 ) -> Result<MerkleTreeNode, OxenError> {
+    metrics::counter!("oxen_client_tree_download_tree_from_total").increment(1);
     let hash_str = hash.to_string();
     let uri = format!("/tree/download/{hash_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -199,11 +211,13 @@ pub async fn download_tree_from(
     Ok(node)
 }
 
+#[tracing::instrument(skip(remote_repo, path, commit_id))]
 pub async fn get_node_hash_by_path(
     remote_repo: &RemoteRepository,
     commit_id: impl AsRef<str>,
     path: PathBuf,
 ) -> Result<MerkleHash, OxenError> {
+    metrics::counter!("oxen_client_tree_get_node_hash_by_path_total").increment(1);
     let commit_id = commit_id.as_ref();
     let path_str = path.to_string_lossy();
     let uri = format!("/tree/nodes/resource/{commit_id}/{path_str}");
@@ -216,6 +230,7 @@ pub async fn get_node_hash_by_path(
     Ok(hash_response.hash)
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, commit_id, path), fields(is_dir))]
 pub async fn download_tree_from_path(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -223,6 +238,7 @@ pub async fn download_tree_from_path(
     path: impl AsRef<str>,
     is_dir: bool,
 ) -> Result<MerkleTreeNode, OxenError> {
+    metrics::counter!("oxen_client_tree_download_tree_from_path_total").increment(1);
     let download_tree_opts = DownloadTreeOpts {
         subtree_paths: path.as_ref().into(),
         depth: if is_dir { -1 } else { 0 },
@@ -256,12 +272,14 @@ pub async fn download_tree_from_path(
 }
 
 /// Download ALL the trees starting from the given commit id
+#[tracing::instrument(skip(local_repo, remote_repo, commit_id, fetch_opts))]
 pub async fn download_trees_from(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     commit_id: impl AsRef<str>,
     fetch_opts: &FetchOpts,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_tree_download_trees_from_total").increment(1);
     let commit_id = commit_id.as_ref();
     let uri = append_fetch_opts_to_uri(format!("/tree/download/{commit_id}"), fetch_opts);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -329,6 +347,7 @@ fn append_subtree_paths_and_depth_to_uri(
     uri
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, base_id, head_id, fetch_opts))]
 pub async fn download_trees_between(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -336,6 +355,7 @@ pub async fn download_trees_between(
     head_id: impl AsRef<str>,
     fetch_opts: &FetchOpts,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_tree_download_trees_between_total").increment(1);
     let base_id = base_id.as_ref();
     let head_id = head_id.as_ref();
     let base_head = format!("{base_id}..{head_id}");
@@ -399,10 +419,12 @@ async fn node_download_request(
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo, node_ids))]
 pub async fn list_missing_node_hashes(
     remote_repo: &RemoteRepository,
     node_ids: HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
+    metrics::counter!("oxen_client_tree_list_missing_node_hashes_total").increment(1);
     let uri = "/tree/nodes/missing_node_hashes".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
@@ -418,10 +440,12 @@ pub async fn list_missing_node_hashes(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn list_missing_file_hashes(
     remote_repo: &RemoteRepository,
     node_id: &MerkleHash,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
+    metrics::counter!("oxen_client_tree_list_missing_file_hashes_total").increment(1);
     let uri = format!("/tree/nodes/hash/{node_id}/missing_file_hashes");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
@@ -436,11 +460,13 @@ pub async fn list_missing_file_hashes(
     }
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, commit_ids))]
 pub async fn list_missing_file_hashes_from_commits(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     commit_ids: HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
+    metrics::counter!("oxen_client_tree_list_missing_file_hashes_from_commits_total").increment(1);
     let uri = "/tree/nodes/missing_file_hashes_from_commits".to_string();
     let uri = append_subtree_paths_and_depth_to_uri(
         uri,
@@ -463,10 +489,12 @@ pub async fn list_missing_file_hashes_from_commits(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, commit_hashes))]
 pub async fn mark_nodes_as_synced(
     remote_repo: &RemoteRepository,
     commit_hashes: HashSet<MerkleHash>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_tree_mark_nodes_as_synced_total").increment(1);
     let uri = "/tree/nodes/mark_nodes_as_synced".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;

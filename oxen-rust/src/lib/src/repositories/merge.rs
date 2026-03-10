@@ -20,7 +20,9 @@ impl MergeCommits {
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_conflicts(repo: &LocalRepository) -> Result<Vec<MergeConflict>, OxenError> {
+    metrics::counter!("oxen_repo_merge_list_conflicts_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -33,40 +35,48 @@ pub fn list_conflicts(repo: &LocalRepository) -> Result<Vec<MergeConflict>, Oxen
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn has_conflicts(
     repo: &LocalRepository,
     base_branch: &Branch,
     merge_branch: &Branch,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_repo_merge_has_conflicts_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::has_conflicts(repo, base_branch, merge_branch).await,
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn mark_conflict_as_resolved(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_merge_mark_conflict_as_resolved_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("mark_conflict_as_resolved not supported for oxen v0.10"),
         _ => core::v_latest::merge::mark_conflict_as_resolved(repo, path),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, merge_commit_id = %merge_commit.id))]
 pub async fn can_merge_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_repo_merge_can_merge_commits_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::can_merge_commits(repo, base_commit, merge_commit).await,
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn list_conflicts_between_branches(
     repo: &LocalRepository,
     base_branch: &Branch,
     merge_branch: &Branch,
 ) -> Result<Vec<PathBuf>, OxenError> {
+    metrics::counter!("oxen_repo_merge_list_conflicts_between_branches_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -76,33 +86,39 @@ pub async fn list_conflicts_between_branches(
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_commits_between_branches(
     repo: &LocalRepository,
     base_branch: &Branch,
     head_branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_merge_list_commits_between_branches_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::list_commits_between_branches(repo, base_branch, head_branch),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, head_commit_id = %head_commit.id))]
 pub fn list_commits_between_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_merge_list_commits_between_commits_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::list_commits_between_commits(repo, base_commit, head_commit),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, merge_commit_id = %merge_commit.id))]
 pub async fn list_conflicts_between_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<Vec<PathBuf>, OxenError> {
+    metrics::counter!("oxen_repo_merge_list_conflicts_between_commits_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -112,44 +128,56 @@ pub async fn list_conflicts_between_commits(
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn merge_into_base(
     repo: &LocalRepository,
     merge_branch: &Branch,
     base_branch: &Branch,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_merge_merge_into_base_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::merge_into_base(repo, merge_branch, base_branch).await,
     }
 }
 
+#[tracing::instrument(skip(repo, branch_name), fields(repo_path = %repo.path.display()))]
 pub async fn merge(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
 ) -> Result<Option<Commit>, OxenError> {
-    match repo.min_version() {
+    metrics::counter!("oxen_repo_merge_merge_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::merge(repo, branch_name).await,
-    }
+    };
+    metrics::histogram!("oxen_repo_merge_merge_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
+    result
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), merge_commit_id = %merge_commit.id, base_commit_id = %base_commit.id))]
 pub async fn merge_commit_into_base(
     repo: &LocalRepository,
     merge_commit: &Commit,
     base_commit: &Commit,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_merge_merge_commit_into_base_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::merge_commit_into_base(repo, merge_commit, base_commit).await,
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), merge_commit_id = %merge_commit.id, base_commit_id = %base_commit.id))]
 pub async fn merge_commit_into_base_on_branch(
     repo: &LocalRepository,
     merge_commit: &Commit,
     base_commit: &Commit,
     branch: &Branch,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_merge_merge_commit_into_base_on_branch_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -164,35 +192,43 @@ pub async fn merge_commit_into_base_on_branch(
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_repo_merge_has_file_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::has_file(repo, path),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_merge_remove_conflict_path_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::remove_conflict_path(repo, path),
     }
 }
 
+#[tracing::instrument(skip(repo, branch_name), fields(repo_path = %repo.path.display()))]
 pub fn find_merge_commits<S: AsRef<str>>(
     repo: &LocalRepository,
     branch_name: S,
 ) -> Result<MergeCommits, OxenError> {
+    metrics::counter!("oxen_repo_merge_find_merge_commits_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::find_merge_commits(repo, branch_name),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, merge_commit_id = %merge_commit.id))]
 pub fn lowest_common_ancestor_from_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_merge_lowest_common_ancestor_from_commits_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::lowest_common_ancestor_from_commits(

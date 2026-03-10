@@ -8,12 +8,15 @@ use crate::api::client;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 
+#[tracing::instrument(skip(remote_repo, revision, directory, local_path))]
 pub async fn download_dir_as_zip(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
     directory: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
 ) -> Result<u64, OxenError> {
+    metrics::counter!("oxen_client_export_download_dir_as_zip_total").increment(1);
+    let timer = std::time::Instant::now();
     let revision = revision.as_ref().to_string();
     let directory = directory.as_ref().to_string_lossy().to_string();
     let local_path = local_path.as_ref();
@@ -54,8 +57,12 @@ pub async fn download_dir_as_zip(
 
         log::debug!("Successfully downloaded {size} bytes to: {local_path:?}");
 
+        metrics::histogram!("oxen_client_export_download_dir_as_zip_duration_seconds")
+            .record(timer.elapsed().as_secs_f64());
         Ok(size)
     } else {
+        metrics::histogram!("oxen_client_export_download_dir_as_zip_duration_seconds")
+            .record(timer.elapsed().as_secs_f64());
         let err = format!("try_download_dir_as_zip failed to send request {url}");
         Err(OxenError::basic_str(err))
     }

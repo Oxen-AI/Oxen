@@ -21,11 +21,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
+#[tracing::instrument(skip(repo, path), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn get_directory(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<DirNode>, OxenError> {
+    metrics::counter!("oxen_repo_entries_get_directory_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is no longer supported"),
         _ => core::v_latest::entries::get_directory(repo, commit, path),
@@ -33,11 +35,13 @@ pub fn get_directory(
 }
 
 /// Get a file node for a commit
+#[tracing::instrument(skip(repo, path), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn get_file(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
+    metrics::counter!("oxen_repo_entries_get_file_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is no longer supported"),
         MinOxenVersion::V0_19_0 => core::v_old::v0_19_0::entries::get_file(repo, commit, path),
@@ -46,25 +50,30 @@ pub fn get_file(
 }
 
 /// List all the entries within a commit
+#[tracing::instrument(skip(repo, revision, paginate_opts), fields(repo_path = %repo.path.display()))]
 pub fn list_commit_entries(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_commit_entries_total").increment(1);
     list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts, repo.min_version())
 }
 
 /// List all the entries within a directory given a specific commit
+#[tracing::instrument(skip(repo, directory, revision, paginate_opts), fields(repo_path = %repo.path.display()))]
 pub fn list_directory(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_directory_total").increment(1);
     list_directory_w_version(repo, directory, revision, paginate_opts, repo.min_version())
 }
 
 /// Force a version when listing a repo
+#[tracing::instrument(skip(repo, directory, revision, paginate_opts), fields(repo_path = %repo.path.display()))]
 pub fn list_directory_w_version(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
@@ -72,6 +81,7 @@ pub fn list_directory_w_version(
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_directory_w_version_total").increment(1);
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -96,6 +106,7 @@ pub fn list_directory_w_version(
     }
 }
 
+#[tracing::instrument(skip(repo, directory, revision, workspace, paginate_opts), fields(repo_path = %repo.path.display()))]
 pub fn list_directory_w_workspace(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
@@ -104,6 +115,7 @@ pub fn list_directory_w_workspace(
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_directory_w_workspace_total").increment(1);
     list_directory_w_workspace_depth(
         repo,
         directory,
@@ -115,6 +127,7 @@ pub fn list_directory_w_workspace(
     )
 }
 
+#[tracing::instrument(skip(repo, directory, revision, workspace, paginate_opts), fields(repo_path = %repo.path.display()))]
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
@@ -124,6 +137,7 @@ pub fn list_directory_w_workspace_depth(
     version: MinOxenVersion,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_directory_w_workspace_depth_total").increment(1);
     let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
 
     match version {
@@ -160,7 +174,9 @@ pub fn list_directory_w_workspace_depth(
     }
 }
 
+#[tracing::instrument(skip(repo, revision), fields(repo_path = %repo.path.display()))]
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_entries_update_metadata_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("update_metadata not implemented for oxen v0.10.0")
@@ -172,11 +188,13 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
 
 /// Get the entry for a given path in a commit.
 /// Could be a file or a directory.
+#[tracing::instrument(skip(repo, path), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn get_meta_entry(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<MetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_entries_get_meta_entry_total").increment(1);
     let path = path.as_ref();
     let parsed_resource = ParsedResource {
         path: path.to_path_buf(),
@@ -196,7 +214,9 @@ pub fn get_meta_entry(
 }
 
 /// List the paths of all the directories in a given commit
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn list_dir_paths(repo: &LocalRepository, commit: &Commit) -> Result<Vec<PathBuf>, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_dir_paths_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -207,11 +227,13 @@ pub fn list_dir_paths(repo: &LocalRepository, commit: &Commit) -> Result<Vec<Pat
 }
 
 /// Commit entries are always files, not directories. Will return None if the path is a directory.
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn get_commit_entry(
     repo: &LocalRepository,
     commit: &Commit,
     path: &Path,
 ) -> Result<Option<CommitEntry>, OxenError> {
+    metrics::counter!("oxen_repo_entries_get_commit_entry_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => match core::v_latest::entries::get_file(repo, commit, path)? {
@@ -231,17 +253,21 @@ pub fn get_commit_entry(
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn list_for_commit(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Vec<CommitEntry>, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_for_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::entries::list_for_commit(repo, commit),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn count_for_commit(repo: &LocalRepository, commit: &Commit) -> Result<usize, OxenError> {
+    metrics::counter!("oxen_repo_entries_count_for_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::entries::count_for_commit(repo, commit),
@@ -314,11 +340,13 @@ pub fn group_schemas_to_parent_dirs(
     results
 }
 
+#[tracing::instrument(skip(repo, base_commit), fields(repo_path = %repo.path.display(), head_commit_id = %head_commit.id))]
 pub async fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
     base_commit: &Option<Commit>,
     head_commit: &Commit,
 ) -> Result<Vec<CommitEntry>, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_missing_files_in_commit_range_total").increment(1);
     let version_store = repo.version_store()?;
 
     match base_commit {
@@ -379,10 +407,12 @@ pub async fn list_missing_files_in_commit_range(
     }
 }
 
+#[tracing::instrument(skip(local_repo), fields(repo_path = %local_repo.path.display(), commit_id = %commit.id))]
 pub fn list_tabular_files_in_repo(
     local_repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
+    metrics::counter!("oxen_repo_entries_list_tabular_files_in_repo_total").increment(1);
     match local_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::entries::list_tabular_files_in_repo(local_repo, commit),

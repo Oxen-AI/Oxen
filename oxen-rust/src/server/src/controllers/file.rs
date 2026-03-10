@@ -61,6 +61,7 @@ pub struct FileQueryParams {
 }
 
 /// Download File
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
@@ -84,6 +85,7 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<FileQueryParams>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_file_get_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -201,6 +203,7 @@ pub async fn get(
 }
 
 /// Upload files
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
@@ -225,6 +228,8 @@ pub async fn put(
     req: HttpRequest,
     payload: Multipart,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_file_put_total").increment(1);
+    let timer = std::time::Instant::now();
     log::debug!("file::put path {:?}", req.path());
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -299,6 +304,8 @@ pub async fn put(
 
     log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
+    metrics::histogram!("oxen_server_file_put_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
@@ -306,6 +313,7 @@ pub async fn put(
 }
 
 /// Delete file
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
@@ -329,6 +337,7 @@ pub async fn delete(
     req: HttpRequest,
     payload: Multipart,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_file_delete_total").increment(1);
     log::debug!("file::delete path {:?}", req.path());
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -400,6 +409,7 @@ pub struct FileMoveBody {
 }
 
 /// Move/Rename file
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     patch,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
@@ -421,6 +431,7 @@ pub struct FileMoveBody {
     )
 )]
 pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_file_mv_total").increment(1);
     log::debug!("file::mv path {:?}", req.path());
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;

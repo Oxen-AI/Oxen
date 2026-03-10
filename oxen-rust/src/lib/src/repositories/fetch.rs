@@ -13,10 +13,12 @@ use crate::repositories;
 use futures::{StreamExt, stream};
 
 /// # Fetch the remote branches and objects
+#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
 pub async fn fetch_all(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<Vec<Branch>, OxenError> {
+    metrics::counter!("oxen_repo_fetch_fetch_all_total").increment(1);
     let remote = repo
         .get_remote(&fetch_opts.remote)
         .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
@@ -83,10 +85,12 @@ pub async fn fetch_all(
     branches
 }
 
+#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
 pub async fn fetch_branch(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_fetch_fetch_branch_total").increment(1);
     let remote = repo
         .get_remote(&fetch_opts.remote)
         .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
@@ -100,11 +104,13 @@ pub async fn fetch_branch(
     Ok(branch)
 }
 
+#[tracing::instrument(skip(repo, remote_repo, fetch_opts), fields(repo_path = %repo.path.display()))]
 pub async fn fetch_remote_branch(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_fetch_fetch_remote_branch_total").increment(1);
     println!(
         "Fetch remote branch: {}/{}",
         remote_repo.name, fetch_opts.branch

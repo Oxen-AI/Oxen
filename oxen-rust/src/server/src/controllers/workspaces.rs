@@ -20,6 +20,7 @@ pub mod data_frames;
 pub mod files;
 
 /// Get or create workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/get_or_create",
@@ -48,6 +49,7 @@ pub async fn get_or_create(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_get_or_create_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -142,6 +144,7 @@ pub async fn get_or_create(
 }
 
 /// Get workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
@@ -158,6 +161,7 @@ pub async fn get_or_create(
     )
 )]
 pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_get_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -184,15 +188,18 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
 /// **DEPRECATED**: Use PUT (get_or_create) instead. This endpoint now delegates to get_or_create
 /// for consistent idempotent behavior. The POST method is retained for backward compatibility.
 #[deprecated(note = "Use PUT /workspaces (get_or_create) instead")]
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn create(
     req: HttpRequest,
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_create_total").increment(1);
     // Delegate to get_or_create for consistent behavior
     get_or_create(req, body).await
 }
 
 /// List workspaces
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces",
@@ -212,6 +219,7 @@ pub async fn list(
     req: HttpRequest,
     params: web::Query<NameParam>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_list_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -244,6 +252,7 @@ pub async fn list(
 }
 
 /// Clear workspaces for repo
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/clear",
@@ -259,6 +268,7 @@ pub async fn list(
     )
 )]
 pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_clear_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -268,6 +278,7 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// Delete workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}",
@@ -284,6 +295,7 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     )
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_delete_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -308,6 +320,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 }
 
 /// Check workspace mergeability
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
@@ -325,6 +338,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     )
 )]
 pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_mergeability_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -346,6 +360,7 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
 }
 
 /// Merge workspace into branch
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch}",
@@ -374,6 +389,8 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     )
 )]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_commit_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
 
     let namespace = path_param(&req, "namespace")?;
@@ -405,7 +422,10 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         return Ok(HttpResponse::NotFound().json(StatusMessageDescription::not_found(branch_name)));
     };
 
-    match repositories::workspaces::commit(&workspace, &data, &branch_name).await {
+    let result = repositories::workspaces::commit(&workspace, &data, &branch_name).await;
+    metrics::histogram!("oxen_server_workspaces_commit_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
+    match result {
         Ok(commit) => {
             log::debug!("workspace::commit ✅ success! commit {commit:?}");
             Ok(HttpResponse::Ok().json(CommitResponse {

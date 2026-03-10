@@ -10,11 +10,13 @@ use std::path::Path;
 
 use crate::model::RemoteRepository;
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn get(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_embeddings_get_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -31,6 +33,7 @@ pub async fn get(
     Ok(response?)
 }
 
+#[tracing::instrument(skip(remote_repo, column, embedding, paginate_opts))]
 pub async fn neighbors(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -39,6 +42,7 @@ pub async fn neighbors(
     embedding: &Vec<f32>,
     paginate_opts: &PaginateOpts,
 ) -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_embeddings_neighbors_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
@@ -65,6 +69,7 @@ pub async fn neighbors(
     Ok(response?)
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn index(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -72,6 +77,7 @@ pub async fn index(
     column: &str,
     use_background_thread: bool,
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_embeddings_index_total").increment(1);
     let Some(file_path_str) = path.to_str() else {
         return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"

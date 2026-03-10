@@ -117,6 +117,12 @@ utoipa = { workspace = true }
 uuid = { workspace = true }
 walkdir = { workspace = true }
 xxhash-rust = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-log = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]

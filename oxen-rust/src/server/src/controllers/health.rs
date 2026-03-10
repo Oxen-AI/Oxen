@@ -4,7 +4,9 @@ use actix_web::{HttpRequest, HttpResponse};
 use liboxen::util;
 use liboxen::view::{HealthResponse, StatusMessage};
 
+#[tracing::instrument(skip_all)]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_health_index_total").increment(1);
     let app_data = app_data(&req)?;
     match util::fs::disk_usage_for_path(&app_data.path) {
         Ok(disk_usage) => {

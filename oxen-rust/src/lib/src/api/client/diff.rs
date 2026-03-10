@@ -7,6 +7,7 @@ use crate::model::{DiffEntry, RemoteRepository};
 use crate::view::CompareEntriesResponse;
 use crate::view::compare::{CompareEntries, CompareEntryResponse};
 
+#[tracing::instrument(skip(remote_repo, base, head), fields(page, page_size))]
 pub async fn list_diff_entries(
     remote_repo: &RemoteRepository,
     base: impl AsRef<str>,
@@ -14,6 +15,7 @@ pub async fn list_diff_entries(
     page: usize,
     page_size: usize,
 ) -> Result<CompareEntries, OxenError> {
+    metrics::counter!("oxen_client_diff_list_diff_entries_total").increment(1);
     let base = base.as_ref();
     let head = head.as_ref();
     let uri = format!("/compare/entries/{base}..{head}?page={page}&page_size={page_size}");
@@ -31,12 +33,14 @@ pub async fn list_diff_entries(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, base, head, path))]
 pub async fn diff_entries(
     remote_repo: &RemoteRepository,
     base: impl AsRef<str>,
     head: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<DiffEntry, OxenError> {
+    metrics::counter!("oxen_client_diff_diff_entries_total").increment(1);
     let base = base.as_ref();
     let head = head.as_ref();
     let path = path.as_ref();

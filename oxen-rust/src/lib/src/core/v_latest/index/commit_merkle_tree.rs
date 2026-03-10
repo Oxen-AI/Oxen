@@ -25,10 +25,12 @@ pub struct CommitMerkleTree {
 
 impl CommitMerkleTree {
     /// The dir hashes allow you to skip to a directory in the tree
+    #[tracing::instrument(skip(repo), fields(commit_id = %commit.id))]
     pub fn dir_hashes(
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
+        metrics::counter!("oxen_merkle_dir_hashes_total").increment(1);
         let dir_hashes = with_dir_hash_db_manager(repo, &commit.id, |dir_hashes_db| {
             let mut dir_hashes = HashMap::new();
             let iterator = dir_hashes_db.iterator(IteratorMode::Start);
@@ -62,7 +64,10 @@ impl CommitMerkleTree {
         dir_hash_db_path(repo, commit)
     }
 
+    #[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
     pub fn from_commit(repo: &LocalRepository, commit: &Commit) -> Result<Self, OxenError> {
+        metrics::counter!("oxen_merkle_from_commit_total").increment(1);
+        let timer = std::time::Instant::now();
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
@@ -72,6 +77,8 @@ impl CommitMerkleTree {
             ))?;
 
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        metrics::histogram!("oxen_merkle_from_commit_duration_seconds")
+            .record(timer.elapsed().as_secs_f64());
         Ok(Self { root, dir_hashes })
     }
 
@@ -99,23 +106,28 @@ impl CommitMerkleTree {
         })
     }
 
+    #[tracing::instrument(skip(repo), fields(commit_id = %commit.id))]
     pub fn root_with_children(
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        metrics::counter!("oxen_merkle_root_with_children_total").increment(1);
         let node_hash = commit.id.parse()?;
         CommitMerkleTree::read_node(repo, &node_hash, true)
     }
 
+    #[tracing::instrument(skip(repo), fields(commit_id = %commit.id))]
     pub fn root_without_children(
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        metrics::counter!("oxen_merkle_root_without_children_total").increment(1);
         let node_hash = commit.id.parse()?;
         // Read the root node at depth 1 to get the directory node as well
         CommitMerkleTree::read_node(repo, &node_hash, false)
     }
 
+    #[tracing::instrument(skip(repo, base_hashes, unique_hashes, shared_hashes), fields(commit_id = %commit.id))]
     pub fn root_with_children_and_node_hashes(
         repo: &LocalRepository,
         commit: &Commit,
@@ -123,6 +135,7 @@ impl CommitMerkleTree {
         unique_hashes: Option<&mut HashSet<MerkleHash>>,
         shared_hashes: Option<&mut HashSet<MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        metrics::counter!("oxen_merkle_root_with_children_and_node_hashes_total").increment(1);
         let node_hash = commit.id.parse()?;
 
         CommitMerkleTree::read_node_and_collect_hashes(
@@ -134,6 +147,7 @@ impl CommitMerkleTree {
         )
     }
 
+    #[tracing::instrument(skip(repo, base_hashes, unique_hashes, shared_hashes, partial_nodes), fields(commit_id = %commit.id))]
     pub fn root_with_children_and_partial_nodes(
         repo: &LocalRepository,
         commit: &Commit,
@@ -142,6 +156,7 @@ impl CommitMerkleTree {
         shared_hashes: Option<&mut HashSet<MerkleHash>>,
         partial_nodes: &mut HashMap<PathBuf, PartialNode>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        metrics::counter!("oxen_merkle_root_with_children_and_partial_nodes_total").increment(1);
         let node_hash = commit.id.parse()?;
 
         CommitMerkleTree::read_node_and_collect_partial_nodes(
@@ -273,11 +288,13 @@ impl CommitMerkleTree {
         )
     }
 
+    #[tracing::instrument(skip(repo), fields(hash = %hash, depth))]
     pub fn read_depth(
         repo: &LocalRepository,
         hash: &MerkleHash,
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        metrics::counter!("oxen_merkle_read_depth_total").increment(1);
         // log::debug!("Read depth {} node hash [{}]", depth, hash);
         if !MerkleNodeDB::exists(repo, hash) {
             log::debug!("read_depth merkle node db does not exist for hash: {hash}");
@@ -741,11 +758,13 @@ impl CommitMerkleTree {
     }
 
     /// This uses the dir_hashes db to skip right to a file in the tree
+    #[tracing::instrument(skip(repo, dir_hashes, path))]
     pub fn read_file(
         repo: &LocalRepository,
         dir_hashes: &HashMap<PathBuf, MerkleHash>,
         path: impl AsRef<Path>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        metrics::counter!("oxen_merkle_read_file_total").increment(1);
         // Get the directory from the path
         let path = path.as_ref();
         let Some(parent_path) = path.parent() else {
@@ -812,6 +831,7 @@ impl CommitMerkleTree {
     // TODO: We might want to simplify to one tree-loading method
     // The advantage of multiple is that it saves us tree traversals, when we want to collect something as we load in the tree
     // However, I'm not sure that's worth the cost of extending the code base. We could probably cut this file in half if we're willing to do extra tree traversals
+    #[tracing::instrument(skip(repo, node, base_hashes, unique_hashes, shared_hashes), fields(hash = %node.hash, requested_depth, traversed_depth))]
     fn load_children(
         repo: &LocalRepository,
         node: &mut MerkleTreeNode,
@@ -821,6 +841,7 @@ impl CommitMerkleTree {
         requested_depth: i32,
         traversed_depth: i32,
     ) -> Result<(), OxenError> {
+        metrics::counter!("oxen_merkle_load_children_total").increment(1);
         let dtype = node.node.node_type();
         // log::debug!(
         //     "load_children requested_depth {} traversed_depth {} node {}",

@@ -9,7 +9,9 @@ use crate::view::entries::EMetadataEntry;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
 use crate::{api, constants};
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_client_dir_list_root_total").increment(1);
     list(
         remote_repo,
         constants::DEFAULT_BRANCH_NAME,
@@ -20,6 +22,7 @@ pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEnt
     .await
 }
 
+#[tracing::instrument(skip(remote_repo, revision, path), fields(page, page_size))]
 pub async fn list(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
@@ -27,6 +30,7 @@ pub async fn list(
     page: usize,
     page_size: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    metrics::counter!("oxen_client_dir_list_total").increment(1);
     let revision = revision.as_ref();
     let path = path.as_ref().to_string_lossy();
     let uri = format!("/dir/{revision}/{path}?page={page}&page_size={page_size}");
@@ -44,11 +48,13 @@ pub async fn list(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, revision, path))]
 pub async fn file_counts(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<MetadataDir, OxenError> {
+    metrics::counter!("oxen_client_dir_file_counts_total").increment(1);
     let path_str = path.as_ref().to_string_lossy();
     let response = list(remote_repo, revision, &path, 1, 1).await?;
     match response.dir {
@@ -69,11 +75,13 @@ pub async fn file_counts(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, revision, path))]
 pub async fn get_dir(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<PaginatedDirEntriesResponse, OxenError> {
+    metrics::counter!("oxen_client_dir_get_dir_total").increment(1);
     let path_str = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/dir/{revision}/{path_str}");

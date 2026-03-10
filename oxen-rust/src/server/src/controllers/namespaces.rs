@@ -8,6 +8,7 @@ use actix_web::{HttpRequest, HttpResponse, Result};
 use utoipa;
 
 /// List namespaces
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/namespaces",
@@ -18,6 +19,7 @@ use utoipa;
     )
 )]
 pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_namespaces_index_total").increment(1);
     let app_data = app_data(&req)?;
 
     let namespaces: Vec<NamespaceView> = namespaces::list(&app_data.path)
@@ -34,6 +36,7 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 }
 
 /// Get namespace
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/namespaces/{namespace}",
@@ -49,6 +52,7 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     )
 )]
 pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_namespaces_show_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace: Option<&str> = req.match_info().get("namespace");
 

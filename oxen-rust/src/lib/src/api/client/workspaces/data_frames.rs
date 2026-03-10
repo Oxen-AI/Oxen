@@ -16,12 +16,14 @@ pub mod columns;
 pub mod embeddings;
 pub mod rows;
 
+#[tracing::instrument(skip(remote_repo, workspace_id, path, opts))]
 pub async fn get(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     path: impl AsRef<Path>,
     opts: &DFOpts,
 ) -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_get_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
@@ -46,12 +48,15 @@ pub async fn get(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, path, opts))]
 pub async fn download(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     path: impl AsRef<Path>,
     opts: &DFOpts, // opts holds output path
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_download_total").increment(1);
+    let timer = std::time::Instant::now();
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
@@ -93,23 +98,29 @@ pub async fn download(
         file.write_all(&chunk)?;
     }
 
+    metrics::histogram!("oxen_client_workspaces_data_frames_download_duration_seconds")
+        .record(timer.elapsed().as_secs_f64());
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn is_indexed(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_is_indexed_total").increment(1);
     let res = get(remote_repo, workspace_id, path, &DFOpts::empty()).await?;
     Ok(res.is_indexed)
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn list(
     remote_repo: &RemoteRepository,
     branch_name: &str,
     workspace_id: &str,
 ) -> Result<PaginatedMetadataEntriesResponse, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_list_total").increment(1);
     let uri = format!("/workspaces/{workspace_id}/data_frames/branch/{branch_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -129,11 +140,13 @@ pub async fn list(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path))]
 pub async fn index(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_index_total").increment(1);
     let path = util::fs::linux_path(path.as_ref());
     put(
         remote_repo,
@@ -144,11 +157,13 @@ pub async fn index(
     .await
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn unindex(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_unindex_total").increment(1);
     put(
         remote_repo,
         workspace_id,
@@ -158,12 +173,14 @@ pub async fn unindex(
     .await
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, path, data))]
 pub async fn put(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     path: impl AsRef<Path>,
     data: &serde_json::Value,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_put_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
@@ -186,11 +203,13 @@ pub async fn put(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path))]
 pub async fn restore(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_restore_total").increment(1);
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -202,11 +221,13 @@ pub async fn restore(
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo, path))]
 pub async fn restore_files(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_restore_files_total").increment(1);
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -218,6 +239,7 @@ pub async fn restore_files(
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn diff(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -225,6 +247,7 @@ pub async fn diff(
     page_num: usize,
     page_size: usize,
 ) -> Result<JsonDataFrameViews, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_diff_total").increment(1);
     let file_path_str = path.to_str().unwrap();
 
     let uri = format!(
@@ -254,12 +277,14 @@ pub async fn diff(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, path, new_path))]
 pub async fn rename_data_frame(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
 ) -> Result<StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_workspaces_data_frames_rename_data_frame_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let file_path_str = path.to_string_lossy();

@@ -12,11 +12,13 @@ use crate::view::entry_metadata::EMetadataEntryResponseView;
 use std::path::Path;
 
 /// Get the metadata about a resource from the remote.
+#[tracing::instrument(skip(remote_repo, revision, path))]
 pub async fn get_file(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<Option<EMetadataEntryResponseView>, OxenError> {
+    metrics::counter!("oxen_client_metadata_get_file_total").increment(1);
     let path = path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/meta/{revision}/{path}");

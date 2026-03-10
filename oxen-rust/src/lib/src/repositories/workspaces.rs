@@ -33,10 +33,12 @@ use uuid::Uuid;
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
 ///
 /// Returns an None if the workspace does not exist
+#[tracing::instrument(skip(repo, workspace_id), fields(repo_path = %repo.path.display()))]
 pub fn get(
     repo: &LocalRepository,
     workspace_id: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
+    metrics::counter!("oxen_repo_workspace_get_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
     log::debug!("workspace::get workspace_id: {workspace_id:?} hash: {workspace_id_hash:?}");
@@ -56,10 +58,12 @@ pub fn get(
     }
 }
 
+#[tracing::instrument(skip(repo, workspace_dir), fields(repo_path = %repo.path.display()))]
 pub fn get_by_dir(
     repo: &LocalRepository,
     workspace_dir: impl AsRef<Path>,
 ) -> Result<Option<Workspace>, OxenError> {
+    metrics::counter!("oxen_repo_workspace_get_by_dir_total").increment(1);
     let workspace_dir = workspace_dir.as_ref();
     let workspace_id = workspace_dir.file_name().unwrap().to_str().unwrap();
     let config_path = Workspace::config_path_from_dir(workspace_dir);
@@ -98,10 +102,12 @@ pub fn get_by_dir(
     }))
 }
 
+#[tracing::instrument(skip(repo, workspace_name), fields(repo_path = %repo.path.display()))]
 pub fn get_by_name(
     repo: &LocalRepository,
     workspace_name: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
+    metrics::counter!("oxen_repo_workspace_get_by_name_total").increment(1);
     let workspace_name = workspace_name.as_ref();
     let workspaces = list(repo)?;
     for workspace in workspaces {
@@ -113,15 +119,18 @@ pub fn get_by_name(
 }
 
 /// Creates a new workspace and saves it to the filesystem
+#[tracing::instrument(skip(base_repo, workspace_id), fields(repo_path = %base_repo.path.display(), commit_id = %commit.id))]
 pub fn create(
     base_repo: &LocalRepository,
     commit: &Commit,
     workspace_id: impl AsRef<str>,
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
+    metrics::counter!("oxen_repo_workspace_create_total").increment(1);
     create_with_name(base_repo, commit, workspace_id, None, is_editable)
 }
 
+#[tracing::instrument(skip(base_repo, workspace_id, workspace_name), fields(repo_path = %base_repo.path.display(), commit_id = %commit.id))]
 pub fn create_with_name(
     base_repo: &LocalRepository,
     commit: &Commit,
@@ -129,6 +138,7 @@ pub fn create_with_name(
     workspace_name: Option<String>,
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
+    metrics::counter!("oxen_repo_workspace_create_with_name_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
     let workspace_dir = Workspace::workspace_dir(base_repo, &workspace_id_hash);
@@ -219,10 +229,12 @@ impl Drop for TemporaryWorkspace {
 }
 
 /// Creates a new temporary workspace that will be deleted when the reference is dropped
+#[tracing::instrument(skip(base_repo), fields(repo_path = %base_repo.path.display(), commit_id = %commit.id))]
 pub fn create_temporary(
     base_repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<TemporaryWorkspace, OxenError> {
+    metrics::counter!("oxen_repo_workspace_create_temporary_total").increment(1);
     let workspace_id = Uuid::new_v4().to_string();
     let workspace_name = format!("temporary-{workspace_id}");
     let workspace = create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true)?;
@@ -251,7 +263,9 @@ fn check_existing_workspace_name(
     Ok(())
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
+    metrics::counter!("oxen_repo_workspace_list_total").increment(1);
     let workspaces_dir = Workspace::workspaces_dir(repo);
     log::debug!("workspace::list got workspaces_dir: {workspaces_dir:?}");
     if !workspaces_dir.exists() {
@@ -283,10 +297,12 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
     Ok(workspaces)
 }
 
+#[tracing::instrument(skip(repo, commit_id), fields(repo_path = %repo.path.display()))]
 pub fn get_non_editable_by_commit_id(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
 ) -> Result<Workspace, OxenError> {
+    metrics::counter!("oxen_repo_workspace_get_non_editable_by_commit_id_total").increment(1);
     let workspaces = list(repo)?;
     for workspace in workspaces {
         if workspace.commit.id == commit_id.as_ref() && !workspace.is_editable {
@@ -298,7 +314,9 @@ pub fn get_non_editable_by_commit_id(
     ))
 }
 
+#[tracing::instrument(skip(workspace), fields(workspace_id = %workspace.id))]
 pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_workspace_delete_total").increment(1);
     let workspace_id = workspace.id.to_string();
     let workspace_dir = workspace.dir();
     if !workspace_dir.exists() {
@@ -318,7 +336,9 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     Ok(())
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_workspace_clear_total").increment(1);
     let workspaces_dir = Workspace::workspaces_dir(repo);
     if !workspaces_dir.exists() {
         return Ok(());
@@ -328,7 +348,9 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     Ok(())
 }
 
+#[tracing::instrument(skip(workspace), fields(workspace_id = %workspace.id))]
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_workspace_update_commit_total").increment(1);
     let config_path = workspace.config_path();
 
     if !config_path.exists() {
@@ -360,21 +382,25 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     Ok(())
 }
 
+#[tracing::instrument(skip(workspace, new_commit, branch_name), fields(workspace_id = %workspace.id))]
 pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_workspace_commit_total").increment(1);
     match workspace.workspace_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name).await,
     }
 }
 
+#[tracing::instrument(skip(workspace, branch_name), fields(workspace_id = %workspace.id))]
 pub fn mergeability(
     workspace: &Workspace,
     branch_name: impl AsRef<str>,
 ) -> Result<Mergeable, OxenError> {
+    metrics::counter!("oxen_repo_workspace_mergeability_total").increment(1);
     match workspace.workspace_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::commit::mergeability(workspace, branch_name),
@@ -392,12 +418,15 @@ fn init_workspace_repo(
     }
 }
 
+#[tracing::instrument(skip(repo, workspace, entries), fields(repo_path = %repo.path.display(), workspace_id = %workspace.id))]
 pub fn populate_entries_with_workspace_data(
     repo: &LocalRepository,
     directory: &Path,
     workspace: &Workspace,
     entries: &[MetadataEntry],
 ) -> Result<Vec<EMetadataEntry>, OxenError> {
+    metrics::counter!("oxen_repo_workspace_populate_entries_with_workspace_data_total")
+        .increment(1);
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
     let mut dir_entries: Vec<EMetadataEntry> = Vec::new();
@@ -455,11 +484,13 @@ pub fn populate_entries_with_workspace_data(
     Ok(dir_entries)
 }
 
+#[tracing::instrument(skip(entry, workspace), fields(workspace_id = %workspace.id))]
 pub fn populate_entry_with_workspace_data(
     file_path: &Path,
     entry: MetadataEntry,
     workspace: &Workspace,
 ) -> Result<EMetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_workspace_populate_entry_with_workspace_data_total").increment(1);
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, file_path)?;
     let (_additions_map, other_changes_map) = build_file_status_maps_for_file(&workspace_changes);
@@ -473,12 +504,14 @@ pub fn populate_entry_with_workspace_data(
     Ok(EMetadataEntry::WorkspaceMetadataEntry(entry))
 }
 
+#[tracing::instrument(skip(repo, workspace, resource), fields(repo_path = %repo.path.display(), workspace_id = %workspace.id))]
 pub fn get_added_entry(
     repo: &LocalRepository,
     file_path: &Path,
     workspace: &Workspace,
     resource: &ParsedResource,
 ) -> Result<EMetadataEntry, OxenError> {
+    metrics::counter!("oxen_repo_workspace_get_added_entry_total").increment(1);
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, file_path)?;
     let (additions_map, _other_changes_map) = build_file_status_maps_for_file(&workspace_changes);

@@ -10,7 +10,9 @@ struct ActionResponse {
     state: String,
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn completed(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_action_completed_total").increment(1);
     let action = path_param(&req, "action")?;
     log::debug!("{action} action completed");
     let resp = ActionResponse {
@@ -21,7 +23,9 @@ pub async fn completed(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     Ok(HttpResponse::Ok().json(resp))
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn started(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_action_started_total").increment(1);
     let action = path_param(&req, "action")?;
     let resp = ActionResponse {
         action: action.to_string(),

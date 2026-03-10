@@ -17,7 +17,9 @@ use crate::model::{LocalRepository, RemoteRepository};
 ///
 /// # Returns
 /// Statistics about the prune operation
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), dry_run))]
 pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, OxenError> {
+    metrics::counter!("oxen_repo_prune_prune_total").increment(1);
     prune_impl(repo, dry_run).await
 }
 
@@ -31,9 +33,11 @@ pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, 
 ///
 /// # Returns
 /// Statistics about the prune operation
+#[tracing::instrument(skip(remote_repo), fields(dry_run))]
 pub async fn prune_remote(
     remote_repo: &RemoteRepository,
     dry_run: bool,
 ) -> Result<PruneStats, OxenError> {
+    metrics::counter!("oxen_repo_prune_prune_remote_total").increment(1);
     prune_remote_impl(remote_repo, dry_run).await
 }
