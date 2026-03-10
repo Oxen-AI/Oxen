@@ -190,6 +190,12 @@ impl RunCmd for DFCmd {
                 .action(clap::ArgAction::Set),
         )
         .arg(
+            Arg::new("unique_count")
+                .long("unique_count")
+                .help("Aggregate unique values in a column by count. Returns a data frame with the column values and their counts. Takes a comma separated set of column names ie: \"label\".")
+                .action(clap::ArgAction::Set),
+        )
+        .arg(
             Arg::new("schema")
                 .long("schema")
                 .help("Print the full list of columns and data types within the schema in a dataframe.")
@@ -340,6 +346,7 @@ impl DFCmd {
             take: args.get_one::<String>("take").map(String::from),
             text2sql: args.get_one::<String>("text2sql").map(String::from),
             unique: args.get_one::<String>("unique").map(String::from),
+            unique_count: args.get_one::<String>("unique_count").map(String::from),
             vstack,
             write: write_path,
         }

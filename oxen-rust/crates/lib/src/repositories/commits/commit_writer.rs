@@ -535,12 +535,14 @@ fn cleanup_rm_dirs(
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_entries: &HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
 ) -> Result<(), OxenError> {
-    for (path, entries) in dir_entries.iter() {
+    for (_path, entries) in dir_entries.iter() {
         for entry in entries.iter() {
             if let EMerkleTreeNode::Directory(dir_node) = &entry.node.node
                 && entry.status == StagedEntryStatus::Removed
             {
-                let dir_path = path.join(dir_node.name());
+                // dir_node.name() already contains the full relative path
+                // (e.g., "annotations/train"), so use it directly as the key.
+                let dir_path = PathBuf::from(dir_node.name());
                 log::debug!("dir path for cleanup: {dir_path:?}");
                 let key = dir_path.to_str().unwrap();
                 dir_hash_db.delete(key)?;

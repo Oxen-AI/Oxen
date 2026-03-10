@@ -10,7 +10,7 @@ use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::metadata::metadata_tabular::MetadataTabularImpl;
 use crate::model::{Commit, DataFrameSize, LocalRepository, Schema, Workspace};
 use crate::opts::DFOpts;
-use crate::{repositories, util};
+use crate::repositories;
 use polars::prelude::IntoLazy as _;
 
 use std::path::Path;
@@ -94,7 +94,8 @@ pub async fn get_slice(
         return Ok(response);
     }
     // Read the data frame from the version path
-    let version_path = util::fs::version_path_from_hash(repo, file_node.hash().to_string());
+    let version_store = repo.version_store()?;
+    let version_path = version_store.get_version_path(&file_node.hash().to_string())?;
     let df = tabular::read_df_with_extension(version_path, file_node.extension(), opts).await?;
     log::debug!("get_slice df {:?}", df.height());
 

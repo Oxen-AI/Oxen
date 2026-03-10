@@ -1014,7 +1014,7 @@ pub async fn rm_files(
         .map(|p| util::fs::path_relative_to_dir(p, repo_path).unwrap())
         .collect();
 
-    let uri = format!("/workspaces/{workspace_id}/versions");
+    let uri = format!("/workspaces/{workspace_id}/files");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("rm_files: {url}");
     let client = client::new_for_url(&url)?;
@@ -1024,15 +1024,17 @@ pub async fn rm_files(
         let _body = client::parse_json_body(&url, response).await?;
         println!("🐂 oxen staged paths {paths:?} as removed in workspace {workspace_id}");
 
-        // Remove files locally
-        for path in expanded_paths {
-            let full_path = local_repo.path.join(&path);
-            if full_path.is_dir() {
-                util::fs::remove_dir_all(&full_path)?;
-            }
+        if local_repo.is_remote_mode() {
+            // Remove files locally if we're in remote mode
+            for path in expanded_paths {
+                let full_path = local_repo.path.join(&path);
+                if full_path.is_dir() {
+                    util::fs::remove_dir_all(&full_path)?;
+                }
 
-            if full_path.is_file() {
-                util::fs::remove_file(&full_path)?;
+                if full_path.is_file() {
+                    util::fs::remove_file(&full_path)?;
+                }
             }
         }
     } else {
@@ -2144,6 +2146,14 @@ mod tests {
                 api::client::entries::get_entry(&remote_repo, new_path, &commit.id).await?;
             assert!(new_file.is_some(), "File should exist at new path");
 
+            // Verify the actual file content is accessible at the new path
+            let file_bytes =
+                api::client::file::get_file(&remote_repo, branch_name, new_path).await?;
+            assert!(
+                !file_bytes.is_empty(),
+                "File content should not be empty at new path"
+            );
+
             // Verify the original path no longer exists
             let old_file =
                 api::client::entries::get_entry(&remote_repo, original_path, &commit.id).await?;
@@ -2378,7 +2388,6 @@ mod tests {
         .await
     }
 
-    // Test that downloading a non-existent file returns OxenError::PathDoesNotExist
     #[tokio::test]
     async fn test_download_nonexistent_file_returns_path_dne() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2463,7 +2472,7 @@ mod tests {
     ) -> Result<(), OxenError> {
         let branch_name = "add-files-preserve-paths";
         let branch = api::client::branches::create_from_branch(
-            &remote_repo,
+            remote_repo,
             branch_name,
             DEFAULT_BRANCH_NAME,
         )
@@ -2472,7 +2481,7 @@ mod tests {
 
         let workspace_id = uuid::Uuid::new_v4().to_string();
         let workspace =
-            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+            api::client::workspaces::create(remote_repo, branch_name, &workspace_id).await?;
         assert_eq!(workspace.id, workspace_id);
 
         let sub_dir_1 = base_dir.join("data_being_added");
@@ -2497,7 +2506,7 @@ mod tests {
             if use_relative_paths {
                 paths
                     .into_iter()
-                    .map(|p| p.strip_prefix(&base_dir).unwrap().to_path_buf())
+                    .map(|p| p.strip_prefix(base_dir).unwrap().to_path_buf())
                     .collect()
             } else {
                 paths
@@ -2509,7 +2518,7 @@ mod tests {
 
         // Call add_files — should preserve relative paths
         let result =
-            api::client::workspaces::files::add_files(&remote_repo, &workspace_id, base_dir, paths)
+            api::client::workspaces::files::add_files(remote_repo, &workspace_id, base_dir, paths)
                 .await;
         assert!(result.is_ok(), "add_files failed: {result:?}");
 
@@ -2517,7 +2526,7 @@ mod tests {
         let page_num = constants::DEFAULT_PAGE_NUM;
         let page_size = constants::DEFAULT_PAGE_SIZE;
         let entries = api::client::workspaces::changes::list(
-            &remote_repo,
+            remote_repo,
             &workspace_id,
             Path::new(""),
             page_num,
@@ -2553,7 +2562,7 @@ mod tests {
                 "data_being_added{}file_c.txt",
                 std::path::MAIN_SEPARATOR_STR
             ),
-            format!("root_file.txt"),
+            "root_file.txt".to_string(),
         ] {
             assert!(
                 staged.contains(&p),

@@ -139,7 +139,8 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     };
     util::fs::create_dir_all(parent)?;
 
-    let version_path = util::fs::version_path_from_node(repo, file_hash.to_string(), path);
+    let version_store = repo.version_store()?;
+    let version_path = version_store.get_version_path(&file_hash.to_string())?;
 
     log::debug!(
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
@@ -212,11 +213,9 @@ pub async fn rename(
         if let Some(existing_file_node) =
             repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
         {
-            let version_path = util::fs::version_path_from_node(
-                &workspace.base_repo,
-                existing_file_node.hash().to_string(),
-                path,
-            );
+            let version_store = workspace.base_repo.version_store()?;
+            let version_path =
+                version_store.get_version_path(&existing_file_node.hash().to_string())?;
             log::debug!(
                 "rename: copying version path: {version_path:?} to {workspace_file_path:?}"
             );

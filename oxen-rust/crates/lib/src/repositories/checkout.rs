@@ -142,11 +142,8 @@ pub async fn checkout_combine<P: AsRef<Path>>(
         .find(|c| c.merge_entry.path == path.as_ref())
     {
         if util::fs::is_tabular(&conflict.base_entry.path) {
-            let df_base_path = util::fs::version_path_from_hash_and_filename(
-                repo,
-                &conflict.base_entry.hash,
-                &conflict.base_entry.filename,
-            );
+            let version_store = repo.version_store()?;
+            let df_base_path = version_store.get_version_path(&conflict.base_entry.hash)?;
             let df_base = tabular::maybe_read_df_with_extension(
                 repo,
                 &df_base_path,
@@ -155,11 +152,7 @@ pub async fn checkout_combine<P: AsRef<Path>>(
                 &DFOpts::empty(),
             )
             .await?;
-            let df_merge_path = util::fs::version_path_from_hash_and_filename(
-                repo,
-                &conflict.merge_entry.hash,
-                &conflict.merge_entry.filename,
-            );
+            let df_merge_path = version_store.get_version_path(&conflict.merge_entry.hash)?;
             let df_merge = tabular::maybe_read_df_with_extension(
                 repo,
                 df_merge_path,
