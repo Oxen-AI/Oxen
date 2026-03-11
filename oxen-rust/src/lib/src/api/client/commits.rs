@@ -31,6 +31,7 @@ use flate2::write::GzEncoder;
 use futures_util::TryStreamExt;
 use http::header::CONTENT_LENGTH;
 use indicatif::{ProgressBar, ProgressStyle};
+use tokio::time::sleep;
 
 pub struct ChunkParams {
     pub chunk_num: usize,
@@ -859,7 +860,7 @@ pub async fn upload_single_tarball_to_server_with_client_with_retry(
                 log::debug!(
                     "upload_single_tarball_to_server_with_retry upload failed sleeping {sleep_time}: {err:?}"
                 );
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
@@ -977,7 +978,7 @@ pub async fn upload_data_chunk_to_server_with_retry(
                     "upload_data_chunk_to_server_with_retry upload failed sleeping {sleep_time}: {err}"
                 );
                 last_error = format!("{err}");
-                std::thread::sleep(std::time::Duration::from_secs(sleep_time));
+                sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
