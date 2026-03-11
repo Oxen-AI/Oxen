@@ -33,7 +33,6 @@ use utoipa::ToSchema;
     title = "FileUploadBody",
     description = "Multipart form for uploading files. Use `file` for a single full-path upload, or `files[]` for uploading one or more files into a directory.",
     example = json!({
-        "file": "<binary data>",
         "files[]": ["<binary data>"],
         "message": "Adding a picture of a cow",
         "name": "bessie",
@@ -47,7 +46,8 @@ pub struct FileUploadBody {
     email: Option<Text<String>>,
     #[schema(value_type = Option<String>, example = "Adding a new image to the training set")]
     message: Option<Text<String>>,
-    #[schema(value_type = Option<String>, format = Binary)]
+    /// Deprecated: use `files[]` instead.
+    #[schema(value_type = Option<String>, format = Binary, deprecated)]
     file: Option<MultipartTempFileNew>,
     #[multipart(rename = "files[]")]
     #[schema(value_type = Vec<String>, format = Binary)]
@@ -388,6 +388,7 @@ pub async fn put(
         (status = 404, description = "Branch or path not found")
     )
 )]
+// TODO: `content` above should be a different type that doesn't include `files` and `file` fields
 pub async fn delete(
     req: HttpRequest,
     MultipartForm(form): MultipartForm<FileUploadBody>,
