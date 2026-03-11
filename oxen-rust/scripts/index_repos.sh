@@ -27,10 +27,9 @@ while read -r repo; do
     echo "Cloning $repo...."
     oxen clone "https://staging.hub.oxen.ai/ox/$repo" --all
 
-    cd "$repo"
+    pushd "$repo" >/dev/null
     oxen config --set-remote origin "https://$SYNC_SERVER/ox/$repo"
     oxen push origin main
-    cd ..
-
+    popd >/dev/null
   fi
 done < "$IN_FILE"
