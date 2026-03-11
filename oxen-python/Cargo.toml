@@ -13,9 +13,7 @@ liboxen = { path = "../oxen-rust/src/lib", features = ["perf-logging"] }
 log = "0.4.17"
 pyo3 = { version = "0.25" }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "async-std-runtime", "tokio-runtime"] }
-pyo3-log = "0.12"
 pyo3-polars = { version = "0.22", features = ["dtype-full"] }
-reqwest = { version = "0.12.2", features = ["multipart", "json", "gzip", "stream"] }
 serde_json = "1.0.106"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1.4.1", features = ["serde", "v4"] }

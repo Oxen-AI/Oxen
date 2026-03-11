@@ -4458,7 +4458,6 @@ dependencies = [
  "par-stream",
  "parking_lot",
  "pathdiff",
- "pluralizer",
  "polars",
  "qsv-sniffer",
  "r2d2",
@@ -5545,16 +5544,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
-]
-
-[[package]]
-name = "pluralizer"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35e4616e94b67b8b61846ea69d4bf041a62147d569d16f437689229e2677d38c"
-dependencies = [
- "lazy_static",
- "regex",
 ]
 
 [[package]]
