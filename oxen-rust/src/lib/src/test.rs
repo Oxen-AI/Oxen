@@ -74,8 +74,7 @@ pub fn repo_remote_url_from(name: &str) -> String {
 static ENV_LOCK: LazyLock<Arc<Mutex<bool>>> = LazyLock::new(|| Arc::new(Mutex::new(false)));
 
 pub fn init_test_env() {
-    // check if logger is already initialized
-    util::logging::init_logging();
+    let _tracing_guard = util::telemetry::init_tracing("oxen-test");
 
     match ENV_LOCK.lock() {
         Ok(mut logging_setup) => {
