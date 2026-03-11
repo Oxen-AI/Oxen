@@ -231,19 +231,28 @@ fi
 
 install_shellcheck() {
     local version="$1"
+    local arch
+    arch="$(uname -m)"
 
+    local sc_os sc_arch
     if [ "$PLATFORM" = "macos" ]; then
-        info "Installing shellcheck ${version} via Homebrew..."
-        # Unlink any existing shellcheck to avoid conflicts
-        brew unlink shellcheck &>/dev/null || true
-        brew install "shellcheck@${version}"
-        brew link --overwrite "shellcheck@${version}"
-    elif [ "$PLATFORM" = "linux" ]; then
-        info "Installing shellcheck ${version} via apt..."
-        sudo apt-get update -y
-        # Use --allow-downgrades to force the pinned version even if a newer one is installed
-        sudo apt-get install -y --allow-downgrades "shellcheck=${version}*"
+        sc_os="darwin"
+    else
+        sc_os="linux"
     fi
+    case "$arch" in
+        x86_64)  sc_arch="x86_64" ;;
+        aarch64|arm64) sc_arch="aarch64" ;;
+        *)       echo "Unsupported architecture: $arch"; exit 1 ;;
+    esac
+
+    local url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${sc_os}.${sc_arch}.tar.xz"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    info "Downloading shellcheck v${version} from ${url}..."
+    curl -fsSL "$url" | tar -xJ -C "$tmp_dir"
+    sudo install -m 755 "$tmp_dir/shellcheck-v${version}/shellcheck" /usr/local/bin/shellcheck
+    rm -rf "$tmp_dir"
 }
 
 info "Checking shellcheck..."
@@ -263,7 +272,7 @@ fi
 
 if $NEED_SHELLCHECK; then
     install_shellcheck "$SHELLCHECK_VERSION"
-    ok "shellcheck ${SHELLCHECK_VERSION} installed"
+    ok "shellcheck v${SHELLCHECK_VERSION} installed"
 fi
 
 ###############################################################################
