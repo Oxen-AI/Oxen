@@ -69,7 +69,7 @@ async fn put_multipart_file(
     let form = apply_commit_body(Form::new().part(field_name, file_part), commit_body);
     let res = client.put(&url).multipart(form).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    serde_json::from_str(&body).map_err(Into::into)
+    Ok(serde_json::from_str(&body)?)
 }
 
 async fn make_file_part(
