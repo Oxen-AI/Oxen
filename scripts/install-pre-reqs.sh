@@ -247,6 +247,7 @@ install_shellcheck() {
     esac
 
     local install_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    install_dir="${install_dir%/}"
     mkdir -p "$install_dir"
 
     local url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${sc_os}.${sc_arch}.tar.xz"
