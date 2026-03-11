@@ -9,6 +9,7 @@ use crate::error::PyOxenError;
 use crate::py_commit::PyCommit;
 use crate::py_remote_repo::PyRemoteRepo;
 use crate::py_staged_data::PyStagedData;
+use crate::py_types::PyErrorFileInfo;
 
 #[derive(Clone)]
 #[pyclass]
@@ -146,8 +147,8 @@ impl PyWorkspace {
         Ok(())
     }
 
-    fn add(&self, src: Vec<PathBuf>, dst: String) -> Result<(), PyOxenError> {
-        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+    fn add(&self, src: Vec<PathBuf>, dst: String) -> Result<Vec<PyErrorFileInfo>, PyOxenError> {
+        let errors = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add(
                 &self.repo.repo,
                 &self.get_identifier(),
@@ -157,11 +158,15 @@ impl PyWorkspace {
             )
             .await
         })?;
-        Ok(())
+        Ok(errors.into_iter().map(PyErrorFileInfo::from).collect())
     }
 
-    fn add_files(&self, base_dir: PathBuf, src: Vec<PathBuf>) -> Result<(), PyOxenError> {
-        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+    fn add_files(
+        &self,
+        base_dir: PathBuf,
+        src: Vec<PathBuf>,
+    ) -> Result<Vec<PyErrorFileInfo>, PyOxenError> {
+        let errors = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add_files(
                 &self.repo.repo,
                 &self.get_identifier(),
@@ -170,7 +175,7 @@ impl PyWorkspace {
             )
             .await
         })?;
-        Ok(())
+        Ok(errors.into_iter().map(PyErrorFileInfo::from).collect())
     }
 
     fn rm(&self, path: PathBuf) -> Result<(), PyOxenError> {
