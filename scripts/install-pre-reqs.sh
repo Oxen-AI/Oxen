@@ -246,13 +246,20 @@ install_shellcheck() {
         *)       echo "Unsupported architecture: $arch"; exit 1 ;;
     esac
 
+    local install_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    mkdir -p "$install_dir"
+
     local url="https://github.com/koalaman/shellcheck/releases/download/v${version}/shellcheck-v${version}.${sc_os}.${sc_arch}.tar.xz"
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     info "Downloading shellcheck v${version} from ${url}..."
     curl -fsSL "$url" | tar -xJ -C "$tmp_dir"
-    sudo install -m 755 "$tmp_dir/shellcheck-v${version}/shellcheck" /usr/local/bin/shellcheck
+    install -m 755 "$tmp_dir/shellcheck-v${version}/shellcheck" "$install_dir/shellcheck"
     rm -rf "$tmp_dir"
+
+    if [[ ":$PATH:" != *":$install_dir:"* ]]; then
+        export PATH="$install_dir:$PATH"
+    fi
 }
 
 info "Checking shellcheck..."
