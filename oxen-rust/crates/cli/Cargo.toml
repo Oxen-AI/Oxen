@@ -1,0 +1,42 @@
+[package]
+name = "oxen-cli"
+version = { workspace = true }
+edition = { workspace = true }
+license-file = { workspace = true }
+description = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+categories = [
+    "command-line-utilities",
+    "science",
+    "multimedia",
+    "database",
+]
+
+[[bin]]
+name = "oxen"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = { workspace = true }
+bytesize = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+dialoguer = { workspace = true }
+glob = { workspace = true }
+liboxen = { path = "../lib" }
+log = { workspace = true }
+minus = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-log = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
