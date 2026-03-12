@@ -77,6 +77,8 @@ if [ "$PLATFORM" = "macos" ]; then
         ok "Homebrew already installed"
     fi
 
+    brew install cmake
+
 elif [ "$PLATFORM" = "linux" ]; then
     if ! command_exists apt-get || ! command_exists dpkg; then
         warn "Unsupported Linux distro for automatic package install (requires apt + dpkg)."
