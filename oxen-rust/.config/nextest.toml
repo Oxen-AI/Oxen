@@ -2,6 +2,7 @@
 retries = 2
 failure-output = "immediate-final"
 fail-fast = { max-fail = 10 }
+leak-timeout = "1s"
 # temporarily disable S3 tests
 default-filter = 'not test(s3_tests::)'
 
@@ -10,5 +11,6 @@ default-filter = 'not test(s3_tests::)'
 fail-fast = false
 retries = 2
 failure-output = "immediate-final"
+leak-timeout = "1s"
 # temporarily disable S3 tests
 default-filter = 'not test(s3_tests::)'

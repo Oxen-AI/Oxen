@@ -573,6 +573,8 @@ async fn action_hook(
 mod tests {
     use std::path::PathBuf;
 
+    use tokio::time::sleep;
+
     use crate::api;
     use crate::config::UserConfig;
     use crate::constants;
@@ -805,7 +807,7 @@ mod tests {
             api::client::repositories::delete(&remote_repo).await?;
 
             // We delete in a background thread, so give it a second
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            sleep(std::time::Duration::from_secs(1)).await;
 
             let result = api::client::repositories::get_by_remote_repo(&remote_repo).await;
             assert!(result.is_ok());

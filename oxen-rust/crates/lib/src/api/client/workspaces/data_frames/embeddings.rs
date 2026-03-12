@@ -102,6 +102,7 @@ pub async fn index(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tokio::time::sleep;
 
     use crate::config::UserConfig;
     use crate::config::embedding_config::EmbeddingStatus;
@@ -203,7 +204,7 @@ mod tests {
                 indexing_status = response.columns[0].status.clone();
 
                 // sleep for 1 second
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                sleep(std::time::Duration::from_secs(1)).await;
 
                 max_retries -= 1;
             }
@@ -399,7 +400,7 @@ mod tests {
                 indexing_status = response.columns[0].status.clone();
 
                 // sleep for 1 second
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                sleep(std::time::Duration::from_secs(1)).await;
 
                 max_retries -= 1;
             }
@@ -482,7 +483,7 @@ mod tests {
                 indexing_status = response.columns[0].status.clone();
 
                 // sleep for 1 second
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                sleep(std::time::Duration::from_secs(1)).await;
 
                 max_retries -= 1;
             }
