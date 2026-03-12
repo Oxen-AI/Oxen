@@ -80,7 +80,7 @@ Once the release notes are complete, click **Publish release**.
 Publishing the release automatically triggers the **Publish** workflow ([`publish.yml`](.github/workflows/publish.yml)), which:
 
 1. **Publishes Python wheels to PyPI** — downloads the `oxen-wheels-*` artifacts from the release and uploads all `.whl` files via maturin (_secret: `PYPI_API_TOKEN`_).
-2. **Publishes the `liboxen` crate to crates.io** — runs `cargo publish` from [`oxen-rust/src/lib`](`oxen-rust/src/lib) (_secret: `CRATES_IO_TOKEN`_).
+2. **Publishes the `liboxen` crate to crates.io** — runs `cargo publish` from [`oxen-rust/crates/lib`](`oxen-rust/crates/lib) (_secret: `CRATES_IO_TOKEN`_).
 3. **Updates the `oxen` Homebrew formula** — opens a PR against [`Homebrew/homebrew-core`](https://github.com/Homebrew/homebrew-core) to update [`Formula/o/oxen.rb`](https://github.com/Homebrew/homebrew-core/blob/main/Formula/o/oxen.rb) (_secret: `GH_PERSONAL_ACCESS_TOKEN`_).
 4. **Updates the `oxen-server` Homebrew formula** — pushes directly to [`Oxen-AI/homebrew-oxen-server`](https://github.com/Oxen-AI/homebrew-oxen-server) on `main`, updating [`Formula/oxen-server.rb`](https://github.com/Oxen-AI/homebrew-oxen-server/blob/main/Formula/oxen-server.rb) (_secret: `GH_PERSONAL_ACCESS_TOKEN`_).
 
