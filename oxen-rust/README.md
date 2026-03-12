@@ -153,7 +153,7 @@ Set where you want the data to be synced to. The default sync directory is `./da
 export SYNC_DIR=/path/to/sync/dir
 ```
 
-You can also create a .env.local file in the /src/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
+You can also create a .env.local file in the /crates/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
 
 Run the server
 
@@ -312,7 +312,7 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.45.0 .
+docker build -t oxen/server:0.46.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.

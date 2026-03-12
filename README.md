@@ -170,7 +170,7 @@ Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be in
 brew install cmake
 ```
 
-The [Python interface](./oxen-python/README.md) uses [`liboxen`](./oxen-rust/src/lib/) bindings provided by PyO3.
+The [Python interface](./oxen-python/README.md) uses [`liboxen`](./oxen-rust/crates/lib/) bindings provided by PyO3.
 
 The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
 

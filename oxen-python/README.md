@@ -93,7 +93,7 @@ uv run --verbose pytest -s tests/
 ```
 
 If you have already installed all dependencies, and you're not making any changes to
-[`liboxen`](../oxen-rust/src/lib), then you may use `--no-sync`:
+[`liboxen`](../oxen-rust/crates/lib), then you may use `--no-sync`:
 
 ```bash
 uv run --no-sync pytest -s tests/
