@@ -11,7 +11,7 @@ set -e
 
 # Get current version from the main Cargo.toml
 get_current_version() {
-    echo $(cd oxen-rust/src/lib && cargo pkgid | cut -f2 -d@)
+    echo $(cd oxen-rust/crates/lib && cargo pkgid | cut -f2 -d@)
 }
 
 # Parse and validate semver format
