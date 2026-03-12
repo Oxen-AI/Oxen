@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub mod commit_writer;
+pub mod squash;
 
 /// # Commit the staged files in the repo
 ///
@@ -136,16 +137,22 @@ pub fn commit_id_exists(
     get_by_id(repo, commit_id.as_ref()).map(|commit| commit.is_some())
 }
 
-/// Create an empty commit off of the head commit of a branch
+/// Create a commit preserving tree from `tree_source_commit_id` (or branch HEAD if None)
 pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     commit: &Commit,
+    tree_source_commit_id: Option<&str>,
 ) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("create_empty_commit not supported in v0.10.0"),
-        _ => core::v_latest::commits::create_empty_commit(repo, branch_name, commit),
+        _ => core::v_latest::commits::create_empty_commit(
+            repo,
+            branch_name,
+            commit,
+            tree_source_commit_id,
+        ),
     }
 }
 
