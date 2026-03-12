@@ -18,7 +18,8 @@ then
   exit 1
 fi
 
-while read -r repo; do
+while IFS= read -r repo || [ -n "$repo" ]; do
+  [ -z "$repo" ] && continue
   if [ -d "$repo" ]
   then
     echo "Repo $repo already exists."
