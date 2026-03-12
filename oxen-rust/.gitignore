@@ -3,7 +3,7 @@
 data/test/runs
 data/test/config/user_config.toml
 .vscode
-src/server/.env.local
+crates/server/.env.local
 
 # rspec failure tracking
 cli-test/.rspec_status

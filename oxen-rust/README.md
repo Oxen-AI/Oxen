@@ -153,7 +153,7 @@ Set where you want the data to be synced to. The default sync directory is `./da
 export SYNC_DIR=/path/to/sync/dir
 ```
 
-You can also create a .env.local file in the /src/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
+You can also create a .env.local file in the /crates/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
 
 Run the server
 
@@ -268,11 +268,12 @@ To run with all debug output and run a specific test
 env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust.sh --no-capture test_command_push_clone_pull_push
 ```
 
-To set a different test host you can set the `OXEN_TEST_HOST` environment variable
+To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
 ```bash
-env OXEN_TEST_HOST=0.0.0.0:4000 scripts/test-rust.sh
+env OXEN_PORT=4000 scripts/test-rust.sh
 ```
+
 
 # Oxen Server
 
@@ -311,7 +312,7 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.45.0 .
+docker build -t oxen/server:0.46.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
