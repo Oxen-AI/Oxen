@@ -1,13 +1,11 @@
 use clap::{Parser, Subcommand};
-use std::{fs, string};
-use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use framework::{FrameworkError, FrameworkResult};
+use framework::FrameworkResult;
 
 pub mod framework;
-pub mod migrate;
 pub mod lmdb;
+pub mod migrate;
 
 struct TestMetrics {
     pack_time: Duration,
@@ -35,11 +33,7 @@ fn main() -> FrameworkResult<()> {
     let args = Args::parse();
 
     match args.command {
-        Commands::Migrate => {
-            migrate::migrate()
-        }
-        Commands::Test => {
-            migrate::test()
-        }
+        Commands::Migrate => migrate::migrate(),
+        Commands::Test => migrate::test(),
     }
 }

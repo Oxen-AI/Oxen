@@ -12,7 +12,6 @@ use liboxen::repositories::{self, commits};
 use std::io::Error;
 use std::io::ErrorKind;
 
-
 pub fn migrate() -> FrameworkResult<()> {
     let lmdb_path = PathBuf::from(LMDB_PATH);
 
@@ -25,11 +24,11 @@ pub fn migrate() -> FrameworkResult<()> {
 
     let head_commit = repositories::commits::head_commit_maybe(&repo)?.unwrap();
 
-    let commit_tree = CommitMerkleTree::root_with_children(&repo, &head_commit)
-    .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
+    let _commit_tree = CommitMerkleTree::root_with_children(&repo, &head_commit)
+        .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
 
     let commits = commits::list(&repo)
-    .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
+        .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
 
     let mut list_hashes = HashSet::new();
     for commit in commits {
@@ -37,18 +36,25 @@ pub fn migrate() -> FrameworkResult<()> {
         let mut unique_hashes = HashSet::new();
         let start_path = PathBuf::new();
         let mut node = MerkleTreeNode::from_hash(&repo, &commit.id.parse::<MerkleHash>().unwrap())?;
-        CommitMerkleTree::load_unique_children_list(&repo, &mut node, &start_path, &mut shared_hashes, &mut unique_hashes, &mut list_hashes)
+        CommitMerkleTree::load_unique_children_list(
+            &repo,
+            &mut node,
+            &start_path,
+            &mut shared_hashes,
+            &mut unique_hashes,
+            &mut list_hashes,
+        )
         .map_err(|e| Error::new(ErrorKind::NotFound, format!("error listing commit: {}", e)))?;
         list_hashes.insert((commit.id.parse::<MerkleHash>().unwrap(), node));
     }
 
-    lmdb::insert(&lmdb_path, list_hashes).map_err(|e| Error::new(ErrorKind::Other, format!("error inserting lmdb: {}", e)))?;
+    lmdb::insert(&lmdb_path, list_hashes)
+        .map_err(|e| Error::other(format!("error inserting lmdb: {}", e)))?;
 
     Ok(())
 }
 
-
 pub fn test() -> FrameworkResult<()> {
-    lmdb::test().map_err(|e| Error::new(ErrorKind::Other, format!("error testing lmdb: {}", e)))?;
+    lmdb::test().map_err(|e| Error::other(format!("error testing lmdb: {}", e)))?;
     Ok(())
 }
