@@ -428,7 +428,10 @@ def generate_text_file(path: Path, size: int) -> None:
 def generate_text(
     size: int, *, explicit_text_pool: TextPool | None = None
 ) -> list[str]:
-    """Generates random text content as a"""
+    """Generate and return a list of random text chunks totaling approximately `size` bytes.
+
+    Uses `explicit_text_pool` if provided, otherwise falls back to the global TEXT_POOL.
+    """
     global TEXT_POOL
 
     if explicit_text_pool is not None:
@@ -508,12 +511,12 @@ def generate_image(*, width: int, height: int, block_size: int) -> Image.Image:
                 # Fill block with random pixels (noise)
                 for y in range(block_y, min(block_y + block_size, height)):
                     for x in range(block_x, min(block_x + block_size, width)):
-                        block: Pixel = (
+                        pixel: Pixel = (
                             random.randint(0, 255),
                             random.randint(0, 255),
                             random.randint(0, 255),
                         )
-                        pixels[x, y] = block
+                        pixels[x, y] = pixel
             else:
                 # Fill block with solid random color
                 color: Pixel = (
@@ -560,7 +563,7 @@ def compute_avg_image_size(num_samples: int = 10) -> int:
 
 
 FileGenerator = Callable[[Path, int], None]
-"""Something that can randomly generate file contents. Optionally configuarable.
+"""Something that can randomly generate file contents. Optionally configurable.
 """
 
 _GENERATORS: Mapping[FileType, FileGenerator] = {

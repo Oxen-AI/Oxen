@@ -50,17 +50,6 @@ def positive_int(value: str) -> int:
     return ivalue
 
 
-def collect_file_paths(directory: Path) -> list[Path]:
-    """Recursively collect all file paths under directory, sorted for determinism."""
-    return sorted(f for f in directory.rglob("*") if f.is_file())
-
-
-def batch_iter(items: list, size: int):
-    """Yield successive chunks of `size` from `items`."""
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
-
-
 def main(
     *,
     repo_name: str,
@@ -109,7 +98,13 @@ def main(
 
     print("  Adding files...")
     workspace = Workspace(repo, branch)
-    workspace.add_files(parent, all_files)
+    failed = workspace.add_files(parent, all_files)
+
+    if failed:
+        print(f"[ERROR] {len(failed)} file(s) failed to upload:")
+        for f in failed:
+            print(f"  - {f}")
+        return 1
 
     # Commit the workspace
     print(f'  Committing: "{message}"')
@@ -118,15 +113,15 @@ def main(
 
     print(f"  Commit {commit.id} ({overall_elapsed:.1f}s)")
     print()
+    return 0
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Upload a files to a remote Oxen repo as a workspace and then commit it.",
+        description="Upload files to a remote Oxen repo as a workspace and then commit it.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --repo ox/my-repo --branch main
   %(prog)s --repo ox/my-repo --branch main
   %(prog)s --host hub.oxen.ai --repo ox/my-repo --branch main
         """,
