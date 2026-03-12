@@ -82,7 +82,6 @@ os_path = { workspace = true }
 par-stream = { workspace = true }
 parking_lot = { workspace = true }
 pathdiff = { workspace = true }
-pluralizer = { workspace = true }
 polars = { workspace = true }
 qsv-sniffer = { workspace = true }
 r2d2 = { workspace = true }

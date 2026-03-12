@@ -3734,7 +3734,6 @@ dependencies = [
  "par-stream",
  "parking_lot",
  "pathdiff",
- "pluralizer",
  "polars",
  "qsv-sniffer",
  "r2d2",
@@ -4408,9 +4407,7 @@ dependencies = [
  "pkg-config",
  "pyo3",
  "pyo3-async-runtimes",
- "pyo3-log",
  "pyo3-polars",
- "reqwest",
  "serde_json",
  "tokio",
  "uuid",
@@ -4584,16 +4581,6 @@ checksum = "3daf8e3d4b712abe1d690838f6e29fb76b76ea19589c4afa39ec30e12f62af71"
 dependencies = [
  "array-init-cursor",
  "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "pluralizer"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35e4616e94b67b8b61846ea69d4bf041a62147d569d16f437689229e2677d38c"
-dependencies = [
- "lazy_static",
- "regex",
 ]
 
 [[package]]
@@ -5331,17 +5318,6 @@ checksum = "7114fe5457c61b276ab77c5055f206295b812608083644a5c5b2640c3102565c"
 dependencies = [
  "libc",
  "pyo3-build-config",
-]
-
-[[package]]
-name = "pyo3-log"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45192e5e4a4d2505587e27806c7b710c231c40c56f3bfc19535d0bb25df52264"
-dependencies = [
- "arc-swap",
- "log",
- "pyo3",
 ]
 
 [[package]]
