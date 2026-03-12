@@ -448,7 +448,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
     }
 
     // Create a client for uploading batches
-    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let client = Arc::new(api::client::new_for_host_transfer(remote_repo.url())?);
 
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
