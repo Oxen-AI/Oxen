@@ -360,6 +360,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_update_file_to_full_path() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let file_path_on_repo = "test_data/test_full_path.jpeg";
+            let file_path = test::test_img_file();
+            let commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Update file test full path".to_string(),
+            };
+
+            let response = api::client::file::put_file_to_path(
+                &remote_repo,
+                branch_name,
+                file_path_on_repo,
+                &file_path,
+                Some("ignored-name.jpeg"),
+                Some(commit_body),
+            )
+            .await?;
+
+            assert_eq!(response.status.status_message, "resource_created");
+
+            repositories::pull(&local_repo).await?;
+            let file_path_in_repo = local_repo.path.join(file_path_on_repo);
+            assert!(file_path_in_repo.exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_update_file_to_full_path_on_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_configured_remote_repo_test(|local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let file_path_on_repo = "test_data/test_full_path.jpeg";
+            let file_path = test::test_img_file();
+            let commit_body = NewCommitBody {
+                author: "Test Author".to_string(),
+                email: "test@example.com".to_string(),
+                message: "Update file test full path".to_string(),
+            };
+
+            let response = api::client::file::put_file_to_path(
+                &remote_repo,
+                branch_name,
+                file_path_on_repo,
+                &file_path,
+                Some("ignored-name.jpeg"),
+                Some(commit_body),
+            )
+            .await?;
+            assert_eq!(response.status.status_message, "resource_created");
+
+            repositories::pull(&local_repo).await?;
+            repositories::checkout(&local_repo, branch_name).await?;
+            let file_path_in_repo = local_repo.path.join(file_path_on_repo);
+            assert!(file_path_in_repo.exists());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_get_file() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "main";
