@@ -1,4 +1,4 @@
-/target
+target/
 .DS_Store
 data/test/runs
 data/test/config/user_config.toml
