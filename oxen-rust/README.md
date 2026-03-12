@@ -4,7 +4,7 @@ Create a world where everyone can contribute to an Artificial General Intelligen
 
 # 🌾 What is Oxen?
 
-Oxen at it's core is a data version control library, written in Rust. It's goals are to be fast, reliable, and easy to use. It's designed to be used in a variety of ways, from a simple command line tool, to a remote server to sync to, to integrations into other ecosystems such as [python](https://github.com/Oxen-AI/oxen-release).
+Oxen at its core is a data version control library, written in Rust. Its goals are to be fast, reliable, and easy to use. It's designed to be used in a variety of ways, from a simple command line tool, to a remote server to sync to, to integrations into other ecosystems such as [python](https://github.com/Oxen-AI/oxen-release).
 
 # 📚 Documentation
 
@@ -22,109 +22,102 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
 
 # 🔨 Build & Run
 
-## Install Dependencies
+## Install Prerequisites
 
-Oxen is purely written in Rust 🦀. You should install the Rust toolchain with rustup: https://www.rust-lang.org/tools/install.
-
-```
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-If you are a developer and want to learn more about adding code or the overall architecture [start here](docs/dev/AddLibraryCode.md). Otherwise, a quick start to make sure everything is working follows.
+See the [prerequisites](../README.md#prerequisites) section of the main readme to install the needed prerequisites.
 
 ## Build
 
+Build the entire workspace (CLI, server, and library):
+
+```bash
+cargo build --workspace
 ```
-cargo build
+
+Or build a specific crate:
+
+```bash
+cargo build -p oxen-server
+cargo build -p oxen-cli
+cargo build -p liboxen
 ```
 
 If on intel mac, you may need to build with the following
 
-```
-$ rustup target install x86_64-apple-darwin
-$ cargo build --target x86_64-apple-darwin
+```bash
+rustup target install x86_64-apple-darwin
+cargo build --workspace --target x86_64-apple-darwin
 ```
 
 If on Windows, you may need to add the following directories to the 'INCLUDE' environment variable
 
-```
+```text
 "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\14.29.30133\include"
 
 "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\14.29.27023\include"
 
 "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\Llvm\lib\clang\12.0.0\include"
 ```
+
 These are example paths and will vary between machines. If you install 'C++ Clang tools for Windows' through [Microsoft Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2019), the directories can be located from the Visual Studio installation under 'BuildTools\VC\Tools'
 
 ## Speed up the build process
 
-You can use the [mold](https://github.com/rui314/mold) linker to speed up builds (The MIT-licensed macOS version is [sold](https://github.com/bluewhalesystems/sold)).
+### Linux
 
-Use the following instructions to
-install sold and configure cargo to use it for building Oxen:
+_Note: Rust 1.90+ on `x86_64-unknown-linux-gnu` [already uses](https://blog.rust-lang.org/2025/09/01/rust-lld-on-1.90.0-stable/) an optimized linker by default. For other variants of Linux, the instructions below may speed things up._
 
-```
-git clone --depth=1 --single-branch https://github.com/bluewhalesystems/sold.git
-
-mkdir sold/build
-cd sold/build
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=c++ ..
-cmake --build . -j $(nproc)
-sudo cmake --install .
-```
+On Linux, you can use the [mold](https://github.com/rui314/mold) linker to speed up builds.
 
 Then create `.cargo/config.toml` in your Oxen repo root with the following
 content:
 
-```
+```toml
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/ld64.mold"]
-
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/ld64.mold"]
-
 ```
+
+### macOS with Apple Silicon
 
 **For macOS with Apple Silicon**, you can use the [lld](https://lld.llvm.org/) linker.
 
-```
+```bash
 brew install llvm
 ```
 
 Then create `.cargo/config.toml` in your Oxen repo root with the following:
 
-```
+```toml
 [target.aarch64-apple-darwin]
 rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld", ]
-
 ```
 
 # Run
 
 ## CLI
 
-To run Oxen from the command line, add the `Oxen/target/debug` directory to the 'PATH' environment variable
+To run Oxen from the command line, add the `oxen-rust/target/debug` directory to the 'PATH' environment variable
 
-```
-export PATH="$PATH:/path/to/Oxen/target/debug"
+```bash
+export PATH="$PATH:/path/to/Oxen/oxen-rust/target/debug"
 ```
 
 On Windows, you can use
 
-```
-$env:PATH += ";/path/to/Oxen/target/debug"
+```powershell
+$env:PATH += ";/path/to/Oxen/oxen-rust/target/debug"
 ```
 
 Initialize a new repository or clone an existing one
 
-```
+```bash
 oxen init
 oxen clone https://hub.oxen.ai/namespace/repository
 ```
 
 This will create the `.oxen` dir in your current directory and allow you to run Oxen CLI commands
 
-```
+```bash
 oxen status
 oxen add images/
 oxen commit -m "added images"
@@ -136,54 +129,54 @@ oxen push origin main
 
 To run a local Oxen Server, generate a config file and token to authenticate the user
 
-```
+```bash
 ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
 ```
 
 Copy the config to the default locations
 
-```
+```bash
 mkdir ~/.oxen
 ```
 
-```
+```bash
 mv user_config.toml ~/.oxen/user_config.toml
 ```
 
-```
+```bash
 cp ~/.oxen/user_config.toml data/test/config/user_config.toml
 ```
 
-Set where you want the data to be synced to. The default sync directory is `./data/` to change it set the SYNC_DIR environment variable to a path.
+Set where you want the data to be synced to. The default sync directory is `./data/` to change it set the `SYNC_DIR` environment variable to a path.
 
-```
+```bash
 export SYNC_DIR=/path/to/sync/dir
 ```
 
-You can also create a .env.local file in the /src/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
+You can also create a .env.local file in the /crates/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
 
 Run the server
 
+```bash
+cargo run -p oxen-server -- start
 ```
+
+Or run the compiled binary directly:
+
+```bash
 ./target/debug/oxen-server start
 ```
 
-To run the server with live reload, first install cargo-watch
+To run the server with live reload, use `bacon`:
 
-```
-cargo install cargo-watch
-```
-
-On Windows, you may need to use `cargo-watch --locked`
-
-```
-cargo install cargo-watch --locked
+```bash
+cargo install --locked bacon
 ```
 
 Then run the server like this
 
-```
-cargo watch -- cargo run --bin oxen-server start
+```bash
+bacon server
 ```
 
 
@@ -193,127 +186,124 @@ If you have [Nix installed](https://github.com/DeterminateSystems/nix-installer)
 you can use the flake to build and run the server. This will automatically
 install and configure the required build toolchain dependencies for Linux & macOS.
 
-```
+```bash
 nix build .#oxen-server
 nix build .#oxen-cli
 nix build .#liboxen
 ```
 
-```
+```bash
 nix run .#oxen-server -- start
 nix run .#oxen-cli -- init
 ```
 
 To develop with the standard rust toolchain in a Nix dev shell:
 
-```
+```bash
 nix develop -c $SHELL
-cargo build
-cargo run --bin oxen-server start
-cargo run --bin oxen start
+cargo build --workspace
+cargo run -p oxen-server -- start
+cargo run -p oxen-cli -- init
 ```
 
-The flake also provides derviations to build OCI (Docker) images with the minimal
+The flake also provides derivations to build OCI (Docker) images with the minimal
 set of dependencies required to build and run `oxen` & `oxen-server`.
 
-```
+```bash
 nix build .#oci-oxen-server
 nix build .#oci-oxen-cli
 ```
 
 This will export the OCI image and can be loaded with:
 
-```
+```bash
 docker load -i result
 ```
 
 # Unit & Integration Tests
 
-Make sure your user is configured and server is running on the default port and host, by following these setup steps:
+## Manual Test Setup
+
+Here are the steps to manually configure and run tests (see also the [Automatic Test Setup](#automatic-test-setup) section). Make sure your user is configured and server is running on the default port and host, by following these setup steps:
 
 ```bash
 # Configure a user
-mkdir ./data/test/runs
-./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-cp user_config.toml data/test/config/user_config.toml
+mkdir -p data/test/{runs,config}
+./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output data/test/config/user_config.toml
 # Start the oxen-server
 ./target/debug/oxen-server start
 ```
 
 *Note:* tests open up a lot of file handles, so limit num test threads if running everything.
 
-You an also increase the number of open files your system allows ulimit before running tests:
+You can also increase the number of open files your system allows ulimit before running tests:
 
-```
+```bash
 ulimit -n 10240
 ```
 
+Then you can run the tests with the `cargo test` or `cargo nextest` (preferred) directly. To run all tests with the default number of threads:
+
+```bash
+cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 ```
-cargo test -- --test-threads=$(nproc)
+
+## Automatic Test Setup
+
+You can use [the following script](./scripts/test-rust.sh) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
+
+```bash
+scripts/test-rust.sh
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
-```
-cargo test --lib test_get_metadata_text_readme
-```
-
-To run a specific integration test
-
-```
-cargo test --test test_rm test_rm_directory_restore_directory
+```bash
+scripts/test-rust.sh --lib test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
-```
-env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo test -- --nocapture test_command_push_clone_pull_push
-```
-
-To set a different test host you can set the `OXEN_TEST_HOST` environment variable
-
-```
-env OXEN_TEST_HOST=0.0.0.0:4000 cargo test
+```bash
+env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust.sh --no-capture test_command_push_clone_pull_push
 ```
 
-## Pre-Commit Hook
+To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
-We use [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks) to check for commit consistency.
-make sure to install [`pre-commit-hooks`](https://pre-commit.com/) library
-and then install the precommits locally using
+```bash
+env OXEN_PORT=4000 scripts/test-rust.sh
 ```
-pre-commit install
-```
+
 
 # Oxen Server
 
 ## Structure
 
-Remote repositories have the same internal structure as local ones, with the caviate that all the data is in the .oxen dir and not duplicated into a "local workspace".
+Remote repositories have the same internal structure as local ones, with the caveat that all the data is in the .oxen dir and not duplicated into a "local workspace".
 
 # APIs
 
 Server defaults to localhost 3000
 
-```
+```bash
 set SERVER 0.0.0.0:3000
 ```
 
 You can grab your auth token from the config file above (~/.oxen/user_config.toml)
 
-```
+```bash
 set TOKEN <YOUR_TOKEN>
 ```
 
 ## List Repositories
 
-```
+```bash
 curl -H "Authorization: Bearer $TOKEN" "http://$SERVER/api/repos"
 ```
 
 ## Create Repository
 
-```
+```bash
 curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$SERVER/api/repos"
 ```
 
@@ -321,23 +311,23 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 
 Create the docker image
 
-```
-docker build -t oxen/server:0.6.0 .
+```bash
+docker build -t oxen/server:0.46.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
 
-```
-docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.6.0
+```bash
+docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.44.1
 ```
 
 Or use docker compose
 
-```
+```bash
 docker-compose up -d reverse-proxy
 ```
 
-```
+```bash
 docker-compose up -d --scale oxen=4 --no-recreate
 ```
 
@@ -345,14 +335,14 @@ docker-compose up -d --scale oxen=4 --no-recreate
 
 we use criterion to handle benchmarks.
 
-```
-cargo bench
+```bash
+cargo bench --workspace
 ```
 
 To save baseline you can run
 
-```
-cargo bench -- --save-baseline bench
+```bash
+cargo bench --workspace -- --save-baseline bench
 ```
 
 Which would then store the benchmark under `target/criterion/add`
@@ -361,7 +351,13 @@ Which would then store the benchmark under `target/criterion/add`
 
 To enable thumbnailing for videos, you will have to build with ffmpeg enabled
 
-```
+```bash
 brew install ffmpeg@7
-cargo build --features ffmpeg
+cargo build --workspace --all-features
+```
+
+Or for a specific crate:
+
+```bash
+cargo build -p oxen-server --features liboxen/ffmpeg
 ```

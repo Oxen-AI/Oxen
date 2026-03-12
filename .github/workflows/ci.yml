@@ -1,13 +1,33 @@
 on:
-  push
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # opened: A new pull request is created.
+    # synchronize: New commits are pushed to the PR's head branch, or the base branch is changed (i.e. a 'push' event on the PR branch).
+    # reopened: The PR is reopened.
+    # ready_for_review: The PR is marked as ready for review.
 
 name: 🐂 Continuous integration
 
+# Each CI job on a branch gets a unique key name like "lint-refs/heads/your-feature-branch".
+# GH actions will only let one job per unique key run if cancel-in-progress is true.
+# cancel-in-progress is always true unless the branch name is `main` - `main` jobs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   lint:
+    if: github.event.pull_request.draft != true
     name: Lint
     uses: ./.github/workflows/ci_lint.yml
 
   test:
+    if: github.event.pull_request.draft != true
     name: Test Suite
     uses: ./.github/workflows/ci_test.yml

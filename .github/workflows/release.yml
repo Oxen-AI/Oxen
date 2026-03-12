@@ -15,6 +15,10 @@ env:
   AWS_REGION: us-west-1
   PYTHON_VERSIONS: "3.13 3.12 3.11 3.10"
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
   set_env:
     name: Set env
@@ -51,7 +55,7 @@ jobs:
     needs: set_env
     uses: ./.github/workflows/release_docker.yml
     with:
-      ARCHITECTURE: x86_64
+      ARCHITECTURE: amd64
       AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
       AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
       RELEASE_VERSION: ${{ needs.set_env.outputs.release_version }}

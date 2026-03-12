@@ -4,3 +4,7 @@ release/
 .DS_Store
 data/
 logs/
+**/.claude/settings.local.json
+*.pyc
+.superset
+*.swp

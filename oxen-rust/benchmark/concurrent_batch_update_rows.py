@@ -137,21 +137,21 @@ def create_workspace() -> Workspace:
 def generate_initial_data():
     """Generate initial data with prompts and responses"""
     print(f"Generating {num_entries:,} initial entries...")
-    
+
     data = []
     for _ in tqdm(range(num_entries), desc="Generating data", unit="entries"):
         # Generate random prompt
         prompt = lorem.sentence()
-        
+
         # Generate random response
         response = lorem.paragraph()
-        
+
         data.append({
             "prompt": prompt,
             "response": response,
             "new_response": ""  # Empty initially
         })
-    
+
     return pd.DataFrame(data)
 
 
@@ -167,7 +167,7 @@ def update_row(workspace_id: str, row_id : str) -> str:
         }]
     }
     response = requests.put(
-        url, 
+        url,
         json=test_data,
         headers={"Content-Type": "application/json"}
     )
@@ -191,34 +191,34 @@ def fetch_all_rows(workspace_id: str, file_path: str, page_size: int = 1000, tot
     """Fetch all rows from the DataFrame using pagination"""
     all_rows = []
     page = 0
-    
+
     # If we don't have total_rows, we can't show a progress bar
     if total_rows is None:
         print("Fetching rows without size information...")
         while True:
             url = f"{BASE_URL}/api/repos/{TEST_NAMESPACE}/{TEST_REPO}/workspaces/{workspace_id}/data_frames/resource/{file_path}"
             params = {"page": page, "page_size": page_size}
-            
+
             response = requests.get(url, params=params)
             response.raise_for_status()
-            
+
             parsed_response = parseOxenResponse(response.json())
             if not parsed_response.data_frame:
                 raise Exception("Expected data_frame in response, got None")
-            
+
             df = parsed_response.data_frame
             current_page_rows = df.view.data
-            
+
             if not current_page_rows:
                 break
-                
+
             all_rows.extend(current_page_rows)
             print(f"Fetched page {page + 1}: {len(current_page_rows)} rows (total so far: {len(all_rows)})")
-            
+
             # If we got fewer rows than page_size, we've reached the end
             if len(current_page_rows) < page_size:
                 break
-                
+
             page += 1
     else:
         # We have total_rows, so we can show a progress bar
@@ -226,29 +226,29 @@ def fetch_all_rows(workspace_id: str, file_path: str, page_size: int = 1000, tot
             while True:
                 url = f"{BASE_URL}/api/repos/{TEST_NAMESPACE}/{TEST_REPO}/workspaces/{workspace_id}/data_frames/resource/{file_path}"
                 params = {"page": page, "page_size": page_size}
-                
+
                 response = requests.get(url, params=params)
                 response.raise_for_status()
-                
+
                 parsed_response = parseOxenResponse(response.json())
                 if not parsed_response.data_frame:
                     raise Exception("Expected data_frame in response, got None")
-                
+
                 df = parsed_response.data_frame
                 current_page_rows = df.view.data
-                
+
                 if not current_page_rows:
                     break
-                    
+
                 all_rows.extend(current_page_rows)
                 pbar.update(len(current_page_rows))
-                
+
                 # If we got fewer rows than page_size, we've reached the end
                 if len(current_page_rows) < page_size:
                     break
-                    
+
                 page += 1
-    
+
     return all_rows
 
 
@@ -260,7 +260,7 @@ def main():
         repo.create()
 
     file_name = TEST_FILE
-    
+
     # Create initial parquet file with 100,000 rows if it doesn't exist
     if not repo.file_exists(file_name):
         print(f"Creating initial {TEST_FILE} with 100,000 rows...")
@@ -281,7 +281,7 @@ def main():
     # else:
     #     print(f"Using existing workspace: {existing_workspaces[0].name}")
     #     workspace = existing_workspaces[0]
-    
+
     # Index the DataFrame
     response = requests.put(
         f"{BASE_URL}/api/repos/{TEST_NAMESPACE}/{TEST_REPO}/workspaces/{workspace.id}/data_frames/resource/{TEST_FILE}",
@@ -289,18 +289,18 @@ def main():
         json={"is_indexed": True}
     )
     response.raise_for_status()
-    
+
     # Get the total size first to know how many rows we're dealing with
     # We'll use a simple approach - fetch the first page to get size info
     print("Getting DataFrame size information...")
     size_response = requests.get(f"{BASE_URL}/api/repos/{TEST_NAMESPACE}/{TEST_REPO}/workspaces/{workspace.id}/data_frames/resource/{TEST_FILE}?page=0&page_size=1")
     size_response.raise_for_status()
-    
+
     try:
         size_data = parseOxenResponse(size_response.json())
         if not size_data.data_frame:
             raise Exception("Expected data_frame in response, got None")
-        
+
         total_rows = size_data.data_frame.size.height
         print(f"DataFrame size: {total_rows} rows x {size_data.data_frame.size.width} columns")
     except Exception as e:
@@ -313,7 +313,7 @@ def main():
         print(f"Fetching all {total_rows:,} rows using pagination...")
     else:
         print("Fetching all rows using pagination (size unknown)...")
-    
+
     all_rows = fetch_all_rows(workspace.id, TEST_FILE, total_rows=total_rows)
     print(f"Fetched {len(all_rows):,} rows total")
 
@@ -323,18 +323,18 @@ def main():
         futures : list[Future[str]] = []
         total_rows_to_process = len(all_rows)
         print(f"Submitting {total_rows_to_process:,} rows for processing...")
-        
+
         for row in tqdm(all_rows, desc="Submitting tasks", total=total_rows_to_process, unit="rows"):
             future : Future[str] = executor.submit(update_row, workspace.id, row._oxen_id)
             futures.append(future)
-        
+
         # Collect results
         print("collecting results...")
         results = []
         has_error = False
         total_rows = len(futures)
         completed_rows = 0
-        
+
         for future in tqdm(futures, desc="Collecting results", total=total_rows):
             try:
                 row_index = future.result(timeout=30)  # 30 second timeout per row
@@ -343,9 +343,9 @@ def main():
             except Exception as e:
                 has_error = True
                 print(f"Future failed: {e}")
-        
+
         print(f"Successfully processed {completed_rows}/{total_rows} rows")
-        
+
     if has_error:
         print("Some futures failed, check logs for details.")
     else:

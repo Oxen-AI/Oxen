@@ -1,4 +1,4 @@
-FROM rust:1.85.0 AS builder
+FROM rust:1.94 AS builder
 
 USER root
 RUN apt-get update
@@ -37,9 +37,9 @@ RUN apt-get update \
 # RUN cd /usr/src && cargo new --bin oxen-server
 # WORKDIR /usr/src/oxen-server
 # COPY Cargo.toml Cargo.lock ./
-# COPY src/lib/Cargo.toml src/lib/Cargo.toml
-# COPY src/cli/Cargo.toml src/cli/Cargo.toml
-# COPY src/server/Cargo.toml src/server/Cargo.toml
+# COPY crates/lib/Cargo.toml crates/lib/Cargo.toml
+# COPY crates/cli/Cargo.toml crates/cli/Cargo.toml
+# COPY crates/server/Cargo.toml crates/server/Cargo.toml
 # # build just the deps for caching
 # RUN cargo build-deps --release
 
@@ -50,7 +50,7 @@ RUN apt-get update \
 
 WORKDIR /usr/src/oxen-server
 COPY . .
-RUN cargo build --release --features ffmpeg
+RUN cargo build --workspace --release --features liboxen/ffmpeg
 
 # Minimal image to run the binary (without Rust toolchain)
 FROM debian:bookworm-slim AS runtime

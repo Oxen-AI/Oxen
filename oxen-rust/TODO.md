@@ -1,7 +1,7 @@
 # Merkle Tree Refactor
 
 * File Chunk Deduplication
-  * Contribute back to Polars the fix for 
+  * Contribute back to Polars the fix for
     * /Users/gregschoeninger/.cargo/registry/src/index.crates.io-6f17d22bba15001f/polars-io-0.41.2/src/mmap.rs
   * Biggest question is if we can reconstruct and render the large data frames efficiently...?
     * yes.

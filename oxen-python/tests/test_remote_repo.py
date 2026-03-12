@@ -106,7 +106,7 @@ def test_remote_repo_file_has_changes_file_does_not_exist(
 
 
 def test_remote_repo_dir_download_with_large_files(
-    parquet_files_remote_repo_fully_pushed: Tuple[Repo, RemoteRepo]
+    parquet_files_remote_repo_fully_pushed: Tuple[Repo, RemoteRepo],
 ):
     local_repo, remote_repo = parquet_files_remote_repo_fully_pushed
     tmp_dir = os.path.join(local_repo.path, "tmp")

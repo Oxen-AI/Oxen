@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Version bumping script to update version across Rust and Python codebases
 # Usage:
 #   ./scripts/bump-version.sh <version>  - Set specific version
@@ -7,12 +7,11 @@
 #   ./scripts/bump-version.sh patch      - Bump patch version (1.2.3 -> 1.2.4)
 # Example: ./scripts/bump-version.sh 0.39.0
 
-set -e
+set -euo pipefail
 
 # Get current version from the main Cargo.toml
 get_current_version() {
-    grep -m 1 -oE '^version = "[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?"' oxen-rust/Cargo.toml | \
-        grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?'
+    (cd oxen-rust/src/lib && cargo pkgid | cut -f2 -d@)
 }
 
 # Parse and validate semver format
@@ -62,7 +61,7 @@ bump_version() {
     echo "${major}.${minor}.${patch}"
 }
 
-ARG=$1
+ARG=${1:-}
 
 # Validate argument
 if [[ -z "$ARG" ]]; then
@@ -94,17 +93,24 @@ esac
 echo "Bumping version to $VERSION" >&2
 echo "" >&2
 
-# Update all Cargo.toml files (excluding target directories and dependencies sections)
-echo "Updating Cargo.toml files..." >&2
-find . -name "Cargo.toml" -not -path "*/target/*" -not -path "*/experiments/*" | while read -r file; do
-  # Only update the [package] version line, not dependency versions
-  if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
-  else
-    sed -i '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' "$file"
-  fi
-  echo "  ✓ $file" >&2
-done
+# Update the workspace Cargo.toml file
+echo "Updating workspace Cargo.toml file..." >&2
+# Only update the [workspace.package] version line, not dependency versions
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-rust/Cargo.toml
+else
+  sed -i '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-rust/Cargo.toml
+fi
+echo "  ✓ oxen-rust/Cargo.toml" >&2
+
+# Update the readme
+echo "Updating the rust readme..." >&2
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' 's/server:[^[:space:]]*/server:'"$VERSION"'/g' oxen-rust/README.md
+else
+  sed -i 's/server:[^[:space:]]*/server:'"$VERSION"'/g' oxen-rust/README.md
+fi
+echo "  ✓ oxen-rust/README.md" >&2
 
 # Update pyproject.toml
 echo "Updating pyproject.toml..." >&2
@@ -118,7 +124,7 @@ echo "  ✓ oxen-python/pyproject.toml" >&2
 # Update lock files (only workspace packages, not all dependencies)
 echo "Updating lock files..." >&2
 echo "  Updating oxen-rust/Cargo.lock..." >&2
-(cd oxen-rust && cargo update -p liboxen -p oxen-cli -p oxen-server --quiet)
+(cd oxen-rust && cargo update --workspace --quiet) #cargo update -p liboxen -p oxen-cli -p oxen-server -p oxen-bench --quiet)
 echo "  ✓ oxen-rust/Cargo.lock" >&2
 
 echo "  Updating oxen-python/Cargo.lock and uv.lock..." >&2
@@ -136,9 +142,10 @@ git status --short >&2
 echo "" >&2
 echo "Committing changes..." >&2
 # Add only the files modified by this script
-find . -name "Cargo.toml" -not -path "*/target/*" -not -path "*/experiments/*" -exec git add {} \;
 git add oxen-python/pyproject.toml
+git add oxen-rust/Cargo.toml
 git add oxen-rust/Cargo.lock
+git add oxen-rust/README.md
 git add oxen-python/Cargo.lock
 git add oxen-python/uv.lock
 git commit -m "Bump v$VERSION" >&2

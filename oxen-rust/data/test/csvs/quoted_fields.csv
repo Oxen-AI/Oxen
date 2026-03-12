@@ -1,0 +1,11 @@
+name,description,value
+Alice,"Has a comma, in description",10
+Bob,"Normal description",20
+Charlie,"Has ""escaped"" quotes",30
+Diana,"Another comma, here",40
+Eve,"Plain text",50
+Frank,"Commas, commas, everywhere",60
+Grace,"Nothing special",70
+Hank,"Yet another, comma",80
+Ivy,"Simple",90
+Jack,"Final, entry",100
