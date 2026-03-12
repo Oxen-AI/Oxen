@@ -68,3 +68,10 @@ repos:
         language: system
         files: ^scripts/.*\.py$
         pass_filenames: false
+
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck -x
+        language: system
+        types: [shell]
+        files: \.sh$
