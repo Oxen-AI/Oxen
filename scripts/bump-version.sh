@@ -121,6 +121,15 @@ else
 fi
 echo "  ✓ oxen-python/pyproject.toml" >&2
 
+# Update oxen-python/Cargo.toml
+echo "Updating oxen-python/Cargo.toml..." >&2
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/Cargo.toml
+else
+  sed -i '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/Cargo.toml
+fi
+echo "  ✓ oxen-python/Cargo.toml" >&2
+
 # Update lock files (only workspace packages, not all dependencies)
 echo "Updating lock files..." >&2
 echo "  Updating oxen-rust/Cargo.lock..." >&2
@@ -143,6 +152,7 @@ echo "" >&2
 echo "Committing changes..." >&2
 # Add only the files modified by this script
 git add oxen-python/pyproject.toml
+git add oxen-python/Cargo.toml
 git add oxen-rust/Cargo.toml
 git add oxen-rust/Cargo.lock
 git add oxen-rust/README.md
