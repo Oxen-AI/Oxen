@@ -153,7 +153,7 @@ Set where you want the data to be synced to. The default sync directory is `./da
 export SYNC_DIR=/path/to/sync/dir
 ```
 
-You can also create a .env.local file in the /src/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
+You can also create a .env.local file in the /crates/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
 
 Run the server
 
@@ -250,28 +250,28 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use the following script to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
+You can use [the following script](./scripts/test-rust.sh) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
 
 ```bash
-scripts/test-rust
+scripts/test-rust.sh
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```bash
-scripts/test-rust --lib test_get_metadata_text_readme
+scripts/test-rust.sh --lib test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust --no-capture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust.sh --no-capture test_command_push_clone_pull_push
 ```
 
 To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
 ```bash
-env OXEN_PORT=4000 scripts/test-rust
+env OXEN_PORT=4000 scripts/test-rust.sh
 ```
 
 
@@ -312,7 +312,7 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.45.0 .
+docker build -t oxen/server:0.46.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.

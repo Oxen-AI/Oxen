@@ -10,4 +10,4 @@ publish = false
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
 heed = "0.22.0"
-liboxen  = { path = "../../src/lib" }
+liboxen  = { path = "../../crates/lib" }

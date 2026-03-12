@@ -1,5 +1,6 @@
 use crate::api;
 use crate::api::client;
+use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 
@@ -18,42 +19,80 @@ pub async fn upload_zip(
     let branch_name = branch_name.as_ref();
     let directory = directory.as_ref();
     let zip_path = zip_path.as_ref();
+
     let name = name.as_ref();
     let email = email.as_ref();
 
-    // Read the ZIP file
-    let zip_data = std::fs::read(zip_path)?;
+    // Read the ZIP file into memory once for potential retries
+    // NOTE: bytes::Bytes wraps the Vec<u8> into an Arc internally.
+    //       We need to move into `reqwest.multipart::Part::bytes`, but with retries, we don't want
+    //       to actually clone the data. This wrapper makes it cheap to clone as we're just
+    //       incrementing the arc's internal reference count.
+    let zip_data = bytes::Bytes::from(tokio::fs::read(zip_path).await?);
+    let len_zip_data = zip_data.len() as u64;
     let file_name = zip_path
         .file_name()
         .ok_or_else(|| OxenError::basic_str("Invalid ZIP file path"))?
-        .to_string_lossy();
+        .to_string_lossy()
+        .to_string();
 
-    // Create the URL for workspace ZIP upload endpoint
     let uri = format!("/import/upload/{branch_name}/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let commit_msg = commit_message.map(|m| m.as_ref().to_string());
 
-    // Create multipart form
-    let file_part = reqwest::multipart::Part::bytes(zip_data).file_name(file_name.to_string());
+    let config = retry::RetryConfig::default();
+    retry::with_retry(&config, |_attempt| {
+        let url = url.clone();
+        let zip_data = zip_data.clone();
+        let file_name = file_name.clone();
+        let name = name.to_string();
+        let email = email.to_string();
+        let directory = directory.to_string();
+        let commit_msg = commit_msg.clone();
+        async move {
+            let form = make_multipart_form(
+                zip_data,
+                len_zip_data,
+                file_name,
+                name,
+                email,
+                directory,
+                commit_msg,
+            );
+
+            let client = client::new_for_url_transfer(&url)?;
+            let response = client.post(&url).multipart(form).send().await?;
+            let body = client::parse_json_body(&url, response).await?;
+            let response: crate::view::CommitResponse = serde_json::from_str(&body)
+                .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
+            Ok(response.commit)
+        }
+    })
+    .await
+}
+
+fn make_multipart_form<T: Into<reqwest::Body>>(
+    zip_data: T,
+    len_zip_data: u64,
+    file_name: String,
+    name: String,
+    email: String,
+    directory: String,
+    commit_msg: Option<String>,
+) -> reqwest::multipart::Form {
+    let file_part =
+        reqwest::multipart::Part::stream_with_length(zip_data, len_zip_data).file_name(file_name);
+
     let mut form = reqwest::multipart::Form::new()
         .part("file", file_part)
-        .text("name", name.to_string())
-        .text("email", email.to_string())
-        .text("resource_path", directory.to_string());
+        .text("name", name)
+        .text("email", email)
+        .text("resource_path", directory);
 
-    if let Some(msg) = commit_message {
-        form = form.text("commit_message", msg.as_ref().to_string());
+    if let Some(msg) = commit_msg {
+        form = form.text("commit_message", msg);
     }
-
-    // Send the request
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-
-    // Parse the response
-    let response: crate::view::CommitResponse = serde_json::from_str(&body)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
-
-    Ok(response.commit)
+    form
 }
 
 #[cfg(test)]

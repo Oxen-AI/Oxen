@@ -39,6 +39,12 @@ pub struct UploadResult {
     pub err_files: Vec<ErrorFileInfo>,
 }
 
+/// All of the paths that failed to transfer to the remote repository during an upload operation.
+///
+/// When uploading many files, if most of them succeed, we don't want to treat the entire operation
+/// as an `Err`. Uploads can have partial success.
+pub type UploadFails = Vec<ErrorFileInfo>;
+
 // TODO: Test adding removed files
 pub async fn add(
     remote_repo: &RemoteRepository,
@@ -46,13 +52,13 @@ pub async fn add(
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-) -> Result<(), OxenError> {
+) -> Result<UploadFails, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
     // If no paths provided, return early
     if paths.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
 
     // Parse glob paths
@@ -67,46 +73,40 @@ pub async fn add(
     let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref())?;
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
     // TODO: add a progress bar
-    // TODO: need to handle error files and not display the `oxen added` message if files weren't added
 
-    match match local_repo {
-        Some(local_repo) => {
-            let local = LocalOrBase::Local(local_repo.clone());
-            upload_multiple_files(
-                remote_repo,
-                workspace_id,
-                directory,
-                expanded_paths.clone(),
-                Some(&local),
-                false,
-            )
-            .await
+    let n_expected_uploads = expanded_paths.len();
+
+    let upload_result = upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        directory,
+        expanded_paths,
+        local_repo
+            .clone()
+            .map(|local| LocalOrBase::Local(local.clone()))
+            .as_ref(),
+    )
+    .await;
+
+    match upload_result {
+        Ok(failed_to_upload) => {
+            print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
+            Ok(failed_to_upload)
         }
-        None => {
-            upload_multiple_files(
-                remote_repo,
-                workspace_id,
-                directory,
-                expanded_paths.clone(),
-                None,
-                false,
-            )
-            .await
-        }
-    } {
-        Ok(()) => {
-            println!(
-                "🐂 oxen added {} entries to workspace {}",
-                expanded_paths.len(),
-                workspace_id
-            );
-        }
-        Err(e) => {
-            return Err(e);
-        }
+        error => error,
     }
+}
 
-    Ok(())
+fn print_add_result(workspace_id: &str, n_total: usize, failed_to_upload: &[ErrorFileInfo]) {
+    let n_fail = failed_to_upload.len();
+    if n_fail == 0 {
+        println!("🐂 oxen added {n_total} entries to workspace {workspace_id}");
+    } else {
+        let n_success = n_total - n_fail;
+        println!(
+            "🐂 oxen added {n_success} entries to workspace {workspace_id} but 😱 failed to upload {n_fail} entries",
+        );
+    }
 }
 
 pub struct AddResult {
@@ -159,7 +159,7 @@ pub async fn add_files(
     workspace_id: impl AsRef<str>,
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
-) -> Result<(), OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
@@ -183,7 +183,7 @@ pub async fn add_files(
 
     let base_dir_enum = LocalOrBase::Base(base_dir);
 
-    let n_paths_uploaded = paths.len();
+    let n_expected_uploads = paths.len();
     match upload_multiple_files(
         remote_repo,
         workspace_id,
@@ -192,19 +192,15 @@ pub async fn add_files(
         //    for a single API call.
         paths,
         Some(&base_dir_enum),
-        true,
     )
     .await
     {
-        Ok(()) => {
-            println!("🐂 oxen added {n_paths_uploaded} entries to workspace {workspace_id}");
+        Ok(failed_to_upload) => {
+            print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
+            Ok(failed_to_upload)
         }
-        Err(e) => {
-            return Err(e);
-        }
+        error => error,
     }
-
-    Ok(())
 }
 
 pub async fn add_bytes(
@@ -280,10 +276,9 @@ async fn upload_multiple_files(
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
-    strict_errors: bool,
-) -> Result<(), OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if paths.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
 
     let workspace_id = workspace_id.as_ref();
@@ -296,6 +291,8 @@ async fn upload_multiple_files(
     let mut large_files_size = 0;
     let mut small_files = Vec::new();
     let mut small_files_size = 0;
+
+    let mut failed_to_upload = vec![];
 
     // Group files by size
     for path in paths {
@@ -310,12 +307,8 @@ async fn upload_multiple_files(
         };
 
         if !path.exists() {
-            let msg = format!("File does not exist: {path:?}");
-            if strict_errors {
-                return Err(OxenError::basic_str(msg));
-            }
-            log::warn!("{msg}");
-            continue;
+            log::debug!("Path does not exist: {path:?}");
+            return Err(OxenError::path_does_not_exist(path));
         }
 
         match path.metadata() {
@@ -332,12 +325,8 @@ async fn upload_multiple_files(
                 }
             }
             Err(err) => {
-                let msg = format!("Failed to get metadata for file {path:?}: {err}");
-                if strict_errors {
-                    return Err(OxenError::basic_str(msg));
-                }
-                log::warn!("{msg}");
-                continue;
+                log::debug!("Failed to get metadata for file {path:?}: {err}");
+                return Err(OxenError::file_metadata_error(path, err));
             }
         }
     }
@@ -355,6 +344,8 @@ async fn upload_multiple_files(
             Some(LocalOrBase::Local(_)) | None => directory.to_path_buf(),
         };
 
+        let hash = util::hasher::hash_file_contents(&path).unwrap_or_default();
+
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             &path,
@@ -366,12 +357,20 @@ async fn upload_multiple_files(
         .await
         {
             Ok(_) => log::debug!("Successfully uploaded large file: {path:?}"),
-            Err(err) => log::error!("Failed to upload large file {path:?}: {err}"),
+            Err(err) => {
+                let msg = format!("Failed to upload large file {path:?}");
+                log::error!("{msg}: {err}");
+                failed_to_upload.push(ErrorFileInfo {
+                    hash,
+                    path: Some(path),
+                    error: msg,
+                });
+            }
         }
     }
 
     // Upload small files in batches
-    parallel_batched_small_file_upload(
+    let err_files_small_upload = parallel_batched_small_file_upload(
         remote_repo,
         workspace_id,
         directory,
@@ -381,7 +380,9 @@ async fn upload_multiple_files(
     )
     .await?;
 
-    Ok(())
+    failed_to_upload.extend(err_files_small_upload);
+
+    Ok(failed_to_upload)
 }
 
 pub(crate) async fn parallel_batched_small_file_upload(
@@ -391,9 +392,9 @@ pub(crate) async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
-) -> Result<(), OxenError> {
+) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if small_files.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
 
     let (base_or_repo_path, head_commit_local_repo_maybe, keep_relative_paths) = match local_or_base
@@ -447,7 +448,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
     }
 
     // Create a client for uploading batches
-    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let client = Arc::new(api::client::new_for_host_transfer(remote_repo.url())?);
 
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
@@ -748,18 +749,35 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
     let err_files = mutex.into_inner();
 
+    // Check for fatal operational errors (channel failures, compression errors, etc.)
+    let operational_errors = match Arc::try_unwrap(errors) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(e) => {
+            let err = format!("Couldn't acquire mutex guard for errors: {e:?}");
+            log::error!("{err}");
+            return Err(OxenError::basic_str(&err));
+        }
+    };
+
     log::debug!("All upload tasks completed");
     progress.finish();
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
-    if !err_files.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Failed to upload {} files after retry",
-            err_files.len()
-        )));
+    if !operational_errors.is_empty() {
+        log::error!(
+            "Encountered {} fatal error(s) during upload",
+            operational_errors.len()
+        );
+        // Return the first fatal error — these indicate batch-level failures
+        // (e.g. channel send, staging) that aren't captured per-file in err_files.
+        return Err(operational_errors.into_iter().next().unwrap());
     }
 
-    Ok(())
+    if !err_files.is_empty() {
+        log::error!("Failed to upload {} files after retry", err_files.len());
+        Ok(err_files)
+    } else {
+        Ok(vec![])
+    }
 }
 
 // Retry stage_files_to_workspace until successful or retry limit breached
@@ -1275,6 +1293,8 @@ mod tests {
             )
             .await;
             assert!(result.is_ok());
+            let result = result.unwrap();
+            assert!(result.is_empty(), "{:?}", result);
 
             let page_num = constants::DEFAULT_PAGE_NUM;
             let page_size = constants::DEFAULT_PAGE_SIZE;
