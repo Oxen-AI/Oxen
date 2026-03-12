@@ -6,7 +6,6 @@ use crate::model::commit::NewCommitBody;
 use crate::view::CommitResponse;
 use crate::{api, util::internal_types::HasLen};
 
-use aws_config::default_provider::retry_config;
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
@@ -73,9 +72,7 @@ async fn put_multipart_file(
     retry::with_retry(config, |_attempt| {
         let file_data = file_data.clone(); // cloning is cheap: it's essentially an Arc<[u8]>
         let client = client.clone(); // HTTP client is also an Arc<inner client>
-        let file_name = file_name.clone(); // cloning a string is cheap:
         let url = url.clone(); // it's just the length + pointer
-        let commit_body = commit_body.clone(); // the Some(.) variant has a pointer: cheap clones
 
         async move {
             let file_part = make_file_part(file_data, file_name).await?;
