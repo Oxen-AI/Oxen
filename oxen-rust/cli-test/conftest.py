@@ -28,28 +28,28 @@ def run_system_command(cmd: str, cwd: Optional[str] = None) -> None:
 
 class CLIRunner:
     """Helper class for running CLI commands."""
-    
+
     def __init__(self, executable: str = "oxen"):
         self.executable = executable
-    
-    def run(self, *args, input_text: Optional[str] = None, cwd: Optional[str] = None, 
+
+    def run(self, *args, input_text: Optional[str] = None, cwd: Optional[str] = None,
             check: bool = True, timeout: Optional[int] = None) -> subprocess.CompletedProcess:
         """
         Run the CLI with the given arguments.
-        
+
         Args:
             *args: Command line arguments to pass to the CLI
             input_text: Optional input text to send to the command
             cwd: Optional working directory
             check: If True, raise an exception if the command fails
             timeout: Optional timeout in seconds
-            
+
         Returns:
             subprocess.CompletedProcess object with stdout, stderr, and returncode
         """
         cmd = [self.executable] + list(args)
         print(f"Running: {' '.join(cmd)}")
-        
+
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -58,16 +58,16 @@ class CLIRunner:
             cwd=cwd,
             timeout=timeout
         )
-        
+
         if check and result.returncode != 0:
             raise RuntimeError(
                 f"Command failed with exit code {result.returncode}\n"
                 f"Command: {' '.join(cmd)}\n"
                 f"Stderr: {result.stderr}"
             )
-        
+
         return result
-    
+
     def run_raw(self, cmd: str, cwd: Optional[str] = None, check: bool = True) -> subprocess.CompletedProcess:
         """Run a raw shell command."""
         print(f"Running: {cmd}")
@@ -100,9 +100,9 @@ def setup_test_environment(tmp_path):
         shell=True,
         capture_output=True
     )
-    
+
     yield
-    
+
     # Cleanup after test
     subprocess.run(
         "oxen delete-remote --name ox/performance-test --host localhost:3000 -y --scheme http",
@@ -121,9 +121,9 @@ def test_dir(tmp_path) -> Generator[Path, None, None]:
     test_path = tmp_path / "test_workspace"
     test_path.mkdir(parents=True, exist_ok=True)
     os.chdir(test_path)
-    
+
     yield test_path
-    
+
     os.chdir(original_dir)
 
 

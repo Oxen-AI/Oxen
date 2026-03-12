@@ -241,9 +241,9 @@ def test_data_frame_add_column(celeba_remote_repo_fully_pushed):
     df.insert_row(new_row)
     # Get the columns
     columns = df.get_columns()
-    assert (
-        len(columns) == 3
-    ), "DataFrame should have 3 columns (plus the _oxen_id column)"
+    assert len(columns) == 3, (
+        "DataFrame should have 3 columns (plus the _oxen_id column)"
+    )
 
     # Add a column
     df.add_column("new_column", "str")

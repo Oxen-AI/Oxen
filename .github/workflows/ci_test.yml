@@ -1,4 +1,4 @@
-name: 🐂 Continuous integration - Test Suite
+name: 🐂📝 Continuous integration - Test Suite
 
 on:
   workflow_call:
@@ -7,16 +7,22 @@ jobs:
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
             platform: linux
+            shell: bash -leo pipefail {0}
           - os: macos-latest
             platform: macos
+            shell: bash -leo pipefail {0}
           - os: windows-latest
             platform: windows
+            shell: powershell
       fail-fast: false
 
     env:
@@ -152,7 +158,7 @@ jobs:
       - name: Build oxen-rust
         run: |
           cd ${{ github.workspace }}/oxen-rust
-          cargo build
+          cargo build --workspace
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
@@ -173,14 +179,14 @@ jobs:
         run: |
           cd ${{ github.workspace }}/oxen-rust
           ./target/debug/oxen-server start &
-          cargo nextest run --profile ci
+          cargo nextest run --workspace --profile ci
 
       - name: Run oxen-rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-rust
           Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo nextest run --profile ci
+          cargo nextest run --workspace --profile ci
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)

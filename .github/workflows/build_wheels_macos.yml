@@ -1,4 +1,4 @@
-name: 🍏 Build macOS Wheels
+name: 🧪🍏 Build macOS Wheels
 
 on:
   workflow_call:
@@ -18,6 +18,10 @@ on:
 
 env:
   MACOSX_DEPLOYMENT_TARGET: 10.13
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
 
 jobs:
   build_wheels:

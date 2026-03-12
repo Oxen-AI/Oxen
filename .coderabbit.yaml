@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# IMPORTANT: CodeRabbit reads this file from the BASE branch (e.g. main),
+# not from the PR branch. Merge this into your default branch first,
+# then open new PRs to see the changes take effect.
+
+language: "en-US"
+
+reviews:
+  # We want to generate a PR summary, but...
+  high_level_summary: true
+
+  # don't edit the PR description.
+  # Instead, put it in CodeRabbit's own walkthrough comment.
+  high_level_summary_in_walkthrough: true
+
+  # Clear the placeholder so that even if "@coderabbitai summary"
+  # appears in the PR description, CodeRabbit won't inject into it.
+  high_level_summary_placeholder: ""
+
+  # Prevent CodeRabbit from auto-generating PR titles.
+  auto_title_placeholder: ""
+
+  # Re-review on every push so the walkthrough comment stays current.
+  auto_review:
+    enabled: true
+    auto_incremental_review: true

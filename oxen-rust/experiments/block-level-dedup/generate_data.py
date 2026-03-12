@@ -1,6 +1,6 @@
 import csv
 import os
-import random 
+import random
 import string
 import time
 import io
@@ -9,7 +9,7 @@ TARGET_SIZE_GB = 10
 
 FILENAME = "large_filler.csv"
 
-ROWS_PER_CHUNK = 20000 
+ROWS_PER_CHUNK = 20000
 REPORT_INTERVAL_SECONDS = 2
 
 COLUMN_NAMES = [
@@ -58,7 +58,7 @@ def create_data_block_string(num_rows):
     """
     string_io = io.StringIO()
     temp_csv_writer = csv.writer(string_io, lineterminator='\n')
-    
+
     for _ in range(num_rows):
         temp_csv_writer.writerow(FIXED_ROW_VALUES)
 
@@ -108,33 +108,33 @@ def main():
                 rows_written += ROWS_PER_CHUNK
                 current_time = time.time()
                 if current_time - last_report_time >= REPORT_INTERVAL_SECONDS:
-                    csvfile.flush() 
+                    csvfile.flush()
                     current_size_bytes = os.path.getsize(FILENAME)
                     elapsed_time = current_time - start_time
                     gb_written = current_size_bytes / (1024**3)
                     speed_mb_s = 0
                     if elapsed_time > 0:
                         speed_mb_s = (current_size_bytes / (1024**2)) / elapsed_time
-                    
+
                     print(f"\rWritten: {rows_written // ROWS_PER_CHUNK:>8,} blocks ({rows_written:,} pseudo-rows) | Size: {gb_written:>6.2f} GB / {TARGET_SIZE_GB} GB "
                           f"| Speed: {speed_mb_s:>6.2f} MB/s | Elapsed: {elapsed_time:>5.0f}s", end="")
                     last_report_time = current_time
-            
+
             csvfile.flush()
-            current_size_bytes = os.path.getsize(FILENAME) 
+            current_size_bytes = os.path.getsize(FILENAME)
 
 
             terminal_width = 80
             try: terminal_width = os.get_terminal_size().columns
             except OSError: pass
-            print(f"\r{' ' * (terminal_width -1)}\r", end="") 
+            print(f"\r{' ' * (terminal_width -1)}\r", end="")
 
             elapsed_time = time.time() - start_time
             gb_written = current_size_bytes / (1024**3)
             avg_speed_mb_s = 0
             if elapsed_time > 0 :
                 avg_speed_mb_s = (current_size_bytes / (1024**2)) / elapsed_time
-            
+
             print(f"Finished generation!")
             print(f"Total pseudo-rows written (blocks * rows_per_block): {rows_written:,}")
             print(f"Final file size: {gb_written:.3f} GB (Target: {TARGET_SIZE_GB} GB)")

@@ -26,7 +26,7 @@ The CLI and server both depend on the shared library to avoid code duplication. 
 
 ## Key Components
 
-### Core Architecture (`src/lib/src/`)
+### Core Architecture (`crates/lib/src/`)
 - **`core/`** - Core data structures and database operations (RocksDB for metadata, DuckDB for tabular data)
 - **`model/`** - Data structures representing commits, branches, entries, diffs, etc.
 - **`repositories/`** - Repository operations (init, clone, add, commit, push, pull, etc.) - Most high-level operations start here
@@ -41,12 +41,12 @@ The CLI and server both depend on the shared library to avoid code duplication. 
 ## Common Development Commands
 
 *IMPORTANT*: Our codebase assumes cargo commands are run on the whole workspace, from the workspace root, _NOT_ on specific packages.
-GOOD: `cargo check`
+GOOD: `cargo check --workspace`
 BAD: `cargo check --package liboxen`
 
 ### Building
 ```bash
-cargo build                           # Debug build
+cargo build --workspace                           # Debug build
 ```
 
 ### Testing
@@ -69,9 +69,9 @@ env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo test -- --nocapture
 
 ### Code Quality
 ```bash
-cargo fmt                              # Format code
-cargo clippy --no-deps -- -D warnings  # Lint code
-pre-commit run --all-files             # Run pre-commit hooks (runs format and lint)
+cargo fmt --all                                    # Format code
+cargo clippy --workspace --no-deps -- -D warnings  # Lint code
+pre-commit run --all-files                         # Run pre-commit hooks (runs format and lint)
 ```
 
 ### Server Development
@@ -100,9 +100,8 @@ oxen push origin main               # Push to remote
 - Implement proper error propagation through the `?` operator
 
 # Testing Rules
-- Use the test helpers in `src/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
+- Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
 - Try to use the minimal helper for the scenario you are testing. E.g., don't use `run_training_data_fully_sync_remote` when `run_one_commit_local_repo_test` is enough.
 - When possible, put tests in the higher-level `repositories` module rather than the lower-level, version-specific implementation.
     - e.g., Tests should go in `repositories/commits.rs` rather than `core/v_latest/commits.rs`.
 - Tests create unique temporary directories and clean up automatically
-

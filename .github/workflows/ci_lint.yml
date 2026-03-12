@@ -1,7 +1,11 @@
-name: 🐂 Continuous integration - Lint
+name: 🐂🔎 Continuous integration - Lint
 
 on:
   workflow_call:
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
 
 jobs:
   check:
@@ -34,39 +38,12 @@ jobs:
             oxen-rust
             oxen-python
 
-      - name: Install system dependencies (Linux)
+      - name: Install dependencies and development tools
         run: |
-          sudo apt-get update
-          sudo apt install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
+          cd ${{ github.workspace }}
+          ./scripts/install-pre-reqs.sh
 
-      - name: Cargo Check
+      - name: Run Pre-Commit Hooks
         run: |
-          cd ${{ github.workspace }}/oxen-rust
-          # cargo build
-          cargo check --all-features
-
-          cd ${{ github.workspace }}/oxen-python
-          cargo build
-          # cargo check --all-targets --all-features
-
-      - name: Cargo Format
-        run: |
-          cd ${{ github.workspace }}/oxen-rust
-          cargo fmt --all -- --check
-
-          cd ${{ github.workspace }}/oxen-python
-          cargo fmt --all -- --check
-
-      - name: Cargo Clippy
-        run: |
-          cd ${{ github.workspace }}/oxen-rust
-          cargo clippy --no-deps -- -D warnings
-
-          cd ${{ github.workspace }}/oxen-python
-          cargo clippy --no-deps -- -D warnings
-
-      - name: Ruff check
-        run: |
-          cd ${{ github.workspace }}/oxen-python
-
-          uvx ruff check .
+          cd ${{ github.workspace }}
+          pre-commit run --verbose --all-files

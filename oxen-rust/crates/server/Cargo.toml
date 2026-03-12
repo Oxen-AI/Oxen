@@ -1,0 +1,58 @@
+[package]
+name = "oxen-server"
+version = { workspace = true }
+edition = { workspace = true }
+license-file = { workspace = true }
+description = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+categories = ["science", "multimedia", "database"]
+
+[package.metadata.cargo-machete]
+ignored = ["astral-tokio-tar"]
+
+[[bin]]
+name = "oxen-server"
+path = "src/main.rs"
+
+[dependencies]
+actix-http = { workspace = true }
+actix-multipart = { workspace = true }
+actix-web = { workspace = true }
+actix-web-httpauth = { workspace = true }
+astral-tokio-tar = { workspace = true }
+async-compression = { workspace = true }
+async_zip = { workspace = true }
+bytesize = { workspace = true }
+clap = { workspace = true }
+derive_more = { workspace = true }
+dotenv = { workspace = true }
+dunce = { workspace = true }
+flate2 = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }
+jsonwebtoken = { workspace = true }
+liboxen = { path = "../lib" }
+log = { workspace = true }
+lru = { workspace = true }
+mime = { workspace = true }
+os_path = { workspace = true }
+percent-encoding = { workspace = true }
+regex = { workspace = true }
+rocksdb = { workspace = true }
+sanitize-filename = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+url = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+actix-multipart-test = { workspace = true }

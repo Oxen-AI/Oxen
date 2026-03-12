@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 
-from .oxen import PyCommit, PyWorkspace
+from .oxen import PyCommit, PyErrorFileInfo, PyWorkspace
 
 # Use TYPE_CHECKING for type hints to avoid runtime circular imports
 if TYPE_CHECKING:
@@ -36,14 +36,18 @@ class Workspace:
     workspace = Workspace(repo, "my-branch")
 
     # Add a file to the workspace
-    workspace.add("my-image.png")
+    failed_to_upload = workspace.add("my-image.png", raise_on_failure=False)
+    assert len(failed_to_upload) == 0
+
+    # Or raise an exception if any files fail to upload
+    workspace.add("my-image-final-final.png")
 
     # Print the status of the workspace
     status = workspace.status()
     print(status.added_files())
 
     # Commit the workspace
-    workspace.commit("Adding my image to the workspace.")
+    workspace.commit("Adding my images to the workspace.")
     ```
     """
 
@@ -125,7 +129,7 @@ class Workspace:
         """
         return self._repo
 
-    def status(self, path: str = "") -> None:
+    def status(self, path: str = ""):
         """
         Get the status of the workspace.
 
@@ -136,8 +140,11 @@ class Workspace:
         return self._workspace.status(path)
 
     def add(
-        self, src: str | Iterable[str] | Path | Iterable[Path], dst: str = ""
-    ) -> None:
+        self,
+        src: str | Iterable[str] | Path | Iterable[Path],
+        dst: str = "",
+        raise_on_failure: bool = True,
+    ) -> list[PyErrorFileInfo]:
         """
         Add files to the workspace.
 
@@ -151,6 +158,15 @@ class Workspace:
                 The path(s) to the local file(s) to be staged.
             dst: `str`
                 The path in the remote repo where the file(s) will be added.
+            raise_on_failure: `bool`
+                Whether to raise an exception if any files fail to upload.
+                By default, raises an exception. Set to `False` to return
+                a list of failed file paths instead.
+
+        Returns:
+            A list of `PyErrorFileInfo` for files that failed to upload.
+            An empty list means all files were uploaded successfully.
+            Each entry has `.hash`, `.path`, and `.error` attributes.
 
         Raises:
             ValueError if the provided input is not a valid filepath, an invalid
@@ -185,7 +201,63 @@ class Workspace:
                 raise ValueError(
                     "No valid filepaths provided: adding nothing to a workspace is invalid."
                 )
-        self._workspace.add(paths, dst)
+
+        failed_to_upload = self._workspace.add(paths, dst)
+
+        if raise_on_failure and len(failed_to_upload) > 0:
+            raise ValueError(f"Failed to upload {len(failed_to_upload)} files.")
+        return failed_to_upload
+
+    def add_files(
+        self,
+        base_dir: str | Path,
+        paths: Iterable[str] | Iterable[Path],
+        raise_on_failure: bool = True,
+    ) -> list[PyErrorFileInfo]:
+        """
+        A workspace add that preserves relative paths of files that share a common base.
+
+        Unlike `add`, which places files into a flat destination directory,
+        this method uses each file's path relative to the supplied base directory as
+        its staging path on the server.
+
+        The `base_dir` serves as a stand-in for the root of the remote repository. The key
+        use of `add_files` is to import a large file tree into an existing repository.
+
+        For example, a file at
+        ``repo/data/images/cat.jpg`` will be staged as ``data/images/cat.jpg``.
+
+        Args:
+            base_dir: `str` | `Path`
+                The base directory: all added files share this as an ancestor.
+            paths: `Iterable[str]` | `Iterable[Path]`
+                The file paths to add. Can be absolute or relative to the
+                base directory. Each path must point to an existing file.
+            raise_on_failure: `bool`
+                Whether to raise an exception if any files fail to upload.
+                By default, raises an exception. Set to `False` to return
+                a list of failed file paths instead.
+
+        Returns:
+            A list of `PyErrorFileInfo` for files that failed to upload.
+            An empty list means all files were uploaded successfully.
+            Each entry has `.hash`, `.path`, and `.error` attributes.
+
+        Raises:
+            PyOxenError: If no valid file paths are provided.
+        """
+        base_dir = Path(base_dir).absolute()
+        resolved: list[str] = []
+        for p in paths:
+            p = Path(p)
+            abs_path = p if p.is_absolute() else (base_dir / p).absolute()
+            resolved.append(str(abs_path))
+
+        failed_to_upload = self._workspace.add_files(str(base_dir), resolved)
+
+        if raise_on_failure and len(failed_to_upload) > 0:
+            raise ValueError(f"Failed to upload {len(failed_to_upload)} files.")
+        return failed_to_upload
 
     def add_bytes(self, src: str, buf: bytes, dst: str = "") -> None:
         """
