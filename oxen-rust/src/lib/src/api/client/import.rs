@@ -4,7 +4,6 @@ use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 
-use std::borrow::Cow;
 use std::path::Path;
 
 /// Upload a ZIP file that gets extracted into the workspace directory
@@ -72,17 +71,18 @@ pub async fn upload_zip(
     .await
 }
 
-fn make_multipart_form<T: Into<reqwest::Body>, S: Into<Cow<'static, str>>>(
+fn make_multipart_form<T: Into<reqwest::Body>>(
     zip_data: T,
     len_zip_data: u64,
-    file_name: S,
-    name: S,
-    email: S,
-    directory: S,
-    commit_msg: Option<S>,
+    file_name: String,
+    name: String,
+    email: String,
+    directory: String,
+    commit_msg: Option<String>,
 ) -> reqwest::multipart::Form {
-    let file_part = reqwest::multipart::Part::stream_with_length(zip_data, len_zip_data)
-        .file_name(file_name.into());
+    let file_part =
+        reqwest::multipart::Part::stream_with_length(zip_data, len_zip_data).file_name(file_name);
+
     let mut form = reqwest::multipart::Form::new()
         .part("file", file_part)
         .text("name", name)

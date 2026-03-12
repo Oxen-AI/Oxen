@@ -1,11 +1,12 @@
-use crate::api;
 use crate::api::client;
 use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::model::commit::NewCommitBody;
 use crate::view::CommitResponse;
+use crate::{api, util::internal_types::HasLen};
 
+use aws_config::default_provider::retry_config;
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
@@ -21,40 +22,102 @@ pub async fn put_file(
 ) -> Result<CommitResponse, OxenError> {
     let branch = branch.as_ref();
     let directory = directory.as_ref();
-    let file_path = file_path.as_ref();
-    let file_name_str = file_name.map(|f| f.as_ref().to_string());
-    let uri = format!("/file/{branch}/{directory}");
-    log::debug!("put_file {uri:?}, file_path {file_path:?}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    put_multipart_file(
+        remote_repo,
+        &format!("/file/{branch}/{directory}"),
+        "files[]",
+        file_path.as_ref(),
+        file_name.as_ref().map(|s| s.as_ref()),
+        commit_body.as_ref(),
+        &retry::RetryConfig::default(),
+    )
+    .await
+}
 
-    let config = retry::RetryConfig::default();
-    retry::with_retry(&config, |_attempt| {
-        let url = url.clone();
-        let file_name_str = file_name_str.clone();
-        let commit_body = commit_body.clone();
+pub async fn put_file_to_path(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    file_path_on_repo: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let file_path_on_repo = file_path_on_repo.as_ref();
+    put_multipart_file(
+        remote_repo,
+        &format!("/file/{branch}/{file_path_on_repo}"),
+        "file",
+        file_path.as_ref(),
+        file_name.as_ref().map(|s| s.as_ref()),
+        commit_body.as_ref(),
+        &retry::RetryConfig::default(),
+    )
+    .await
+}
+async fn put_multipart_file(
+    remote_repo: &RemoteRepository,
+    uri: &str,
+    field_name: &'static str,
+    file_path: &Path,
+    file_name: Option<&str>,
+    commit_body: Option<&NewCommitBody>,
+    config: &retry::RetryConfig,
+) -> Result<CommitResponse, OxenError> {
+    log::debug!("put_multipart_file {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, uri)?;
+    let client = client::new_for_host_transfer(&url)?;
+
+    let file_data = bytes::Bytes::from(tokio::fs::read(file_path).await?);
+
+    retry::with_retry(config, |_attempt| {
+        let file_data = file_data.clone(); // cloning is cheap: it's essentially an Arc<[u8]>
+        let client = client.clone(); // HTTP client is also an Arc<inner client>
+        let file_name = file_name.clone(); // cloning a string is cheap:
+        let url = url.clone(); // it's just the length + pointer
+        let commit_body = commit_body.clone(); // the Some(.) variant has a pointer: cheap clones
+
         async move {
-            let client = client::new_for_url_transfer(&url)?;
-            let file_part = Part::file(file_path).await?;
-            let file_part = if let Some(ref name) = file_name_str {
-                file_part.file_name(name.clone())
-            } else {
-                file_part
-            };
-            let mut form = Form::new().part("file", file_part);
-
-            if let Some(body) = commit_body {
-                form = form.text("name", body.author);
-                form = form.text("email", body.email);
-                form = form.text("message", body.message);
-            }
+            let file_part = make_file_part(file_data, file_name).await?;
+            let form = apply_commit_body(Form::new().part(field_name, file_part), commit_body);
 
             let res = client.put(&url).multipart(form).send().await?;
             let body = client::parse_json_body(&url, res).await?;
-            let response: CommitResponse = serde_json::from_str(&body)?;
-            Ok(response)
+
+            Ok(serde_json::from_str(&body)?)
         }
     })
     .await
+}
+
+/// Create a Part in a multipart Form from the specified data.
+/// Intended to be used for uploading a single file.
+async fn make_file_part<T: Into<reqwest::Body> + HasLen>(
+    file_data: T,
+    file_name: Option<&str>,
+) -> Result<Part, OxenError> {
+    let file_data_len = file_data.len() as u64;
+    let file_part = reqwest::multipart::Part::stream_with_length(file_data, file_data_len);
+    Ok(match file_name {
+        Some(file_name) => file_part.file_name(file_name.to_string()),
+        None => file_part,
+    })
+}
+
+/// Add the commit information as fields to the form.
+fn apply_commit_body(form: Form, commit_body: Option<&NewCommitBody>) -> Form {
+    if let Some(NewCommitBody {
+        message,
+        author,
+        email,
+    }) = commit_body
+    {
+        form.text("name", author.to_string())
+            .text("email", email.to_string())
+            .text("message", message.to_string())
+    } else {
+        form
+    }
 }
 
 pub async fn get_file(
