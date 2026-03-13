@@ -271,8 +271,8 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         log::info!("Successfully staged file {upload_file:?}");
     }
 
-    metrics::histogram!("oxen_server_workspaces_files_add_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_workspaces_files_add_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(FilePathsResponse {
         status: StatusMessage::resource_created(),
         paths: ret_files,

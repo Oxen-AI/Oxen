@@ -152,8 +152,8 @@ pub async fn merge(
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::merge(repo, branch_name).await,
     };
-    metrics::histogram!("oxen_repo_merge_merge_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_merge_merge_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 

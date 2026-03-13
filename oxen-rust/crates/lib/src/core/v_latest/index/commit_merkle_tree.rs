@@ -77,8 +77,8 @@ impl CommitMerkleTree {
             ))?;
 
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
-        metrics::histogram!("oxen_merkle_from_commit_duration_seconds")
-            .record(timer.elapsed().as_secs_f64());
+        metrics::histogram!("oxen_merkle_from_commit_duration_ms")
+            .record(timer.elapsed().as_millis() as f64);
         Ok(Self { root, dir_hashes })
     }
 

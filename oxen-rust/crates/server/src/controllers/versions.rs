@@ -521,8 +521,8 @@ pub async fn batch_upload(
     let err_files = save_multiparts(payload, &repo).await?;
     log::debug!("batch upload complete with err_files: {}", err_files.len());
 
-    metrics::histogram!("oxen_server_versions_batch_upload_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_versions_batch_upload_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(ErrorFilesResponse {
         status: StatusMessage::resource_created(),
         err_files,

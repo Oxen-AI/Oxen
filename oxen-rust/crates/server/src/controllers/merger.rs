@@ -114,8 +114,8 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 
     // Check if mergeable
     let result = repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await;
-    metrics::histogram!("oxen_server_merger_merge_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_merger_merge_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     match result {
         Ok(Some(merge_commit)) => {
             // If the merge was successful, update the branch

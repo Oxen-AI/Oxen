@@ -54,8 +54,8 @@ pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::commit(repo, message),
     };
-    metrics::histogram!("oxen_repo_commit_commit_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_commit_commit_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 

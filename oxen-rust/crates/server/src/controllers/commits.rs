@@ -1084,8 +1084,8 @@ pub async fn upload(
     unpack_entry_tarball_async(&repo, &bytes).await?;
     // });
 
-    metrics::histogram!("oxen_server_commits_upload_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_commits_upload_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
@@ -1202,8 +1202,8 @@ pub async fn upload_tree(
 
     unpack_tree_tarball(&tmp_dir, &bytes).await?;
 
-    metrics::histogram!("oxen_server_commits_upload_tree_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_commits_upload_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_found(),
         commit: server_head_commit.to_owned(),

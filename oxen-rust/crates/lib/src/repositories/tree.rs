@@ -41,8 +41,8 @@ pub fn get_root(
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_without_children(repo, commit),
         _ => CommitMerkleTreeLatest::root_without_children(repo, commit),
     };
-    metrics::histogram!("oxen_repo_tree_get_root_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_get_root_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 
@@ -60,8 +60,8 @@ pub fn get_root_with_children(
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_with_children(repo, commit),
         _ => CommitMerkleTreeLatest::root_with_children(repo, commit),
     };
-    metrics::histogram!("oxen_repo_tree_get_root_with_children_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_get_root_with_children_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 
@@ -536,8 +536,8 @@ pub fn list_missing_node_hashes(
         }
     }
 
-    metrics::histogram!("oxen_repo_tree_list_missing_node_hashes_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_list_missing_node_hashes_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(results)
 }
 
@@ -560,8 +560,8 @@ pub async fn list_missing_file_hashes(
         };
         node.list_missing_file_hashes(repo).await
     };
-    metrics::histogram!("oxen_repo_tree_list_missing_file_hashes_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_list_missing_file_hashes_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 
@@ -937,8 +937,8 @@ pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError>
 
     log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
 
-    metrics::histogram!("oxen_repo_tree_compress_tree_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_compress_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(buffer)
 }
 
@@ -965,8 +965,8 @@ pub fn compress_full_tree(
         tar.append_dir_all(&tar_subdir, nodes_dir)?;
     }
 
-    metrics::histogram!("oxen_repo_tree_compress_full_tree_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_compress_full_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 
@@ -1110,8 +1110,8 @@ pub fn unpack_nodes(
             hashes.insert(id.parse()?);
         }
     }
-    metrics::histogram!("oxen_repo_tree_unpack_nodes_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_unpack_nodes_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(hashes)
 }
 
@@ -1125,8 +1125,8 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
     p_write_tree(repo, node, &commit_node)?;
-    metrics::histogram!("oxen_repo_tree_write_tree_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_tree_write_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 

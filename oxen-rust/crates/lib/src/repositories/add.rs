@@ -41,7 +41,7 @@ pub async fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), O
     metrics::counter!("oxen_repo_add_add_total").increment(1);
     let timer = std::time::Instant::now();
     let result = add_all_with_version(repo, vec![path], repo.min_version()).await;
-    metrics::histogram!("oxen_repo_add_add_duration_seconds").record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_add_add_duration_ms").record(timer.elapsed().as_millis() as f64);
     result
 }
 
@@ -53,8 +53,8 @@ pub async fn add_all<T: AsRef<Path>>(
     metrics::counter!("oxen_repo_add_add_all_total").increment(1);
     let timer = std::time::Instant::now();
     let result = add_all_with_version(repo, paths, repo.min_version()).await;
-    metrics::histogram!("oxen_repo_add_add_all_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_add_add_all_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 

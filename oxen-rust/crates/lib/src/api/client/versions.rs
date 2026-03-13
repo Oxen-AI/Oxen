@@ -146,8 +146,8 @@ pub async fn parallel_large_file_upload(
     log::debug!("multipart_large_file_upload num_chunks: {num_chunks:?}");
     let result =
         complete_multipart_large_file_upload(remote_repo, upload, num_chunks, workspace_id).await;
-    metrics::histogram!("oxen_client_versions_parallel_large_file_upload_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_versions_parallel_large_file_upload_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 
@@ -221,16 +221,16 @@ pub async fn download_data_from_version_paths(
         match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
             Ok(val) => {
                 metrics::histogram!(
-                    "oxen_client_versions_download_data_from_version_paths_duration_seconds"
+                    "oxen_client_versions_download_data_from_version_paths_duration_ms"
                 )
-                .record(timer.elapsed().as_secs_f64());
+                .record(timer.elapsed().as_millis() as f64);
                 Ok(val)
             }
             Err(OxenError::Authentication(val)) => {
                 metrics::histogram!(
-                    "oxen_client_versions_download_data_from_version_paths_duration_seconds"
+                    "oxen_client_versions_download_data_from_version_paths_duration_ms"
                 )
-                .record(timer.elapsed().as_secs_f64());
+                .record(timer.elapsed().as_millis() as f64);
                 Err(OxenError::Authentication(val))
             }
             Err(err) => Err(err),
@@ -526,8 +526,8 @@ pub async fn multipart_batch_upload_with_retry(
             sleep(Duration::from_millis(wait_time)).await;
         }
     }
-    metrics::histogram!("oxen_client_versions_multipart_batch_upload_with_retry_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_versions_multipart_batch_upload_with_retry_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
 
     Err(OxenError::basic_str(format!(
         "Failed to upload files: {files_to_retry:#?}"

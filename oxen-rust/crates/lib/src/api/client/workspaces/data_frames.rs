@@ -98,8 +98,8 @@ pub async fn download(
         file.write_all(&chunk)?;
     }
 
-    metrics::histogram!("oxen_client_workspaces_data_frames_download_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_workspaces_data_frames_download_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 

@@ -78,7 +78,7 @@ pub async fn download_zip(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
 
     let response = controllers::versions::stream_versions_zip(&repo, files_with_hash).await?;
 
-    metrics::histogram!("oxen_server_export_download_zip_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_export_download_zip_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(response)
 }

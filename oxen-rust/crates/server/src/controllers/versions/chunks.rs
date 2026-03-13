@@ -64,8 +64,8 @@ pub async fn upload(
         .await
         .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
 
-    metrics::histogram!("oxen_server_versions_chunks_upload_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_versions_chunks_upload_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
@@ -146,13 +146,13 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
             )?;
         }
 
-        metrics::histogram!("oxen_server_versions_chunks_complete_duration_seconds")
-            .record(timer.elapsed().as_secs_f64());
+        metrics::histogram!("oxen_server_versions_chunks_complete_duration_ms")
+            .record(timer.elapsed().as_millis() as f64);
         return Ok(HttpResponse::Ok().json(StatusMessage::resource_found()));
     }
 
-    metrics::histogram!("oxen_server_versions_chunks_complete_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_versions_chunks_complete_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 

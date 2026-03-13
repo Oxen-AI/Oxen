@@ -23,8 +23,8 @@ pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
         Ok(None) => Err(OxenError::remote_repo_not_found(&opts.url)),
         Err(err) => Err(err),
     };
-    metrics::histogram!("oxen_repo_clone_clone_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_clone_clone_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 

@@ -76,8 +76,8 @@ pub async fn upload_zip(
             let body = client::parse_json_body(&url, response).await?;
             let response: crate::view::CommitResponse = serde_json::from_str(&body)
                 .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
-            metrics::histogram!("oxen_client_import_upload_zip_duration_seconds")
-                .record(timer.elapsed().as_secs_f64());
+            metrics::histogram!("oxen_client_import_upload_zip_duration_ms")
+                .record(timer.elapsed().as_millis() as f64);
             Ok(response.commit)
         }
     })

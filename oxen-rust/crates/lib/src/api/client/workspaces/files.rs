@@ -91,8 +91,8 @@ pub async fn add(
     )
     .await;
 
-    metrics::histogram!("oxen_client_workspaces_files_add_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_workspaces_files_add_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
 
     match upload_result {
         Ok(failed_to_upload) => {
@@ -203,8 +203,8 @@ pub async fn add_files(
         Some(&base_dir_enum),
     )
     .await;
-    metrics::histogram!("oxen_client_workspaces_files_add_files_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_workspaces_files_add_files_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     match result {
         Ok(failed_to_upload) => {
             print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
@@ -274,8 +274,8 @@ pub async fn upload_single_file(
         // Single multipart request
         p_upload_single_file(remote_repo, workspace_id, directory, path).await
     };
-    metrics::histogram!("oxen_client_workspaces_files_upload_single_file_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_workspaces_files_upload_single_file_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 
@@ -788,9 +788,9 @@ pub(crate) async fn parallel_batched_small_file_upload(
     progress.finish();
 
     metrics::histogram!(
-        "oxen_client_workspaces_files_parallel_batched_small_file_upload_duration_seconds"
+        "oxen_client_workspaces_files_parallel_batched_small_file_upload_duration_ms"
     )
-    .record(timer.elapsed().as_secs_f64());
+    .record(timer.elapsed().as_millis() as f64);
     if !operational_errors.is_empty() {
         log::error!(
             "Encountered {} fatal error(s) during upload",
@@ -850,13 +850,16 @@ pub async fn stage_files_to_workspace_with_retry(
         {
             // If successful, return individual files that failed to stage
             Ok(stage_err_files) => {
-                metrics::histogram!("oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_seconds").record(timer.elapsed().as_secs_f64());
+                metrics::histogram!(
+                    "oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_ms"
+                )
+                .record(timer.elapsed().as_millis() as f64);
                 return Ok(stage_err_files);
             }
             Err(e) => {
                 log::error!("Error staging files to workspace: {e:?}");
                 if retry_count == max_retries {
-                    metrics::histogram!("oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_seconds").record(timer.elapsed().as_secs_f64());
+                    metrics::histogram!("oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_ms").record(timer.elapsed().as_millis() as f64);
                     return Err(OxenError::basic_str(format!(
                         "failed to stage files to workspace after retries: {e:?}"
                     )));
@@ -873,9 +876,9 @@ pub async fn stage_files_to_workspace_with_retry(
         files_to_add.len()
     );
     metrics::histogram!(
-        "oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_seconds"
+        "oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_ms"
     )
-    .record(timer.elapsed().as_secs_f64());
+    .record(timer.elapsed().as_millis() as f64);
     Err(OxenError::basic_str(
         "failed to stage files to workspace after retries",
     ))
@@ -1283,8 +1286,8 @@ pub async fn download(
         )));
     }
 
-    metrics::histogram!("oxen_client_workspaces_files_download_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_client_workspaces_files_download_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 

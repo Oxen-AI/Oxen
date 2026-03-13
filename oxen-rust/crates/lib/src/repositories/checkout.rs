@@ -75,8 +75,8 @@ pub async fn checkout(
             Ok(None)
         }
     };
-    metrics::histogram!("oxen_repo_checkout_checkout_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_repo_checkout_checkout_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     result
 }
 

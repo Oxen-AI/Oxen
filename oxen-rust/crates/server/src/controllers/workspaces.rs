@@ -423,8 +423,8 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     };
 
     let result = repositories::workspaces::commit(&workspace, &data, &branch_name).await;
-    metrics::histogram!("oxen_server_workspaces_commit_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_workspaces_commit_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     match result {
         Ok(commit) => {
             log::debug!("workspace::commit ✅ success! commit {commit:?}");

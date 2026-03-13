@@ -192,8 +192,8 @@ pub async fn import(
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
     log::debug!("workspace::commit ✅ success! commit {commit:?}");
 
-    metrics::histogram!("oxen_server_import_import_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_import_import_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
@@ -284,8 +284,8 @@ pub async fn upload_zip(
         &branch,
     )
     .await?;
-    metrics::histogram!("oxen_server_import_upload_zip_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_import_upload_zip_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,

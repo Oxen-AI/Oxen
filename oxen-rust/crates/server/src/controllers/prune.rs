@@ -55,8 +55,8 @@ pub async fn prune(
 
     // Run the prune operation
     let result = repositories::prune::prune(&repository, dry_run).await;
-    metrics::histogram!("oxen_server_prune_prune_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_prune_prune_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     match result {
         Ok(stats) => {
             let status_message = if dry_run {

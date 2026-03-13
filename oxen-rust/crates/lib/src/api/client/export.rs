@@ -57,12 +57,12 @@ pub async fn download_dir_as_zip(
 
         log::debug!("Successfully downloaded {size} bytes to: {local_path:?}");
 
-        metrics::histogram!("oxen_client_export_download_dir_as_zip_duration_seconds")
-            .record(timer.elapsed().as_secs_f64());
+        metrics::histogram!("oxen_client_export_download_dir_as_zip_duration_ms")
+            .record(timer.elapsed().as_millis() as f64);
         Ok(size)
     } else {
-        metrics::histogram!("oxen_client_export_download_dir_as_zip_duration_seconds")
-            .record(timer.elapsed().as_secs_f64());
+        metrics::histogram!("oxen_client_export_download_dir_as_zip_duration_ms")
+            .record(timer.elapsed().as_millis() as f64);
         let err = format!("try_download_dir_as_zip failed to send request {url}");
         Err(OxenError::basic_str(err))
     }

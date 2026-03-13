@@ -352,8 +352,8 @@ pub async fn maybe_create_merge(
     .await?;
 
     // Return what will become the new head of the repo after push is complete.
-    metrics::histogram!("oxen_server_branches_maybe_create_merge_duration_seconds")
-        .record(timer.elapsed().as_secs_f64());
+    metrics::histogram!("oxen_server_branches_maybe_create_merge_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     if let Some(merge_commit) = maybe_merge_commit {
         log::debug!("returning merge commit {merge_commit:?}");
         // Update branch head
