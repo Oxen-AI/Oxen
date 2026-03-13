@@ -46,7 +46,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                 size: parsed.size,
             },
             Err(e) => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Failed to parse size file: {e}"
                 )));
             }
@@ -61,7 +61,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
         }
     };
 
-    util::fs::write_to_path(&path, size.to_string())?;
+    util::fs::write_to_path(&path, &size.to_string())?;
 
     let repo_path = repo.path.clone();
     let path_clone = path.clone();
@@ -75,7 +75,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Done,
                     size: calculated_size,
                 };
-                if let Err(e) = util::fs::write_to_path(&path_clone, size.to_string()) {
+                if let Err(e) = util::fs::write_to_path(&path_clone, &size.to_string()) {
                     log::error!("Failed to write size result: {e}");
                 }
             }
@@ -85,7 +85,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Error,
                     size: 0,
                 };
-                let _ = util::fs::write_to_path(&path_clone, size.to_string());
+                let _ = util::fs::write_to_path(&path_clone, &size.to_string());
             }
         }
     });

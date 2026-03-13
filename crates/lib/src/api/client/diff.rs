@@ -9,13 +9,11 @@ use crate::view::compare::{CompareEntries, CompareEntryResponse};
 
 pub async fn list_diff_entries(
     remote_repo: &RemoteRepository,
-    base: impl AsRef<str>,
-    head: impl AsRef<str>,
+    base: &str,
+    head: &str,
     page: usize,
     page_size: usize,
 ) -> Result<CompareEntries, OxenError> {
-    let base = base.as_ref();
-    let head = head.as_ref();
     let uri = format!("/compare/entries/{base}..{head}?page={page}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -25,7 +23,7 @@ pub async fn list_diff_entries(
     let response: Result<CompareEntriesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.compare),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::diff::list_diff_entries error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -33,13 +31,10 @@ pub async fn list_diff_entries(
 
 pub async fn diff_entries(
     remote_repo: &RemoteRepository,
-    base: impl AsRef<str>,
-    head: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    base: &str,
+    head: &str,
+    path: &Path,
 ) -> Result<DiffEntry, OxenError> {
-    let base = base.as_ref();
-    let head = head.as_ref();
-    let path = path.as_ref();
     let uri = format!("/compare/file/{base}..{head}/{}", path.to_string_lossy());
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -49,7 +44,7 @@ pub async fn diff_entries(
     let response: Result<CompareEntryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.compare),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::diff::diff_entries error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -131,7 +126,7 @@ mod tests {
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 &PathBuf::from("images").join("cat_2.jpg"),
             )
             .await?;
@@ -213,7 +208,7 @@ mod tests {
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 &PathBuf::from("images").join("cat_1.jpg"),
             )
             .await?;
@@ -277,8 +272,8 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Modify and commit the dataframe
-            let repo_filepath = test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the sky?,blue,trivia")?;
-            let repo_filepath = test::append_line_txt_file(repo_filepath, "answer the question,what is the color of the ocean?,blue-ish green sometimes,trivia")?;
+            let repo_filepath = test::append_line_txt_file(&repo_filepath, "answer the question,what is the color of the sky?,blue,trivia")?;
+            let repo_filepath = test::append_line_txt_file(&repo_filepath, "answer the question,what is the color of the ocean?,blue-ish green sometimes,trivia")?;
 
             repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
@@ -299,7 +294,7 @@ mod tests {
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 &PathBuf::from("llm_fine_tune.csv"),
             )
             .await?;
@@ -398,7 +393,7 @@ mod tests {
 
             // Modify and commit the dataframe
             let repo_filepath = test::write_txt_file_to_path(
-                repo_filepath,
+                &repo_filepath,
                 r"instruction,context,response,category
 answer the question,what is the capital of france?,paris,geography
 answer the question,who was the 44th president of the united states?,barack obama,politics
@@ -427,7 +422,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 &PathBuf::from("llm_fine_tune.csv"),
             )
             .await?;
@@ -537,7 +532,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
 
             // Modify and commit the dataframe
             let repo_filepath = test::write_txt_file_to_path(
-                repo_filepath,
+                &repo_filepath,
                 r#"instruction,context,response
 answer the question,what is the capital of france?,paris
 answer the question,who was the 44th president of the united states?,barack obama
@@ -567,7 +562,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 &PathBuf::from("llm_fine_tune.csv"),
             )
             .await?;
@@ -801,7 +796,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -906,7 +901,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -1001,7 +996,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
             util::fs::remove_file(&repo_filepath)?;
 
-            let rm_opts = RmOpts::from_path(Path::new("images").join("cats").join("cat_2.jpg"));
+            let rm_opts = RmOpts::from_path(&Path::new("images").join("cats").join("cat_2.jpg"));
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Remove and modify some cats")?;
 
@@ -1021,7 +1016,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -1270,7 +1265,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -1365,7 +1360,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, dogs_dir).await?;
+            repositories::add(&repo, &dogs_dir).await?;
             repositories::commit(&repo, "Adding dog images 🐕")?;
 
             // Set the proper remote
@@ -1384,7 +1379,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -1497,7 +1492,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::copy(&test_file, &repo_filepath)?;
             }
 
-            repositories::add(&repo, dogs_dir).await?;
+            repositories::add(&repo, &dogs_dir).await?;
             repositories::commit(&repo, "Adding dog images")?;
 
             // Add dwight vince to the cats dir
@@ -1505,7 +1500,7 @@ who won the game?,The packers beat up on the bears,packers
             let repo_filepath = cats_dir.join(test_file.file_name().unwrap());
             util::fs::copy(&test_file, &repo_filepath)?;
 
-            repositories::add(&repo, cats_dir).await?;
+            repositories::add(&repo, &cats_dir).await?;
             repositories::commit(&repo, "Adding dwight/vince image to cats")?;
 
             // Set the proper remote
@@ -1524,7 +1519,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -1749,7 +1744,7 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::remove_file(&repo_filepath)?;
             }
 
-            let mut rm_opts = RmOpts::from_path("images");
+            let mut rm_opts = RmOpts::from_path(Path::new("images"));
             rm_opts.recursive = true;
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing cat images")?;
@@ -1770,7 +1765,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )
@@ -1858,7 +1853,7 @@ who won the game?,The packers beat up on the bears,packers
             // Remove one of the dogs
             let repo_filepath = PathBuf::from("images").join("dog_1.jpg");
 
-            let rm_opts = RmOpts::from_path(repo_filepath);
+            let rm_opts = RmOpts::from_path(&repo_filepath);
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing dog")?;
 
@@ -1881,7 +1876,7 @@ who won the game?,The packers beat up on the bears,packers
             let compare = api::client::diff::list_diff_entries(
                 &remote_repo,
                 &og_branch.name,
-                &branch_name,
+                branch_name,
                 0,
                 100,
             )

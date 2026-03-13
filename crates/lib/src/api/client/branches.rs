@@ -13,9 +13,8 @@ use std::path::Path;
 
 pub async fn get_by_name(
     repository: &RemoteRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
 ) -> Result<Option<Branch>, OxenError> {
-    let branch_name = branch_name.as_ref();
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
 
@@ -34,12 +33,9 @@ pub async fn get_by_name(
 /// Create a new branch from an existing branch
 pub async fn create_from_branch(
     repository: &RemoteRepository,
-    new_name: impl AsRef<str>,
-    from_name: impl AsRef<str>,
+    new_name: &str,
+    from_name: &str,
 ) -> Result<Branch, OxenError> {
-    let new_name = new_name.as_ref();
-    let from_name = from_name.as_ref();
-
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
     log::debug!("branches::create_from_branch {url}");
 
@@ -59,11 +55,9 @@ pub async fn create_from_branch(
 /// The commit must already exist on the remote
 pub async fn create_from_commit(
     repository: &RemoteRepository,
-    new_name: impl AsRef<str>,
+    new_name: &str,
     commit: &Commit,
 ) -> Result<Branch, OxenError> {
-    let new_name = new_name.as_ref();
-
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
     log::debug!("branches::create_from_commit {url}");
 
@@ -81,12 +75,9 @@ pub async fn create_from_commit(
 
 pub async fn create_from_commit_id(
     repository: &RemoteRepository,
-    new_name: impl AsRef<str>,
-    commit_id: impl AsRef<str>,
+    new_name: &str,
+    commit_id: &str,
 ) -> Result<Branch, OxenError> {
-    let new_name = new_name.as_ref();
-    let commit_id = commit_id.as_ref();
-
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
     log::debug!("branches::create_from_commit_id {url}");
 
@@ -116,10 +107,9 @@ pub async fn list(repository: &RemoteRepository) -> Result<Vec<Branch>, OxenErro
 /// Update a remote branch to point to a new commit
 pub async fn update(
     repository: &RemoteRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
     commit: &Commit,
 ) -> Result<Branch, OxenError> {
-    let branch_name = branch_name.as_ref();
     let uri = format!("/branches/{branch_name}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("api::client::branches::update url: {url}");
@@ -159,14 +149,14 @@ pub async fn maybe_create_merge(
 /// # Delete a remote branch
 pub async fn delete_remote(
     repo: &LocalRepository,
-    remote: impl AsRef<str>,
-    branch_name: impl AsRef<str>,
+    remote: &str,
+    branch_name: &str,
 ) -> Result<Branch, OxenError> {
     let remote = repo
-        .get_remote(&remote)
+        .get_remote(remote)
         .ok_or_else(|| OxenError::remote_not_set(remote))?;
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
-    let branch = api::client::branches::get_by_name(&remote_repo, &branch_name)
+    let branch = api::client::branches::get_by_name(&remote_repo, branch_name)
         .await?
         .ok_or_else(|| OxenError::remote_branch_not_found(branch_name))?;
     api::client::branches::delete(&remote_repo, &branch.name).await?;
@@ -256,8 +246,8 @@ mod tests {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&local_repo, &new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -282,8 +272,8 @@ mod tests {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&local_repo, &new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -311,8 +301,8 @@ mod tests {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&local_repo, &new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -340,8 +330,8 @@ mod tests {
             // Create and push the main branch
             // add a file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&local_repo, &new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // Set proper remote
@@ -381,8 +371,8 @@ mod tests {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&local_repo, &new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
             // set proper remote
@@ -421,8 +411,8 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             // Create and checkout branch
@@ -539,8 +529,8 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let branch_name = "my-branch";
@@ -561,8 +551,8 @@ mod tests {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let branch_name = "my-branch";
@@ -583,8 +573,8 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let og_branches = repositories::branches::list(&repo)?;
@@ -595,11 +585,11 @@ mod tests {
 
             // Add another commit on this branch
             let labels_path = repo.path.join("labels.txt");
-            repositories::add(&repo, labels_path).await?;
+            repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
 
             // Checkout main again
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             // Should not be able to delete `my-branch` because it is ahead of `main`
             if repositories::branches::delete(&repo, branch_name).is_ok() {
@@ -622,8 +612,8 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             let og_branches = repositories::branches::list(&repo)?;
@@ -634,11 +624,11 @@ mod tests {
 
             // Add another commit on this branch
             let labels_path = repo.path.join("labels.txt");
-            repositories::add(&repo, labels_path).await?;
+            repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
 
             // Checkout main again
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             // Force delete
             repositories::branches::force_delete(&repo, branch_name)?;

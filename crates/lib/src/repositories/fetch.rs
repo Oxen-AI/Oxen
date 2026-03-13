@@ -19,7 +19,7 @@ pub async fn fetch_all(
 ) -> Result<Vec<Branch>, OxenError> {
     let remote = repo
         .get_remote(&fetch_opts.remote)
-        .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
+        .ok_or(OxenError::remote_not_set(&fetch_opts.remote.clone()))?;
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_fetch(&remote_repo).await?;
@@ -87,7 +87,7 @@ pub async fn fetch_branch(
 ) -> Result<Branch, OxenError> {
     let remote = repo
         .get_remote(&fetch_opts.remote)
-        .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
+        .ok_or(OxenError::remote_not_set(&fetch_opts.remote.clone()))?;
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_fetch(&remote_repo).await?;
@@ -141,7 +141,7 @@ mod tests {
             for branch in branches.iter() {
                 repositories::branches::create_checkout(&repo, branch)?;
                 let filepath = repo.path.join(format!("file_{branch}.txt"));
-                test::write_txt_file_to_path(&filepath, format!("a file on {branch}"))?;
+                test::write_txt_file_to_path(&filepath, &format!("a file on {branch}"))?;
                 repositories::add(&repo, &filepath).await?;
                 repositories::commit(&repo, &format!("Adding file on {branch}"))?;
                 repositories::push(&repo).await?;

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 pub async fn restore(
     repo: &LocalRepository,
     paths: &[PathBuf],
-    revision: &String,
+    revision: &str,
 ) -> Result<(), OxenError> {
     let mut paths_to_download: Vec<(PathBuf, PathBuf)> = vec![];
     let remote_repo = api::client::repositories::get_default_remote(repo).await?;
@@ -35,7 +35,7 @@ pub async fn restore(
         repo,
         &remote_repo,
         &paths_to_download,
-        &revision,
+        revision,
     )
     .await?;
 
@@ -45,6 +45,7 @@ pub async fn restore(
 #[cfg(test)]
 mod tests {
 
+    use std::path::Path;
     use std::path::PathBuf;
 
     use crate::error::OxenError;
@@ -59,19 +60,19 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
 
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
+                let directory_name = ".";
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory_name)]);
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     &status_opts,
                 )
                 .await?;
@@ -81,7 +82,7 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[readme_path.clone()],
+                    std::slice::from_ref(&readme_path),
                     &head_commit.id,
                 )
                 .await?;
@@ -107,19 +108,19 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
 
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
+                let directory_name = ".";
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory_name)]);
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     &status_opts,
                 )
                 .await?;
@@ -130,7 +131,7 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[full_path.clone()],
+                    std::slice::from_ref(&full_path),
                     &head_commit.id,
                 )
                 .await?;
@@ -156,19 +157,19 @@ mod tests {
                 let remote_repo_copy = remote_repo.clone();
 
                 test::run_empty_dir_test_async(|dir| async move {
-                    let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                    let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                     opts.is_remote = true;
                     let cloned_repo = repositories::clone(&opts).await?;
 
                     let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                    let directory = ".".to_string();
+                    let directory_name = ".";
                     let status_opts =
-                        StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                        StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory_name)]);
                     let status = repositories::remote_mode::status(
                         &cloned_repo,
                         &remote_repo,
                         &workspace_identifier,
-                        &directory,
+                        Path::new(directory_name),
                         &status_opts,
                     )
                     .await?;
@@ -180,7 +181,7 @@ mod tests {
                     let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                     repositories::remote_mode::restore(
                         &cloned_repo,
-                        &[file_path.clone()],
+                        std::slice::from_ref(&file_path),
                         &head_commit.id,
                     )
                     .await?;
@@ -217,20 +218,20 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 let repo_path = cloned_repo.path.clone();
 
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
+                let directory_name = ".";
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
+                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory_name)]);
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     &status_opts,
                 )
                 .await?;
@@ -240,17 +241,18 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[annotations_path.clone()],
+                    std::slice::from_ref(&annotations_path),
                     &head_commit.id,
                 )
                 .await?;
 
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     &status_opts,
                 )
                 .await?;

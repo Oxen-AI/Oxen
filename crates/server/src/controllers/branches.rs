@@ -69,7 +69,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, name)?;
+    let repo = get_repo(&app_data.path, &namespace, &name)?;
 
     let branches = repositories::branches::list(&repo)?;
 
@@ -101,7 +101,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     log::debug!("show branch {branch_name:?}");
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
@@ -145,7 +145,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     log::debug!("Create branch: {body}");
 
@@ -183,7 +183,7 @@ fn create_from_branch(
     let from_branch = repositories::branches::get_by_name(repo, &data.from_name)?
         .ok_or(OxenHttpError::NotFound)?;
 
-    let new_branch = repositories::branches::create(repo, &data.new_name, from_branch.commit_id)?;
+    let new_branch = repositories::branches::create(repo, &data.new_name, &from_branch.commit_id)?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_created(),
@@ -224,7 +224,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
         .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
@@ -268,12 +268,12 @@ pub async fn update(
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let branch_name = path_param(&req, "branch_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let data: Result<BranchUpdate, serde_json::Error> = serde_json::from_str(&body);
     let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
 
-    let branch = repositories::branches::update(&repository, branch_name, data.commit_id)?;
+    let branch = repositories::branches::update(&repository, &branch_name, &data.commit_id)?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_updated(),
@@ -313,7 +313,7 @@ pub async fn maybe_create_merge(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
     let branch_name = path_param(&req, "branch_name")?;
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
         .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
@@ -385,12 +385,12 @@ pub async fn list_entry_versions(
     let branch_name = path_param(&req, "branch_name")?;
 
     // Get branch
-    let repo = get_repo(&app_data.path, namespace.clone(), &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let branch = repositories::branches::get_by_name(&repo, &branch_name)?
         .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
 
     let path = PathBuf::from(path_param(&req, "path")?);
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);

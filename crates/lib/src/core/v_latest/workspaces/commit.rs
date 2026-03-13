@@ -27,9 +27,8 @@ use indicatif::ProgressBar;
 pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
@@ -78,7 +77,7 @@ pub async fn commit(
     // Clear the staged db
     log::debug!("Removing staged_db_path: {staged_db_path:?}");
     remove_from_cache(&workspace.workspace_repo.path)?;
-    util::fs::remove_dir_all(staged_db_path)?;
+    util::fs::remove_dir_all(&staged_db_path)?;
 
     // DEBUG
     // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
@@ -103,11 +102,7 @@ pub async fn commit(
     Ok(commit)
 }
 
-pub fn mergeability(
-    workspace: &Workspace,
-    branch_name: impl AsRef<str>,
-) -> Result<Mergeable, OxenError> {
-    let branch_name = branch_name.as_ref();
+pub fn mergeability(workspace: &Workspace, branch_name: &str) -> Result<Mergeable, OxenError> {
     let Some(branch) = repositories::branches::get_by_name(&workspace.base_repo, branch_name)?
     else {
         return Err(OxenError::revision_not_found(

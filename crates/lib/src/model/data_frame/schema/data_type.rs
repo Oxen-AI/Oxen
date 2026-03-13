@@ -37,8 +37,8 @@ impl fmt::Display for DataType {
 }
 
 impl DataType {
-    pub fn from_string(s: impl AsRef<str>) -> DataType {
-        match s.as_ref() {
+    pub fn from_string(s: &str) -> DataType {
+        match s {
             "bool" => DataType::Boolean,
             "uint8" => DataType::UInt8,
             "u16" => DataType::UInt16,
@@ -256,8 +256,8 @@ impl DataType {
         }
     }
 
-    pub fn from_sql(s: impl AsRef<str>) -> Self {
-        match s.as_ref() {
+    pub fn from_sql(s: &str) -> Self {
+        match s {
             "BOOL" => DataType::Boolean,
             "UTINYINT" => DataType::UInt8, // unsigned one-byte integer
             "USMALLINT" => DataType::UInt16, // unsigned two-byte integer
@@ -308,7 +308,7 @@ impl DataType {
                     return DataType::Embedding(size.as_str().parse::<usize>().unwrap());
                 }
 
-                log::error!("TODO: from_sql unknown SQL type {}", s.as_ref());
+                log::error!("TODO: from_sql unknown SQL type {}", s);
                 DataType::Unknown
             }
         }

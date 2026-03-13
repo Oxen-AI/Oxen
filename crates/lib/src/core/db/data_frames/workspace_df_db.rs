@@ -41,7 +41,7 @@ pub fn full_staged_table_schema(conn: &duckdb::Connection) -> Result<Schema, Oxe
 
 pub fn schema_without_oxen_cols(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
 ) -> Result<Schema, OxenError> {
     let table_schema = df_db::get_schema_excluding_cols(conn, table_name, &OXEN_COLS)?;
     Ok(table_schema)

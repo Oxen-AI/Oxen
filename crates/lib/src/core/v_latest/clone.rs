@@ -18,7 +18,7 @@ pub async fn clone_repo(
     let repo_path = &opts.dst;
     if repo_path.exists() {
         let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     // if directory does not exist, create it
@@ -73,7 +73,7 @@ pub async fn clone_repo_remote_mode(
     let repo_path = &opts.dst;
     if repo_path.exists() {
         let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     // if directory does not exist, create it
@@ -107,7 +107,7 @@ pub async fn clone_repo_remote_mode(
 
     let workspace = api::client::workspaces::create_with_path(
         &remote_repo,
-        &branch_name,
+        branch_name,
         &workspace_id,
         Path::new("/"),
         Some(name.clone()),
@@ -139,8 +139,8 @@ pub async fn clone_repo_remote_mode(
     }
     println!("{} {}", "Workspace ID:".green().bold(), workspace.id.bold());
 
-    local_repo.add_workspace(name.clone());
-    local_repo.set_workspace(name.clone())?;
+    local_repo.add_workspace(&name.clone());
+    local_repo.set_workspace(&name.clone())?;
     local_repo.save()?;
 
     if remote_repo.is_empty {

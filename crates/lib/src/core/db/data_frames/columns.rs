@@ -106,10 +106,9 @@ pub fn revert_column_changes(db: &DB, column_name: &str) -> Result<(), OxenError
 
 pub fn polar_insert_column(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     new_column: &NewColumn,
 ) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
     let data_type = DataType::from_string(&new_column.data_type).to_sql();
     let sql = format!(
         "ALTER TABLE {} ADD COLUMN {} {}",
@@ -125,11 +124,9 @@ pub fn polar_insert_column(
 
 pub fn polar_delete_column(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     column_to_delete: &ColumnToDelete,
 ) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
-
     // Corrected to DROP COLUMN instead of ADD COLUMN
     let sql = format!(
         "ALTER TABLE {} DROP COLUMN {}",
@@ -145,10 +142,9 @@ pub fn polar_delete_column(
 
 pub fn polar_update_column(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     column_to_update: &ColumnToUpdate,
 ) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
     let mut sql_commands = Vec::new();
 
     if let Some(ref new_data_type) = column_to_update.new_data_type {

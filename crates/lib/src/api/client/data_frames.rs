@@ -13,7 +13,7 @@ use crate::view::{JsonDataFrameViewResponse, StatusMessage};
 pub async fn get(
     remote_repo: &RemoteRepository,
     commit_or_branch: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
     opts: DFOpts,
 ) -> Result<JsonDataFrameViewResponse, OxenError> {
     let path_str = util::fs::to_unix_str(path);
@@ -32,7 +32,7 @@ pub async fn get(
             log::debug!("got JsonDataFrameViewResponse: {val:?}");
             Ok(val)
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -41,9 +41,9 @@ pub async fn get(
 pub async fn index(
     remote_repo: &RemoteRepository,
     commit_or_branch: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<StatusMessage, OxenError> {
-    let path_str = path.as_ref().to_str().unwrap();
+    let path_str = path.to_str().unwrap();
     let uri = format!("/data_frames/index/{commit_or_branch}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -58,7 +58,7 @@ pub async fn index(
             log::debug!("got StatusMessage: {val:?}");
             Ok(val)
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -67,7 +67,7 @@ pub async fn index(
 pub async fn from_directory(
     remote_repo: &RemoteRepository,
     commit_or_branch: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
     request: FromDirectoryRequest,
 ) -> Result<CommitResponse, OxenError> {
     let path_str = util::fs::to_unix_str(path);
@@ -93,7 +93,7 @@ pub async fn from_directory(
             log::debug!("got CommitResponse: {val:?}");
             Ok(val)
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -102,6 +102,7 @@ pub async fn from_directory(
 #[cfg(test)]
 mod tests {
 
+    use std::path::Path;
     use std::path::PathBuf;
 
     use crate::api;
@@ -127,7 +128,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_200k_csv();
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
@@ -168,14 +169,14 @@ mod tests {
 
             repositories::data_frames::schemas::add_column_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &column_name,
                 &column_metadata,
             )?;
 
             repositories::data_frames::schemas::add_schema_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &schema_metadata,
             )?;
 
@@ -198,7 +199,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                PathBuf::from("large_files").join("test.csv"),
+                &PathBuf::from("large_files").join("test.csv"),
                 opts,
             )
             .await?;
@@ -243,7 +244,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_200k_csv();
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
@@ -264,7 +265,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                PathBuf::from("large_files").join("test.csv"),
+                &PathBuf::from("large_files").join("test.csv"),
                 opts,
             )
             .await?;
@@ -291,7 +292,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_200k_csv();
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
@@ -313,7 +314,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "large_files/test.csv",
+                Path::new("large_files/test.csv"),
                 opts,
             )
             .await?;
@@ -345,7 +346,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_200k_csv();
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
@@ -364,7 +365,7 @@ mod tests {
             api::client::data_frames::index(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "large_files/test.csv",
+                Path::new("large_files/test.csv"),
             )
             .await?;
 
@@ -377,7 +378,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                PathBuf::from("large_files").join("test.csv"),
+                &PathBuf::from("large_files").join("test.csv"),
                 opts,
             )
             .await?;
@@ -406,7 +407,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                PathBuf::from("large_files").join("test.csv"),
+                &PathBuf::from("large_files").join("test.csv"),
                 opts,
             )
             .await?;
@@ -436,7 +437,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             // Add the file
             repositories::add(&local_repo, &csv_file).await?;
@@ -455,9 +456,13 @@ mod tests {
 
             // Cannot get schema that does not exist
             let opts = DFOpts::empty();
-            let result =
-                api::client::data_frames::get(&remote_repo, DEFAULT_BRANCH_NAME, schema_ref, opts)
-                    .await;
+            let result = api::client::data_frames::get(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                Path::new(schema_ref),
+                opts,
+            )
+            .await;
             assert!(result.is_err());
 
             // Push the repo
@@ -486,12 +491,12 @@ mod tests {
             );
             repositories::data_frames::schemas::add_schema_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &schema_metadata,
             )?;
             repositories::data_frames::schemas::add_column_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &column_name,
                 &column_metadata,
             )?;
@@ -500,8 +505,13 @@ mod tests {
 
             // Cannot get schema that does not exist
             let opts = DFOpts::empty();
-            let result =
-                api::client::data_frames::get(&remote_repo, branch_name, schema_ref, opts).await;
+            let result = api::client::data_frames::get(
+                &remote_repo,
+                branch_name,
+                Path::new(schema_ref),
+                opts,
+            )
+            .await;
             assert!(result.is_err());
 
             // Push the repo
@@ -509,8 +519,13 @@ mod tests {
 
             // List the one schema
             let opts = DFOpts::empty();
-            let results =
-                api::client::data_frames::get(&remote_repo, branch_name, schema_ref, opts).await;
+            let results = api::client::data_frames::get(
+                &remote_repo,
+                branch_name,
+                Path::new(schema_ref),
+                opts,
+            )
+            .await;
             assert!(results.is_ok());
 
             let result = results.unwrap();
@@ -547,7 +562,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let test_file = large_dir.join("test.parquet");
             let from_file = test::test_1k_parquet();
-            util::fs::copy(from_file, &test_file)?;
+            util::fs::copy(&from_file, &test_file)?;
 
             repositories::add(&local_repo, &test_file).await?;
             repositories::commit(&local_repo, "add test.parquet")?;
@@ -568,7 +583,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "data/test.parquet",
+                Path::new("data/test.parquet"),
                 opts,
             )
             .await?;
@@ -613,7 +628,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let test_file = large_dir.join("test.parquet");
             let from_file = test::test_1k_parquet();
-            util::fs::copy(from_file, &test_file)?;
+            util::fs::copy(&from_file, &test_file)?;
 
             repositories::add(&local_repo, &test_file).await?;
             repositories::commit(&local_repo, "add test.parquet")?;
@@ -636,7 +651,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "data/test.parquet",
+                Path::new("data/test.parquet"),
                 opts,
             )
             .await?;
@@ -676,7 +691,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let test_file = large_dir.join("test.parquet");
             let from_file = test::test_1k_parquet();
-            util::fs::copy(from_file, &test_file)?;
+            util::fs::copy(&from_file, &test_file)?;
 
             repositories::add(&local_repo, &test_file).await?;
             repositories::commit(&local_repo, "add test.parquet")?;
@@ -698,7 +713,7 @@ mod tests {
             let df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "data/test.parquet",
+                Path::new("data/test.parquet"),
                 opts,
             )
             .await?;
@@ -783,7 +798,7 @@ mod tests {
             let response = api::client::data_frames::from_directory(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "test_files",
+                Path::new("test_files"),
                 request,
             )
             .await?;
@@ -791,7 +806,7 @@ mod tests {
             let files = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "file_listing.parquet",
+                Path::new("file_listing.parquet"),
                 DFOpts::empty(),
             )
             .await?;
@@ -850,9 +865,9 @@ mod tests {
 
             // Create minimal valid JPEG files (or use test fixtures)
             // Here using a placeholder - in real test you'd use actual image data
-            util::fs::copy(test::test_img_file_with_name("cat_1.jpg"), &image1)?;
-            util::fs::copy(test::test_img_file_with_name("cat_rgba.png"), &image2)?;
-            util::fs::copy(test::test_img_file_with_name("dog_1.jpg"), &image3)?;
+            util::fs::copy(&test::test_img_file_with_name("cat_1.jpg"), &image1)?;
+            util::fs::copy(&test::test_img_file_with_name("cat_rgba.png"), &image2)?;
+            util::fs::copy(&test::test_img_file_with_name("dog_1.jpg"), &image3)?;
 
             // Add and commit the files
             repositories::add(&local_repo, &test_dir).await?;
@@ -882,7 +897,7 @@ mod tests {
             let response = api::client::data_frames::from_directory(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "test_images",
+                Path::new("test_images"),
                 request,
             )
             .await?;
@@ -891,7 +906,7 @@ mod tests {
             let files = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "image_listing.parquet",
+                Path::new("image_listing.parquet"),
                 DFOpts::empty(),
             )
             .await?;
@@ -945,7 +960,7 @@ mod tests {
             let image1 = test_dir.join("image1.jpg");
             let text1 = test_dir.join("file1.txt");
 
-            util::fs::copy(test::test_img_file_with_name("cat_1.jpg"), &image1)?;
+            util::fs::copy(&test::test_img_file_with_name("cat_1.jpg"), &image1)?;
             std::fs::write(&text1, "content1")?;
 
             // Add and commit the files
@@ -976,7 +991,7 @@ mod tests {
             let _response = api::client::data_frames::from_directory(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "test_mixed",
+                Path::new("test_mixed"),
                 request,
             )
             .await?;
@@ -985,7 +1000,7 @@ mod tests {
             let files = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                "mixed_listing.parquet",
+                Path::new("mixed_listing.parquet"),
                 DFOpts::empty(),
             )
             .await?;

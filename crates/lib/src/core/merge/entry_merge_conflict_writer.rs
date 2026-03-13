@@ -36,8 +36,8 @@ pub fn write_conflicts_to_disk(
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
     let orig_head_path = hidden_dir.join(ORIG_HEAD_FILE);
-    util::fs::write_to_path(merge_head_path, &merge_commit.id)?;
-    util::fs::write_to_path(orig_head_path, &base_commit.id)?;
+    util::fs::write_to_path(&merge_head_path, &merge_commit.id)?;
+    util::fs::write_to_path(&orig_head_path, &base_commit.id)?;
 
     for conflict in conflicts.iter() {
         let key = conflict.base_entry.path.to_str().unwrap();

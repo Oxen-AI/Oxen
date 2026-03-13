@@ -14,11 +14,7 @@ use crate::{repositories, util};
 /// # Checkout a branch or commit id
 /// This switches HEAD to point to the branch name or commit id,
 /// it also updates all the local files to be from the commit that this branch references
-pub async fn checkout(
-    repo: &LocalRepository,
-    value: impl AsRef<str>,
-) -> Result<Option<Branch>, OxenError> {
-    let value = value.as_ref();
+pub async fn checkout(repo: &LocalRepository, value: &str) -> Result<Option<Branch>, OxenError> {
     log::debug!("--- CHECKOUT START {value} ----");
     if repositories::branches::exists(repo, value)? {
         if repositories::branches::is_checked_out(repo, value) {
@@ -67,26 +63,20 @@ pub async fn checkout(
 
 /// # Checkout a file and take their changes
 /// This overwrites the current file with the changes in the branch we are merging in
-pub async fn checkout_theirs(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
+pub async fn checkout_theirs(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
     let conflicts = repositories::merge::list_conflicts(repo)?;
     log::debug!(
         "checkout_theirs {:?} conflicts.len() {}",
-        path.as_ref(),
+        path,
         conflicts.len()
     );
 
     // find the path that matches in the conflict, throw error if !found
-    if let Some(conflict) = conflicts
-        .iter()
-        .find(|c| c.merge_entry.path == path.as_ref())
-    {
+    if let Some(conflict) = conflicts.iter().find(|c| c.merge_entry.path == path) {
         // Lookup the file for the merge commit entry and copy it over
         repositories::restore::restore(
             repo,
-            RestoreOpts::from_path_ref(path, conflict.merge_entry.commit_id.clone()),
+            RestoreOpts::from_path_ref(path, &conflict.merge_entry.commit_id.clone()),
         )
         .await
     } else {
@@ -96,26 +86,20 @@ pub async fn checkout_theirs(
 
 /// # Checkout a file and take our changes
 /// This overwrites the current file with the changes we had in our current branch
-pub async fn checkout_ours(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
+pub async fn checkout_ours(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
     let conflicts = repositories::merge::list_conflicts(repo)?;
     log::debug!(
         "checkout_ours {:?} conflicts.len() {}",
-        path.as_ref(),
+        path,
         conflicts.len()
     );
 
     // find the path that matches in the conflict, throw error if !found
-    if let Some(conflict) = conflicts
-        .iter()
-        .find(|c| c.merge_entry.path == path.as_ref())
-    {
+    if let Some(conflict) = conflicts.iter().find(|c| c.merge_entry.path == path) {
         // Lookup the file for the base commit entry and copy it over
         repositories::restore(
             repo,
-            RestoreOpts::from_path_ref(path, conflict.base_entry.commit_id.clone()),
+            RestoreOpts::from_path_ref(path, &conflict.base_entry.commit_id.clone()),
         )
         .await
     } else {
@@ -125,22 +109,16 @@ pub async fn checkout_ours(
 
 /// # Combine Conflicting Tabular Data Files
 /// This overwrites the current file with the changes in their file
-pub async fn checkout_combine<P: AsRef<Path>>(
-    repo: &LocalRepository,
-    path: P,
-) -> Result<(), OxenError> {
+pub async fn checkout_combine(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
     let conflicts = repositories::merge::list_conflicts(repo)?;
 
     log::debug!(
         "checkout_combine checking path {:?} -> [{}] conflicts",
-        path.as_ref(),
+        path,
         conflicts.len()
     );
     // find the path that matches in the conflict, throw error if !found
-    if let Some(conflict) = conflicts
-        .iter()
-        .find(|c| c.merge_entry.path == path.as_ref())
-    {
+    if let Some(conflict) = conflicts.iter().find(|c| c.merge_entry.path == path) {
         if util::fs::is_tabular(&conflict.base_entry.path) {
             let version_store = repo.version_store()?;
             let df_base_path = version_store
@@ -159,7 +137,7 @@ pub async fn checkout_combine<P: AsRef<Path>>(
                 .await?;
             let df_merge = tabular::maybe_read_df_with_extension(
                 repo,
-                df_merge_path,
+                &df_merge_path,
                 &conflict.merge_entry.path,
                 &conflict.merge_entry.commit_id,
                 &DFOpts::empty(),
@@ -244,7 +222,7 @@ mod tests {
             assert!(world_file.exists());
 
             // We checkout the previous commit
-            repositories::checkout(&repo, first_commit.id).await?;
+            repositories::checkout(&repo, &first_commit.id).await?;
 
             // // Then we do not have the world file anymore
             assert!(!world_file.exists());
@@ -297,7 +275,7 @@ mod tests {
             assert!(branch_file.exists());
 
             // Checkout the previous commit
-            repositories::checkout(&repo, first_commit.id).await?;
+            repositories::checkout(&repo, &first_commit.id).await?;
 
             // Then we do not have the branch file anymore
             assert!(!branch_file.exists());
@@ -409,7 +387,7 @@ mod tests {
             assert!(world_file.exists());
 
             // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
 
             // The world file should no longer be there
             assert!(hello_file.exists());
@@ -460,15 +438,15 @@ mod tests {
             repositories::commit(&repo, "Added world.txt")?;
 
             // Modify the hello file on the branch
-            let hello_file = test::modify_txt_file(hello_file, "Hello from branch")?;
+            let hello_file = test::modify_txt_file(&hello_file, "Hello from branch")?;
             repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Changed hello.txt on branch")?;
 
             // Checkout the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
 
             // Modify the hello file on the main branch
-            let hello_file = test::modify_txt_file(hello_file, "Hello from main")?;
+            let hello_file = test::modify_txt_file(&hello_file, "Hello from main")?;
 
             // Merge the branch into main while there are conflicts
             let result = repositories::merge::merge(&repo, branch_name).await;
@@ -517,12 +495,12 @@ mod tests {
             repositories::commit(&repo, "Added world.txt")?;
 
             // Modify the hello file on the branch
-            let hello_file = test::modify_txt_file(hello_file, "Hello from branch")?;
+            let hello_file = test::modify_txt_file(&hello_file, "Hello from branch")?;
             repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Changed hello.txt on branch")?;
 
             // Checkout the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
 
             // Add a new file on main
             let new_file = repo.path.join("new_file.txt");
@@ -582,7 +560,7 @@ mod tests {
             assert!(keep_file.exists());
 
             // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
 
             // The world file should no longer be there
             assert!(hello_file.exists());
@@ -619,7 +597,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Modify the file
-            let hello_file = test::modify_txt_file(hello_file, "World")?;
+            let hello_file = test::modify_txt_file(&hello_file, "World")?;
 
             // Track & commit the change in the branch
             repositories::add(&repo, &hello_file).await?;
@@ -629,7 +607,7 @@ mod tests {
             assert_eq!(util::fs::read_from_path(&hello_file)?, "World");
 
             // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
 
             // The file contents should be Hello, not World
             log::debug!("HELLO FILE NAME: {hello_file:?}");
@@ -661,7 +639,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
-            let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
+            let one_shot_path = test::modify_txt_file(&one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             assert_eq!(status.modified_files.len(), 1);
             status.print();
@@ -671,7 +649,7 @@ mod tests {
             repositories::commit(&repo, "Changing one shot")?;
 
             // checkout OG and make sure it reverts
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
             let updated_content = util::fs::read_from_path(&one_shot_path)?;
             assert_eq!(og_content, updated_content);
 
@@ -704,7 +682,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
-            let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
+            let one_shot_path = test::modify_txt_file(&one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             assert_eq!(status.modified_files.len(), 1);
             repositories::add(&repo, &one_shot_path).await?;
@@ -718,7 +696,7 @@ mod tests {
             repositories::commit(&repo, "Changing one shot")?;
 
             // checkout OG and make sure it reverts
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
             let updated_content = util::fs::read_from_path(&one_shot_path)?;
             assert_eq!(og_content, updated_content);
 
@@ -758,7 +736,7 @@ mod tests {
             repositories::commit(&repo, "Removing train dir")?;
 
             // checkout OG and make sure it restores the train dir
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
             assert!(dir_to_remove.exists());
             assert_eq!(util::fs::rcount_files_in_dir(&dir_to_remove), og_num_files);
 
@@ -1069,7 +1047,7 @@ mod tests {
             // Create a feature branch with modifications to world.txt and a new file
             let branch_name = "feature/new-stuff";
             repositories::branches::create_checkout(&repo, branch_name)?;
-            let world_file = test::modify_txt_file(world_file, "World modified")?;
+            let world_file = test::modify_txt_file(&world_file, "World modified")?;
             let new_file = repo.path.join("new.txt");
             util::fs::write_to_path(&new_file, "New")?;
             repositories::add(&repo, &repo.path).await?;
@@ -1114,7 +1092,7 @@ mod tests {
             // Create a feature branch that modifies hello.txt
             let branch_name = "feature/modify-hello";
             repositories::branches::create_checkout(&repo, branch_name)?;
-            test::modify_txt_file(hello_file.clone(), "Hello from feature")?;
+            test::modify_txt_file(&hello_file.clone(), "Hello from feature")?;
             repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Modified hello.txt")?;
 

@@ -41,9 +41,9 @@ impl FetchOpts {
         }
     }
 
-    pub fn from_branch(branch: impl AsRef<str>) -> FetchOpts {
+    pub fn from_branch(branch: &str) -> FetchOpts {
         FetchOpts {
-            branch: branch.as_ref().to_string(),
+            branch: branch.to_string(),
             ..FetchOpts::new()
         }
     }

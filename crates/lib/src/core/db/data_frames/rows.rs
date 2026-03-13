@@ -28,7 +28,8 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
     let df_schema = df.schema();
 
     let df_names: Vec<String> = df_schema.iter_names().map(|s| s.to_string()).collect();
-    if !table_schema.has_field_names(&df_names) {
+    let df_names_str: Vec<&str> = df_names.iter().map(String::as_str).collect();
+    if !table_schema.has_field_names(&df_names_str) {
         return Err(OxenError::incompatible_schemas(table_schema.clone()));
     }
 
@@ -82,7 +83,8 @@ pub fn modify_row(
         .filter(|col| !OXEN_COLS.contains(&col.as_str()))
         .collect();
     let df = df.select(&df_cols)?;
-    if !table_schema.has_field_names(&df_cols) {
+    let df_cols_str: Vec<&str> = df_cols.iter().map(String::as_str).collect();
+    if !table_schema.has_field_names(&df_cols_str) {
         log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
         return Err(OxenError::incompatible_schemas(table_schema));
     }
@@ -151,7 +153,8 @@ pub fn modify_rows(
             .filter(|col| !OXEN_COLS.contains(&col.as_str()))
             .collect();
         let df = df.select(&df_cols)?;
-        if !table_schema.has_field_names(&df_cols) {
+        let df_cols_str: Vec<&str> = df_cols.iter().map(String::as_str).collect();
+        if !table_schema.has_field_names(&df_cols_str) {
             log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
             return Err(OxenError::incompatible_schemas(table_schema));
         }
@@ -197,7 +200,7 @@ pub fn modify_rows(
     }
 
     if result.height() != update_map.len() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Expected {} rows to be modified, but got {}",
             update_map.len(),
             result.height()
@@ -317,11 +320,9 @@ fn get_hash_and_status_for_modification(
 /// Insert a row from a polars dataframe into a duckdb table.
 pub fn insert_polars_df(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     df: &DataFrame,
 ) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
-
     let schema = df.schema();
     let column_names: Vec<String> = schema
         .iter_fields()

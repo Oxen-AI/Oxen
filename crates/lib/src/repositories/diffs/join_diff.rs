@@ -39,13 +39,13 @@ pub fn diff(
     df_1: &DataFrame,
     df_2: &DataFrame,
     schema_diff: SchemaDiff,
-    keys: &[impl AsRef<str>],
-    targets: &[impl AsRef<str>],
-    display: &[impl AsRef<str>],
+    keys: &[&str],
+    targets: &[&str],
+    display: &[&str],
 ) -> Result<TabularDiff, OxenError> {
     if !targets.is_empty() && keys.is_empty() {
         let targets = targets.iter().map(|k| k.as_ref()).collect::<Vec<&str>>();
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Must specify at least one key column if specifying target columns. Targets: {targets:?}"
         )));
     }

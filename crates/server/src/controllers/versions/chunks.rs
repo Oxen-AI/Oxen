@@ -32,7 +32,7 @@ pub async fn upload(
 
     let offset = query.offset.unwrap_or(0);
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     log::debug!(
         "/upload version {} chunk offset{} to repo: {:?}",
@@ -69,7 +69,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let version_id = path_param(&req, "version_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     log::debug!("/complete version chunk upload to repo: {:?}", repo.path);
 
@@ -102,7 +102,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
         if chunks.len() != num_chunks {
             return Ok(
-                HttpResponse::BadRequest().json(StatusMessage::error(format!(
+                HttpResponse::BadRequest().json(StatusMessage::error(&format!(
                     "Number of chunks does not match expected number of chunks: {} != {}",
                     chunks.len(),
                     num_chunks
@@ -118,7 +118,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
         // If the workspace id is provided, stage the file
         if let Some(workspace_id) = request.workspace_id {
             let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
-                return Ok(HttpResponse::NotFound().json(StatusMessage::error(format!(
+                return Ok(HttpResponse::NotFound().json(StatusMessage::error(&format!(
                     "Workspace not found: {workspace_id}"
                 ))));
             };
@@ -154,7 +154,7 @@ pub async fn download(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let version_id = path_param(&req, "version_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let offset = query.offset.unwrap_or(0);
     let size = query.size.unwrap_or(AVG_CHUNK_SIZE);

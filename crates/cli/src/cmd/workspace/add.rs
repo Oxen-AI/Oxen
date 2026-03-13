@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use clap::{Arg, ArgGroup, ArgMatches, Command};
@@ -102,7 +102,7 @@ impl RunCmd for WorkspaceAddCmd {
         api::client::workspaces::files::add(
             &remote_repo,
             workspace_identifier,
-            directory,
+            Path::new(directory),
             paths,
             &None,
         )

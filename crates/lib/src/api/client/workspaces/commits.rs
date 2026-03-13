@@ -18,7 +18,7 @@ pub async fn mergeability(
     let response: Result<MergeableResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.mergeable),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::workspaces::commits::merge error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -57,7 +57,7 @@ pub async fn commit(
             println!("🐂 commit {commit} complete!");
             Ok(commit)
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::workspaces::commits error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -94,11 +94,11 @@ mod tests {
                 test::test_img_file(),
                 test::test_img_file_with_name("cole_anthony.jpeg"),
             ];
-            api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 paths,
                 &None,
             )
@@ -134,7 +134,7 @@ mod tests {
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 paths,
                 &None,
             )
@@ -161,20 +161,20 @@ mod tests {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let workspace_1_id = "workspace_1";
             let directory_name = Path::new("annotations").join("train");
-            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_1_id)
+            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_1_id)
                 .await?;
 
             // Create a second workspace with the same branch off of the same commit
             let workspace_2_id = "workspace_2";
-            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_2_id)
+            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_2_id)
                 .await?;
 
             // add an image file to workspace 1
             let paths = vec![test::test_img_file()];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
-                &workspace_1_id,
-                directory_name.to_str().unwrap(),
+                workspace_1_id,
+                &directory_name,
                 paths,
                 &None,
             )
@@ -205,8 +205,8 @@ mod tests {
             let paths = vec![bbox_path];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
-                &workspace_2_id,
-                directory_name.to_str().unwrap(),
+                workspace_2_id,
+                &directory_name,
                 paths,
                 &None,
             )
@@ -249,12 +249,12 @@ mod tests {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let workspace_1_id = "workspace_1";
             let directory_name = Path::new("annotations").join("train");
-            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_1_id)
+            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_1_id)
                 .await?;
 
             // Create a second workspace with the same branch off of the same commit
             let workspace_2_id = "workspace_2";
-            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_2_id)
+            api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_2_id)
                 .await?;
 
             // And write new data to the annotations/train/bounding_box.csv file
@@ -268,8 +268,8 @@ mod tests {
             let paths = vec![bbox_path];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
-                &workspace_1_id,
-                directory_name.to_str().unwrap(),
+                workspace_1_id,
+                &directory_name,
                 paths,
                 &None,
             )
@@ -300,8 +300,8 @@ mod tests {
             let paths = vec![bbox_path];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
-                &workspace_2_id,
-                directory_name.to_str().unwrap(),
+                workspace_2_id,
+                &directory_name,
                 paths,
                 &None,
             )
@@ -355,7 +355,7 @@ mod tests {
             assert_eq!(branch.name, branch_name);
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // train/dog_1.jpg,dog,101.5,32.0,385,330
@@ -427,7 +427,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let ws =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(ws.id, workspace_id);
 
             let directory_name = "";
@@ -436,7 +436,7 @@ mod tests {
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 paths,
                 &None,
             )
@@ -460,7 +460,7 @@ mod tests {
 
             // List the files on main
             let revision = "main";
-            let path = "";
+            let path = Path::new("");
             let page = 1;
             let page_size = 100;
             let entries =
@@ -473,14 +473,14 @@ mod tests {
             // Add the same file again
             let workspace_id = UserConfig::identifier()? + "2";
             let ws =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(ws.id, workspace_id);
 
             let paths = vec![test::test_100_parquet()];
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 paths,
                 &None,
             )

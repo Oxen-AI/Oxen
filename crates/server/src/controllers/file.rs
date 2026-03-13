@@ -164,13 +164,13 @@ pub async fn get(
                 // Fall back to commit tree using workspace's commit
                 let commit = &ws.commit;
                 repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                    .ok_or(OxenError::path_does_not_exist(path.clone()))?
+                    .ok_or(OxenError::path_does_not_exist(&path))?
             }
         }
         None => {
             let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
             repositories::tree::get_file_by_path(base_repo, &commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.clone()))?
+                .ok_or(OxenError::path_does_not_exist(&path))?
         }
     };
 
@@ -279,7 +279,7 @@ pub async fn put(
         .branch
         .clone()
         .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
+            &resource.version.to_string_lossy(),
         ))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
@@ -335,7 +335,7 @@ pub async fn put(
         }),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, &branch.name).await?;
 
     log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
@@ -384,7 +384,7 @@ pub async fn delete(
         .branch
         .clone()
         .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
+            &resource.version.to_string_lossy(),
         ))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let path = resource.path;
@@ -409,7 +409,7 @@ pub async fn delete(
             .unwrap_or(format!("Remove {}", &path.to_string_lossy())),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, &branch.name).await?;
 
     log::debug!("file::delete workspace commit ✅ success! commit {commit:?}");
 
@@ -477,7 +477,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
         .branch
         .clone()
         .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
+            &resource.version.to_string_lossy(),
         ))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let source_path = resource.path;
@@ -491,7 +491,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     }
 
     // Validate and normalize new_path
-    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
+    let new_path = util::fs::validate_and_normalize_path(Path::new(&body.new_path))?;
 
     // Verify source file exists
     if repositories::entries::get_file(&repo, &commit, &source_path)?.is_none() {
@@ -525,7 +525,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
         }),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, &branch.name).await?;
 
     log::debug!("file::mv workspace commit ✅ success! commit {commit:?}");
 
@@ -806,7 +806,7 @@ mod tests {
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Name";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
         repositories::add(&repo, &hello_file).await?;
@@ -851,9 +851,12 @@ mod tests {
         assert_eq!(resp.status.status, "success");
 
         // Check that the file was updated
-        let entry =
-            repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/hello.txt"))?
-                .unwrap();
+        let entry = repositories::entries::get_file(
+            &repo,
+            &resp.commit,
+            &PathBuf::from("data").join("hello.txt"),
+        )?
+        .unwrap();
         let version_store = repo.version_store()?;
         let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
         assert_eq!(
@@ -875,7 +878,7 @@ mod tests {
         let repo_name = "Testing-Get-Headers";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         let file_content = "Hello";
         util::fs::write_to_path(&hello_file, file_content)?;

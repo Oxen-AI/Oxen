@@ -108,11 +108,7 @@ pub fn get_by_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Option<C
 }
 
 /// Get a commit by it's string hash
-pub fn get_by_id(
-    repo: &LocalRepository,
-    commit_id: impl AsRef<str>,
-) -> Result<Option<Commit>, OxenError> {
-    let commit_id = commit_id.as_ref();
+pub fn get_by_id(repo: &LocalRepository, commit_id: &str) -> Result<Option<Commit>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::get_by_id(repo, commit_id),
@@ -120,20 +116,16 @@ pub fn get_by_id(
 }
 
 /// Commit id exists
-pub fn commit_id_exists(
-    repo: &LocalRepository,
-    commit_id: impl AsRef<str>,
-) -> Result<bool, OxenError> {
-    get_by_id(repo, commit_id.as_ref()).map(|commit| commit.is_some())
+pub fn commit_id_exists(repo: &LocalRepository, commit_id: &str) -> Result<bool, OxenError> {
+    get_by_id(repo, commit_id).map(|commit| commit.is_some())
 }
 
 /// Create an empty commit off of the head commit of a branch
 pub fn create_empty_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
     commit: &Commit,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("create_empty_commit not supported in v0.10.0"),
         _ => core::v_latest::commits::create_empty_commit(repo, branch_name, commit),
@@ -145,12 +137,10 @@ pub fn create_empty_commit(
 /// Returns an error if the repository already has commits.
 pub fn create_initial_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
     user: &User,
-    message: impl AsRef<str>,
+    message: &str,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
-    let message = message.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("create_initial_commit not supported in v0.10.0"),
         _ => core::v_latest::commits::create_initial_commit(repo, branch_name, user, message),
@@ -184,7 +174,7 @@ pub fn list_unsynced(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenErro
 /// List unsynced commits from a specific revision
 pub fn list_unsynced_from(
     repo: &LocalRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
 ) -> Result<HashSet<Commit>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("list_unsynced_from not supported in v0.10.0"),
@@ -192,9 +182,9 @@ pub fn list_unsynced_from(
     }
 }
 // Source
-pub fn get_commit_or_head<S: AsRef<str> + Clone>(
+pub fn get_commit_or_head(
     repo: &LocalRepository,
-    commit_id_or_branch_name: Option<S>,
+    commit_id_or_branch_name: Option<&str>,
 ) -> Result<Commit, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => resource::get_commit_or_head(repo, commit_id_or_branch_name),
@@ -250,27 +240,19 @@ pub fn list_between(
 }
 
 /// Get a list of commits by the commit message
-pub fn get_by_message(
-    repo: &LocalRepository,
-    msg: impl AsRef<str>,
-) -> Result<Vec<Commit>, OxenError> {
+pub fn get_by_message(repo: &LocalRepository, msg: &str) -> Result<Vec<Commit>, OxenError> {
     let commits = list_all(repo)?;
     let filtered: Vec<Commit> = commits
         .into_iter()
-        .filter(|commit| commit.message == msg.as_ref())
+        .filter(|commit| commit.message == msg)
         .collect();
     Ok(filtered)
 }
 
 /// Get the most recent commit by the commit message, starting at the HEAD commit
-pub fn first_by_message(
-    repo: &LocalRepository,
-    msg: impl AsRef<str>,
-) -> Result<Option<Commit>, OxenError> {
+pub fn first_by_message(repo: &LocalRepository, msg: &str) -> Result<Option<Commit>, OxenError> {
     let commits = list(repo)?;
-    Ok(commits
-        .into_iter()
-        .find(|commit| commit.message == msg.as_ref()))
+    Ok(commits.into_iter().find(|commit| commit.message == msg))
 }
 
 /// Retrieve entries with filepaths matching a provided glob pattern
@@ -355,10 +337,7 @@ pub fn list_by_path_from_paginated(
     }
 }
 
-pub fn count_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<(usize, bool), OxenError> {
+pub fn count_from(repo: &LocalRepository, revision: &str) -> Result<(usize, bool), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
         _ => core::v_latest::commits::count_from(repo, revision),
@@ -481,7 +460,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Track the file
             let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir).await?;
+            repositories::add(&repo, &train_dir).await?;
             // Commit the file
             let commit = repositories::commit(&repo, "Adding training data")?;
 
@@ -495,7 +474,7 @@ mod tests {
             repositories::tree::print_tree(&repo, &commit)?;
 
             let dir_node =
-                repositories::tree::get_node_by_path(&repo, &commit, PathBuf::from("train"))?;
+                repositories::tree::get_node_by_path(&repo, &commit, &PathBuf::from("train"))?;
             assert!(dir_node.is_some());
 
             let commits = repositories::commits::list(&repo)?;
@@ -511,7 +490,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Track the annotations dir, which has sub dirs
             let annotations_dir = repo.path.join("annotations");
-            repositories::add(&repo, annotations_dir).await?;
+            repositories::add(&repo, &annotations_dir).await?;
             repositories::commit(&repo, "Adding annotations data dir, which has two levels")?;
 
             let repo_status = repositories::status(&repo)?;
@@ -553,7 +532,7 @@ mod tests {
             repositories::commit(&repo, "Adding test dir")?;
 
             // checkout OG and make sure it removes the train dir
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
             assert!(!test_dir_path.exists());
 
             // checkout branch again and make sure it reverts
@@ -618,7 +597,7 @@ mod tests {
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;
@@ -634,7 +613,7 @@ mod tests {
             // Assume that we fixed the conflict and added the file
             let path = status.merge_conflicts[0].base_entry.path.clone();
             let fullpath = repo.path.join(path);
-            repositories::add(&repo, fullpath).await?;
+            repositories::add(&repo, &fullpath).await?;
 
             // Should commit, and then see full commit history
             repositories::commit(&repo, "merging into main")?;
@@ -822,7 +801,7 @@ mod tests {
     async fn test_commit_history_order() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir).await?;
+            repositories::add(&repo, &train_dir).await?;
             let initial_commit_message = "adding train dir";
             repositories::commit(&repo, initial_commit_message)?;
 
@@ -833,7 +812,7 @@ mod tests {
             repositories::commit(&repo, "adding text file")?;
 
             let test_dir = repo.path.join("test");
-            repositories::add(&repo, test_dir).await?;
+            repositories::add(&repo, &test_dir).await?;
             let most_recent_message = "adding test dir";
             repositories::commit(&repo, most_recent_message)?;
 
@@ -853,22 +832,22 @@ mod tests {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let new_file = repo.path.join("new_1.txt");
             test::write_txt_file_to_path(&new_file, "new 1")?;
-            repositories::add(&repo, new_file).await?;
+            repositories::add(&repo, &new_file).await?;
             let base_commit = repositories::commit(&repo, "commit 1")?;
 
             let new_file = repo.path.join("new_2.txt");
             test::write_txt_file_to_path(&new_file, "new 2")?;
-            repositories::add(&repo, new_file).await?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "commit 2")?;
 
             let new_file = repo.path.join("new_3.txt");
             test::write_txt_file_to_path(&new_file, "new 3")?;
-            repositories::add(&repo, new_file).await?;
+            repositories::add(&repo, &new_file).await?;
             let head_commit = repositories::commit(&repo, "commit 3")?;
 
             let new_file = repo.path.join("new_4.txt");
             test::write_txt_file_to_path(&new_file, "new 4")?;
-            repositories::add(&repo, new_file).await?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "commit 4")?;
 
             let history = repositories::commits::list_between(&repo, &base_commit, &head_commit)?;
@@ -888,7 +867,7 @@ mod tests {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
-            util::fs::create_dir_all(dir_repo_path)?;
+            util::fs::create_dir_all(&dir_repo_path)?;
 
             // File in the dir
             let file_path = dir_path.join(Path::new("test_file.txt"));
@@ -1044,7 +1023,7 @@ mod tests {
                 status
                     .untracked_dirs
                     .iter()
-                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+                    .any(|(path, _)| path == Path::new("empty_dir"))
             );
 
             // Add the empty dir
@@ -1057,16 +1036,16 @@ mod tests {
 
             let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
 
-            assert!(tree.get_by_path(PathBuf::from("empty_dir"))?.is_some());
+            assert!(tree.get_by_path(&PathBuf::from("empty_dir"))?.is_some());
 
             // Remove the empty dir
-            let mut rm_opts = RmOpts::from_path(PathBuf::from("empty_dir"));
+            let mut rm_opts = RmOpts::from_path(&PathBuf::from("empty_dir"));
             rm_opts.recursive = true;
             repositories::rm(&repo, &rm_opts)?;
             let commit_2 = repositories::commit(&repo, "removing empty dir")?;
 
             let tree_2 = repositories::tree::get_root_with_children(&repo, &commit_2)?.unwrap();
-            assert!(tree_2.get_by_path(PathBuf::from("empty_dir"))?.is_none());
+            assert!(tree_2.get_by_path(&PathBuf::from("empty_dir"))?.is_none());
 
             Ok(())
         })
@@ -1084,7 +1063,7 @@ mod tests {
             let commit = repositories::commit(&repo, "Adding invalid parquet file")?;
 
             let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
-            let file_node = tree.get_by_path(PathBuf::from("invalid.parquet"))?;
+            let file_node = tree.get_by_path(&PathBuf::from("invalid.parquet"))?;
             assert!(file_node.is_some());
 
             let file_entry = file_node.unwrap();
@@ -1101,7 +1080,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths =
                     Some(vec![PathBuf::from("annotations").join("test")]);
                 let local_repo = repositories::clone::clone(&opts).await?;
@@ -1137,7 +1116,7 @@ A: Oxen.ai
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from(".")]);
                 let local_repo = repositories::clone::clone(&opts).await?;
 
@@ -1150,7 +1129,7 @@ A: Oxen.ai
                 let tree =
                     repositories::tree::get_root_with_children(&local_repo, &commit)?.unwrap();
 
-                let file_node = tree.get_by_path(PathBuf::from("empty.txt"))?;
+                let file_node = tree.get_by_path(&PathBuf::from("empty.txt"))?;
                 assert!(file_node.is_some());
                 let file_node = file_node.unwrap().file()?;
                 assert_eq!(file_node.num_bytes(), 0);
@@ -1168,7 +1147,7 @@ A: Oxen.ai
                 let tree =
                     repositories::tree::get_root_with_children(&local_repo, &commit)?.unwrap();
 
-                let file_node = tree.get_by_path(PathBuf::from("empty.txt"))?;
+                let file_node = tree.get_by_path(&PathBuf::from("empty.txt"))?;
                 assert!(file_node.is_some());
                 let file_node = file_node.unwrap().file()?;
                 assert_eq!(file_node.num_bytes(), raw_str.len() as u64);
@@ -1220,7 +1199,7 @@ A: Oxen.ai
             let head_commit = repositories::commits::head_commit(&repo)?;
             assert_eq!(head_commit.id, commit_e.id);
 
-            let expected_commits = vec![commit_e.clone(), commit_c.clone(), commit_a.clone()];
+            let expected_commits = [commit_e.clone(), commit_c.clone(), commit_a.clone()];
 
             let pagination_opts = PaginateOpts::default();
             let paginated_result = repositories::commits::list_by_path_from_paginated(

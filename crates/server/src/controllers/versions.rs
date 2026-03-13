@@ -55,7 +55,7 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?;
     let version_id = path_param(&req, "version_id")?;
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let exists = repo.version_store()?.version_exists(&version_id).await?;
     if !exists {
@@ -77,7 +77,7 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let result = version_store.clean_corrupted_versions(false).await?;
 
@@ -126,7 +126,7 @@ pub async fn download(
     log::debug!("Download resource {namespace}/{repo_name}/{resource} version file");
 
     let entry = repositories::entries::get_file(&repo, &commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+        .ok_or(OxenError::path_does_not_exist(&path.clone()))?;
     let file_hash = entry.hash();
     let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();
@@ -183,7 +183,7 @@ pub async fn batch_download(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -251,7 +251,7 @@ pub async fn stream_versions_tar_gz(
                     if let Err(e) = header.set_path(file_hash) {
                         log::error!("Failed to set path for {file_hash}: {e}");
                         error_tx
-                            .send(OxenError::basic_str(format!(
+                            .send(OxenError::basic_str(&format!(
                                 "Failed to set path for {file_hash}: {e}"
                             )))
                             .ok();
@@ -351,7 +351,7 @@ pub async fn stream_versions_zip(
                 Some(path) => path,
                 None => {
                     let err = "Invalid UTF-8 in path".to_string();
-                    error_tx.send(OxenError::basic_str(err)).ok();
+                    error_tx.send(OxenError::basic_str(&err)).ok();
                     had_error = true;
                     break;
                 }
@@ -485,7 +485,7 @@ pub async fn batch_upload(
 
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let err_files = save_multiparts(payload, &repo).await?;
     log::debug!("batch upload complete with err_files: {}", err_files.len());
 
@@ -616,7 +616,7 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         // create test file and commit
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let relative_path = "data/hello.txt";
         let hello_file = repo.path.join(relative_path);
         let file_content = "Hello";
@@ -670,7 +670,7 @@ mod tests {
         let repo_name = "Testing-Resize-Content-Length";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let relative_path = "data/pixel.png";
         let image_file = repo.path.join(relative_path);
         let png_bytes = [
@@ -733,7 +733,7 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         // create test file and commit so we have a valid repo
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let relative_path = "data/hello.txt";
         let hello_file = repo.path.join(relative_path);
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -775,7 +775,7 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
-        repositories::add(&repo, path).await?;
+        repositories::add(&repo, &path).await?;
         repositories::commit(&repo, "first commit")?;
 
         let file_content = "Test Content";

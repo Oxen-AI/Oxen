@@ -12,7 +12,7 @@ pub struct SQLParseError {
 impl SQLParseError {
     pub fn new(sql: String) -> Self {
         Self {
-            status: StatusMessage::error(format!("Error running SQL query '{sql}'")),
+            status: StatusMessage::error(&format!("Error running SQL query '{sql}'")),
             sql,
         }
     }

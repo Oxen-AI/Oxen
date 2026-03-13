@@ -14,11 +14,10 @@ use std::path::Path;
 /// Get the metadata about a resource from the remote.
 pub async fn get_file(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
 ) -> Result<Option<EMetadataEntryResponseView>, OxenError> {
-    let path = path.as_ref().to_string_lossy();
-    let revision = revision.as_ref();
+    let path = path.to_string_lossy();
     let uri = format!("/meta/{revision}/{path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -58,7 +57,7 @@ mod tests {
             let entry = tree.get_by_path(&path)?;
             assert!(entry.is_some());
 
-            let entry = api::client::metadata::get_file(&remote_repo, revision, path)
+            let entry = api::client::metadata::get_file(&remote_repo, revision, &path)
                 .await?
                 .unwrap()
                 .entry;
@@ -88,7 +87,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_dir_entry() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let path = "train";
+            let path = Path::new("train");
             let revision = DEFAULT_BRANCH_NAME;
             let entry = api::client::metadata::get_file(&remote_repo, revision, path)
                 .await?
@@ -153,12 +152,12 @@ mod tests {
             repositories::push(&local_repo).await?;
 
             let meta: EMetadataEntryResponseView =
-                api::client::metadata::get_file(&remote_repo, main_branch, &path)
+                api::client::metadata::get_file(&remote_repo, main_branch, path)
                     .await?
                     .unwrap();
 
             let second_meta: EMetadataEntryResponseView =
-                api::client::metadata::get_file(&remote_repo, second_branch, &path)
+                api::client::metadata::get_file(&remote_repo, second_branch, path)
                     .await?
                     .unwrap();
 
@@ -176,12 +175,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_file_with_workspace() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
-            let file_path = "annotations/train/file.txt";
+            let file_path = Path::new("annotations/train/file.txt");
             let workspace_id = "test_workspace_id";
-            let directory_name = "annotations/train";
+            let directory_name = Path::new("annotations/train");
 
             let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
 
@@ -191,7 +190,7 @@ mod tests {
 
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
-                &workspace_id,
+                workspace_id,
                 directory_name,
                 &full_path,
             )
@@ -214,18 +213,18 @@ mod tests {
 
             let file_path = test::test_bounding_box_csv();
             let full_path = local_repo.path.join(file_path.clone());
-            util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n")?;
+            util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n".as_bytes())?;
 
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
-                &workspace_id,
+                workspace_id,
                 directory_name,
                 &full_path,
             )
             .await;
 
             let meta: EMetadataEntryResponseView =
-                api::client::metadata::get_file(&remote_repo, workspace_id, file_path.clone())
+                api::client::metadata::get_file(&remote_repo, workspace_id, &file_path)
                     .await?
                     .unwrap();
 

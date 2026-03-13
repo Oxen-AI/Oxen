@@ -115,5 +115,5 @@ fn workspace_not_found(message: &str) -> OxenError {
     //       CLI error rendering needs to be updated so we can use error variants properly & have precise
     //       error message formatting control.
     // OxenError::WorkspaceNotFound(Box::new(StringError::new(format!("Workspace {message} does not exist"))))
-    OxenError::basic_str(format!("Workspace {message} does not exist"))
+    OxenError::basic_str(&format!("Workspace {message} does not exist"))
 }

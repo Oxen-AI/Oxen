@@ -40,7 +40,7 @@ impl RunCmd for DbListCmd {
             .get_one::<String>("limit")
             .map(|x| x.parse::<usize>().expect("limit must be valid size"));
 
-        command::db::list(PathBuf::from(path), limit)?;
+        command::db::list(&PathBuf::from(path), limit)?;
 
         Ok(())
     }

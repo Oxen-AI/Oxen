@@ -50,9 +50,9 @@ pub async fn has_conflicts(
     merge_branch: &Branch,
 ) -> Result<bool, OxenError> {
     let base_commit =
-        repositories::commits::get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
+        repositories::commits::get_commit_or_head(repo, Some(&base_branch.commit_id.clone()))?;
     let merge_commit =
-        repositories::commits::get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
+        repositories::commits::get_commit_or_head(repo, Some(&merge_branch.commit_id.clone()))?;
 
     let res = can_merge_commits(repo, &base_commit, &merge_commit).await?;
     Ok(!res)
@@ -106,8 +106,8 @@ pub async fn list_conflicts_between_branches(
     base_branch: &Branch,
     merge_branch: &Branch,
 ) -> Result<Vec<PathBuf>, OxenError> {
-    let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
-    let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
+    let base_commit = get_commit_or_head(repo, Some(&base_branch.commit_id.clone()))?;
+    let merge_commit = get_commit_or_head(repo, Some(&merge_branch.commit_id.clone()))?;
 
     list_conflicts_between_commits(repo, &base_commit, &merge_commit).await
 }
@@ -118,11 +118,11 @@ pub fn list_commits_between_branches(
     head_branch: &Branch,
 ) -> Result<Vec<Commit>, OxenError> {
     log::debug!("list_commits_between_branches() base: {base_branch:?} head: {head_branch:?}");
-    let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
-    let head_commit = get_commit_or_head(repo, Some(head_branch.commit_id.clone()))?;
+    let base_commit = get_commit_or_head(repo, Some(&base_branch.commit_id.clone()))?;
+    let head_commit = get_commit_or_head(repo, Some(&head_branch.commit_id.clone()))?;
 
     let Some(lca) = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Error: head commit {:?} and base commit {:?} have no common ancestor",
             head_commit.id, base_commit.id
         )));
@@ -142,7 +142,7 @@ pub fn list_commits_between_commits(
     log::debug!("list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}");
 
     let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Error: head commit {:?} and base commit {:?} have no common ancestor",
             head_commit.id, base_commit.id
         )));
@@ -194,8 +194,8 @@ pub async fn merge_into_base(
         return Ok(None);
     }
 
-    let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
-    let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
+    let base_commit = get_commit_or_head(repo, Some(&base_branch.commit_id.clone()))?;
+    let merge_commit = get_commit_or_head(repo, Some(&merge_branch.commit_id.clone()))?;
 
     let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
     log::debug!("merge_into_base base: {base_commit:?} merge: {merge_commit:?} lca: {lca:?}");
@@ -210,17 +210,12 @@ pub async fn merge_into_base(
 }
 
 /// Merge into the current branch, returns the merge commit if successful, and None if there is conflicts
-pub async fn merge(
-    repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
-) -> Result<Option<Commit>, OxenError> {
-    let branch_name = branch_name.as_ref();
-
+pub async fn merge(repo: &LocalRepository, branch_name: &str) -> Result<Option<Commit>, OxenError> {
     let merge_branch = repositories::branches::get_by_name(repo, branch_name)?
         .ok_or(OxenError::local_branch_not_found(branch_name))?;
 
     let base_commit = repositories::commits::head_commit(repo)?;
-    let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
+    let merge_commit = get_commit_or_head(repo, Some(&merge_branch.commit_id.clone()))?;
     let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
     let commits = MergeCommits {
         lca,
@@ -290,17 +285,15 @@ pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), O
     Ok(())
 }
 
-pub fn find_merge_commits<S: AsRef<str>>(
+pub fn find_merge_commits(
     repo: &LocalRepository,
-    branch_name: S,
+    branch_name: &str,
 ) -> Result<MergeCommits, OxenError> {
-    let branch_name = branch_name.as_ref();
-
     let current_branch = repositories::branches::current_branch(repo)?
         .ok_or(OxenError::basic_str("No current branch"))?;
 
     let head_commit =
-        repositories::commits::get_commit_or_head(repo, Some(current_branch.name.clone()))?;
+        repositories::commits::get_commit_or_head(repo, Some(&current_branch.name.clone()))?;
 
     let merge_commit = get_commit_or_head(repo, Some(branch_name))?;
 
@@ -392,14 +385,13 @@ Found {} conflicts, please resolve them before merging.
 /// Check if HEAD is in the direct parent chain of the merge commit. If it is a direct parent, we can just fast forward
 pub fn lowest_common_ancestor(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
 ) -> Result<Option<Commit>, OxenError> {
-    let branch_name = branch_name.as_ref();
     let current_branch = repositories::branches::current_branch(repo)?
         .ok_or(OxenError::basic_str("No current branch"))?;
 
     let base_commit =
-        repositories::commits::get_commit_or_head(repo, Some(current_branch.name.clone()))?;
+        repositories::commits::get_commit_or_head(repo, Some(&current_branch.name.clone()))?;
     let merge_commit = repositories::commits::get_commit_or_head(repo, Some(branch_name))?;
 
     lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)
@@ -456,7 +448,7 @@ async fn fast_forward_merge(
     r_ff_merge_commit(
         repo,
         &merge_tree,
-        PathBuf::from(""),
+        &PathBuf::from(""),
         &mut merge_tree_results,
         &mut partial_nodes,
         &mut shared_hashes,
@@ -474,7 +466,7 @@ async fn fast_forward_merge(
     r_ff_base_dir(
         repo,
         &base_tree,
-        PathBuf::from(""),
+        &PathBuf::from(""),
         &mut base_tree_results,
         &mut shared_hashes,
         &mut seen_files,
@@ -508,13 +500,12 @@ async fn fast_forward_merge(
 fn r_ff_merge_commit(
     repo: &LocalRepository,
     merge_node: &MerkleTreeNode,
-    path: impl AsRef<Path>,
+    path: &Path,
     results: &mut MergeResult,
     base_files: &mut HashMap<PathBuf, PartialNode>,
     shared_hashes: &mut HashSet<MerkleHash>,
     seen_files: &mut HashSet<PathBuf>,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref();
     match &merge_node.node {
         EMerkleTreeNode::File(merge_file_node) => {
             let file_path = path.join(merge_file_node.name());
@@ -623,12 +614,11 @@ fn r_ff_merge_commit(
 fn r_ff_base_dir(
     repo: &LocalRepository,
     base_node: &MerkleTreeNode,
-    path: impl AsRef<Path>,
+    path: &Path,
     results: &mut MergeResult,
     shared_hashes: &mut HashSet<MerkleHash>,
     merge_files: &mut HashSet<PathBuf>,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref();
     match &base_node.node {
         EMerkleTreeNode::File(base_file_node) => {
             let file_path = path.join(base_file_node.name());
@@ -818,7 +808,7 @@ async fn create_merge_commit_on_branch(
     // The author in this case is the pusher - the author of the merge commit
 
     let commit = commit_writer::commit_with_parent_ids(repo, &commit_msg, parent_ids)?;
-    let mut opts = RmOpts::from_path(PathBuf::from("/"));
+    let mut opts = RmOpts::from_path(&PathBuf::from("/"));
     opts.staged = true;
     opts.recursive = true;
     rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]), &opts)?;

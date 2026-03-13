@@ -114,20 +114,18 @@ impl AuthConfig {
 
     pub fn save(&self, path: &Path) -> Result<(), OxenError> {
         let toml = toml::to_string(&self)?;
-        util::fs::write_to_path(path, toml)?;
+        util::fs::write_to_path(path, &toml)?;
         Ok(())
     }
 
-    pub fn add_host_auth_token<S: AsRef<str>>(&mut self, host: S, token: S) {
-        let host = host.as_ref();
+    pub fn add_host_auth_token(&mut self, host: &str, token: &str) {
         self.host_configs.replace(HostConfig {
             host: String::from(host),
-            auth_token: Some(String::from(token.as_ref())),
+            auth_token: Some(String::from(token)),
         });
     }
 
-    pub fn auth_token_for_host<S: AsRef<str>>(&self, host: S) -> Option<String> {
-        let host = host.as_ref();
+    pub fn auth_token_for_host(&self, host: &str) -> Option<String> {
         if let Some(token) = self.host_configs.get(&HostConfig::from_host(host)) {
             if token.auth_token.is_none() {
                 log::trace!("no auth_token found for host \"{}\"", token.host);

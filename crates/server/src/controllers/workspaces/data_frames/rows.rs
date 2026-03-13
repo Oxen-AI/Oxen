@@ -23,7 +23,7 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     let data = String::from_utf8(bytes.to_vec()).expect("Could not parse bytes as utf8");
@@ -45,7 +45,7 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     // Get the workspace
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     // Make sure the data frame is indexed
@@ -92,16 +92,19 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let file_path = path_param(&req, "path")?;
     let row_id = path_param(&req, "row_id")?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
-    let row_df =
-        repositories::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
+    let row_df = repositories::workspaces::data_frames::rows::get_by_id(
+        &workspace,
+        std::path::Path::new(&file_path),
+        &row_id,
+    )?;
 
     let row_id = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
     let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
@@ -157,7 +160,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     // Assumes the workspace is already created
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     log::debug!(
         "update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?} with json data {data:?}"
@@ -197,12 +200,12 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     let workspace_id = path_param(&req, "workspace_id")?;
     let row_id = path_param(&req, "row_id")?;
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let df = repositories::workspaces::data_frames::rows::delete(
@@ -234,12 +237,12 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let workspace_id = path_param(&req, "workspace_id")?;
     let row_id = path_param(&req, "row_id")?;
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let restored_row = repositories::workspaces::data_frames::rows::restore(
@@ -294,7 +297,7 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     log::debug!("update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?}");
 

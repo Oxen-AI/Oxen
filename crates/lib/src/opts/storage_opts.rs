@@ -68,7 +68,7 @@ impl StorageOpts {
                     s3_opts: Some(s3_opts),
                 })
             }
-            _ => Err(OxenError::basic_str(format!(
+            _ => Err(OxenError::basic_str(&format!(
                 "Unsupported async storage type: {}",
                 config.type_
             ))),

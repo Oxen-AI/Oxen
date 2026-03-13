@@ -30,7 +30,7 @@ impl RunCmd for DbCountCmd {
             return Err(OxenError::basic_str("Must supply path"));
         };
 
-        let count = command::db::count(PathBuf::from(path))?;
+        let count = command::db::count(&PathBuf::from(path))?;
 
         println!("There are {count} entries in the database");
 

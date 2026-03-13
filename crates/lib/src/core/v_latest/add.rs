@@ -69,9 +69,9 @@ impl AddAssign<CumulativeStats> for CumulativeStats {
     }
 }
 
-pub async fn add<T: AsRef<Path>>(
+pub async fn add<'a>(
     repo: &LocalRepository,
-    paths: impl IntoIterator<Item = T>,
+    paths: impl IntoIterator<Item = &'a Path>,
 ) -> Result<(), OxenError> {
     // Collect paths that match the glob pattern either:
     // 1. In the repo working directory (untracked or modified files)
@@ -84,8 +84,6 @@ pub async fn add<T: AsRef<Path>>(
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths {
-        let path = path.as_ref();
-
         let glob_opts = GlobOpts {
             paths: vec![path.to_path_buf()],
             staged_db: false,
@@ -130,7 +128,7 @@ pub async fn add<T: AsRef<Path>>(
 
 pub async fn add_files(
     repo: &LocalRepository,
-    repo_path: &PathBuf,
+    repo_path: &Path,
     paths: &HashSet<PathBuf>, // We assume all paths provided are relative to the repo root
     staged_db: Arc<DBWithThreadMode<MultiThreaded>>,
     version_store: &Arc<dyn VersionStore>,
@@ -379,7 +377,7 @@ pub async fn process_add_dir(
             async move {
                 let process_directory = move || async move {
                     let dir = entry.path();
-                    let dir_path = util::fs::path_relative_to_dir(dir, &*Arc::clone(&repo_path))?;
+                    let dir_path = util::fs::path_relative_to_dir(dir, &Arc::clone(&repo_path))?;
                     // Check if the dir is excluded
                     if let Some(dir_hashes_ref) = dir_hashes.as_ref()
                         && let Some(dir_hash) = dir_hashes_ref.get(&dir_path)
@@ -622,7 +620,7 @@ fn maybe_load_directory(
 
 pub fn get_file_node(
     dir_node: &Option<MerkleTreeNode>,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<FileNode>, OxenError> {
     let Some(node) = dir_node else {
         return Ok(None);
@@ -641,7 +639,7 @@ pub fn get_file_node(
 
 async fn add_file_inner(
     repo: &LocalRepository,
-    repo_path: &PathBuf,
+    repo_path: &Path,
     maybe_head_commit: &Option<Commit>,
     path: &Path,
     staged_db: &DBWithThreadMode<MultiThreaded>,
@@ -680,12 +678,11 @@ async fn add_file_inner(
 
 pub fn determine_file_status(
     maybe_dir_node: &Option<MerkleTreeNode>,
-    file_name: impl AsRef<str>,  // Name of the file in the repository
-    data_path: impl AsRef<Path>, // Path to the data file (maybe in the version store)
+    file_name: &str,  // Name of the file in the repository
+    data_path: &Path, // Path to the data file (maybe in the version store)
 ) -> Result<FileStatus, OxenError> {
     // Check if the file is already in the head commit
     let file_path = file_name.as_ref();
-    let data_path = data_path.as_ref();
     log::debug!("determine_file_status data_path {data_path:?} file_name {file_path:?}",);
 
     let maybe_file_node = get_file_node(maybe_dir_node, file_path)?;
@@ -836,7 +833,13 @@ pub fn process_add_file(
         },
     )?;
 
-    p_add_file_node_to_staged_db(staged_db, relative_path_str, status, &file_node, seen_dirs)
+    p_add_file_node_to_staged_db(
+        staged_db,
+        Path::new(relative_path_str),
+        status,
+        &file_node,
+        seen_dirs,
+    )
 }
 
 /// Add this function in replace of process_add_file for workspaces staged db to handle concurrent add_file calls
@@ -935,13 +938,19 @@ pub fn process_add_file_with_staged_db_manager(
         },
     )?;
 
-    add_file_node_to_staged_db(repo, relative_path_str, status, &file_node, seen_dirs)
+    add_file_node_to_staged_db(
+        repo,
+        Path::new(relative_path_str),
+        status,
+        &file_node,
+        seen_dirs,
+    )
 }
 
 /// Stage file node with staged db manager
 pub fn add_file_node_to_staged_db(
     repo: &LocalRepository,
-    relative_path: impl AsRef<Path>,
+    relative_path: &Path,
     status: StagedEntryStatus,
     file_node: &FileNode,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
@@ -969,7 +978,7 @@ pub fn stage_file_with_hash(
     let base_repo = &workspace.base_repo;
     let head_commit = &workspace.commit;
 
-    let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
+    let relative_path = util::fs::path_relative_to_dir(dst_path, &base_repo.path.clone())?;
     let metadata = util::fs::metadata(data_path)?;
     let mtime = FileTime::from_last_modification_time(&metadata);
     let maybe_file_node =
@@ -1024,15 +1033,15 @@ pub fn stage_file_with_hash(
 pub fn add_file_node_and_parent_dir(
     file_node: &FileNode,
     status: StagedEntryStatus,
-    relative_path: impl AsRef<Path>,
+    relative_path: &Path,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     // Stage the file node
-    staged_db_manager.upsert_file_node(&relative_path, status, file_node)?;
+    staged_db_manager.upsert_file_node(relative_path, status, file_node)?;
 
     // Add all the parent dirs to the staged db
-    let mut parent_path = relative_path.as_ref().to_path_buf();
+    let mut parent_path = relative_path.to_path_buf();
     while let Some(parent) = parent_path.parent() {
         parent_path = parent.to_path_buf();
 
@@ -1158,13 +1167,11 @@ pub fn maybe_construct_generic_metadata_for_tabular(
 
 pub fn p_add_file_node_to_staged_db(
     staged_db: &DBWithThreadMode<MultiThreaded>,
-    relative_path: impl AsRef<Path>,
+    relative_path: &Path,
     status: StagedEntryStatus,
     file_node: &FileNode,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    let relative_path = relative_path.as_ref();
-
     log::debug!(
         "writing {:?} [{:?}] to staged db: {:?}",
         relative_path,
@@ -1204,10 +1211,9 @@ pub fn p_add_file_node_to_staged_db(
 
 pub fn add_dir_to_staged_db(
     staged_db: &DBWithThreadMode<MultiThreaded>,
-    relative_path: impl AsRef<Path>,
+    relative_path: &Path,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-    let relative_path = relative_path.as_ref();
     let relative_path_str = relative_path.to_str().unwrap();
     let mut seen_dirs = seen_dirs.lock();
     if !seen_dirs.insert(relative_path.to_path_buf()) {
@@ -1302,11 +1308,11 @@ mod tests {
             test::write_txt_file_to_path(&file2_1, "dir2/file2_1")?;
             test::write_txt_file_to_path(&file_root, "file_root")?;
 
-            add(&repo, vec![&repo.path]).await?;
+            add(&repo, [repo.path.as_path()]).await?;
 
             repositories::commits::commit(&repo, "Initial commit with multiple files and dirs")?;
 
-            add(&repo, vec![&repo.path]).await?;
+            add(&repo, [repo.path.as_path()]).await?;
 
             let status = repositories::status(&repo);
             assert!(status.is_ok());
@@ -1353,24 +1359,24 @@ mod tests {
 
             // Add files to both directories
             test::write_txt_file_to_path(
-                ignored_dir_path.join("file1.txt"),
+                &ignored_dir_path.join("file1.txt"),
                 "This should be ignored",
             )?;
             test::write_txt_file_to_path(
-                ignored_dir_path.join("file2.txt"),
+                &ignored_dir_path.join("file2.txt"),
                 "This should also be ignored",
             )?;
             test::write_txt_file_to_path(
-                normal_dir_path.join("file1.txt"),
+                &normal_dir_path.join("file1.txt"),
                 "This should be added",
             )?;
             test::write_txt_file_to_path(
-                normal_dir_path.join("file2.txt"),
+                &normal_dir_path.join("file2.txt"),
                 "This should also be added",
             )?;
 
             let oxenignore_path = repo.path.join(".oxenignore");
-            test::write_txt_file_to_path(&oxenignore_path, format!("{dir_to_ignore}/"))?;
+            test::write_txt_file_to_path(&oxenignore_path, &format!("{dir_to_ignore}/"))?;
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 

@@ -9,7 +9,7 @@ use crate::util;
 use std::path::Path;
 
 /// Detects the text metadata for the given file.
-pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataText, OxenError> {
+pub fn get_metadata(path: &Path) -> Result<MetadataText, OxenError> {
     let mut opts = CountLinesOpts::empty();
     opts.with_chars = true;
 
@@ -30,7 +30,7 @@ mod tests {
     #[test]
     fn test_get_metadata_text_readme() {
         let file = test::test_text_file_with_name("README");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
 
         assert!(metadata.size >= 44); // not sure why 46 on windows
         assert_eq!(metadata.data_type, EntryDataType::Text);
@@ -49,7 +49,7 @@ mod tests {
     #[test]
     fn test_get_metadata_text_readme_md() {
         let file = test::test_text_file_with_name("README.md");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
 
         assert!(metadata.size >= 50); // not sure why 53 on windows
         assert_eq!(metadata.data_type, EntryDataType::Text);

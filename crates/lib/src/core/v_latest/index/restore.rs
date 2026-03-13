@@ -32,7 +32,8 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     let paths = opts.paths;
     log::debug!("restore::restore got {:?} paths", paths.len());
 
-    let commit: Commit = repositories::commits::get_commit_or_head(repo, opts.source_ref)?;
+    let commit: Commit =
+        repositories::commits::get_commit_or_head(repo, opts.source_ref.as_deref())?;
     log::debug!("restore::restore: got commit {:?}", commit.id);
 
     let repo_path = repo.path.clone();
@@ -108,7 +109,7 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                             break; // Stop when we've passed all entries with the given prefix
                         }
                     }
-                    Err(e) => return Err(OxenError::basic_str(&e)),
+                    Err(e) => return Err(OxenError::basic_str(e.as_ref())),
                 }
             }
 
@@ -222,9 +223,8 @@ pub fn should_restore_partial_node(
     repo: &LocalRepository,
     base_node: Option<PartialNode>,
     file_node: &FileNode,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<bool, OxenError> {
-    let path = path.as_ref();
     let working_path = repo.path.join(path);
 
     // Check to see if the file has been modified if it exists
@@ -278,9 +278,8 @@ pub fn should_restore_file(
     repo: &LocalRepository,
     base_node: Option<FileNode>,
     file_node: &FileNode,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<bool, OxenError> {
-    let path = path.as_ref();
     let working_path = repo.path.join(path);
     // Check to see if the file has been modified if it exists
     if working_path.exists() {
@@ -364,10 +363,9 @@ pub fn should_restore_file(
 pub async fn restore_file(
     repo: &LocalRepository,
     file_node: &FileNode,
-    path: impl AsRef<Path>,
+    path: &Path,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref();
     let file_hash = file_node.hash();
     let last_modified_seconds = file_node.last_modified_seconds();
     let last_modified_nanoseconds = file_node.last_modified_nanoseconds();

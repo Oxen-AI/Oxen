@@ -134,7 +134,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
         .status()?;
 
     if !status.success() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Editor '{editor}' exited with non-zero status."
         )));
     }

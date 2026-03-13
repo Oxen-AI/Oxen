@@ -40,9 +40,8 @@ pub struct ChunkParams {
 
 pub async fn get_by_id(
     repository: &RemoteRepository,
-    commit_id: impl AsRef<str>,
+    commit_id: &str,
 ) -> Result<Option<Commit>, OxenError> {
-    let commit_id = commit_id.as_ref();
     let uri = format!("/commits/{commit_id}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("remote::commits::get_by_id {url}");
@@ -58,7 +57,7 @@ pub async fn get_by_id(
     let response: Result<CommitResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(Some(j_res.commit)),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "get_commit_by_id() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -67,12 +66,10 @@ pub async fn get_by_id(
 /// List commits for a file
 pub async fn list_commits_for_path(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
     page_opts: &PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
-    let revision = revision.as_ref();
-    let path = path.as_ref();
     let path_str = path.to_string_lossy();
     let uri = format!(
         "/commits/history/{revision}/{path_str}?page={}&page_size={}",
@@ -85,7 +82,7 @@ pub async fn list_commits_for_path(
     let response: Result<PaginatedCommits, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(j_res),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "list_commits_for_file() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -158,7 +155,7 @@ pub async fn list_missing_hashes(
                 .cloned()
                 .collect())
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -187,7 +184,7 @@ pub async fn list_missing_files(
     let response: Result<ListCommitEntryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.entries),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::commits::list_missing_files() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -211,7 +208,7 @@ pub async fn mark_commits_as_synced(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_response) => Ok(()),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -275,12 +272,12 @@ pub async fn list_commit_history_paginated(
             let response: Result<PaginatedCommits, serde_json::Error> = serde_json::from_str(&body);
             match response {
                 Ok(j_res) => Ok(j_res),
-                Err(err) => Err(OxenError::basic_str(format!(
+                Err(err) => Err(OxenError::basic_str(&format!(
                     "list_commit_history() Could not deserialize response [{err}]\n{body}"
                 ))),
             }
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "list_commit_history() Request failed: {err}"
         ))),
     }
@@ -302,12 +299,12 @@ async fn list_all_commits_paginated(
             let response: Result<PaginatedCommits, serde_json::Error> = serde_json::from_str(&body);
             match response {
                 Ok(j_res) => Ok(j_res),
-                Err(err) => Err(OxenError::basic_str(format!(
+                Err(err) => Err(OxenError::basic_str(&format!(
                     "list_commit_history() Could not deserialize response [{err}]\n{body}"
                 ))),
             }
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "list_commit_history() Request failed: {err}"
         ))),
     }
@@ -327,7 +324,7 @@ pub async fn root_commit_maybe(
         let response: Result<RootCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(j_res) => Ok(j_res.commit),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "root_commit() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -339,38 +336,33 @@ pub async fn root_commit_maybe(
 pub async fn download_dir_hashes_from_commit(
     remote_repo: &RemoteRepository,
     commit_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("calling download_dir_hashes_from_commit for commit {commit_id}");
-    download_dir_hashes_from_url(url, path).await
+    download_dir_hashes_from_url(&url, path).await
 }
 
 pub async fn download_base_head_dir_hashes(
     remote_repo: &RemoteRepository,
     base_commit_id: &str,
     head_commit_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{base_commit_id}..{head_commit_id}/download_dir_hashes_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!(
         "calling download_base_head_dir_hashes for commits {base_commit_id}..{head_commit_id}"
     );
-    download_dir_hashes_from_url(url, path).await
+    download_dir_hashes_from_url(&url, path).await
 }
 
-pub async fn download_dir_hashes_from_url(
-    url: impl AsRef<str>,
-    path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    let url = url.as_ref();
+pub async fn download_dir_hashes_from_url(url: &str, path: &Path) -> Result<PathBuf, OxenError> {
     log::debug!("{} downloading from {}", current_function!(), url);
     let client = client::new_for_url(url)?;
     match client.get(url).send().await {
         Ok(res) => {
-            let path = path.as_ref();
             let reader = res
                 .bytes_stream()
                 .map_err(futures::io::Error::other)
@@ -433,7 +425,7 @@ pub async fn download_dir_hashes_from_url(
         }
         Err(err) => {
             let error = format!("Error fetching commit db: {err}");
-            Err(OxenError::basic_str(error))
+            Err(OxenError::basic_str(&error))
         }
     }
 }
@@ -441,7 +433,7 @@ pub async fn download_dir_hashes_from_url(
 pub async fn download_dir_hashes_db_to_path(
     remote_repo: &RemoteRepository,
     commit_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<PathBuf, OxenError> {
     let uri = format!("/commits/{commit_id}/commit_db");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -450,7 +442,6 @@ pub async fn download_dir_hashes_db_to_path(
     let client = client::new_for_url(&url)?;
     match client.get(url).send().await {
         Ok(res) => {
-            let path = path.as_ref();
             let reader = res
                 .bytes_stream()
                 .map_err(futures::io::Error::other)
@@ -497,7 +488,7 @@ pub async fn download_dir_hashes_db_to_path(
             log::debug!("renaming {tmp_path:?} to {full_unpacked_path:?}");
 
             util::fs::rename(
-                tmp_path.join(HISTORY_DIR).join(commit_id),
+                &tmp_path.join(HISTORY_DIR).join(commit_id),
                 &full_unpacked_path,
             )?;
 
@@ -507,7 +498,7 @@ pub async fn download_dir_hashes_db_to_path(
         }
         Err(err) => {
             let error = format!("Error fetching commit db: {err}");
-            Err(OxenError::basic_str(error))
+            Err(OxenError::basic_str(&error))
         }
     }
 }
@@ -525,7 +516,7 @@ pub async fn get_remote_parent(
         let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(j_res) => Ok(j_res.commits),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "get_remote_parent() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -538,10 +529,9 @@ pub async fn post_push_complete(
     remote_repo: &RemoteRepository,
     branch: &Branch,
     // we need to pass in the commit id because we might be pushing multiple commits from the same branch
-    commit_id: impl AsRef<str>,
+    commit_id: &str,
 ) -> Result<(), OxenError> {
     use serde_json::json;
-    let commit_id = commit_id.as_ref();
     let uri = format!("/commits/{commit_id}/complete");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("post_push_complete: {url}");
@@ -559,7 +549,7 @@ pub async fn post_push_complete(
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "post_push_complete() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -586,7 +576,7 @@ pub async fn bulk_post_push_complete(
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "bulk_post_push_complete() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -612,7 +602,7 @@ pub async fn get_commits_with_unsynced_dbs(
         let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(commit_response) => Ok(commit_response.commits),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "get_commits_with_unsynced_dbs() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -638,7 +628,7 @@ pub async fn get_commits_with_unsynced_entries(
         let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(commit_response) => Ok(commit_response.commits),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "get_commits_with_unsynced_entries() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -794,7 +784,7 @@ pub async fn bulk_create_commit_obj_on_server(
         let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(response) => Ok(response),
-            Err(_) => Err(OxenError::basic_str(format!(
+            Err(_) => Err(OxenError::basic_str(&format!(
                 "bulk_create_commit_obj_on_server Err deserializing \n\n{body}"
             ))),
         }
@@ -885,7 +875,7 @@ async fn upload_single_tarball_to_server_with_client(
             bar.inc(size);
             Ok(response)
         }
-        Err(_) => Err(OxenError::basic_str(format!(
+        Err(_) => Err(OxenError::basic_str(&format!(
             "upload_single_tarball_to_server Err deserializing \n\n{body}"
         ))),
     }
@@ -982,7 +972,7 @@ pub async fn upload_data_chunk_to_server_with_retry(
         }
     }
 
-    Err(OxenError::basic_str(format!(
+    Err(OxenError::basic_str(&format!(
         "Upload chunk retry failed. {last_error}"
     )))
 }
@@ -1038,7 +1028,7 @@ async fn upload_data_chunk_to_server(
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "upload_data_chunk_to_server Err deserializing: {err}"
         ))),
     }
@@ -1264,7 +1254,7 @@ mod tests {
 
             // Add and commit a new file
             let file_path = local_repo.path.join("test.txt");
-            let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
+            let file_path = test::write_txt_file_to_path(&file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
             let missing_commit_nodes =

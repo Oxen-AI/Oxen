@@ -251,7 +251,7 @@ impl MerkleNodeDB {
 
     pub fn open_read_only(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
         let path = node_db_path(repo, hash);
-        Self::open(path, true)
+        Self::open(&path, true)
     }
 
     pub fn open_read_write_if_not_exists(
@@ -281,14 +281,12 @@ impl MerkleNodeDB {
             util::fs::create_dir_all(&path)?;
         }
         log::debug!("open_read_write merkle node db at {}", path.display());
-        let mut db = Self::open(path, false)?;
+        let mut db = Self::open(&path, false)?;
         db.write_node(node, parent_id)?;
         Ok(db)
     }
 
-    pub fn open(path: impl AsRef<Path>, read_only: bool) -> Result<Self, OxenError> {
-        let path = path.as_ref();
-
+    pub fn open(path: &Path, read_only: bool) -> Result<Self, OxenError> {
         // mkdir if not exists
         if !path.exists() {
             util::fs::create_dir_all(path)?;
@@ -307,8 +305,8 @@ impl MerkleNodeDB {
             Option<File>,
             Option<File>,
         ) = if read_only {
-            let mut node_file = util::fs::open_file(node_path)?;
-            let children_file = util::fs::open_file(children_path)?;
+            let mut node_file = util::fs::open_file(&node_path)?;
+            let children_file = util::fs::open_file(&children_path)?;
             // log::debug!("Opened merkle node db read_only at {}", path.display());
             (
                 Some(MerkleNodeLookup::load(&mut node_file)?),
@@ -479,7 +477,7 @@ impl MerkleNodeDB {
         children_file.read_exact(&mut data)?;
 
         let val: D = rmp_serde::from_slice(&data).map_err(|e| {
-            OxenError::basic_str(format!(
+            OxenError::basic_str(&format!(
                 "MerkleNodeDB.get({}): Error deserializing data: {:?}",
                 hash, e
             ))

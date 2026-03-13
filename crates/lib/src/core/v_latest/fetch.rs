@@ -229,21 +229,16 @@ async fn sync_from_head(
 async fn sync_tree_from_commit(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    commit_id: impl AsRef<str>,
+    commit_id: &str,
     fetch_opts: &FetchOpts,
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     let repo_hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
 
-    pull_progress.set_message(format!("Downloading commits from {}", commit_id.as_ref()));
-    api::client::tree::download_trees_from(repo, remote_repo, &commit_id.as_ref(), fetch_opts)
+    pull_progress.set_message(format!("Downloading commits from {}", commit_id));
+    api::client::tree::download_trees_from(repo, remote_repo, commit_id, fetch_opts).await?;
+    api::client::commits::download_dir_hashes_from_commit(remote_repo, commit_id, &repo_hidden_dir)
         .await?;
-    api::client::commits::download_dir_hashes_from_commit(
-        remote_repo,
-        commit_id.as_ref(),
-        &repo_hidden_dir,
-    )
-    .await?;
     Ok(())
 }
 
@@ -313,7 +308,7 @@ fn collect_missing_entries(
             let Some(tree) = repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 commit,
-                PathBuf::from("."),
+                &PathBuf::from("."),
                 Some(&shared_hashes),
                 Some(&mut unique_hashes),
                 None,
@@ -642,11 +637,11 @@ pub async fn pull_entries_to_versions_dir(
         }
         (Err(err), Ok(_)) => {
             let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::basic_str(&err));
         }
         (Ok(_), Err(err)) => {
             let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::basic_str(&err));
         }
         _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
@@ -701,7 +696,7 @@ async fn pull_large_entries(
                 let remote_path = &entry.path();
 
                 // Download to the tmp path, then copy over to the entries dir
-                api::client::entries::pull_large_entry(&repo, &remote_repo, &remote_path, &entry)
+                api::client::entries::pull_large_entry(&repo, &remote_repo, remote_path, &entry)
                     .await?;
 
                 log::debug!("Pulled large entry {remote_path:?} to versions dir");
@@ -715,7 +710,8 @@ async fn pull_large_entries(
     let join_results = future::join_all(handles).await;
     for res in join_results {
         match res {
-            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            // TODO: return join error!
+            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }
@@ -802,7 +798,8 @@ async fn pull_small_entries(
     let join_results = future::join_all(handles).await;
     for res in join_results {
         match res {
-            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            // TODO: return join error!
+            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }
@@ -853,11 +850,10 @@ pub async fn download_entries_to_working_dir(
         .map(|e| e.to_owned())
         .collect();
 
-    let large_entries_sync =
-        download_large_entries(remote_repo, larger_entries, &dst, progress_bar);
+    let large_entries_sync = download_large_entries(remote_repo, larger_entries, dst, progress_bar);
     log::info!("Downloaded large entries");
     let small_entries_sync =
-        download_small_entries(remote_repo, smaller_entries, &dst, progress_bar);
+        download_small_entries(remote_repo, smaller_entries, dst, progress_bar);
     log::info!("Downloaded small entries");
 
     match tokio::join!(large_entries_sync, small_entries_sync) {
@@ -866,11 +862,11 @@ pub async fn download_entries_to_working_dir(
         }
         (Err(err), Ok(_)) => {
             let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::basic_str(&err));
         }
         (Ok(_), Err(err)) => {
             let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::basic_str(&err));
         }
         _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
@@ -881,7 +877,7 @@ pub async fn download_entries_to_working_dir(
 async fn download_large_entries(
     remote_repo: &RemoteRepository,
     entries: Vec<Entry>,
-    dst: impl AsRef<Path>,
+    dst: &Path,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
@@ -892,7 +888,7 @@ async fn download_large_entries(
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
-    let large_entry_paths = working_dir_paths_from_large_entries(&entries, dst.as_ref());
+    let large_entry_paths = working_dir_paths_from_large_entries(&entries, dst);
     let entries: Vec<PieceOfWork> = entries
         .iter()
         .zip(large_entry_paths.iter())
@@ -900,7 +896,7 @@ async fn download_large_entries(
             (
                 remote_repo.to_owned(),
                 e.to_owned(),
-                dst.as_ref().to_owned(),
+                dst.to_owned(),
                 path.to_owned(),
             )
         })
@@ -937,7 +933,7 @@ async fn download_large_entries(
                 // Download to the tmp path, then copy over to the entries dir
                 api::client::entries::download_large_entry(
                     &remote_repo,
-                    &remote_path,
+                    remote_path,
                     &download_path,
                     &entry.commit_id(),
                     entry.num_bytes(),
@@ -954,7 +950,8 @@ async fn download_large_entries(
     let join_results = future::join_all(handles).await;
     for res in join_results {
         match res {
-            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            // TODO: return join error!
+            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }
@@ -968,7 +965,7 @@ async fn download_large_entries(
 async fn download_small_entries(
     remote_repo: &RemoteRepository,
     entries: Vec<Entry>,
-    dst: impl AsRef<Path>,
+    dst: &Path,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
@@ -1001,7 +998,7 @@ async fn download_small_entries(
             for e in chunk {
                 content_ids.push((e.hash(), e.path().to_owned()));
             }
-            (remote_repo.to_owned(), content_ids, dst.as_ref().to_owned())
+            (remote_repo.to_owned(), content_ids, dst.to_owned())
         })
         .collect();
 
@@ -1041,7 +1038,8 @@ async fn download_small_entries(
     let join_results = future::join_all(handles).await;
     for res in join_results {
         match res {
-            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            // TODO: return join error!
+            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }

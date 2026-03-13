@@ -52,7 +52,7 @@ pub async fn create_compare(
     let response: Result<CompareTabularResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(tabular_compare) => Ok(tabular_compare.dfs),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "create_compare() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -97,7 +97,7 @@ pub async fn update_compare(
             serde_json::from_str(&body);
         match response {
             Ok(tabular_compare) => Ok(tabular_compare.dfs),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "update_compare() Could not deserialize response [{err}]\n{body}"
             ))),
         }
@@ -122,7 +122,7 @@ pub async fn get_derived_compare_df(
         serde_json::from_str(&body);
     match response {
         Ok(df) => Ok(df.data_frame.view),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "get_derived_compare_df() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -144,7 +144,7 @@ pub async fn commits(
     let response: Result<CompareCommitsResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(commits) => Ok(commits.compare.commits),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -166,7 +166,7 @@ pub async fn dir_tree(
     let response: Result<DirTreeDiffResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(dir_tree) => Ok(dir_tree.dirs),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -188,7 +188,7 @@ pub async fn entries(
     let response: Result<CompareEntriesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(entries) => Ok(entries.compare),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -223,8 +223,8 @@ mod tests {
                 // Write a file
                 let file_path = format!("file_{i}.txt");
                 test::write_txt_file_to_path(
-                    local_repo.path.join(file_path),
-                    format!("File content {i}"),
+                    &local_repo.path.join(file_path),
+                    &format!("File content {i}"),
                 )?;
                 repositories::add(&local_repo, &local_repo.path).await?;
 
@@ -406,7 +406,7 @@ mod tests {
                 // Create the directory
                 util::fs::create_dir_all(full_path.parent().unwrap())?;
 
-                test::write_txt_file_to_path(full_path, format!("File content {i}"))?;
+                test::write_txt_file_to_path(&full_path, &format!("File content {i}"))?;
                 repositories::add(&local_repo, &local_repo.path).await?;
 
                 let commit_message = format!("Commit {i}");
@@ -451,8 +451,8 @@ mod tests {
             let left_path = "left.csv";
             let right_path = "right.csv";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
-            test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
+            test::write_txt_file_to_path(&local_repo.path.join(left_path), csv1)?;
+            test::write_txt_file_to_path(&local_repo.path.join(right_path), csv2)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
 
@@ -552,8 +552,8 @@ mod tests {
             let left_path = "left.csv";
             let right_path = "right.csv";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
-            test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
+            test::write_txt_file_to_path(&local_repo.path.join(left_path), csv1)?;
+            test::write_txt_file_to_path(&local_repo.path.join(right_path), csv2)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
 
@@ -640,7 +640,7 @@ mod tests {
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7";
             // let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8\n0,1,9,2";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
+            test::write_txt_file_to_path(&local_repo.path.join(left_path), csv1)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "committing files")?;

@@ -9,13 +9,13 @@ use pyo3_polars::PyDataFrame;
 pub fn load(path: PathBuf) -> Result<PyDataFrame, PyOxenError> {
     let opts = DFOpts::empty();
     let df = pyo3_async_runtimes::tokio::get_runtime()
-        .block_on(async { tabular::read_df(path, opts).await })?;
+        .block_on(async { tabular::read_df(&path, opts).await })?;
     Ok(PyDataFrame(df))
 }
 
 #[pyfunction]
 pub fn save(df: PyDataFrame, path: PathBuf) -> Result<(), PyOxenError> {
     let mut df = df.as_ref().clone();
-    tabular::write_df(&mut df, path)?;
+    tabular::write_df(&mut df, &path)?;
     Ok(())
 }

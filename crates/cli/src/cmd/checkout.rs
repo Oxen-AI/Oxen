@@ -3,6 +3,7 @@ use clap::{Arg, Command};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
+use std::path::Path;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "checkout";
@@ -96,12 +97,12 @@ impl CheckoutCmd {
         repo: &LocalRepository,
         path: &str,
     ) -> Result<(), OxenError> {
-        repositories::checkout::checkout_theirs(repo, path).await?;
+        repositories::checkout::checkout_theirs(repo, Path::new(path)).await?;
         Ok(())
     }
 
     pub async fn checkout_ours(&self, repo: &LocalRepository, path: &str) -> Result<(), OxenError> {
-        repositories::checkout::checkout_ours(repo, path).await?;
+        repositories::checkout::checkout_ours(repo, Path::new(path)).await?;
         Ok(())
     }
 

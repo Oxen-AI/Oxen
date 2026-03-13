@@ -12,7 +12,7 @@ pub mod schemas;
 pub async fn get_slice(
     repo: &LocalRepository,
     resource: &ParsedResource,
-    path: impl AsRef<Path>,
+    path: &Path,
     opts: &DFOpts,
 ) -> Result<DataFrameSlice, OxenError> {
     match repo.min_version() {

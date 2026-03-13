@@ -20,7 +20,7 @@ pub fn config_auth(host: String, token: String, path: String) -> Result<(), PyOx
     }
 
     let mut config = AuthConfig::get_or_create()?;
-    config.add_host_auth_token(host, token);
+    config.add_host_auth_token(&host, &token);
     config.save(final_path)?;
     Ok(())
 }

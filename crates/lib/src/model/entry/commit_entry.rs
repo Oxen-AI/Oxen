@@ -155,10 +155,10 @@ impl Hash for CommitEntry {
 
 impl CommitEntry {
     // For HashSet search purposes
-    pub fn from_path<T: AsRef<Path>>(path: T) -> CommitEntry {
+    pub fn from_path(path: &Path) -> CommitEntry {
         CommitEntry {
             commit_id: String::from(""),
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             hash: String::from(""),
             num_bytes: 0,
             last_modified_seconds: 0,

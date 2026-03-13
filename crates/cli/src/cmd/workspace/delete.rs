@@ -58,7 +58,7 @@ impl RunCmd for WorkspaceDeleteCmd {
         };
 
         // Now call the delete API using the resolved workspace id.
-        api::client::workspaces::delete(&remote_repo, &workspace_identifier).await?;
+        api::client::workspaces::delete(&remote_repo, workspace_identifier).await?;
         println!("Workspace '{workspace_identifier}' deleted successfully");
         Ok(())
     }

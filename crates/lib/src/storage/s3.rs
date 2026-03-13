@@ -60,7 +60,7 @@ impl S3VersionStore {
                     .send()
                     .await
                     .map_err(|err| {
-                        OxenError::basic_str(format!("Failed to get bucket location: {err:?}"))
+                        OxenError::basic_str(&format!("Failed to get bucket location: {err:?}"))
                     })?
                     .location_constraint()
                     .map(|loc| loc.as_str().to_string())
@@ -78,7 +78,7 @@ impl S3VersionStore {
 
         match result_ref {
             Ok(client) => Ok(client.clone()),
-            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+            Err(e) => Err(OxenError::basic_str(&format!("{e:?}"))),
         }
     }
 
@@ -123,19 +123,19 @@ impl VersionStore for S3VersionStore {
                             .send()
                             .await
                             .map_err(|err| {
-                                OxenError::basic_str(format!(
+                                OxenError::basic_str(&format!(
                                     "Failed to delete _permission_check: {err}"
                                 ))
                             })?;
                         Ok(())
                     }
                     // Surface the error from S3
-                    Err(err) => Err(OxenError::basic_str(format!(
+                    Err(err) => Err(OxenError::basic_str(&format!(
                         "S3 write permission check failed: {err}",
                     ))),
                 }
             }
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "Cannot access S3 bucket '{}': {err}",
                 self.bucket
             ))),
@@ -147,12 +147,12 @@ impl VersionStore for S3VersionStore {
         let client = self.init_client().await?;
         // get file content from the path
         let mut file = std::fs::File::open(file_path).map_err(|e| {
-            OxenError::basic_str(format!("Failed to open file {}: {e}", file_path.display()))
+            OxenError::basic_str(&format!("Failed to open file {}: {e}", file_path.display()))
         })?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).map_err(|e| {
-            OxenError::basic_str(format!("Failed to read file {}: {e}", file_path.display()))
+            OxenError::basic_str(&format!("Failed to read file {}: {e}", file_path.display()))
         })?;
 
         let key = self.generate_key(hash);
@@ -164,7 +164,7 @@ impl VersionStore for S3VersionStore {
             .body(body)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to store version in S3: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Failed to store version in S3: {e}")))?;
 
         Ok(())
     }
@@ -215,7 +215,7 @@ impl VersionStore for S3VersionStore {
             .send()
             .await
             .map_err(|e| {
-                OxenError::basic_str(format!("failed to store derived version file in S3: {e}"))
+                OxenError::basic_str(&format!("failed to store derived version file in S3: {e}"))
             })?;
         log::debug!("Saved derived version file {key}");
 
@@ -232,7 +232,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("S3 head_object failed: {e}")))?;
 
         let size = resp
             .content_length()
@@ -251,13 +251,13 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
 
         let data = resp
             .body
             .collect()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 read body failed: {e}")))?
+            .map_err(|e| OxenError::basic_str(&format!("S3 read body failed: {e}")))?
             .into_bytes()
             .to_vec();
 
@@ -278,7 +278,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("S3 head_object failed: {e}")))?;
 
         let size = resp
             .content_length()
@@ -301,7 +301,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
 
@@ -323,7 +323,7 @@ impl VersionStore for S3VersionStore {
             .key(key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("S3 get_object failed: {e}")))?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
         Ok(Box::new(adapter) as Box<_>)
@@ -348,12 +348,12 @@ impl VersionStore for S3VersionStore {
 
             Err(SdkError::ServiceError(err)) => match err.err() {
                 HeadObjectError::NotFound(_) => Ok(false),
-                err => Err(OxenError::basic_str(format!(
+                err => Err(OxenError::basic_str(&format!(
                     "derived_exists failed with S3 head_object error: {err:?}"
                 ))),
             },
 
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "derived_exists failed with S3 head_object error: {err:?}"
             ))),
         }
@@ -364,10 +364,10 @@ impl VersionStore for S3VersionStore {
         let data = self.get_version(hash).await?;
         let mut tmp = TempFile::new()
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Failed to create temp file: {e}")))?;
         tmp.write_all(&data)
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to write temp file: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Failed to write temp file: {e}")))?;
         Ok(LocalFilePath::Temp(tmp))
     }
 
@@ -377,11 +377,11 @@ impl VersionStore for S3VersionStore {
         if let Some(parent) = dest_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to create parent dirs: {e}")))?;
+                .map_err(|e| OxenError::basic_str(&format!("Failed to create parent dirs: {e}")))?;
         }
         tokio::fs::write(dest_path, &data)
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to write file: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Failed to write file: {e}")))?;
         Ok(())
     }
 
@@ -442,12 +442,12 @@ impl VersionStore for S3VersionStore {
 
             Err(SdkError::ServiceError(err)) => match err.err() {
                 HeadObjectError::NotFound(_) => Ok(false),
-                err => Err(OxenError::basic_str(format!(
+                err => Err(OxenError::basic_str(&format!(
                     "version_exists failed with S3 head_object error: {err:?}"
                 ))),
             },
 
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "version_exists failed with S3 head_object error: {err:?}"
             ))),
         }

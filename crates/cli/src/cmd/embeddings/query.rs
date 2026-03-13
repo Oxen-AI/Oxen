@@ -110,7 +110,7 @@ impl RunCmd for EmbeddingsQueryCmd {
         let commit = repositories::commits::head_commit(&repository)?;
         let workspace_id = format!("{}-{}", path, commit.id);
         let Some(workspace) = repositories::workspaces::get(&repository, &workspace_id)? else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Workspace not found: {workspace_id}"
             )));
         };
@@ -126,7 +126,7 @@ impl RunCmd for EmbeddingsQueryCmd {
         };
 
         println!("Writing to {output}");
-        tabular::write_df(&mut df, output)?;
+        tabular::write_df(&mut df, std::path::Path::new(output))?;
 
         Ok(())
     }

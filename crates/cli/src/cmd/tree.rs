@@ -95,7 +95,7 @@ impl TreeCmd {
         let node_hash = node.parse()?;
         // REFACTOR: Get through repositories::tree
         let tree = CommitMerkleTree::read_node(repo, &node_hash, true)?
-            .ok_or_else(|| OxenError::resource_not_found(format!("Node {node_hash} not found")))?;
+            .ok_or_else(|| OxenError::resource_not_found(&format!("Node {node_hash} not found")))?;
         CommitMerkleTree::print_node_depth(&tree, depth);
 
         Ok(())
@@ -121,7 +121,7 @@ impl TreeCmd {
             }
             (_, _) => {
                 if let Some(path) = path {
-                    repositories::tree::print_tree_path(repo, commit, path)?;
+                    repositories::tree::print_tree_path(repo, commit, std::path::Path::new(path))?;
                 } else {
                     repositories::tree::print_tree_depth(repo, commit, depth)?;
                 }

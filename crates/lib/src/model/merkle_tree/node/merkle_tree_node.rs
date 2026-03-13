@@ -151,10 +151,10 @@ impl MerkleTreeNode {
     }
 
     /// Create a default DirNode with the given path
-    pub fn default_dir_from_path(path: impl AsRef<Path>) -> MerkleTreeNode {
+    pub fn default_dir_from_path(path: &Path) -> MerkleTreeNode {
         let mut dir_node = DirNode::default();
-        let dir_str = path.as_ref().to_str().unwrap().to_string();
-        dir_node.set_name(dir_str);
+        let dir_str = path.to_str().unwrap().to_string();
+        dir_node.set_name(&dir_str);
         MerkleTreeNode {
             hash: MerkleHash::new(0),
             node: EMerkleTreeNode::Directory(dir_node),
@@ -212,7 +212,7 @@ impl MerkleTreeNode {
         if let EMerkleTreeNode::File(file_node) = &self.node {
             return Ok(PathBuf::from(file_node.name()));
         }
-        Err(OxenError::basic_str(format!(
+        Err(OxenError::basic_str(&format!(
             "MerkleTreeNode::maybe_path called on non-file or non-dir node: {self:?}"
         )))
     }
@@ -505,19 +505,15 @@ impl MerkleTreeNode {
     }
 
     /// Get all the vnodes for a given directory
-    pub fn get_vnodes_for_dir(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Vec<MerkleTreeNode>, OxenError> {
-        let path = path.as_ref();
+    pub fn get_vnodes_for_dir(&self, path: &Path) -> Result<Vec<MerkleTreeNode>, OxenError> {
         let Some(node) = self.get_by_path(path)? else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Merkle tree directory not found: '{path:?}'"
             )));
         };
 
         if MerkleTreeNodeType::Dir != node.node.node_type() {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "get_vnodes_for_dir Merkle tree node is not a directory: '{path:?}'"
             )));
         }
@@ -532,8 +528,7 @@ impl MerkleTreeNode {
     }
 
     /// Search for a file node by path
-    pub fn get_by_path(&self, path: impl AsRef<Path>) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let path = path.as_ref();
+    pub fn get_by_path(&self, path: &Path) -> Result<Option<MerkleTreeNode>, OxenError> {
         let traversed_path = Path::new("");
         self.get_by_path_helper(traversed_path, path)
     }

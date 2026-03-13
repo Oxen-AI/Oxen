@@ -56,13 +56,13 @@ impl RepoNew {
     pub fn scheme(&self) -> String {
         self.scheme
             .clone()
-            .unwrap_or_else(|| RepoNew::scheme_default(self.host()))
+            .unwrap_or_else(|| RepoNew::scheme_default(&self.host()))
     }
 
     /// repo_id is the "{namespace}/{repo_name}"
     pub fn new(repo_id: String, storage_opts: Option<StorageOpts>) -> Result<RepoNew, OxenError> {
         if !repo_id.contains('/') {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Invalid repo id: {repo_id:?}"
             )));
         }
@@ -75,7 +75,7 @@ impl RepoNew {
             name: repo_name,
             is_public: None,
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             root_commit: None,
             description: None,
             files: None,
@@ -83,8 +83,7 @@ impl RepoNew {
         })
     }
 
-    pub fn scheme_default(host: impl AsRef<str>) -> String {
-        let host = host.as_ref();
+    pub fn scheme_default(host: &str) -> String {
         if host.contains("localhost") || host.contains("127.0.0.1") || host.contains("0.0.0.0") {
             "http".to_string()
         } else {
@@ -93,15 +92,15 @@ impl RepoNew {
     }
 
     pub fn from_namespace_name(
-        namespace: impl AsRef<str>,
-        name: impl AsRef<str>,
+        namespace: &str,
+        name: &str,
         storage_opts: Option<StorageOpts>,
     ) -> RepoNew {
         RepoNew {
-            namespace: String::from(namespace.as_ref()),
-            name: String::from(name.as_ref()),
+            namespace: String::from(namespace),
+            name: String::from(name),
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             is_public: None,
             root_commit: None,
             description: None,
@@ -111,16 +110,16 @@ impl RepoNew {
     }
 
     pub fn from_namespace_name_host(
-        namespace: impl AsRef<str>,
-        name: impl AsRef<str>,
-        host: impl AsRef<str>,
+        namespace: &str,
+        name: &str,
+        host: &str,
         storage_opts: Option<StorageOpts>,
     ) -> RepoNew {
         RepoNew {
-            namespace: String::from(namespace.as_ref()),
-            name: String::from(name.as_ref()),
+            namespace: String::from(namespace),
+            name: String::from(name),
             is_public: None,
-            host: Some(String::from(host.as_ref())),
+            host: Some(String::from(host)),
             scheme: Some(RepoNew::scheme_default(host)),
             root_commit: None,
             description: None,
@@ -129,17 +128,13 @@ impl RepoNew {
         }
     }
 
-    pub fn from_root_commit(
-        namespace: impl AsRef<str>,
-        name: impl AsRef<str>,
-        root_commit: Commit,
-    ) -> RepoNew {
+    pub fn from_root_commit(namespace: &str, name: &str, root_commit: Commit) -> RepoNew {
         RepoNew {
-            namespace: String::from(namespace.as_ref()),
-            name: String::from(name.as_ref()),
+            namespace: String::from(namespace),
+            name: String::from(name),
             is_public: None,
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             root_commit: Some(root_commit),
             description: None,
             files: None,
@@ -148,17 +143,17 @@ impl RepoNew {
     }
 
     pub fn from_files(
-        namespace: impl AsRef<str>,
-        name: impl AsRef<str>,
+        namespace: &str,
+        name: &str,
         files: Vec<FileNew>,
         storage_opts: Option<StorageOpts>,
     ) -> RepoNew {
         RepoNew {
-            namespace: String::from(namespace.as_ref()),
-            name: String::from(name.as_ref()),
+            namespace: String::from(namespace),
+            name: String::from(name),
             is_public: None,
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             root_commit: None,
             description: None,
             files: Some(files),

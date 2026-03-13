@@ -26,7 +26,7 @@ pub mod schemas;
 pub fn is_queryable_data_frame_indexed(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<bool, OxenError> {
     match get_queryable_data_frame_workspace(repo, path, commit) {
         Ok(_workspace) => Ok(true),
@@ -83,10 +83,9 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
 
 pub fn get_queryable_data_frame_workspace(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
     commit: &Commit,
 ) -> Result<Workspace, OxenError> {
-    let path = path.as_ref();
     log::debug!("get_queryable_data_frame_workspace path: {path:?}");
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
         .ok_or(OxenError::path_does_not_exist(path))?;
@@ -119,7 +118,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let Ok(Some(commit_merkle_tree)) =
         repositories::tree::get_node_by_path_with_children(repo, commit, path)
     else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Merkle tree for commit {commit} not found"
         )));
     };
@@ -133,7 +132,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
     let Some(parent) = db_path.parent() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Failed to get parent directory for {db_path:?}"
         )));
     };
@@ -155,7 +154,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
         }
     };
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             if df_db::table_exists(conn, TABLE_NAME)? {
                 df_db::drop_table(conn, TABLE_NAME)?;
@@ -174,18 +173,16 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =
         repositories::workspaces::data_frames::previous_commit_ref_path(workspace, path);
-    util::fs::write_to_path(commit_path, &commit.id)?;
+    util::fs::write_to_path(&commit_path, &commit.id)?;
 
     Ok(())
 }
 
 pub async fn rename(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
+    path: &Path,
+    new_path: &Path,
 ) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-    let new_path = new_path.as_ref();
     let workspace_repo = &workspace.workspace_repo;
 
     // Handle duckdb file operations first
@@ -242,7 +239,7 @@ pub async fn rename(
         log::debug!("rename: staged_entry after add: {staged_entry:?}");
     }
 
-    let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(format!(
+    let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(&format!(
         "rename: staged entry not found: {path:?}"
     )))?;
 
@@ -296,10 +293,9 @@ fn add_row_status_cols(conn: &Connection) -> Result<(), OxenError> {
 
 pub fn extract_file_node_to_working_dir(
     workspace: &Workspace,
-    dir_path: impl AsRef<Path>,
+    dir_path: &Path,
     file_node: &FileNode,
 ) -> Result<PathBuf, OxenError> {
-    let dir_path = dir_path.as_ref();
     log::debug!("extract_file_node_to_working_dir dir_path: {dir_path:?} file_node: {file_node}");
     let workspace_repo = &workspace.workspace_repo;
     let path = PathBuf::from(file_node.name());
@@ -317,7 +313,7 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
                 "\"{}\" = '{}'",
@@ -343,8 +339,7 @@ pub fn valid_export_extensions() -> Vec<&'static str> {
     vec!["csv", "tsv", "parquet", "jsonl", "json", "ndjson"]
 }
 
-pub fn is_valid_export_extension(path: impl AsRef<Path>) -> bool {
-    let path = path.as_ref();
+pub fn is_valid_export_extension(path: &Path) -> bool {
     let extension = path
         .extension()
         .unwrap_or_default()
@@ -353,8 +348,7 @@ pub fn is_valid_export_extension(path: impl AsRef<Path>) -> bool {
     valid_export_extensions().contains(&extension)
 }
 
-pub fn wrap_sql_for_export(sql: &str, path: impl AsRef<Path>) -> String {
-    let path = path.as_ref();
+pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
     let extension = path
         .extension()
         .unwrap_or_default()

@@ -40,7 +40,11 @@ impl RunCmd for SchemasRmCmd {
         };
 
         let staged = args.get_flag("staged");
-        repositories::data_frames::schemas::rm(&repository, schema_ref, staged)?;
+        repositories::data_frames::schemas::rm(
+            &repository,
+            std::path::Path::new(schema_ref),
+            staged,
+        )?;
 
         Ok(())
     }

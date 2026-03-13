@@ -73,8 +73,7 @@ impl Schema {
     }
 
     /// Checks if the provided schema matches this schema given a hash or path
-    pub fn matches_ref(&self, schema_ref: impl AsRef<str>) -> bool {
-        let schema_ref = schema_ref.as_ref();
+    pub fn matches_ref(&self, schema_ref: &str) -> bool {
         self.hash == schema_ref
     }
 
@@ -155,22 +154,20 @@ impl Schema {
             .any(|f| f.name == field.name && f.dtype == field.dtype)
     }
 
-    pub fn has_field_names(&self, fields: &[impl AsRef<str>]) -> bool {
+    pub fn has_field_names(&self, fields: &[&str]) -> bool {
         fields.iter().all(|field| self.has_field_name(field))
     }
 
-    pub fn has_field_name(&self, name: impl AsRef<str>) -> bool {
-        let name = name.as_ref();
+    pub fn has_field_name(&self, name: &str) -> bool {
         self.fields.iter().any(|f| f.name == name)
     }
 
-    pub fn has_column(&self, name: impl AsRef<str>) -> bool {
-        let name = name.as_ref().to_lowercase(); // Convert the parameter to lowercase
+    pub fn has_column(&self, name: &str) -> bool {
+        let name = name.to_lowercase(); // Convert the parameter to lowercase
         self.fields.iter().any(|f| f.name.to_lowercase() == name) // Compare lowercase versions
     }
 
-    pub fn get_field(&self, name: impl AsRef<str>) -> Option<&Field> {
-        let name = name.as_ref();
+    pub fn get_field(&self, name: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.name == name)
     }
 

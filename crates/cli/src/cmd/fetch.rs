@@ -36,7 +36,7 @@ impl RunCmd for FetchCmd {
         let (scheme, host) = get_scheme_and_host_from_repo(&repository)?;
 
         check_repo_migration_needed(&repository)?;
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
         let mut fetch_opts = FetchOpts::new();
         let subtrees = repository.subtree_paths();
         fetch_opts.subtree_paths = subtrees;

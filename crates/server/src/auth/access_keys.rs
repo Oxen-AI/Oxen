@@ -101,7 +101,7 @@ impl AccessKeyManager {
             }
             Err(_) => {
                 let err = format!("Could not create access key for: {user_claims:?}");
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(&err))
             }
         }
     }
@@ -117,7 +117,7 @@ impl AccessKeyManager {
             Ok(None) => Ok(None),
             Err(err) => {
                 let err = format!("Err could not red from commit db: {err}");
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(&err))
             }
         }
     }
@@ -154,7 +154,7 @@ impl AccessKeyManager {
 
     fn read_secret_key(&self) -> Result<String, OxenError> {
         let path = AccessKeyManager::secret_key_path(&self.sync_dir);
-        util::fs::read_from_path(path)
+        util::fs::read_from_path(&path)
     }
 }
 

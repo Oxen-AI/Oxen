@@ -38,7 +38,7 @@ impl RunCmd for DbGetCmd {
         };
 
         let dtype = args.get_one::<String>("dtype").map(|x| x.as_str());
-        let value = command::db::get(path, key, dtype)?;
+        let value = command::db::get(std::path::Path::new(path), key, dtype)?;
         println!("{value}");
 
         Ok(())

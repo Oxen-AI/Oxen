@@ -80,19 +80,20 @@ pub async fn get(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
 
-    let path = path_param(&req, "path")?;
-    log::debug!("got workspace file path {:?}", &path);
+    let path_str = path_param(&req, "path")?;
+    let path = std::path::Path::new(&path_str);
+    log::debug!("got workspace file path {:?}", path);
 
     // First, look for the file in the workspace staged_db
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    let file_node = match staged_db_manager.read_from_staged_db(&path)? {
+    let file_node = match staged_db_manager.read_from_staged_db(path)? {
         Some(staged_node) => match staged_node.node.node {
             EMerkleTreeNode::File(f) => Ok(f),
             _ => Err(OxenError::basic_str(
@@ -101,15 +102,13 @@ pub async fn get(
         }?,
         None => {
             // If the file isn't in the workspace staged_db, look for it in the base repo
-            if let Some(file_node) = repositories::tree::get_file_by_path(
-                &workspace.base_repo,
-                &workspace.commit,
-                &path,
-            )? {
+            if let Some(file_node) =
+                repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
+            {
                 file_node
             } else {
                 return Err(OxenHttpError::InternalOxenError(
-                    OxenError::resource_not_found(&path),
+                    OxenError::resource_not_found(&path.to_string_lossy()),
                 ));
             }
         }
@@ -199,12 +198,12 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let directory = path_param(&req, "path")?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let version_store = repo.version_store()?;
@@ -283,10 +282,10 @@ pub async fn add_version_files(
     let workspace_id = path_param(&req, "workspace_id")?;
     let directory = path_param(&req, "directory")?;
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
     log::debug!(
@@ -340,11 +339,11 @@ pub async fn rm_files(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
@@ -353,7 +352,7 @@ pub async fn rm_files(
     let mut err_files = vec![];
 
     for path in &paths_to_remove {
-        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
+        err_files.extend(repositories::workspaces::files::rm(&workspace, path).await?);
         log::debug!("rm ✅ success! staged file {path:?} as removed");
         ret_files.push(path);
     }
@@ -384,11 +383,11 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let Some(_workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
@@ -422,7 +421,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
     // Parse request body
@@ -434,11 +433,11 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     }
 
     // Validate and normalize new_path
-    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
+    let new_path = util::fs::validate_and_normalize_path(std::path::Path::new(&body.new_path))?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     // Check if new_path already exists in the workspace or base repo
@@ -518,7 +517,7 @@ pub async fn save_parts(
                         let mut decoder = GzDecoder::new(&field_bytes[..]);
                         let mut decompressed_bytes: Vec<u8> = Vec::new();
                         decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                            OxenError::basic_str(format!("Failed to decompress gzipped data: {e}"))
+                            OxenError::basic_str(&format!("Failed to decompress gzipped data: {e}"))
                         })?;
 
                         // Hash file contents

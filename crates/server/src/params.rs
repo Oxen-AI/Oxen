@@ -110,12 +110,12 @@ pub fn parse_resource(
         "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
     );
     parse_resource_from_path(repo, &decoded_resource)?
-        .ok_or(OxenError::path_does_not_exist(resource).into())
+        .ok_or(OxenError::path_does_not_exist(&resource).into())
 }
 
 /// Split the base..head string into base and head strings
-pub fn parse_base_head(base_head: impl AsRef<str>) -> Result<(String, String), OxenError> {
-    let mut split = base_head.as_ref().split("..");
+pub fn parse_base_head(base_head: &str) -> Result<(String, String), OxenError> {
+    let mut split = base_head.split("..");
     if let (Some(base), Some(head)) = (split.next(), split.next()) {
         Ok((base.to_string(), head.to_string()))
     } else {

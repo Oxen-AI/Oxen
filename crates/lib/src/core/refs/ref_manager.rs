@@ -21,7 +21,7 @@ static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
 /// Removes a repository's DB instance from the cache.
-pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
+pub fn remove_from_cache(repository_path: &std::path::Path) -> Result<(), OxenError> {
     let refs_dir = util::fs::oxen_hidden_dir(repository_path).join(REFS_DIR);
     let mut instances = DB_INSTANCES.lock();
     let _ = instances.pop(&refs_dir); // drop immediately
@@ -30,13 +30,11 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 
 /// Removes a repository's DB instance and all its subdirectories from the cache.
 /// This is mostly useful in test cleanup to ensure all DB instances are removed.
-pub fn remove_from_cache_with_children(
-    repository_path: impl AsRef<std::path::Path>,
-) -> Result<(), OxenError> {
+pub fn remove_from_cache_with_children(repository_path: &std::path::Path) -> Result<(), OxenError> {
     let mut dbs_to_remove: Vec<PathBuf> = vec![];
     let mut instances = DB_INSTANCES.lock();
     for (key, _) in instances.iter() {
-        if key.starts_with(&repository_path) {
+        if key.starts_with(repository_path) {
             dbs_to_remove.push(key.clone());
         }
     }
@@ -68,14 +66,14 @@ where
             if !refs_dir.exists() {
                 util::fs::create_dir_all(&refs_dir).map_err(|e| {
                     log::error!("Failed to create refs directory: {e}");
-                    OxenError::basic_str(format!("Failed to create refs directory: {e}"))
+                    OxenError::basic_str(&format!("Failed to create refs directory: {e}"))
                 })?;
             }
 
             let opts = db::key_val::opts::default();
             let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|e| {
                 log::error!("Failed to open refs database: {e}");
-                OxenError::basic_str(format!("Failed to open refs database: {e}"))
+                OxenError::basic_str(&format!("Failed to open refs database: {e}"))
             })?;
             let arc_db = Arc::new(db);
             instances.put(refs_dir, arc_db.clone());
@@ -129,7 +127,7 @@ impl RefManager {
             Ok(None) => Ok(None),
             Err(err) => {
                 log::error!("get_commit_id_for_branch error finding commit id for branch {name}");
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(err.as_ref()))
             }
         }
     }
@@ -178,7 +176,7 @@ impl RefManager {
                 },
                 Err(err) => {
                     let err = format!("Error reading refs db\nErr: {err}");
-                    return Err(OxenError::basic_str(err));
+                    return Err(OxenError::basic_str(&err));
                 }
             }
         }
@@ -198,7 +196,7 @@ impl RefManager {
                             let id = String::from(value);
                             let ref_commit = repositories::commits::get_commit_or_head(
                                 &self.repository,
-                                Some(ref_name.clone()),
+                                Some(&ref_name.clone()),
                             )?;
                             branch_names.push((
                                 Branch {
@@ -215,7 +213,7 @@ impl RefManager {
                 },
                 Err(err) => {
                     let err = format!("Error reading refs db\nErr: {err}");
-                    return Err(OxenError::basic_str(err));
+                    return Err(OxenError::basic_str(&err));
                 }
             }
         }
@@ -224,27 +222,19 @@ impl RefManager {
 
     // Write operations (from RefWriter)
 
-    pub fn set_head(&self, name: impl AsRef<str>) {
-        let name = name.as_ref();
+    pub fn set_head(&self, name: &str) {
         util::fs::write_to_path(&self.head_file, name).expect("Could not write to head");
     }
 
-    pub fn create_branch(
-        &self,
-        name: impl AsRef<str>,
-        commit_id: impl AsRef<str>,
-    ) -> Result<Branch, OxenError> {
-        let name = name.as_ref();
-        let commit_id = commit_id.as_ref();
-
+    pub fn create_branch(&self, name: &str, commit_id: &str) -> Result<Branch, OxenError> {
         if self.is_invalid_branch_name(name) {
             let err = format!("'{name}' is not a valid branch name.");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::basic_str(&err));
         }
 
         if self.has_branch(name) {
             let err = format!("Branch already exists: {name}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         } else {
             self.set_branch_commit_id(name, commit_id)?;
             Ok(Branch {
@@ -278,11 +268,11 @@ impl RefManager {
         if !self.has_branch(old_name) {
             Err(OxenError::local_branch_not_found(old_name))
         } else if self.has_branch(new_name) {
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "Branch already exists: {new_name}"
             )))
         } else if self.is_invalid_branch_name(new_name) {
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "'{new_name}' is not a valid branch name."
             )))
         } else {
@@ -296,19 +286,13 @@ impl RefManager {
     pub fn delete_branch(&self, name: &str) -> Result<Branch, OxenError> {
         let Some(branch) = self.get_branch_by_name(name)? else {
             let err = format!("Branch does not exist: {name}");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::basic_str(&err));
         };
         self.refs_db.delete(name)?;
         Ok(branch)
     }
 
-    pub fn set_branch_commit_id(
-        &self,
-        name: impl AsRef<str>,
-        commit_id: impl AsRef<str>,
-    ) -> Result<(), OxenError> {
-        let name = name.as_ref();
-        let commit_id = commit_id.as_ref();
+    pub fn set_branch_commit_id(&self, name: &str, commit_id: &str) -> Result<(), OxenError> {
         self.refs_db.put(name, commit_id)?;
         Ok(())
     }
@@ -362,7 +346,7 @@ mod tests {
                 let handle = thread::spawn(move || {
                     // Each thread creates its own branch and reads all branches
                     with_ref_manager(&repo_clone, |manager| {
-                        manager.create_branch(format!("branch-{i}"), format!("commit-{i}"))?;
+                        manager.create_branch(&format!("branch-{i}"), &format!("commit-{i}"))?;
                         manager.list_branches()
                     })
                 });
@@ -396,8 +380,8 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
             repositories::branches::create_from_head(&repo, "feature/add-something")?;

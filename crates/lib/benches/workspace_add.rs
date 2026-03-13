@@ -202,7 +202,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion) {
                 let workspace = rt
                     .block_on(api::client::workspaces::create(
                         &remote_repo,
-                        &branch_name,
+                        branch_name,
                         &workspace_id,
                     ))
                     .unwrap();
@@ -210,8 +210,8 @@ pub fn workspace_add_benchmark(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| async {
                     api::client::workspaces::files::add(
                         &remote_repo,
-                        &workspace.id.as_str(),
-                        "",
+                        workspace.id.as_str(),
+                        Path::new(""),
                         files.clone(),
                         &None,
                     )
@@ -227,7 +227,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion) {
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }
 
 criterion_group!(benches, workspace_add_benchmark);

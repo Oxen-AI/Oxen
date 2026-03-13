@@ -11,7 +11,7 @@ use liboxen::opts::StorageOpts;
 use liboxen::{api, repositories};
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::PyOxenError;
 use crate::py_branch::PyBranch;
@@ -51,7 +51,7 @@ impl PyRemoteRepo {
         let (namespace, repo_name) = match repo.split_once('/') {
             Some((namespace, repo_name)) => (namespace.to_string(), repo_name.to_string()),
             None => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Invalid repo name, must be in format namespace/repo_name. Got {repo}"
                 ))
                 .into());
@@ -156,9 +156,9 @@ impl PyRemoteRepo {
 
             if empty {
                 let mut repo = RepoNew::from_namespace_name_host(
-                    self.repo.namespace.clone(),
-                    self.repo.name.clone(),
-                    self.host.clone(),
+                    &self.repo.namespace,
+                    &self.repo.name,
+                    &self.host,
                     storage_opts,
                 );
                 repo.is_public = Some(is_public);
@@ -216,7 +216,7 @@ impl PyRemoteRepo {
             if !revision.is_empty() {
                 repositories::download(&self.repo, &remote_path, &local_path, revision).await
             } else if let Some(revision) = &self.revision {
-                repositories::download(&self.repo, &remote_path, &local_path, &revision).await
+                repositories::download(&self.repo, &remote_path, &local_path, revision).await
             } else {
                 Err(OxenError::basic_str(
                     "Invalid Revision: Cannot download without a version.",
@@ -263,7 +263,7 @@ impl PyRemoteRepo {
 
     fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<'_, [u8]>, PyOxenError> {
         let bytes = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::file::get_file(&self.repo, &revision, &remote_path).await
+            api::client::file::get_file(&self.repo, revision, &remote_path).await
         })?;
 
         Ok(bytes.to_vec().into())
@@ -286,8 +286,8 @@ impl PyRemoteRepo {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::file::put_file(
                 &self.repo,
-                &branch,
-                &directory,
+                branch,
+                directory,
                 &local_path,
                 Some(file_name),
                 Some(commit_body),
@@ -312,7 +312,7 @@ impl PyRemoteRepo {
         });
 
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::file::delete_file(&self.repo, &branch, &file_path, commit_body).await
+            api::client::file::delete_file(&self.repo, branch, &file_path, commit_body).await
         })?;
 
         Ok(())
@@ -333,8 +333,13 @@ impl PyRemoteRepo {
 
         let paginated_commits = if let Some(path) = path {
             pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-                api::client::commits::list_commits_for_path(&self.repo, revision, path, &page_opts)
-                    .await
+                api::client::commits::list_commits_for_path(
+                    &self.repo,
+                    revision,
+                    Path::new(path),
+                    &page_opts,
+                )
+                .await
             })?
         } else {
             pyo3_async_runtimes::tokio::get_runtime().block_on(async {
@@ -368,7 +373,7 @@ impl PyRemoteRepo {
         };
 
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::dir::list(&self.repo, &revision, &path, page_num, page_size).await
+            api::client::dir::list(&self.repo, revision, &path, page_num, page_size).await
         })?;
 
         // Convert remote status to a PyStagedData using the from method
@@ -377,7 +382,7 @@ impl PyRemoteRepo {
 
     fn file_exists(&self, path: PathBuf, revision: &str) -> Result<bool, PyOxenError> {
         let exists = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            match api::client::metadata::get_file(&self.repo, &revision, &path).await {
+            match api::client::metadata::get_file(&self.repo, revision, &path).await {
                 Ok(Some(_)) => Ok(true),
                 Ok(None) => Ok(false),
                 Err(e) => Err(e),
@@ -394,7 +399,7 @@ impl PyRemoteRepo {
         revision: &str,
     ) -> PyResult<bool> {
         match pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::metadata::get_file(&self.repo, &revision, &remote_path).await
+            api::client::metadata::get_file(&self.repo, revision, &remote_path).await
         }) {
             Ok(Some(remote_metadata)) => {
                 let remote_hash = remote_metadata.entry.hash();
@@ -418,7 +423,7 @@ impl PyRemoteRepo {
         };
 
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::metadata::get_file(&self.repo, &revision, &path).await
+            api::client::metadata::get_file(&self.repo, revision, &path).await
         })?;
 
         Ok(result.map(|e| PyEntry::from(e.entry)))
@@ -466,7 +471,7 @@ impl PyRemoteRepo {
         };
 
         let branch = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::branches::create_from_commit_id(&self.repo, &new_name, &commit_id).await
+            api::client::branches::create_from_commit_id(&self.repo, &new_name, commit_id).await
         });
 
         match branch {
@@ -534,9 +539,9 @@ impl PyRemoteRepo {
         }
     }
 
-    fn diff_file(&self, base: &str, head: &str, path: &str) -> Result<PyDiffEntry, PyOxenError> {
+    fn diff_file(&self, base: &str, head: &str, path: PathBuf) -> Result<PyDiffEntry, PyOxenError> {
         let diff = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::diff::diff_entries(&self.repo, &base, &head, path).await
+            api::client::diff::diff_entries(&self.repo, base, head, &path).await
         })?;
 
         Ok(diff.into())
