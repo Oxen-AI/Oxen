@@ -1,4 +1,4 @@
-FROM rust:1.94 AS builder
+FROM rust:1.94-bookworm AS builder
 
 USER root
 RUN apt-get update
