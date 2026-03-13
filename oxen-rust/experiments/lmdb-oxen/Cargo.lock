@@ -3732,6 +3732,7 @@ dependencies = [
  "futures-util",
  "glob",
  "glob-match",
+ "heed",
  "http 1.4.0",
  "humantime",
  "ignore",

@@ -23,6 +23,10 @@ impl MerkleHash {
         self.0.to_le_bytes()
     }
 
+    pub fn from_le_bytes(bytes: [u8; 16]) -> Self {
+        Self(u128::from_le_bytes(bytes))
+    }
+
     pub fn to_u128(&self) -> u128 {
         self.0
     }

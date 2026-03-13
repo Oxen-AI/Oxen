@@ -28,6 +28,7 @@ pub fn cleanup_sync_dir(sync_dir: &Path) -> Result<(), OxenError> {
     refs::ref_manager::remove_from_cache_with_children(sync_dir)?;
     df_db::remove_df_db_from_cache_with_children(sync_dir)?;
     dir_hashes_db::remove_from_cache_with_children(sync_dir)?;
+    liboxen::core::db::merkle_node::tree_store::remove_tree_store_from_cache(sync_dir)?;
     std::fs::remove_dir_all(sync_dir)?;
     Ok(())
 }

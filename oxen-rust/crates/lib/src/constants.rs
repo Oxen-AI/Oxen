@@ -55,6 +55,8 @@ pub const DIR_HASHES_DIR: &str = "dir_hashes";
 pub const TREE_DIR: &str = "tree";
 /// prefix for the commit merkle tree node dbs
 pub const NODES_DIR: &str = "nodes";
+/// name of the lmdb directory for the merkle tree
+pub const TREE_LMDB_DIR: &str = "lmdb";
 /// prefix for cached compare dfs
 pub const COMPARES_DIR: &str = "compares";
 /// prefix for the left commit pointer in cached compares

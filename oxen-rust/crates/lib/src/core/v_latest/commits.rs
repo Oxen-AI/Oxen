@@ -20,10 +20,9 @@ use std::path::PathBuf;
 use std::str;
 
 use crate::constants::COMMIT_COUNT_DIR;
-use crate::core::db::key_val::{opts, str_val_db};
+use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
-use crate::core::v_latest::index::CommitMerkleTree;
-use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 
 /// Configuration for commit traversal operations
 struct CommitTraversalConfig<'a> {
@@ -364,13 +363,9 @@ pub fn create_initial_commit(
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, None)?;
     commit_db.add_child(&dir_node)?;
 
-    // Initialize the dir_hash_db with the root directory hash
-    let commit_id_string = commit_id.to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts::default(), dunce::simplified(&dir_hash_db_path))?;
-    str_val_db::put(&dir_hash_db, "", &dir_node.hash().to_string())?;
+    // Initialize the dir_hash in LMDB with the root directory hash
+    let tree_store = crate::core::db::merkle_node::get_tree_store(repo)?;
+    tree_store.put_dir_hash(&commit_id, "", dir_node.hash())?;
 
     // Create the branch pointing to this commit
     with_ref_manager(repo, |manager| {

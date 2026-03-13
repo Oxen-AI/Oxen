@@ -3,17 +3,19 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str;
 use tar::Archive;
 
-use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
+use crate::constants::{NODES_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
+use crate::core::db::merkle_node::node_record::{ChildEntry, NodeRecord};
+use crate::core::db::merkle_node::tree_store::get_tree_store;
 use crate::core::db::merkle_node::MerkleNodeDB;
-use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
+use crate::core::db::merkle_node::merkle_node_db::node_db_prefix;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -24,7 +26,7 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,
     TMerkleTreeNode,
 };
-use crate::{repositories, util};
+use crate::repositories;
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
 /// Otherwise it will return None
@@ -881,12 +883,11 @@ pub fn cp_dir_hashes_to(
     original_commit_id: &MerkleHash,
     new_commit_id: &MerkleHash,
 ) -> Result<(), OxenError> {
-    let original_dir_hashes_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &original_commit_id.to_string());
-    let new_dir_hashes_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &new_commit_id.to_string());
-    util::fs::copy_dir_all(original_dir_hashes_path, new_dir_hashes_path)?;
-
+    let tree_store = crate::core::db::merkle_node::get_tree_store(repo)?;
+    let dir_hashes = tree_store.list_dir_hashes(original_commit_id)?;
+    if !dir_hashes.is_empty() {
+        tree_store.put_dir_hashes_batch(new_commit_id, &dir_hashes)?;
+    }
     Ok(())
 }
 
@@ -904,26 +905,148 @@ pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError>
     Ok(buffer)
 }
 
+// ---- Wire format helpers ----
+// The tar wire format uses `tree/nodes/{prefix}/{suffix}/node` and
+// `tree/nodes/{prefix}/{suffix}/children` files. These helpers convert
+// between the LMDB records and that on-disk format.
+
+/// Reconstruct the old `node` file format from LMDB records.
+/// Format: [dtype][parent_id 16B LE][data_len 4B LE][data][child_index_entries...]
+/// Each child index entry: [dtype 1B][hash 16B LE][offset 8B LE][length 8B LE]
+fn reconstruct_node_file(node: &NodeRecord, children: &[ChildEntry]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.push(node.dtype);
+    buf.extend_from_slice(&node.parent_id.to_le_bytes());
+    buf.extend_from_slice(&(node.data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&node.data);
+    let mut offset: u64 = 0;
+    for child in children {
+        buf.push(child.dtype);
+        buf.extend_from_slice(&child.hash.to_le_bytes());
+        buf.extend_from_slice(&offset.to_le_bytes());
+        buf.extend_from_slice(&(child.data.len() as u64).to_le_bytes());
+        offset += child.data.len() as u64;
+    }
+    buf
+}
+
+/// Reconstruct the old `children` file format: concatenated msgpack blobs.
+fn reconstruct_children_file(children: &[ChildEntry]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for child in children {
+        buf.extend_from_slice(&child.data);
+    }
+    buf
+}
+
+/// Parse the wire-format `node` + `children` files back into LMDB records.
+fn parse_wire_format(
+    node_data: &[u8],
+    children_data: &[u8],
+) -> Result<(NodeRecord, Vec<ChildEntry>), OxenError> {
+    if node_data.len() < 21 {
+        return Err(OxenError::basic_str("Node wire data too short"));
+    }
+    let dtype = node_data[0];
+    let parent_id = u128::from_le_bytes(node_data[1..17].try_into().unwrap());
+    let data_len = u32::from_le_bytes(node_data[17..21].try_into().unwrap()) as usize;
+    if node_data.len() < 21 + data_len {
+        return Err(OxenError::basic_str("Node wire data truncated"));
+    }
+    let data = node_data[21..21 + data_len].to_vec();
+    let node_record = NodeRecord {
+        dtype,
+        parent_id,
+        data,
+    };
+
+    // Parse child index entries from the remainder of the node file.
+    // Each entry: [dtype 1B][hash 16B][offset 8B][length 8B] = 33 bytes
+    let child_index_data = &node_data[21 + data_len..];
+    let child_entry_size = 33;
+    let num_children = child_index_data.len() / child_entry_size;
+    let mut child_entries = Vec::with_capacity(num_children);
+    for i in 0..num_children {
+        let base = i * child_entry_size;
+        let child_dtype = child_index_data[base];
+        let child_hash =
+            u128::from_le_bytes(child_index_data[base + 1..base + 17].try_into().unwrap());
+        let offset =
+            u64::from_le_bytes(child_index_data[base + 17..base + 25].try_into().unwrap())
+                as usize;
+        let length =
+            u64::from_le_bytes(child_index_data[base + 25..base + 33].try_into().unwrap())
+                as usize;
+        let child_data = if offset + length <= children_data.len() {
+            children_data[offset..offset + length].to_vec()
+        } else {
+            log::warn!(
+                "Child data out of bounds: offset={offset} length={length} children_len={}",
+                children_data.len()
+            );
+            vec![]
+        };
+        child_entries.push(ChildEntry {
+            dtype: child_dtype,
+            hash: child_hash,
+            data: child_data,
+        });
+    }
+    Ok((node_record, child_entries))
+}
+
+/// Add a single node (with its children) from LMDB into a tar archive.
+fn add_node_to_tar<W: std::io::Write>(
+    tree_store: &crate::core::db::merkle_node::TreeStore,
+    hash: &MerkleHash,
+    tar: &mut tar::Builder<W>,
+) -> Result<(), OxenError> {
+    let node_record = match tree_store.get_node(hash)? {
+        Some(r) => r,
+        None => {
+            log::warn!("Node not found in LMDB for compression: {hash}");
+            return Ok(());
+        }
+    };
+    let children = tree_store.get_children(hash)?.unwrap_or_default();
+
+    let dir_prefix = node_db_prefix(hash);
+    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
+
+    let node_bytes = reconstruct_node_file(&node_record, &children);
+    let children_bytes = reconstruct_children_file(&children);
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(node_bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    tar.append_data(&mut header, tar_subdir.join("node"), &node_bytes[..])?;
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(children_bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    tar.append_data(
+        &mut header,
+        tar_subdir.join("children"),
+        &children_bytes[..],
+    )?;
+
+    Ok(())
+}
+
+// ---- Compress / Unpack functions ----
+
 pub fn compress_full_tree(
     repository: &LocalRepository,
     tar: &mut tar::Builder<GzEncoder<Vec<u8>>>,
 ) -> Result<(), OxenError> {
-    // This will be the subdir within the tarball,
-    // so when we untar it, all the subdirs will be extracted to
-    // tree/nodes/...
-    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
-    let nodes_dir = repository
-        .path
-        .join(OXEN_HIDDEN_DIR)
-        .join(TREE_DIR)
-        .join(NODES_DIR);
-
-    log::debug!("Compressing tree in dir {nodes_dir:?}");
-
-    if nodes_dir.exists() {
-        tar.append_dir_all(&tar_subdir, nodes_dir)?;
+    let tree_store = get_tree_store(repository)?;
+    let all_nodes = tree_store.iter_all_nodes()?;
+    log::debug!("Compressing full tree with {} nodes", all_nodes.len());
+    for (hash, _) in &all_nodes {
+        add_node_to_tar(&tree_store, hash, tar)?;
     }
-
     Ok(())
 }
 
@@ -931,23 +1054,13 @@ pub fn compress_nodes(
     repository: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> Result<Vec<u8>, OxenError> {
-    // zip up the node directories for each commit tree
+    let tree_store = get_tree_store(repository)?;
     let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
 
     log::debug!("Compressing {} unique nodes...", hashes.len());
     for hash in hashes {
-        // This will be the subdir within the tarball
-        // so when we untar it, all the subdirs will be extracted to
-        // tree/nodes/...
-        let dir_prefix = node_db_prefix(hash);
-        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
-
-        let node_dir = node_db_path(repository, hash);
-        // log::debug!("Compressing node from dir {:?}", node_dir);
-        if node_dir.exists() {
-            tar.append_dir_all(&tar_subdir, node_dir)?;
-        }
+        add_node_to_tar(&tree_store, hash, &mut tar)?;
     }
     tar.finish()?;
 
@@ -959,21 +1072,11 @@ pub fn compress_node(
     repository: &LocalRepository,
     hash: &MerkleHash,
 ) -> Result<Vec<u8>, OxenError> {
-    // This will be the subdir within the tarball
-    // so when we untar it, all the subdirs will be extracted to
-    // tree/nodes/...
-    let dir_prefix = node_db_prefix(hash);
-    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
-
-    // zip up the node directory
+    let tree_store = get_tree_store(repository)?;
     let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
-    let node_dir = node_db_path(repository, hash);
 
-    // log::debug!("Compressing node {} from dir {:?}", hash, node_dir);
-    if node_dir.exists() {
-        tar.append_dir_all(&tar_subdir, node_dir)?;
-    }
+    add_node_to_tar(&tree_store, hash, &mut tar)?;
     tar.finish()?;
 
     let buffer: Vec<u8> = tar.into_inner()?.finish()?;
@@ -991,23 +1094,14 @@ pub fn compress_commits(
     repository: &LocalRepository,
     commits: &Vec<Commit>,
 ) -> Result<Vec<u8>, OxenError> {
-    // zip up the node directory
+    let tree_store = get_tree_store(repository)?;
     let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
 
     for commit in commits {
         let hash = commit.hash()?;
-        // This will be the subdir within the tarball
-        // so when we untar it, all the subdirs will be extracted to
-        // tree/nodes/...
-        let dir_prefix = node_db_prefix(&hash);
-        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
-
-        let node_dir = node_db_path(repository, &hash);
-        log::debug!("Compressing commit from dir {node_dir:?}");
-        if node_dir.exists() {
-            tar.append_dir_all(&tar_subdir, node_dir)?;
-        }
+        log::debug!("Compressing commit {hash}");
+        add_node_to_tar(&tree_store, &hash, &mut tar)?;
     }
     tar.finish()?;
 
@@ -1019,51 +1113,78 @@ pub fn unpack_nodes(
     repository: &LocalRepository,
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
+    let tree_store = get_tree_store(repository)?;
     let mut hashes: HashSet<MerkleHash> = HashSet::new();
+
+    // Buffer tar entries grouped by hash: hash_str -> (node_bytes, children_bytes)
+    let mut node_files: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut children_files: HashMap<String, Vec<u8>> = HashMap::new();
+
     log::debug!("Unpacking nodes from buffer...");
     let decoder = GzDecoder::new(buffer);
-    log::debug!("Decoder created");
     let mut archive = Archive::new(decoder);
-    log::debug!("Archive created");
     let Ok(entries) = archive.entries() else {
         return Err(OxenError::basic_str(
             "Could not unpack tree database from archive",
         ));
     };
-    log::debug!("Extracting entries...");
+
     for file in entries {
         let Ok(mut file) = file else {
             log::error!("Could not unpack file in archive...");
             continue;
         };
-        let path = file.path().unwrap();
-        let oxen_hidden_path = repository.path.join(OXEN_HIDDEN_DIR);
-        let dst_path = oxen_hidden_path.join(TREE_DIR).join(NODES_DIR).join(path);
 
-        if let Some(parent) = dst_path.parent() {
-            util::fs::create_dir_all(parent).expect("Could not create parent dir");
-        }
-        // log::debug!("create_node writing {:?}", dst_path);
-        if dst_path.exists() {
-            log::debug!("Node already exists at {dst_path:?}");
+        // Skip directory entries
+        if file.header().entry_type().is_dir() {
             continue;
         }
-        file.unpack(&dst_path)?;
 
-        // the hash is the last two path components combined
-        if !dst_path.ends_with("node") && !dst_path.ends_with("children") {
-            let id = dst_path
-                .components()
-                .rev()
-                .take(2)
-                .map(|c| c.as_os_str().to_str().unwrap())
-                .collect::<Vec<&str>>()
-                .into_iter()
-                .rev()
-                .collect::<String>();
-            hashes.insert(id.parse()?);
+        let path = file.path()?.to_path_buf();
+        let path_str = path.to_string_lossy();
+
+        // Extract hash from path: tree/nodes/{prefix}/{suffix}/node|children
+        // We need {prefix}{suffix} as the hash string.
+        let components: Vec<&str> = path_str.split('/').collect();
+        if components.len() < 5 {
+            continue;
+        }
+        let hash_str = format!("{}{}", components[2], components[3]);
+        let filename = components[4];
+
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents)?;
+
+        match filename {
+            "node" => {
+                node_files.insert(hash_str, contents);
+            }
+            "children" => {
+                children_files.insert(hash_str, contents);
+            }
+            _ => {}
         }
     }
+
+    // Process each hash: parse wire format and write to LMDB
+    for (hash_str, node_data) in &node_files {
+        let hash: MerkleHash = hash_str.parse()?;
+
+        if tree_store.node_exists(&hash)? {
+            log::debug!("Node already exists in LMDB: {hash}");
+            hashes.insert(hash);
+            continue;
+        }
+
+        let children_data = children_files
+            .get(hash_str)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let (node_record, child_entries) = parse_wire_format(node_data, children_data)?;
+        tree_store.put_node_with_children(&hash, &node_record, &child_entries)?;
+        hashes.insert(hash);
+    }
+
     Ok(hashes)
 }
 

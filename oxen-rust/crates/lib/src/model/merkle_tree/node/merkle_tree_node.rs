@@ -74,7 +74,7 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
         hash: &MerkleHash,
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
-        let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, hash) else {
+        let Ok(node_db) = MerkleNodeDB::open_read_only(repo, hash) else {
             // We don't return an error here because there are some situations where we won't have all the node files.
             // For example, when working in a subtree clone.
             log::warn!("no child node db: {hash:?}");

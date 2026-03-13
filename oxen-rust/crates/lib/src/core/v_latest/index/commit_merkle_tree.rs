@@ -1,12 +1,7 @@
-use rocksdb::IteratorMode;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::str;
 
-use crate::core::db::dir_hashes::dir_hashes_db::{
-    dir_hash_db_path, dir_hash_db_path_from_commit_id, with_dir_hash_db_manager,
-};
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::merkle_node::{get_tree_store, MerkleNodeDB};
 
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 
@@ -29,37 +24,9 @@ impl CommitMerkleTree {
         repo: &LocalRepository,
         commit: &Commit,
     ) -> Result<HashMap<PathBuf, MerkleHash>, OxenError> {
-        let dir_hashes = with_dir_hash_db_manager(repo, &commit.id, |dir_hashes_db| {
-            let mut dir_hashes = HashMap::new();
-            let iterator = dir_hashes_db.iterator(IteratorMode::Start);
-            for item in iterator {
-                match item {
-                    Ok((key, value)) => {
-                        let key = str::from_utf8(&key)?;
-                        let value = str::from_utf8(&value)?;
-                        let hash = value.parse()?;
-                        dir_hashes.insert(PathBuf::from(key), hash);
-                    }
-                    _ => {
-                        return Err(OxenError::basic_str(
-                            "Could not read iterate over db values",
-                        ));
-                    }
-                }
-            }
-
-            Ok(dir_hashes)
-        })?;
-
-        Ok(dir_hashes)
-    }
-
-    pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &String) -> PathBuf {
-        dir_hash_db_path_from_commit_id(repo, commit_id)
-    }
-
-    pub fn dir_hash_db_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
-        dir_hash_db_path(repo, commit)
+        let tree_store = get_tree_store(repo)?;
+        let commit_hash = commit.hash()?;
+        tree_store.list_dir_hashes(&commit_hash)
     }
 
     pub fn from_commit(repo: &LocalRepository, commit: &Commit) -> Result<Self, OxenError> {

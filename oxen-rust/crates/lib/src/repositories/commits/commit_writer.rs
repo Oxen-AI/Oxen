@@ -16,8 +16,7 @@ use crate::constants::MERGE_HEAD_FILE;
 use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
-use crate::core::db::key_val::str_val_db;
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::merkle_node::{get_tree_store, MerkleNodeDB, TreeStore};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
@@ -267,12 +266,7 @@ pub fn commit_dir_entries_with_parents(
         },
     )?;
 
-    let opts = db::key_val::opts::default();
-    let commit_id_string = format!("{commit_id}").to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+    let tree_store = get_tree_store(repo)?;
 
     let (dir_hashes, parent_id) = match &maybe_head_commit {
         Some(commit) => (
@@ -282,12 +276,9 @@ pub fn commit_dir_entries_with_parents(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
+    // Copy parent dir_hashes to this commit in one batch transaction
+    if !dir_hashes.is_empty() {
+        tree_store.put_dir_hashes_batch(&commit_id, &dir_hashes)?;
     }
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
@@ -295,7 +286,7 @@ pub fn commit_dir_entries_with_parents(
         repo,
         commit_id,
         &mut commit_db,
-        &dir_hash_db,
+        &tree_store,
         &dir_hashes,
         &vnode_entries,
     )?;
@@ -370,12 +361,7 @@ pub fn commit_dir_entries_new(
         },
     )?;
 
-    let opts = db::key_val::opts::default();
-    let commit_id_string = format!("{commit_id}").to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+    let tree_store = get_tree_store(repo)?;
 
     let (dir_hashes, parent_id) = match &maybe_head_commit {
         Some(commit) => (
@@ -385,12 +371,9 @@ pub fn commit_dir_entries_new(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
+    // Copy parent dir_hashes to this commit in one batch transaction
+    if !dir_hashes.is_empty() {
+        tree_store.put_dir_hashes_batch(&commit_id, &dir_hashes)?;
     }
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
@@ -399,7 +382,7 @@ pub fn commit_dir_entries_new(
         repo,
         commit_id,
         &mut commit_db,
-        &dir_hash_db,
+        &tree_store,
         &dir_hashes,
         &vnode_entries,
     )?;
@@ -407,7 +390,7 @@ pub fn commit_dir_entries_new(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
+    cleanup_rm_dirs(&tree_store, &commit_id, &dir_entries)?;
 
     // Close the connection before removing the staged db
     let staged_db_path = staged_db.path().to_owned();
@@ -494,24 +477,16 @@ pub fn commit_dir_entries(
         },
     )?;
 
-    let opts = db::key_val::opts::default();
-    let commit_id_string = format!("{commit_id}").to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+    let tree_store = get_tree_store(repo)?;
 
     let dir_hashes = match &maybe_head_commit {
         Some(commit) => CommitMerkleTree::dir_hashes(repo, commit)?,
         None => HashMap::new(),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
+    // Copy parent dir_hashes to this commit in one batch transaction
+    if !dir_hashes.is_empty() {
+        tree_store.put_dir_hashes_batch(&commit_id, &dir_hashes)?;
     }
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
@@ -519,20 +494,21 @@ pub fn commit_dir_entries(
         repo,
         commit_id,
         &mut commit_db,
-        &dir_hash_db,
+        &tree_store,
         &dir_hashes,
         &vnode_entries,
     )?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
+    cleanup_rm_dirs(&tree_store, &commit_id, &dir_entries)?;
 
     Ok(node.to_commit())
 }
 
 fn cleanup_rm_dirs(
-    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    tree_store: &TreeStore,
+    commit_id: &MerkleHash,
     dir_entries: &HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
 ) -> Result<(), OxenError> {
     for (_path, entries) in dir_entries.iter() {
@@ -545,7 +521,7 @@ fn cleanup_rm_dirs(
                 let dir_path = PathBuf::from(dir_node.name());
                 log::debug!("dir path for cleanup: {dir_path:?}");
                 let key = dir_path.to_str().unwrap();
-                dir_hash_db.delete(key)?;
+                tree_store.delete_dir_hash(commit_id, key)?;
             }
         }
     }
@@ -801,7 +777,7 @@ fn write_commit_entries(
     repo: &LocalRepository,
     commit_id: MerkleHash,
     commit_db: &mut MerkleNodeDB,
-    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    tree_store: &TreeStore,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
 ) -> Result<(), OxenError> {
@@ -812,17 +788,13 @@ fn write_commit_entries(
     commit_db.add_child(&dir_node)?;
     total_written += 1;
 
-    str_val_db::put(
-        dir_hash_db,
-        root_path.to_str().unwrap(),
-        &dir_node.hash().to_string(),
-    )?;
+    tree_store.put_dir_hash(&commit_id, root_path.to_str().unwrap(), dir_node.hash())?;
     let dir_db = MerkleNodeDB::open_read_write(repo, &dir_node, Some(commit_id))?;
     r_create_dir_node(
         repo,
         commit_id,
         &mut Some(dir_db),
-        dir_hash_db,
+        tree_store,
         dir_hashes,
         entries,
         root_path,
@@ -837,7 +809,7 @@ fn r_create_dir_node(
     repo: &LocalRepository,
     commit_id: MerkleHash,
     maybe_dir_db: &mut Option<MerkleNodeDB>,
-    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    tree_store: &TreeStore,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     path: impl AsRef<Path>,
@@ -919,7 +891,7 @@ fn r_create_dir_node(
                             repo,
                             commit_id,
                             &mut child_db,
-                            dir_hash_db,
+                            tree_store,
                             dir_hashes,
                             entries,
                             &dir_path,
@@ -927,41 +899,24 @@ fn r_create_dir_node(
                         )?;
                         dir_node
                     } else {
-                        // log::debug!("r_create_dir_node skipping {:?}", dir_path);
                         // Look up the old dir node and reference it
                         let Some(old_dir_node) =
                             CommitMerkleTree::read_node(repo, node.hash(), false)?
                         else {
-                            // log::debug!(
-                            //     "r_create_dir_node could not read old dir node {:?}",
-                            //     node.hash
-                            // );
                             continue;
                         };
                         let dir_node = old_dir_node.dir()?;
 
-                        // if let Some(vnode_db) = &mut maybe_vnode_db {
                         vnode_db.add_child(&dir_node)?;
                         *total_written += 1;
-                        // }
                         dir_node
                     };
 
-                    // Write the dir hash to the dir_hashes db or delete it if it has children
-                    // log::debug!(
-                    //     "dir entry has {} children {:?} ",
-                    //     entry.node.children.len(),
-                    //     dir_path
-                    // );
-                    // if entry.node.children.is_empty() {
-                    //     str_val_db::delete(dir_hash_db, dir_path.to_str().unwrap())?;
-                    // } else {
-                    str_val_db::put(
-                        dir_hash_db,
+                    tree_store.put_dir_hash(
+                        &commit_id,
                         dir_path.to_str().unwrap(),
-                        &dir_node.hash().to_string(),
+                        dir_node.hash(),
                     )?;
-                    // }
                 }
                 EMerkleTreeNode::File(file_node) => {
                     let mut file_node = file_node.clone();
