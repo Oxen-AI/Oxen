@@ -174,7 +174,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     // TODO: See if we can make this infallible
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError>;
 
-    /// Copy a version to a destination path
+    /// Copy a versioned file from the version store to a destination path on the local filesystem
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve

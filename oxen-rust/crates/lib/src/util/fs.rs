@@ -599,14 +599,12 @@ pub fn rename(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenEr
     }
 }
 
-/// Wrapper around the std::fs::copy which makes the parent directory of the dst if it doesn't exist
-pub fn copy_mkdir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenError> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
+/// Wrapper around the tokio::fs::copy which makes the parent directory of the dst if it doesn't exist
+pub async fn copy_mkdir(src: &Path, dst: &Path) -> Result<(), OxenError> {
     if let Some(parent) = dst.parent() {
-        create_dir_all(parent)?;
+        tokio::fs::create_dir_all(parent).await?;
     }
-    match std::fs::copy(src, dst) {
+    match tokio::fs::copy(src, dst).await {
         Ok(_) => Ok(()),
         Err(err) => {
             if !src.exists() {

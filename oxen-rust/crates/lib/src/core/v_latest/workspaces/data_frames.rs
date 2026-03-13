@@ -214,12 +214,10 @@ pub async fn rename(
             repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
         {
             let version_store = workspace.base_repo.version_store()?;
-            let version_path =
-                version_store.get_version_path(&existing_file_node.hash().to_string())?;
-            log::debug!(
-                "rename: copying version path: {version_path:?} to {workspace_file_path:?}"
-            );
-            util::fs::copy_mkdir(version_path, &workspace_file_path)?;
+            let hash = existing_file_node.hash().to_string();
+            version_store
+                .copy_version_to_path(&hash, &workspace_file_path)
+                .await?;
         }
 
         // Check if the new path exists in the merkle tree, if it does, it is modified
