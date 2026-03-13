@@ -67,27 +67,33 @@ use crate::model::{LocalRepository, StagedData};
 /// # Ok(())
 /// # }
 /// ```
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
+    metrics::counter!("oxen_repo_status_status_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::status::status(repo),
     }
 }
 
+#[tracing::instrument(skip(repo, opts), fields(repo_path = %repo.path.display()))]
 pub fn status_from_opts(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
 ) -> Result<StagedData, OxenError> {
+    metrics::counter!("oxen_repo_status_status_from_opts_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v10 not supported"),
         _ => core::v_latest::status::status_from_opts(repo, opts),
     }
 }
 
+#[tracing::instrument(skip(repo, dir), fields(repo_path = %repo.path.display()))]
 pub fn status_from_dir(
     repo: &LocalRepository,
     dir: impl AsRef<Path>,
 ) -> Result<StagedData, OxenError> {
+    metrics::counter!("oxen_repo_status_status_from_dir_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::status::status_from_dir(repo, dir),

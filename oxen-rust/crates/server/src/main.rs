@@ -378,8 +378,15 @@ async fn main() -> Result<(), ServerError> {
         Err(e) => log::debug!("Failed to load .env file: {e}"),
     }
 
-    util::logging::init_logging();
+    let _tracing_guard = util::telemetry::init_tracing("oxen-server");
     util::perf::init_perf_logging();
+
+    let metrics_port: u16 = env::var("OXEN_METRICS_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9090);
+    util::telemetry::init_metrics_prometheus(metrics_port);
+    log::info!("Prometheus metrics available at http://0.0.0.0:{metrics_port}/metrics");
 
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => PathBuf::from(dir),
@@ -396,8 +403,8 @@ async fn main() -> Result<(), ServerError> {
 
     match ServerCli::parse().command {
         ServerCommand::Start { ip, port, auth } => {
-            println!("🐂 v{VERSION}");
-            println!("{SUPPORT}");
+            log::info!("🐂 v{VERSION}");
+            log::info!("{SUPPORT}");
 
             start(
                 &ip,
@@ -424,6 +431,7 @@ async fn main() -> Result<(), ServerError> {
         } => {
             log::debug!("Saving to sync dir: {sync_dir:?}");
             let token = add_user(&email, &name, output.as_path(), &sync_dir)?;
+            // Keep this as println!: we want to send this to STDOUT only.
             println!(
                 "User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`"
             );
@@ -467,8 +475,8 @@ async fn start(
 
     let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
 
-    println!("Running on {host}:{port}");
-    println!("Syncing to directory: {}", sync_dir.display());
+    log::info!("Running on {host}:{port}");
+    log::info!("Syncing to directory: {}", sync_dir.display());
 
     HttpServer::new(move || {
         App::new()

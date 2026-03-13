@@ -9,7 +9,9 @@ use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::view::repository::{RepositoryStatsResponse, RepositoryStatsView};
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, OxenError> {
+    metrics::counter!("oxen_client_stats_get_total").increment(1);
     let uri = "/stats".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 

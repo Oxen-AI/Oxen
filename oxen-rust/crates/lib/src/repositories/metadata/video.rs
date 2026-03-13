@@ -21,7 +21,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
 
     match mp4::Mp4Reader::read_header(reader, size) {
         Ok(video) => {
-            let duration = video.duration().as_secs_f64();
+            let duration = video.duration().as_millis() as f64;
 
             let video_tracks: Vec<&Mp4Track> = video
                 .tracks()

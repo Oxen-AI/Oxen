@@ -12,10 +12,12 @@ use crate::model::RemoteRepository;
 use crate::view::ListSchemaResponse;
 use crate::view::schema::SchemaWithPath;
 
+#[tracing::instrument(skip(remote_repo, revision))]
 pub async fn list(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
 ) -> Result<Vec<SchemaWithPath>, OxenError> {
+    metrics::counter!("oxen_client_schemas_list_total").increment(1);
     let revision = revision.as_ref();
 
     let uri = format!("/schemas/{revision}");
@@ -45,11 +47,13 @@ pub async fn list(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, revision, path))]
 pub async fn get(
     remote_repo: &RemoteRepository,
     revision: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<Option<SchemaWithPath>, OxenError> {
+    metrics::counter!("oxen_client_schemas_get_total").increment(1);
     let revision = revision.as_ref();
     let path = path.as_ref();
 

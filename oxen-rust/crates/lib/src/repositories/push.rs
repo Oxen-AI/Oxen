@@ -48,18 +48,26 @@ use crate::opts::PushOpts;
 /// # Ok(())
 /// # }
 /// ```
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
-    match repo.min_version() {
+    metrics::counter!("oxen_repo_push_push_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is deprecated"),
         _ => core::v_latest::push::push(repo).await,
-    }
+    };
+    metrics::histogram!("oxen_repo_push_push_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
 /// Push to a specific remote branch on the default remote repository
+#[tracing::instrument(skip(repo, opts), fields(repo_path = %repo.path.display()))]
 pub async fn push_remote_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
+    metrics::counter!("oxen_repo_push_push_remote_branch_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is deprecated"),
         _ => core::v_latest::push::push_remote_branch(repo, opts).await,

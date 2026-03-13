@@ -30,27 +30,39 @@ use crate::{repositories, util};
 /// Otherwise it will return None
 /// The node will not have any children, so is fast to look up
 /// if you want the root with children, use `get_root_with_children``
+#[tracing::instrument(skip(repo), fields(commit_id = %commit.id))]
 pub fn get_root(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
+    metrics::counter!("oxen_repo_tree_get_root_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_without_children(repo, commit),
         _ => CommitMerkleTreeLatest::root_without_children(repo, commit),
-    }
+    };
+    metrics::histogram!("oxen_repo_tree_get_root_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
 /// Otherwise it will return None
 /// The node will load all children from disk, so is slower than `get_root`
+#[tracing::instrument(skip(repo), fields(commit_id = %commit.id))]
 pub fn get_root_with_children(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
+    metrics::counter!("oxen_repo_tree_get_root_with_children_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::root_with_children(repo, commit),
         _ => CommitMerkleTreeLatest::root_with_children(repo, commit),
-    }
+    };
+    metrics::histogram!("oxen_repo_tree_get_root_with_children_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
@@ -129,10 +141,12 @@ pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError>
     Ok(root_dir)
 }
 
+#[tracing::instrument(level = "debug", skip(repo), fields(hash = %hash))]
 pub fn get_node_by_id(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
+    metrics::counter!("oxen_repo_tree_get_node_by_id_total").increment(1);
     let load_recursive = false;
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::read_node(repo, hash, load_recursive),
@@ -201,11 +215,13 @@ pub fn has_path(
     }
 }
 
+#[tracing::instrument(level = "debug", skip(repo, path), fields(commit_id = %commit.id))]
 pub fn get_node_by_path(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
+    metrics::counter!("oxen_repo_tree_get_node_by_path_total").increment(1);
     let load_recursive = false;
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {
@@ -243,11 +259,13 @@ pub fn get_node_by_path_with_children(
     Ok(node)
 }
 
+#[tracing::instrument(level = "debug", skip(repo, path), fields(commit_id = %commit.id))]
 pub fn get_file_by_path(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
+    metrics::counter!("oxen_repo_tree_get_file_by_path_total").increment(1);
     let Some(root) = get_node_by_path(repo, commit, &path)? else {
         return Ok(None);
     };
@@ -257,12 +275,14 @@ pub fn get_file_by_path(
     }
 }
 
+#[tracing::instrument(level = "debug", skip(repo, path, dir_hashes), fields(commit_id = %commit.id))]
 pub fn get_dir_with_children(
     repo: &LocalRepository,
     commit: &Commit,
     path: impl AsRef<Path>,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
+    metrics::counter!("oxen_repo_tree_get_dir_with_children_total").increment(1);
     let _perf = crate::perf_guard!("tree::get_dir_with_children");
 
     match repo.min_version() {
@@ -403,7 +423,9 @@ pub fn list_nodes_from_paths(
 }
 
 /// List the files and folders given a directory node
+#[tracing::instrument(level = "debug", skip(node))]
 pub fn list_files_and_folders(node: &MerkleTreeNode) -> Result<Vec<MerkleTreeNode>, OxenError> {
+    metrics::counter!("oxen_repo_tree_list_files_and_folders_total").increment(1);
     if MerkleTreeNodeType::Dir != node.node.node_type() {
         return Err(OxenError::basic_str(format!(
             "list_files_and_folders Merkle tree node is not a directory: '{:?}'",
@@ -500,10 +522,13 @@ pub fn collect_nodes_along_path(
     Ok(())
 }
 
+#[tracing::instrument(skip(repo, hashes), fields(num_hashes = hashes.len()))]
 pub fn list_missing_node_hashes(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
+    metrics::counter!("oxen_repo_tree_list_missing_node_hashes_total").increment(1);
+    let timer = std::time::Instant::now();
     let mut results = HashSet::new();
     for hash in hashes {
         if !node_sync_status::node_is_synced(repo, hash) {
@@ -511,15 +536,20 @@ pub fn list_missing_node_hashes(
         }
     }
 
+    metrics::histogram!("oxen_repo_tree_list_missing_node_hashes_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(results)
 }
 
 // TODO: Deduplicate functionality with model::MerkleTreeNode
+#[tracing::instrument(skip(repo), fields(hash = %hash))]
 pub async fn list_missing_file_hashes(
     repo: &LocalRepository,
     hash: &MerkleHash,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
-    if repo.min_version() == MinOxenVersion::V0_19_0 {
+    metrics::counter!("oxen_repo_tree_list_missing_file_hashes_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = if repo.min_version() == MinOxenVersion::V0_19_0 {
         let Some(node) = CommitMerkleTreeV0_19_0::read_depth(repo, hash, 1)? else {
             return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
@@ -529,7 +559,10 @@ pub async fn list_missing_file_hashes(
             return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo).await
-    }
+    };
+    metrics::histogram!("oxen_repo_tree_list_missing_file_hashes_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
 /// Given a set of commit ids, return the hashes that are missing from the tree
@@ -890,7 +923,10 @@ pub fn cp_dir_hashes_to(
     Ok(())
 }
 
+#[tracing::instrument(skip(repository))]
 pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
+    metrics::counter!("oxen_repo_tree_compress_tree_total").increment(1);
+    let timer = std::time::Instant::now();
     let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
     compress_full_tree(repository, &mut tar)?;
@@ -901,13 +937,18 @@ pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError>
 
     log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
 
+    metrics::histogram!("oxen_repo_tree_compress_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(buffer)
 }
 
+#[tracing::instrument(skip(repository, tar))]
 pub fn compress_full_tree(
     repository: &LocalRepository,
     tar: &mut tar::Builder<GzEncoder<Vec<u8>>>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_tree_compress_full_tree_total").increment(1);
+    let timer = std::time::Instant::now();
     // This will be the subdir within the tarball,
     // so when we untar it, all the subdirs will be extracted to
     // tree/nodes/...
@@ -924,6 +965,8 @@ pub fn compress_full_tree(
         tar.append_dir_all(&tar_subdir, nodes_dir)?;
     }
 
+    metrics::histogram!("oxen_repo_tree_compress_full_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 
@@ -1015,10 +1058,13 @@ pub fn compress_commits(
     Ok(buffer)
 }
 
+#[tracing::instrument(skip(repository, buffer), fields(buffer_len = buffer.len()))]
 pub fn unpack_nodes(
     repository: &LocalRepository,
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
+    metrics::counter!("oxen_repo_tree_unpack_nodes_total").increment(1);
+    let timer = std::time::Instant::now();
     let mut hashes: HashSet<MerkleHash> = HashSet::new();
     log::debug!("Unpacking nodes from buffer...");
     let decoder = GzDecoder::new(buffer);
@@ -1064,16 +1110,23 @@ pub fn unpack_nodes(
             hashes.insert(id.parse()?);
         }
     }
+    metrics::histogram!("oxen_repo_tree_unpack_nodes_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(hashes)
 }
 
 /// Write a node to disk
+#[tracing::instrument(skip(repo, node))]
 pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_tree_write_tree_total").increment(1);
+    let timer = std::time::Instant::now();
     let EMerkleTreeNode::Commit(commit_node) = &node.node else {
         return Err(OxenError::basic_str("Expected commit node"));
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
     p_write_tree(repo, node, &commit_node)?;
+    metrics::histogram!("oxen_repo_tree_write_tree_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 
@@ -1368,7 +1421,9 @@ pub fn get_ancestor_nodes(
 }
 
 // TODO: Deduplicate these
+#[tracing::instrument(level = "debug", skip(repo), fields(commit_id = %commit.id))]
 pub fn print_tree(repo: &LocalRepository, commit: &Commit) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_tree_print_tree_total").increment(1);
     let tree = get_root_with_children(repo, commit)?.unwrap();
     match repo.min_version() {
         MinOxenVersion::V0_19_0 => {

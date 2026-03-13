@@ -46,18 +46,26 @@ pub mod commit_writer;
 /// # Ok(())
 /// # }
 /// ```
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
-    match repo.min_version() {
+    metrics::counter!("oxen_repo_commit_commit_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::commit(repo, message),
-    }
+    };
+    metrics::histogram!("oxen_repo_commit_commit_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
+#[tracing::instrument(skip(repo, user), fields(repo_path = %repo.path.display()))]
 pub fn commit_with_user(
     repo: &LocalRepository,
     message: &str,
     user: &User,
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_commit_with_user_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::commit_with_user(repo, message, user),
@@ -68,7 +76,9 @@ pub fn commit_with_user(
 ///
 /// Allows creating a commit even when there are no staged changes.
 /// This reuses the existing create_empty_commit infrastructure.
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_commit_allow_empty_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::commit_allow_empty(repo, message),
@@ -76,7 +86,9 @@ pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commi
 }
 
 /// Iterate over all commits and get the one with the latest timestamp
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_latest_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::latest_commit(repo),
@@ -84,7 +96,9 @@ pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
 }
 
 /// The current HEAD commit of the branch you currently have checked out
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_head_commit_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::head_commit(repo),
@@ -93,7 +107,9 @@ pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
 
 /// Maybe get the head commit if it exists
 /// Returns None if the head commit does not exist (empty repo)
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn head_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_head_commit_maybe_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::head_commit_maybe(repo),
@@ -101,7 +117,9 @@ pub fn head_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
 }
 
 /// Get the root commit of a repository
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_root_commit_maybe_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::root_commit_maybe(repo),
@@ -109,7 +127,9 @@ pub fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenE
 }
 
 /// Get a commit by it's MerkleHash
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn get_by_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_get_by_hash_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::get_by_hash(repo, hash),
@@ -117,10 +137,12 @@ pub fn get_by_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Option<C
 }
 
 /// Get a commit by it's string hash
+#[tracing::instrument(skip(repo, commit_id), fields(repo_path = %repo.path.display()))]
 pub fn get_by_id(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_get_by_id_total").increment(1);
     let commit_id = commit_id.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -129,19 +151,23 @@ pub fn get_by_id(
 }
 
 /// Commit id exists
+#[tracing::instrument(skip(repo, commit_id), fields(repo_path = %repo.path.display()))]
 pub fn commit_id_exists(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_repo_commit_commit_id_exists_total").increment(1);
     get_by_id(repo, commit_id.as_ref()).map(|commit| commit.is_some())
 }
 
 /// Create an empty commit off of the head commit of a branch
+#[tracing::instrument(skip(repo, branch_name), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     commit: &Commit,
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_create_empty_commit_total").increment(1);
     let branch_name = branch_name.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("create_empty_commit not supported in v0.10.0"),
@@ -152,12 +178,14 @@ pub fn create_empty_commit(
 /// Create an initial empty commit for an empty repository.
 /// This creates the first commit with an empty tree and sets up the branch.
 /// Returns an error if the repository already has commits.
+#[tracing::instrument(skip(repo, branch_name, user, message), fields(repo_path = %repo.path.display()))]
 pub fn create_initial_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     user: &User,
     message: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_create_initial_commit_total").increment(1);
     let branch_name = branch_name.as_ref();
     let message = message.as_ref();
     match repo.min_version() {
@@ -167,7 +195,9 @@ pub fn create_initial_commit(
 }
 
 /// List commits on the current branch from HEAD
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list(repo),
@@ -175,7 +205,9 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
 }
 
 /// List commits for the repository in no particular order
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_all_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list_all(repo),
@@ -183,7 +215,9 @@ pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
 }
 
 /// List unsynced commits for the repository (ie they are missing their .version/ files)
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_unsynced(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_unsynced_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("list_unsynced not supported in v0.10.0"),
         _ => core::v_latest::commits::list_unsynced(repo),
@@ -191,30 +225,36 @@ pub fn list_unsynced(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenErro
 }
 
 /// List unsynced commits from a specific revision
+#[tracing::instrument(skip(repo, revision), fields(repo_path = %repo.path.display()))]
 pub fn list_unsynced_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
 ) -> Result<HashSet<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_unsynced_from_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("list_unsynced_from not supported in v0.10.0"),
         _ => core::v_latest::commits::list_unsynced_from(repo, revision),
     }
 }
 // Source
+#[tracing::instrument(skip(repo, commit_id_or_branch_name), fields(repo_path = %repo.path.display()))]
 pub fn get_commit_or_head<S: AsRef<str> + Clone>(
     repo: &LocalRepository,
     commit_id_or_branch_name: Option<S>,
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_repo_commit_get_commit_or_head_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => resource::get_commit_or_head(repo, commit_id_or_branch_name),
         _ => core::v_latest::commits::get_commit_or_head(repo, commit_id_or_branch_name),
     }
 }
 
+#[tracing::instrument(skip(repo, pagination), fields(repo_path = %repo.path.display()))]
 pub fn list_all_paginated(
     repo: &LocalRepository,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_all_paginated_total").increment(1);
     log::info!("list_all_paginated: {:?} {:?}", repo.path, pagination);
     let commits = list_all(repo)?;
     let commits: Vec<Commit> = commits.into_iter().collect();
@@ -227,17 +267,21 @@ pub fn list_all_paginated(
 }
 
 /// List the history for a specific branch or commit (revision)
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_from(repo: &LocalRepository, revision: &str) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_from_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list_from(repo, revision),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub fn list_from_with_depth(
     repo: &LocalRepository,
     revision: &str,
 ) -> Result<HashMap<Commit, usize>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_from_with_depth_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str(
             "list_from_with_depth not supported in v0.10.0",
@@ -247,11 +291,13 @@ pub fn list_from_with_depth(
 }
 
 /// List the history between two commits
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), base_id = %base.id, head_id = %head.id))]
 pub fn list_between(
     repo: &LocalRepository,
     base: &Commit,
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_between_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::list_between(repo, base, head),
@@ -259,10 +305,12 @@ pub fn list_between(
 }
 
 /// Get a list of commits by the commit message
+#[tracing::instrument(skip(repo, msg), fields(repo_path = %repo.path.display()))]
 pub fn get_by_message(
     repo: &LocalRepository,
     msg: impl AsRef<str>,
 ) -> Result<Vec<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_get_by_message_total").increment(1);
     let commits = list_all(repo)?;
     let filtered: Vec<Commit> = commits
         .into_iter()
@@ -272,10 +320,12 @@ pub fn get_by_message(
 }
 
 /// Get the most recent commit by the commit message, starting at the HEAD commit
+#[tracing::instrument(skip(repo, msg), fields(repo_path = %repo.path.display()))]
 pub fn first_by_message(
     repo: &LocalRepository,
     msg: impl AsRef<str>,
 ) -> Result<Option<Commit>, OxenError> {
+    metrics::counter!("oxen_repo_commit_first_by_message_total").increment(1);
     let commits = list(repo)?;
     Ok(commits
         .into_iter()
@@ -283,11 +333,13 @@ pub fn first_by_message(
 }
 
 /// Retrieve entries with filepaths matching a provided glob pattern
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn search_entries(
     repo: &LocalRepository,
     commit: &Commit,
     pattern: &str,
 ) -> Result<HashSet<PathBuf>, OxenError> {
+    metrics::counter!("oxen_repo_commit_search_entries_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::commits::search_entries(repo, commit, pattern),
@@ -295,11 +347,13 @@ pub fn search_entries(
 }
 
 /// List paginated commits starting from the given revision
+#[tracing::instrument(skip(repo, pagination), fields(repo_path = %repo.path.display()))]
 pub fn list_from_paginated(
     repo: &LocalRepository,
     revision: &str,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_from_paginated_total").increment(1);
     let _perf = crate::perf_guard!("commits::list_from_paginated");
 
     match repo.min_version() {
@@ -349,12 +403,14 @@ pub fn list_from_paginated(
 }
 
 /// List paginated commits by resource
+#[tracing::instrument(skip(repo, pagination), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn list_by_path_from_paginated(
     repo: &LocalRepository,
     commit: &Commit,
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
+    metrics::counter!("oxen_repo_commit_list_by_path_from_paginated_total").increment(1);
     let _perf = crate::perf_guard!("commits::list_by_path_from_paginated");
 
     log::info!("list_by_path_from_paginated: {commit:?} {path:?}");
@@ -364,20 +420,24 @@ pub fn list_by_path_from_paginated(
     }
 }
 
+#[tracing::instrument(skip(repo, revision), fields(repo_path = %repo.path.display()))]
 pub fn count_from(
     repo: &LocalRepository,
     revision: impl AsRef<str>,
 ) -> Result<(usize, bool), OxenError> {
+    metrics::counter!("oxen_repo_commit_count_from_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
         _ => core::v_latest::commits::count_from(repo, revision),
     }
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), commit_id = %commit.id))]
 pub fn commit_history_is_complete(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<bool, OxenError> {
+    metrics::counter!("oxen_repo_commit_commit_history_is_complete_total").increment(1);
     // Get full commit history from this head backwards
     let history = list_from(repo, &commit.id)?;
 

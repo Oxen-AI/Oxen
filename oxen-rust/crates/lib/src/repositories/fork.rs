@@ -46,10 +46,12 @@ fn read_status(repo_path: &Path) -> Result<Option<ForkStatus>, OxenError> {
     }))
 }
 
+#[tracing::instrument]
 pub fn start_fork(
     original_path: PathBuf,
     new_path: PathBuf,
 ) -> Result<ForkStartResponse, OxenError> {
+    metrics::counter!("oxen_repo_fork_start_fork_total").increment(1);
     if new_path.exists() {
         return Err(OxenError::basic_str(format!(
             "A file already exists at the destination path: {}",
@@ -101,7 +103,9 @@ pub fn start_fork(
     })
 }
 
+#[tracing::instrument]
 pub fn get_fork_status(repo_path: &Path) -> Result<ForkStatusResponse, OxenError> {
+    metrics::counter!("oxen_repo_fork_get_fork_status_total").increment(1);
     let status = read_status(repo_path)?.ok_or_else(OxenError::fork_status_not_found)?;
 
     Ok(ForkStatusResponse {

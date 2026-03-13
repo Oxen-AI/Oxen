@@ -50,6 +50,7 @@ pub struct WorkspaceFileQueryParams {
 }
 
 /// Get file from workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
@@ -80,6 +81,7 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<WorkspaceFileQueryParams>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_files_get_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -199,6 +201,7 @@ pub async fn get(
 }
 
 /// Add files to workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
@@ -222,6 +225,8 @@ pub async fn get(
     )
 )]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_files_add_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -266,6 +271,8 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         log::info!("Successfully staged file {upload_file:?}");
     }
 
+    metrics::histogram!("oxen_server_workspaces_files_add_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(FilePathsResponse {
         status: StatusMessage::resource_created(),
         paths: ret_files,
@@ -273,6 +280,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 }
 
 /// Stage files to workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
@@ -303,6 +311,7 @@ pub async fn add_version_files(
     req: HttpRequest,
     payload: web::Json<Vec<FileWithHash>>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_files_add_version_files_total").increment(1);
     // Add file to staging
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
@@ -337,6 +346,7 @@ pub async fn add_version_files(
 }
 
 /// Stage files for removal
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files",
@@ -362,6 +372,7 @@ pub async fn rm_files(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_files_rm_files_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -405,7 +416,9 @@ pub async fn rm_files(
     }
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_files_validate_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -421,6 +434,7 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
 }
 
 /// Move or rename a file within the workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     patch,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
@@ -444,6 +458,7 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
     )
 )]
 pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_files_mv_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

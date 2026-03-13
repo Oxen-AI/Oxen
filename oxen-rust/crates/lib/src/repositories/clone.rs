@@ -14,26 +14,36 @@ use crate::opts::CloneOpts;
 use crate::opts::{FetchOpts, StorageOpts};
 use crate::{api, util};
 
+#[tracing::instrument(skip(opts))]
 pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
-    match clone_remote(opts).await {
+    metrics::counter!("oxen_repo_clone_clone_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match clone_remote(opts).await {
         Ok(Some(repo)) => Ok(repo),
         Ok(None) => Err(OxenError::remote_repo_not_found(&opts.url)),
         Err(err) => Err(err),
-    }
+    };
+    metrics::histogram!("oxen_repo_clone_clone_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
+#[tracing::instrument(skip(url, dst))]
 pub async fn clone_url(
     url: impl AsRef<str>,
     dst: impl AsRef<Path>,
 ) -> Result<LocalRepository, OxenError> {
+    metrics::counter!("oxen_repo_clone_clone_url_total").increment(1);
     let fetch_opts = FetchOpts::new();
     _clone(url, dst, fetch_opts).await
 }
 
+#[tracing::instrument(skip(url, dst))]
 pub async fn deep_clone_url(
     url: impl AsRef<str>,
     dst: impl AsRef<Path>,
 ) -> Result<LocalRepository, OxenError> {
+    metrics::counter!("oxen_repo_clone_deep_clone_url_total").increment(1);
     let fetch_opts = FetchOpts {
         all: true,
         ..FetchOpts::new()

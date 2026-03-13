@@ -9,7 +9,9 @@ use crate::{
     params::{app_data, path_param},
 };
 
+#[tracing::instrument(skip_all)]
 pub async fn list_unmigrated(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_migrations_list_unmigrated_total").increment(1);
     log::debug!("in the list_unmigrated controller");
     let app_data = app_data(&req)?;
     let migration_tstamp = path_param(&req, "migration_tstamp")?;

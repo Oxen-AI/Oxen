@@ -54,7 +54,7 @@ impl RunCmd for FsckCmd {
             println!("  Cleaned:   {}", result.cleaned);
         }
         println!("  Errors:    {}", result.errors);
-        println!("  Elapsed:   {:.2}s", result.elapsed.as_secs_f64());
+        println!("  Elapsed:   {:.2}s", result.elapsed.as_millis() as f64);
 
         if dry_run && result.corrupted > 0 {
             println!("\nRun with --clean to remove corrupted version files.");

@@ -60,6 +60,7 @@ pub struct ImportFileBody {
 }
 
 /// Import file from URL
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/{resource}",
@@ -89,6 +90,8 @@ pub async fn import(
     req: HttpRequest,
     body: web::Json<Value>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_import_import_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -189,6 +192,8 @@ pub async fn import(
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
     log::debug!("workspace::commit ✅ success! commit {commit:?}");
 
+    metrics::histogram!("oxen_server_import_import_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
@@ -196,6 +201,7 @@ pub async fn import(
 }
 
 /// Upload zip archive
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/upload/{resource}",
@@ -219,6 +225,8 @@ pub async fn upload_zip(
     req: HttpRequest,
     payload: Multipart,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_import_upload_zip_total").increment(1);
+    let timer = std::time::Instant::now();
     log::debug!("file::upload_zip path {:?}", req.path());
 
     let app_data = app_data(&req)?;
@@ -276,6 +284,8 @@ pub async fn upload_zip(
         &branch,
     )
     .await?;
+    metrics::histogram!("oxen_server_import_upload_zip_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,

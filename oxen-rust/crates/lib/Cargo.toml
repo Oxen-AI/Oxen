@@ -75,6 +75,8 @@ libduckdb-sys = { workspace = true, optional = true }
 lofty = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 minus = { workspace = true }
 mp4 = { workspace = true }
 num_cpus = { workspace = true }
@@ -110,6 +112,10 @@ tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
 toml = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-log = { workspace = true }
+tracing-subscriber = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
 utoipa = { workspace = true }

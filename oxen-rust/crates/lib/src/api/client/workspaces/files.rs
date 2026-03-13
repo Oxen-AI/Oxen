@@ -46,6 +46,7 @@ pub struct UploadResult {
 pub type UploadFails = Vec<ErrorFileInfo>;
 
 // TODO: Test adding removed files
+#[tracing::instrument(skip(remote_repo, workspace_id, directory, paths, local_repo))]
 pub async fn add(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -53,6 +54,8 @@ pub async fn add(
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
 ) -> Result<UploadFails, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_add_total").increment(1);
+    let timer = std::time::Instant::now();
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
@@ -87,6 +90,9 @@ pub async fn add(
             .as_ref(),
     )
     .await;
+
+    metrics::histogram!("oxen_client_workspaces_files_add_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
 
     match upload_result {
         Ok(failed_to_upload) => {
@@ -154,12 +160,15 @@ fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), 
 ///
 /// The intended use case is to import a large pre-existing file-directory structure into a
 /// repository.
+#[tracing::instrument(skip(remote_repo, workspace_id, base_dir, paths))]
 pub async fn add_files(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     base_dir: impl AsRef<Path>,
     paths: Vec<PathBuf>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_add_files_total").increment(1);
+    let timer = std::time::Instant::now();
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
@@ -184,7 +193,7 @@ pub async fn add_files(
     let base_dir_enum = LocalOrBase::Base(base_dir);
 
     let n_expected_uploads = paths.len();
-    match upload_multiple_files(
+    let result = upload_multiple_files(
         remote_repo,
         workspace_id,
         "", // Each path has the right relative directory components, so it's crucial that they're
@@ -193,8 +202,10 @@ pub async fn add_files(
         paths,
         Some(&base_dir_enum),
     )
-    .await
-    {
+    .await;
+    metrics::histogram!("oxen_client_workspaces_files_add_files_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    match result {
         Ok(failed_to_upload) => {
             print_add_result(workspace_id, n_expected_uploads, &failed_to_upload);
             Ok(failed_to_upload)
@@ -203,6 +214,7 @@ pub async fn add_files(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, directory, path, buf))]
 pub async fn add_bytes(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -210,6 +222,7 @@ pub async fn add_bytes(
     path: PathBuf,
     buf: &[u8],
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_add_bytes_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
@@ -225,12 +238,15 @@ pub async fn add_bytes(
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, directory, path))]
 pub async fn upload_single_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_upload_single_file_total").increment(1);
+    let timer = std::time::Instant::now();
     let path = path.as_ref();
 
     let Ok(metadata) = path.metadata() else {
@@ -239,7 +255,7 @@ pub async fn upload_single_file(
 
     log::debug!("Uploading file with size: {}", metadata.len());
     // If the file is larger than AVG_CHUNK_SIZE, use the parallel upload strategy
-    if metadata.len() > chunk_size() {
+    let result = if metadata.len() > chunk_size() {
         let directory = directory.as_ref();
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
@@ -257,9 +273,13 @@ pub async fn upload_single_file(
     } else {
         // Single multipart request
         p_upload_single_file(remote_repo, workspace_id, directory, path).await
-    }
+    };
+    metrics::histogram!("oxen_client_workspaces_files_upload_single_file_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, directory, path, buf))]
 pub async fn upload_bytes_as_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -267,6 +287,7 @@ pub async fn upload_bytes_as_file(
     path: impl AsRef<Path>,
     buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_upload_bytes_as_file_total").increment(1);
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
 }
 
@@ -385,6 +406,7 @@ async fn upload_multiple_files(
     Ok(failed_to_upload)
 }
 
+#[tracing::instrument(skip(remote_repo, workspace_id, directory, small_files, local_or_base))]
 pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -393,6 +415,9 @@ pub(crate) async fn parallel_batched_small_file_upload(
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_parallel_batched_small_file_upload_total")
+        .increment(1);
+    let timer = std::time::Instant::now();
     if small_files.is_empty() {
         return Ok(vec![]);
     }
@@ -762,6 +787,10 @@ pub(crate) async fn parallel_batched_small_file_upload(
     log::debug!("All upload tasks completed");
     progress.finish();
 
+    metrics::histogram!(
+        "oxen_client_workspaces_files_parallel_batched_small_file_upload_duration_ms"
+    )
+    .record(timer.elapsed().as_millis() as f64);
     if !operational_errors.is_empty() {
         log::error!(
             "Encountered {} fatal error(s) during upload",
@@ -782,6 +811,14 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
 // Retry stage_files_to_workspace until successful or retry limit breached
 // If individual files fail, return them to be re-tried at the end
+#[tracing::instrument(skip(
+    remote_repo,
+    client,
+    workspace_id,
+    files_to_add,
+    directory_str,
+    err_files
+))]
 pub async fn stage_files_to_workspace_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
@@ -790,6 +827,9 @@ pub async fn stage_files_to_workspace_with_retry(
     directory_str: impl AsRef<str>,
     err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_stage_files_to_workspace_with_retry_total")
+        .increment(1);
+    let timer = std::time::Instant::now();
     let mut retry_count: usize = 0;
     let directory_str = directory_str.as_ref();
     let workspace_id = workspace_id.as_ref().to_string();
@@ -810,11 +850,16 @@ pub async fn stage_files_to_workspace_with_retry(
         {
             // If successful, return individual files that failed to stage
             Ok(stage_err_files) => {
+                metrics::histogram!(
+                    "oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_ms"
+                )
+                .record(timer.elapsed().as_millis() as f64);
                 return Ok(stage_err_files);
             }
             Err(e) => {
                 log::error!("Error staging files to workspace: {e:?}");
                 if retry_count == max_retries {
+                    metrics::histogram!("oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_ms").record(timer.elapsed().as_millis() as f64);
                     return Err(OxenError::basic_str(format!(
                         "failed to stage files to workspace after retries: {e:?}"
                     )));
@@ -830,12 +875,24 @@ pub async fn stage_files_to_workspace_with_retry(
         "Error: Failed to stage files_to_add: {:?}",
         files_to_add.len()
     );
+    metrics::histogram!(
+        "oxen_client_workspaces_files_stage_files_to_workspace_with_retry_duration_ms"
+    )
+    .record(timer.elapsed().as_millis() as f64);
     Err(OxenError::basic_str(
         "failed to stage files to workspace after retries",
     ))
 }
 
 // Stage files to the workspace, filtering out files that previously failed to upload to version store
+#[tracing::instrument(skip(
+    remote_repo,
+    client,
+    workspace_id,
+    files_to_add,
+    directory_str,
+    err_files
+))]
 pub async fn stage_files_to_workspace(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
@@ -844,6 +901,7 @@ pub async fn stage_files_to_workspace(
     directory_str: impl AsRef<str>,
     err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_stage_files_to_workspace_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let directory_str = directory_str.as_ref();
     let uri = format!("/workspaces/{workspace_id}/versions/{directory_str}");
@@ -989,11 +1047,13 @@ async fn p_upload_bytes_as_file(
 
 // TODO: Merge this with 'rm_files'
 // Splitting them is a temporary solution to preserve compatibility with the python repo
+#[tracing::instrument(skip(remote_repo, path))]
 pub async fn rm(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_rm_total").increment(1);
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/files/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -1005,12 +1065,14 @@ pub async fn rm(
     Ok(())
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, workspace_id, paths))]
 pub async fn rm_files(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_rm_files_total").increment(1);
     let workspace_id = workspace_id.as_ref();
 
     // Parse glob paths
@@ -1067,12 +1129,14 @@ pub async fn rm_files(
     Ok(())
 }
 
+#[tracing::instrument(skip(local_repo, remote_repo, workspace_id, paths))]
 pub async fn rm_files_from_staged(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_rm_files_from_staged_total").increment(1);
     let workspace_id = workspace_id.as_ref();
 
     // Parse glob paths
@@ -1137,12 +1201,14 @@ pub async fn rm_files_from_staged(
 
 /// Move or rename a file within a workspace.
 /// Sends a PATCH request to update the file's path.
+#[tracing::instrument(skip(remote_repo, workspace_id, path, new_path))]
 pub async fn mv(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
 ) -> Result<view::StatusMessage, OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_mv_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
@@ -1168,12 +1234,15 @@ pub async fn mv(
     }
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn download(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &str,
     output_path: Option<&Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_download_total").increment(1);
+    let timer = std::time::Instant::now();
     let uri = if util::fs::has_tabular_extension(path) {
         format!("/workspaces/{workspace_id}/data_frames/download/{path}")
     } else {
@@ -1217,14 +1286,19 @@ pub async fn download(
         )));
     }
 
+    metrics::histogram!("oxen_client_workspaces_files_download_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(())
 }
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn validate_upload_feasibility(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     total_size: u64,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_files_validate_upload_feasibility_total")
+        .increment(1);
     let uri = format!("/workspaces/{workspace_id}/validate");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;

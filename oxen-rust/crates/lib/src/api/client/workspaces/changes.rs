@@ -7,6 +7,7 @@ use crate::view::{RemoteStagedStatus, RemoteStagedStatusResponse};
 
 use std::path::Path;
 
+#[tracing::instrument(skip(remote_repo, workspace_id, path))]
 pub async fn list(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -14,6 +15,7 @@ pub async fn list(
     page: usize,
     page_size: usize,
 ) -> Result<RemoteStagedStatus, OxenError> {
+    metrics::counter!("oxen_client_workspaces_changes_list_total").increment(1);
     let workspace_id = workspace_id.as_ref();
     let path = path.as_ref();
     let path_str = path.to_str().unwrap();
@@ -44,11 +46,13 @@ pub async fn list(
 }
 
 // TODO: Consolidate this with api::client::workspaces::files to have only one workspace rm API
+#[tracing::instrument(skip(remote_repo, path))]
 pub async fn rm(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_client_workspaces_changes_rm_total").increment(1);
     let file_name = path.as_ref().to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/changes/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;

@@ -61,7 +61,9 @@ fn is_files_utf8(file_1: impl AsRef<Path>, file_2: impl AsRef<Path>) -> bool {
     util::fs::is_utf8(file_1.as_ref()) && util::fs::is_utf8(file_2.as_ref())
 }
 
+#[tracing::instrument(skip(opts))]
 pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_total").increment(1);
     log::debug!(
         "Starting diff function with keys: {:?} and targets: {:?}",
         opts.keys,
@@ -163,12 +165,14 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
     }
 }
 
+#[tracing::instrument(skip(repo, opts), fields(repo_path = %repo.path.display()))]
 pub async fn diff_uncommitted(
     repo: &LocalRepository,
     rev_1: &str,
     path_1: &Path,
     opts: &DiffOpts,
 ) -> Result<Vec<DiffResult>, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_uncommitted_total").increment(1);
     let status_opts = StagedDataOpts::from_paths(&[path_1.to_path_buf()]);
     let status = repositories::status::status_from_opts(repo, &status_opts)?;
     let unstaged_files = status.unstaged_files();
@@ -208,6 +212,7 @@ pub async fn diff_uncommitted(
     Ok(diff_result)
 }
 
+#[tracing::instrument(skip(repo, opts), fields(repo_path = %repo.path.display()))]
 pub async fn diff_revs(
     repo: &LocalRepository,
     rev_1: &str,
@@ -216,6 +221,7 @@ pub async fn diff_revs(
     path_2: &Path,
     opts: &DiffOpts,
 ) -> Result<Vec<DiffResult>, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_revs_total").increment(1);
     log::debug!(
         "Comparing revisions: {}:{} with {}:{}",
         rev_1,
@@ -346,6 +352,7 @@ pub async fn diff_revs(
     Ok(content_diffs)
 }
 
+#[tracing::instrument(skip(repo, cpath_1, cpath_2, keys, targets, display), fields(repo_path = %repo.path.display()))]
 pub async fn diff_commits(
     repo: &LocalRepository,
     cpath_1: CommitPath,
@@ -354,6 +361,7 @@ pub async fn diff_commits(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_commits_total").increment(1);
     log::debug!("Compare command called with: {cpath_1:?} and {cpath_2:?}");
 
     let (node_1, node_2) = match (cpath_1.commit, cpath_2.commit) {
@@ -400,6 +408,7 @@ pub async fn diff_commits(
 }
 
 /// Diffs a directory between two commits, returning a summary of changes.
+#[tracing::instrument(skip(repo, base_path, head_path, opts), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, head_commit_id = %head_commit.id))]
 pub async fn diff_path(
     repo: &LocalRepository,
     base_commit: &Commit,
@@ -408,6 +417,7 @@ pub async fn diff_path(
     head_path: impl AsRef<Path>,
     opts: &DiffOpts,
 ) -> Result<DiffEntriesCounts, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_path_total").increment(1);
     match (base_path.as_ref().is_file(), head_path.as_ref().is_file()) {
         (true, true) => {
             let diff_entry = DiffEntry {
@@ -457,6 +467,7 @@ pub async fn diff_path(
     }
 }
 
+#[tracing::instrument(skip(path_1, path_2, keys, targets, display))]
 pub async fn diff_files(
     path_1: impl AsRef<Path>,
     path_2: impl AsRef<Path>,
@@ -464,6 +475,7 @@ pub async fn diff_files(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_files_total").increment(1);
     log::debug!(
         "Compare command called with: {:?} and {:?}",
         path_1.as_ref(),
@@ -492,6 +504,7 @@ pub async fn diff_files(
 }
 
 // TODO: merge this and diff_file_and_node
+#[tracing::instrument(skip(repo, file_node, file_path, keys, targets, display), fields(repo_path = %repo.path.display()))]
 pub async fn diff_file_and_node(
     repo: &LocalRepository,
     file_node: Option<FileNode>,
@@ -500,6 +513,7 @@ pub async fn diff_file_and_node(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_file_and_node_total").increment(1);
     match file_node {
         Some(file_node) => match file_node.data_type() {
             EntryDataType::Tabular => {
@@ -565,6 +579,7 @@ pub async fn diff_file_and_node(
     }
 }
 
+#[tracing::instrument(skip(repo, file_1, file_2, keys, targets, display), fields(repo_path = %repo.path.display()))]
 pub async fn diff_file_nodes(
     repo: &LocalRepository,
     file_1: Option<FileNode>,
@@ -573,6 +588,7 @@ pub async fn diff_file_nodes(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_file_nodes_total").increment(1);
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
             log::debug!(
@@ -819,6 +835,7 @@ pub async fn diff_text_file_nodes(
     }
 }
 
+#[tracing::instrument(skip(file_1, file_2, keys, targets, display))]
 pub async fn tabular(
     file_1: impl AsRef<Path>,
     file_2: impl AsRef<Path>,
@@ -826,6 +843,7 @@ pub async fn tabular(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<TabularDiff, OxenError> {
+    metrics::counter!("oxen_repo_diff_tabular_total").increment(1);
     let df_1 = tabular::read_df(file_1, DFOpts::empty()).await?;
     let df_2 = tabular::read_df(file_2, DFOpts::empty()).await?;
 
@@ -1267,6 +1285,7 @@ pub async fn compute_new_columns_from_dfs(
     })
 }
 
+#[tracing::instrument(skip(repo, file_path, base_entry, head_entry, df_opts), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, head_commit_id = %head_commit.id))]
 pub async fn diff_entries(
     repo: &LocalRepository,
     file_path: impl AsRef<Path>,
@@ -1276,6 +1295,7 @@ pub async fn diff_entries(
     head_commit: &Commit,
     df_opts: DFOpts,
 ) -> Result<DiffEntry, OxenError> {
+    metrics::counter!("oxen_repo_diff_diff_entries_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
@@ -1442,6 +1462,7 @@ fn read_dupes(repo: &LocalRepository, compare_id: &str) -> Result<TabularDiffDup
     Ok(dupes)
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display(), base_commit_id = %base_commit.id, head_commit_id = %head_commit.id))]
 pub async fn list_diff_entries(
     repo: &LocalRepository,
     base_commit: &Commit,
@@ -1451,6 +1472,7 @@ pub async fn list_diff_entries(
     page: usize,
     page_size: usize,
 ) -> Result<DiffEntriesCounts, OxenError> {
+    metrics::counter!("oxen_repo_diff_list_diff_entries_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {

@@ -20,11 +20,14 @@ pub struct ChunkQuery {
     pub size: Option<u64>,
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn upload(
     req: HttpRequest,
     query: web::Query<ChunkQuery>,
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_chunks_upload_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -61,10 +64,15 @@ pub async fn upload(
         .await
         .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
 
+    metrics::histogram!("oxen_server_versions_chunks_upload_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_chunks_complete_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -138,18 +146,24 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
             )?;
         }
 
+        metrics::histogram!("oxen_server_versions_chunks_complete_duration_ms")
+            .record(timer.elapsed().as_millis() as f64);
         return Ok(HttpResponse::Ok().json(StatusMessage::resource_found()));
     }
 
+    metrics::histogram!("oxen_server_versions_chunks_complete_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 
 // TODO: Add content-type and oxen-revision-id in the response header
 // Currently, this endpoint is not used anywhere.
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn download(
     req: HttpRequest,
     query: web::Query<ChunkQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_chunks_download_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -180,6 +194,8 @@ pub async fn download(
         .body(chunk_data))
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn create(_req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_versions_chunks_create_total").increment(1);
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }

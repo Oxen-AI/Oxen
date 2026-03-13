@@ -12,6 +12,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use utoipa;
 
 /// List directory contents
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/dir/{resource}",
@@ -32,6 +33,7 @@ pub async fn get(
     req: HttpRequest,
     query: web::Query<PageNumVersionQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_dir_get_total").increment(1);
     let _perf = perf_guard!("dir::get_endpoint");
 
     let _perf_parse = perf_guard!("dir::get_parse_params");

@@ -10,6 +10,7 @@ use liboxen::view::FileWithHash;
 use liboxen::{constants, repositories};
 
 /// Export resource as a zip
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/export/download/{resource}",
@@ -27,6 +28,8 @@ use liboxen::{constants, repositories};
     )
 )]
 pub async fn download_zip(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_export_download_zip_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -75,5 +78,7 @@ pub async fn download_zip(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
 
     let response = controllers::versions::stream_versions_zip(&repo, files_with_hash).await?;
 
+    metrics::histogram!("oxen_server_export_download_zip_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
     Ok(response)
 }

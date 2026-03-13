@@ -6,11 +6,13 @@ use crate::constants::DEFAULT_BRANCH_NAME;
 use crate::repositories;
 use crate::util;
 use crate::{error::OxenError, model::LocalRepository};
+#[tracing::instrument(fields(no_working_dir))]
 pub async fn load(
     src_path: &Path,
     dest_path: &Path,
     no_working_dir: bool,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_load_load_total").increment(1);
     let done_msg: String = format!("✅ Loaded {src_path:?} to an oxen repo at {dest_path:?}");
 
     let dest_path = if dest_path.exists() {

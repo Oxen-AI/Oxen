@@ -75,13 +75,15 @@ pub fn repo_remote_url_from(name: &str) -> String {
 static ENV_LOCK: LazyLock<Arc<Mutex<bool>>> = LazyLock::new(|| Arc::new(Mutex::new(false)));
 
 pub fn init_test_env() {
-    // check if logger is already initialized
-    util::logging::init_logging();
+    let _tracing_guard = util::telemetry::init_tracing("oxen-test");
 
     match ENV_LOCK.lock() {
         Ok(mut logging_setup) => {
             if !*logging_setup {
-                util::logging::init_logging();
+                // TODO: Cleanup. This was broken in the branch pushed to #331 already when I went
+                // to merge in the crates rename change from main to be helpful. Forgot to
+                // do 'pre-commit install', maybe? PR was in draft mode.
+                //util::logging::init_logging();
                 *logging_setup = true;
             }
 

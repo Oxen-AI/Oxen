@@ -17,10 +17,12 @@ use actix_web::{HttpRequest, HttpResponse, web};
 
 use std::path::PathBuf;
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn list_root(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_list_root_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -54,10 +56,12 @@ pub async fn list_root(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 pub async fn list(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_list_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -92,6 +96,7 @@ pub async fn list(
 }
 
 /// Unstage a file from the workspace
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes/{path}",
@@ -109,6 +114,7 @@ pub async fn list(
     )
 )]
 pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_unstage_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -125,6 +131,7 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 }
 
 /// Unstage files
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes",
@@ -150,6 +157,7 @@ pub async fn unstage_many(
     req: HttpRequest,
     payload: web::Json<Vec<PathBuf>>,
 ) -> Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_workspaces_changes_unstage_many_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;

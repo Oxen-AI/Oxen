@@ -9,11 +9,13 @@ use crate::view::merge::{MergeResult, MergeSuccessResponse, Mergeable, Mergeable
 
 /// Can check the mergeability of head into base
 /// base or head are strings that can be branch names or commit ids
+#[tracing::instrument(skip(remote_repo))]
 pub async fn mergeable(
     remote_repo: &RemoteRepository,
     base: &str,
     head: &str,
 ) -> Result<Mergeable, OxenError> {
+    metrics::counter!("oxen_client_merger_mergeable_total").increment(1);
     let uri = format!("/merge/{base}..{head}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("api::client::merger::mergeability url: {url}");
@@ -26,11 +28,13 @@ pub async fn mergeable(
 }
 
 /// Merge the head branch into the base branch
+#[tracing::instrument(skip(remote_repo))]
 pub async fn merge(
     remote_repo: &RemoteRepository,
     base: &str,
     head: &str,
 ) -> Result<MergeResult, OxenError> {
+    metrics::counter!("oxen_client_merger_merge_total").increment(1);
     let uri = format!("/merge/{base}..{head}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("api::client::merger::merge url: {url}");

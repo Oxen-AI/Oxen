@@ -12,6 +12,7 @@ use liboxen::view::merge::{
 };
 
 /// Check if branches are mergeable
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/merge/{base_head}",
@@ -28,6 +29,7 @@ use liboxen::view::merge::{
     )
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_merger_show_total").increment(1);
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -70,6 +72,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 }
 
 /// Merge branches
+#[tracing::instrument(skip_all, fields(namespace, repo_name))]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/merge/{base_head}",
@@ -87,6 +90,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     )
 )]
 pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    metrics::counter!("oxen_server_merger_merge_total").increment(1);
+    let timer = std::time::Instant::now();
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
@@ -108,7 +113,10 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let head_commit = repositories::commits::get_by_id(&repo, &head_branch.commit_id)?.unwrap();
 
     // Check if mergeable
-    match repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await {
+    let result = repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await;
+    metrics::histogram!("oxen_server_merger_merge_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    match result {
         Ok(Some(merge_commit)) => {
             // If the merge was successful, update the branch
             repositories::branches::update(&repo, &base_branch.name, &merge_commit.id)?;

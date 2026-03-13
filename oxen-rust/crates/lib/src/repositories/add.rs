@@ -36,22 +36,35 @@ use std::path::Path;
 /// # Ok(())
 /// # }
 /// ```
+#[tracing::instrument(skip(repo, path))]
 pub async fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
-    add_all_with_version(repo, vec![path], repo.min_version()).await
+    metrics::counter!("oxen_repo_add_add_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = add_all_with_version(repo, vec![path], repo.min_version()).await;
+    metrics::histogram!("oxen_repo_add_add_duration_ms").record(timer.elapsed().as_millis() as f64);
+    result
 }
 
+#[tracing::instrument(skip(repo, paths))]
 pub async fn add_all<T: AsRef<Path>>(
     repo: &LocalRepository,
     paths: impl IntoIterator<Item = T>,
 ) -> Result<(), OxenError> {
-    add_all_with_version(repo, paths, repo.min_version()).await
+    metrics::counter!("oxen_repo_add_add_all_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = add_all_with_version(repo, paths, repo.min_version()).await;
+    metrics::histogram!("oxen_repo_add_add_all_duration_ms")
+        .record(timer.elapsed().as_millis() as f64);
+    result
 }
 
+#[tracing::instrument(skip(repo, paths), fields(version = %version))]
 pub async fn add_all_with_version<T: AsRef<Path>>(
     repo: &LocalRepository,
     paths: impl IntoIterator<Item = T>,
     version: MinOxenVersion,
 ) -> Result<(), OxenError> {
+    metrics::counter!("oxen_repo_add_add_all_with_version_total").increment(1);
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::add::add(repo, paths).await,

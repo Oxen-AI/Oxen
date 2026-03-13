@@ -5,11 +5,13 @@ use crate::model::{Branch, Commit, NewCommitBody, RemoteRepository};
 use crate::view::CommitResponse;
 use crate::view::merge::{Mergeable, MergeableResponse};
 
+#[tracing::instrument(skip(remote_repo))]
 pub async fn mergeability(
     remote_repo: &RemoteRepository,
     branch_name: &str,
     workspace_id: &str,
 ) -> Result<Mergeable, OxenError> {
+    metrics::counter!("oxen_client_workspaces_commits_mergeability_total").increment(1);
     let uri = format!("/workspaces/{workspace_id}/merge/{branch_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
@@ -24,12 +26,14 @@ pub async fn mergeability(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, commit))]
 pub async fn commit(
     remote_repo: &RemoteRepository,
     branch_name: &str,
     workspace_id: &str,
     commit: &NewCommitBody,
 ) -> Result<Commit, OxenError> {
+    metrics::counter!("oxen_client_workspaces_commits_commit_total").increment(1);
     let uri = format!("/workspaces/{workspace_id}/commit/{branch_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("commit_staged {url}\n{commit:?}");

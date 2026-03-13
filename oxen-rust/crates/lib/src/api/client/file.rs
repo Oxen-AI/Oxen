@@ -11,6 +11,7 @@ use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use std::path::Path;
 
+#[tracing::instrument(skip(remote_repo, branch, directory, file_path, file_name, commit_body))]
 pub async fn put_file(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
@@ -19,6 +20,7 @@ pub async fn put_file(
     file_name: Option<impl AsRef<str>>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
+    metrics::counter!("oxen_client_file_put_file_total").increment(1);
     let branch = branch.as_ref();
     let directory = directory.as_ref();
     put_multipart_file(
@@ -117,15 +119,18 @@ fn apply_commit_body(form: Form, commit_body: Option<&NewCommitBody>) -> Form {
     }
 }
 
+#[tracing::instrument(skip(remote_repo, branch, file_path))]
 pub async fn get_file(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
     file_path: impl AsRef<Path>,
 ) -> Result<Bytes, OxenError> {
+    metrics::counter!("oxen_client_file_get_file_total").increment(1);
     get_file_with_params(remote_repo, branch, file_path, None, None, None, None).await
 }
 
 /// Get a file with optional query parameters (for thumbnails, image resizing, etc.)
+#[tracing::instrument(skip(remote_repo, branch, file_path))]
 pub async fn get_file_with_params(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
@@ -135,6 +140,7 @@ pub async fn get_file_with_params(
     height: Option<u32>,
     timestamp: Option<f64>,
 ) -> Result<Bytes, OxenError> {
+    metrics::counter!("oxen_client_file_get_file_with_params_total").increment(1);
     let branch = branch.as_ref();
     let path_ref = file_path.as_ref();
     let file_path = path_ref
@@ -177,6 +183,7 @@ pub async fn get_file_with_params(
 }
 
 /// Get a video thumbnail
+#[tracing::instrument(skip(remote_repo, branch, file_path))]
 pub async fn get_file_thumbnail(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
@@ -185,6 +192,7 @@ pub async fn get_file_thumbnail(
     height: Option<u32>,
     timestamp: Option<f64>,
 ) -> Result<Bytes, OxenError> {
+    metrics::counter!("oxen_client_file_get_file_thumbnail_total").increment(1);
     get_file_with_params(
         remote_repo,
         branch,
@@ -198,6 +206,7 @@ pub async fn get_file_thumbnail(
 }
 
 /// Move/rename a file in place (mv in a temp workspace and commit)
+#[tracing::instrument(skip(remote_repo, branch, source_path, new_path, commit_body))]
 pub async fn mv_file(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
@@ -205,6 +214,7 @@ pub async fn mv_file(
     new_path: impl AsRef<Path>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
+    metrics::counter!("oxen_client_file_mv_file_total").increment(1);
     let branch = branch.as_ref();
     let source_path = source_path.as_ref();
     let new_path = new_path.as_ref();
@@ -241,12 +251,14 @@ pub async fn mv_file(
 }
 
 /// Delete a file in place (rm from a temp workspace and commit)
+#[tracing::instrument(skip(remote_repo, branch, file_path, commit_body))]
 pub async fn delete_file(
     remote_repo: &RemoteRepository,
     branch: impl AsRef<str>,
     file_path: impl AsRef<Path>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
+    metrics::counter!("oxen_client_file_delete_file_total").increment(1);
     let branch = branch.as_ref();
     let file_path = file_path.as_ref();
 
