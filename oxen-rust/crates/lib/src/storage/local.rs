@@ -185,9 +185,11 @@ impl VersionStore for LocalVersionStore {
         Ok(self.version_path(hash))
     }
 
+    // TODO: (CleanCut) Do we need to make sure the destination path is outside the version store?
     async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
         let version_path = self.version_path(hash);
-        fs::copy(&version_path, dest_path).await?;
+        log::debug!("copying version path: {version_path:?} to {dest_path:?}");
+        util::fs::copy_mkdir(&version_path, dest_path).await?;
         Ok(())
     }
 

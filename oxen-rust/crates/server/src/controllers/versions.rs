@@ -368,27 +368,15 @@ pub async fn stream_versions_zip(
 
             let hash = &file.hash;
 
-            let version_path = match version_store_clone.get_version_path(hash) {
-                Ok(path) => path,
+            let file_size = match version_store_clone.get_version_size(hash).await {
+                Ok(size) => size,
                 Err(e) => {
-                    log::error!("Failed to get path for {hash}: {e}");
+                    log::error!("Failed to get version file size for {hash}: {e}");
                     error_tx.send(e).ok();
                     had_error = true;
                     break;
                 }
             };
-
-            let metadata = match util::fs::metadata(&version_path) {
-                Ok(metadata) => metadata,
-                Err(e) => {
-                    log::error!("Failed to get metadata for {version_path:?}: {e}");
-                    error_tx.send(e).ok();
-                    had_error = true;
-                    break;
-                }
-            };
-
-            let file_size = metadata.len();
 
             match version_store_clone.get_version_stream(hash).await {
                 Ok(data) => {
