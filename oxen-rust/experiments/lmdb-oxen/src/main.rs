@@ -46,6 +46,18 @@ fn main() -> Result<(), Error> {
     pub fn new(content: impl Iterator<Item=u8>) -> Self;
   }
 
+  pub trait MerkleTreePlatform {
+
+    trait Node {
+      fn hash(&self) -> Hash;
+      fn name(&self) -> &str;
+    }
+    type N : Node;
+
+    trait Store {}
+    type S : Store;
+
+  }
 
   pub trait MerkleMetadataStore<'db> {
 
@@ -72,7 +84,6 @@ fn main() -> Result<(), Error> {
     /// the provided hash value. If this occurs, the tree will be in an invalid state.
     fn insert_with_hash(&'db self, parent: Hash, content: impl Iterator<Item=u8>, hash: Hash) -> Option<Hash>;
   }
-
 
   Ok(())
 }
