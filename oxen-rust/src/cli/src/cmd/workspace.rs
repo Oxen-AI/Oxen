@@ -71,7 +71,7 @@ impl RunCmd for WorkspaceCmd {
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
                 eprintln!("Unknown schema subcommand {name}");
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Unknown schema subcommand {name}"
                 )));
             };
@@ -114,7 +114,7 @@ impl WorkspaceCmd {
     ) -> Result<(), OxenError> {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Command `oxen {name}` not available for workspaces"
             )));
         };

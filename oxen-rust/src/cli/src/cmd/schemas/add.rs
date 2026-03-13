@@ -50,7 +50,7 @@ impl RunCmd for SchemasAddCmd {
             .get_one::<String>("PATH")
             .map(|p| -> Result<PathBuf, OxenError> {
                 let current_dir = std::env::current_dir().map_err(|e| {
-                    OxenError::basic_str(format!("Failed to get current directory: {e}"))
+                    OxenError::basic_str(&format!("Failed to get current directory: {e}"))
                 })?;
                 let path = current_dir.join(p);
                 util::fs::canonicalize(&path).or_else(|_| Ok(path))
@@ -82,7 +82,7 @@ impl RunCmd for SchemasAddCmd {
         if let Some(column) = column {
             if let Some(render) = render {
                 let render_json = self.generate_render_json(render)?;
-                match self.schema_add_column_metadata(&repository, path, column, render_json) {
+                match self.schema_add_column_metadata(&repository, path, column, &render_json) {
                     Ok(_) => {}
                     Err(err) => {
                         eprintln!("{err}")
@@ -118,16 +118,15 @@ impl SchemasAddCmd {
     fn schema_add_column_metadata(
         &self,
         repository: &LocalRepository,
-        path: impl AsRef<Path>,
-        column: impl AsRef<str>,
-        metadata: impl AsRef<str>,
+        path: &Path,
+        column: &str,
+        metadata: &str,
     ) -> Result<(), OxenError> {
         // make sure metadata is valid json, return oxen error if not
-        let metadata: serde_json::Value = serde_json::from_str(metadata.as_ref()).map_err(|e| {
-            OxenError::basic_str(format!(
+        let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
+            OxenError::basic_str(&format!(
                 "Metadata must be valid JSON: '{}'\n{}",
-                metadata.as_ref(),
-                e
+                metadata, e
             ))
         })?;
 
@@ -143,14 +142,13 @@ impl SchemasAddCmd {
     fn schema_add_metadata(
         &self,
         repository: &LocalRepository,
-        path: impl AsRef<Path>,
-        metadata: impl AsRef<str>,
+        path: &Path,
+        metadata: &str,
     ) -> Result<(), OxenError> {
-        let metadata: serde_json::Value = serde_json::from_str(metadata.as_ref()).map_err(|e| {
-            OxenError::basic_str(format!(
+        let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
+            OxenError::basic_str(&format!(
                 "Metadata must be valid JSON: '{}'\n{}",
-                metadata.as_ref(),
-                e
+                metadata, e
             ))
         })?;
 
@@ -163,8 +161,7 @@ impl SchemasAddCmd {
         Ok(())
     }
 
-    fn generate_render_json(&self, render_type: impl AsRef<str>) -> Result<String, OxenError> {
-        let render_type = render_type.as_ref();
+    fn generate_render_json(&self, render_type: &str) -> Result<String, OxenError> {
         let valid_render_types: HashSet<&str> = ["image", "link", "video"].into_iter().collect();
         if valid_render_types.contains(render_type) {
             let json = serde_json::json!({
@@ -177,7 +174,7 @@ impl SchemasAddCmd {
 
             Ok(serde_json::to_string(&json)?)
         } else {
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "Invalid render type: {render_type}"
             )))
         }

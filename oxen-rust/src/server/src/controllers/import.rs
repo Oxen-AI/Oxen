@@ -92,7 +92,7 @@ pub async fn import(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
 
     // Resource must specify branch for committing the workspace
@@ -100,7 +100,7 @@ pub async fn import(
         .branch
         .clone()
         .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
+            &resource.version.to_string_lossy(),
         ))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let directory = resource.path.clone();
@@ -186,7 +186,7 @@ pub async fn import(
         ),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, &branch.name).await?;
     log::debug!("workspace::commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
@@ -242,7 +242,7 @@ pub async fn upload_zip(
         .branch
         .clone()
         .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
+            &resource.version.to_string_lossy(),
         ))?;
     let directory = resource.path.clone();
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
@@ -312,7 +312,8 @@ async fn handle_initial_upload_zip_empty_repo(
 
     for temp_file in temp_files {
         let files = decompress_zip(&temp_file.temp_file_path)?;
-        repositories::add::add_all(repo, &files).await?;
+        let file_paths: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
+        repositories::add::add_all(repo, file_paths).await?;
     }
 
     // Commit the files
@@ -461,7 +462,7 @@ mod tests {
     use liboxen::error::OxenError;
 
     use actix_web::{App, web};
-    use std::path::PathBuf;
+    use std::path::Path;
 
     #[actix_web::test]
     async fn test_controllers_file_import_tabular_file() -> Result<(), OxenError> {
@@ -477,7 +478,7 @@ mod tests {
         let author = "test_user";
         let email = "ox@oxen.ai";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
         repositories::add(&repo, &hello_file).await?;
@@ -514,8 +515,12 @@ mod tests {
         let resp: CommitResponse = serde_json::from_str(body)?;
         assert_eq!(resp.status.status, "success");
 
-        let entry =
-            repositories::entries::get_file(&repo, &resp.commit, "data/cats_vs_dogs.tsv")?.unwrap();
+        let entry = repositories::entries::get_file(
+            &repo,
+            &resp.commit,
+            Path::new("data/cats_vs_dogs.tsv"),
+        )?
+        .unwrap();
         let version_store = repo.version_store()?;
         let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         assert!(version_path.exists());
@@ -535,7 +540,7 @@ mod tests {
         let author = "test_user";
         let email = "ox@oxen.ai";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        util::fs::create_dir_all(repo.path.join("data"))?;
+        util::fs::create_dir_all(&repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
         repositories::add(&repo, &hello_file).await?;
@@ -572,12 +577,9 @@ mod tests {
         let resp: CommitResponse = serde_json::from_str(body)?;
         assert_eq!(resp.status.status, "success");
 
-        let entry = repositories::entries::get_file(
-            &repo,
-            &resp.commit,
-            PathBuf::from("notebooks/chat.py"),
-        )?
-        .unwrap();
+        let entry =
+            repositories::entries::get_file(&repo, &resp.commit, Path::new("notebooks/chat.py"))?
+                .unwrap();
         let version_store = repo.version_store()?;
         let version_path = version_store.get_version_path(&entry.hash().to_string())?;
         assert!(version_path.exists());

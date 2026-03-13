@@ -12,8 +12,7 @@ use std::path::Path;
 use std::str;
 
 /// List the key -> value pairs in a database
-pub fn list(path: impl AsRef<Path>, limit: Option<usize>) -> Result<(), OxenError> {
-    let path = path.as_ref();
+pub fn list(path: &Path, limit: Option<usize>) -> Result<(), OxenError> {
     let mut opts = Options::default();
     opts.set_log_level(LogLevel::Fatal);
 
@@ -77,15 +76,14 @@ pub fn list(path: impl AsRef<Path>, limit: Option<usize>) -> Result<(), OxenErro
 }
 
 /// Count the values in a database
-pub fn count(path: impl AsRef<Path>) -> Result<usize, OxenError> {
-    let path = path.as_ref();
+pub fn count(path: &Path) -> Result<usize, OxenError> {
     let opts = Options::default();
     log::debug!("Opening db at {path:?}");
     let db = DB::open_for_read_only(&opts, dunce::simplified(path), false)?;
     log::debug!("Opened db at {path:?}");
     let iter = db.iterator(IteratorMode::Start);
     log::debug!("Iterating over db at {path:?}");
-    let progress = spinner_with_msg(format!("Counting db at {path:?}"));
+    let progress = spinner_with_msg(&format!("Counting db at {path:?}"));
     let mut count = 0;
     for _ in iter {
         count += 1;
@@ -97,13 +95,8 @@ pub fn count(path: impl AsRef<Path>) -> Result<usize, OxenError> {
 }
 
 /// Get a value from a database
-pub fn get(
-    path: impl AsRef<Path>,
-    key: impl AsRef<str>,
-    dtype: Option<&str>,
-) -> Result<String, OxenError> {
-    let path = path.as_ref();
-    let str_key = key.as_ref();
+pub fn get(path: &Path, key: &str, dtype: Option<&str>) -> Result<String, OxenError> {
+    let str_key = key;
     let mut opts = Options::default();
     opts.set_log_level(LogLevel::Fatal);
 
@@ -130,6 +123,6 @@ pub fn get(
             Ok(format!("<{} bytes>", value.len()))
         }
     } else {
-        Err(OxenError::basic_str(format!("Key {str_key} not found")))
+        Err(OxenError::basic_str(&format!("Key {str_key} not found")))
     }
 }

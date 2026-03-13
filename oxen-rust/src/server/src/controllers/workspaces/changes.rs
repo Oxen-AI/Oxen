@@ -12,6 +12,7 @@ use liboxen::view::remote_staged_status::RemoteStagedStatus;
 use liboxen::view::{
     FilePathsResponse, RemoteStagedStatusResponse, StatusMessage, StatusMessageDescription,
 };
+use std::path::Path;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
@@ -27,7 +28,7 @@ pub async fn list_root(
     let workspace_id = path_param(&req, "workspace_id")?;
     log::debug!("/changes looking up repo: {namespace}/{repo_name}");
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let page_num = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
@@ -35,7 +36,7 @@ pub async fn list_root(
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         log::debug!("/changes could not find workspace_id: {workspace_id}");
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let path = PathBuf::from(".");
     let staged = repositories::workspaces::status::status_from_dir(&workspace, &path)?;
@@ -64,7 +65,7 @@ pub async fn list(
     let workspace_id = path_param(&req, "workspace_id")?;
     log::debug!("/changes looking up repo: {namespace}/{repo_name}");
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
     let page_num = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
@@ -73,7 +74,7 @@ pub async fn list(
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         log::debug!("/changes could not find workspace_id: {workspace_id}");
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let staged = repositories::workspaces::status::status_from_dir(&workspace, &path)?;
 
@@ -113,12 +114,12 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     unstage_from_workspace(&repo, &workspace, &path)
@@ -154,12 +155,12 @@ pub async fn unstage_many(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     log::debug!("unstage_many found repo {repo_name}, workspace_id {workspace_id}");
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
@@ -202,7 +203,7 @@ pub async fn unstage_many(
 fn unstage_from_workspace(
     repo: &LocalRepository,
     workspace: &Workspace,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<HttpResponse, OxenHttpError> {
     // This may not be in the commit if it's added, so have to parse tabular-ness from the path.
     if util::fs::is_tabular(path) {

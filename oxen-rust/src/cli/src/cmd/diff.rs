@@ -337,7 +337,7 @@ impl DiffCmd {
                 match result {
                     DiffResult::Tabular(result) => {
                         let mut df = result.contents.clone();
-                        tabular::write_df(&mut df, file_path.clone())?;
+                        tabular::write_df(&mut df, &file_path.clone())?;
                     }
                     DiffResult::Text(_) => {
                         println!("Saving to disk not supported for text output");

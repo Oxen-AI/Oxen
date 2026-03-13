@@ -26,10 +26,9 @@ use std::path::{Path, PathBuf};
 
 pub fn add(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     new_column: &NewColumn,
 ) -> Result<DataFrame, OxenError> {
-    let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
@@ -57,10 +56,9 @@ pub fn add(
 
 pub fn delete(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     column_to_delete: &ColumnToDelete,
 ) -> Result<DataFrame, OxenError> {
-    let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
@@ -99,10 +97,9 @@ pub fn delete(
 
 pub async fn update(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     column_to_update: &ColumnToUpdate,
 ) -> Result<DataFrame, OxenError> {
-    let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
@@ -164,10 +161,9 @@ pub async fn update(
 
 pub async fn restore(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     column_to_restore: &ColumnToRestore,
 ) -> Result<DataFrame, OxenError> {
-    let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
@@ -342,14 +338,13 @@ pub async fn restore(
 pub fn add_column_metadata(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    file_path: &Path,
+    column: &str,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-        let path = file_path.as_ref();
+        let path = file_path;
         let path = util::fs::path_relative_to_dir(path, &workspace.workspace_repo.path)?;
-        let column = column.as_ref();
 
         let staged_merkle_tree_node = staged_db_manager.read_from_staged_db(&path)?;
         let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
@@ -381,7 +376,7 @@ pub fn add_column_metadata(
                     break;
                 };
                 dir_path = parent_dir.to_path_buf();
-                dir_node.set_name(dir_path.to_string_lossy());
+                dir_node.set_name(&dir_path.to_string_lossy());
                 parent_node.node = EMerkleTreeNode::Directory(dir_node);
                 let staged_parent_node = StagedMerkleTreeNode {
                     status: StagedEntryStatus::Modified,
@@ -400,7 +395,7 @@ pub fn add_column_metadata(
         // Stage parent nodes
         staged_db_manager.upsert_staged_nodes(&staged_nodes)?;
 
-        let column_diff = get_column_diff(workspace, &file_path)?;
+        let column_diff = get_column_diff(workspace, file_path)?;
 
         update_column_names_in_metadata(&column_diff, file_node.get_mut_metadata());
 
@@ -425,7 +420,7 @@ pub fn add_column_metadata(
                 results.insert(path.clone(), m.tabular.schema.clone());
             }
             _ => {
-                return Err(OxenError::path_does_not_exist(path));
+                return Err(OxenError::path_does_not_exist(&path));
             }
         }
 

@@ -108,14 +108,14 @@ impl DiffEntry {
 
     pub fn from_dir_nodes(
         repo: &LocalRepository,
-        dir_path: impl AsRef<Path>,
+        dir_path: &Path,
         base_dir: Option<DirNode>,
         base_commit: &Commit,
         head_dir: Option<DirNode>,
         head_commit: &Commit,
         status: DiffEntryStatus,
     ) -> Result<DiffEntry, OxenError> {
-        let dir_path = dir_path.as_ref().to_path_buf();
+        let dir_path = dir_path.to_path_buf();
         // Need to check whether we have the head or base entry to check data about the file
         let current_dir = if let Some(dir) = &head_dir {
             dir.clone()
@@ -162,7 +162,7 @@ impl DiffEntry {
     #[allow(clippy::too_many_arguments)]
     pub async fn from_file_nodes(
         repo: &LocalRepository,
-        file_path: impl AsRef<Path>,
+        file_path: &Path,
         base_entry: Option<FileNode>,
         base_commit: &Commit, // pass in commit objects for speed so we don't have to lookup later
         head_entry: Option<FileNode>,
@@ -172,7 +172,7 @@ impl DiffEntry {
         df_opts: Option<DFOpts>, // only for tabular
     ) -> Result<DiffEntry, OxenError> {
         log::debug!("from_file_nodes: base_entry: {base_entry:?}, head_entry: {head_entry:?}");
-        let file_path = file_path.as_ref().to_path_buf();
+        let file_path = file_path.to_path_buf();
         // Need to check whether we have the head or base entry to check data about the file
         let (current_entry, data_type) = if let Some(entry) = &head_entry {
             (entry.clone(), entry.data_type().clone())
@@ -271,25 +271,22 @@ impl DiffEntry {
 
     fn resource_from_file_node(
         node: Option<FileNode>,
-        file_path: impl AsRef<Path>,
-        version: impl AsRef<str>,
+        file_path: &Path,
+        version: &str,
     ) -> Option<ParsedResource> {
-        let path = file_path.as_ref().to_path_buf();
+        let path = file_path.to_path_buf();
         node.map(|_| ParsedResource {
             commit: None,
             branch: None,
             workspace: None,
-            version: PathBuf::from(version.as_ref()),
+            version: PathBuf::from(version),
             path: path.clone(),
-            resource: PathBuf::from(version.as_ref()).join(path),
+            resource: PathBuf::from(version).join(path),
         })
     }
 
-    fn resource_from_dir_node(
-        node: Option<DirNode>,
-        dir_path: impl AsRef<Path>,
-    ) -> Option<ParsedResource> {
-        let path = dir_path.as_ref().to_path_buf();
+    fn resource_from_dir_node(node: Option<DirNode>, dir_path: &Path) -> Option<ParsedResource> {
+        let path = dir_path.to_path_buf();
         node.map(|node| ParsedResource {
             commit: None,
             branch: None,

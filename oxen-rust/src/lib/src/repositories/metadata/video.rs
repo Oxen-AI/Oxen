@@ -9,8 +9,7 @@ use std::io::BufReader;
 use std::path::Path;
 
 /// Detects the video metadata for the given file.
-pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> {
-    let path = path.as_ref();
+pub fn get_metadata(path: &Path) -> Result<MetadataVideo, OxenError> {
     let f = match File::open(path) {
         Ok(f) => f,
         Err(e) => return Err(OxenError::file_error(path, e)),
@@ -29,7 +28,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
                 .filter_map(|t| match t.track_type() {
                     Ok(TrackType::Video) => Some(Ok(t)),
                     Ok(_) => None,
-                    Err(e) => Some(Err(OxenError::basic_str(format!(
+                    Err(e) => Some(Err(OxenError::basic_str(&format!(
                         "Could not get track type: {e:?}"
                     )))),
                 })
@@ -47,7 +46,7 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> 
         }
         Err(err) => {
             let err = format!("Could not get video metadata {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -65,7 +64,7 @@ mod tests {
     #[test]
     fn test_get_metadata_video_mp4() {
         let file = test::test_video_file_with_name("basketball.mp4");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
         println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 23599);
@@ -85,7 +84,7 @@ mod tests {
     #[test]
     fn test_get_metadata_video_mov() {
         let file = test::test_video_file_with_name("dog_skatez.mov");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
         println!("metadata: {metadata:?}");
 
         assert_eq!(metadata.size, 11657299);

@@ -22,18 +22,12 @@ pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
     }
 }
 
-pub async fn clone_url(
-    url: impl AsRef<str>,
-    dst: impl AsRef<Path>,
-) -> Result<LocalRepository, OxenError> {
+pub async fn clone_url(url: &str, dst: &Path) -> Result<LocalRepository, OxenError> {
     let fetch_opts = FetchOpts::new();
     _clone(url, dst, fetch_opts).await
 }
 
-pub async fn deep_clone_url(
-    url: impl AsRef<str>,
-    dst: impl AsRef<Path>,
-) -> Result<LocalRepository, OxenError> {
+pub async fn deep_clone_url(url: &str, dst: &Path) -> Result<LocalRepository, OxenError> {
     let fetch_opts = FetchOpts {
         all: true,
         ..FetchOpts::new()
@@ -43,15 +37,15 @@ pub async fn deep_clone_url(
 }
 
 async fn _clone(
-    url: impl AsRef<str>,
-    dst: impl AsRef<Path>,
+    url: &str,
+    dst: &Path,
     fetch_opts: FetchOpts,
 ) -> Result<LocalRepository, OxenError> {
     let opts = CloneOpts {
-        url: url.as_ref().to_string(),
-        dst: dst.as_ref().to_owned(),
+        url: url.to_string(),
+        dst: dst.to_owned(),
         fetch_opts,
-        storage_opts: StorageOpts::from_path(dst.as_ref(), true),
+        storage_opts: StorageOpts::from_path(dst, true),
         is_vfs: false,
         is_remote: false,
     };
@@ -163,7 +157,7 @@ mod tests {
             log::debug!("created the remote repo");
 
             test::run_empty_dir_test_async(|dir| async move {
-                let opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
 
                 log::debug!("about to clone the remote");
                 let local_repo = clone_remote(&opts).await?.unwrap();
@@ -196,7 +190,7 @@ mod tests {
             let remote_repo = test::create_remote_repo(&local_repo).await?;
 
             test::run_empty_dir_test_async(|dir| async move {
-                let opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 let local_repo = clone_remote(&opts).await?.unwrap();
 
                 api::client::repositories::delete(&remote_repo).await?;
@@ -225,7 +219,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from(".")]);
                 opts.fetch_opts.depth = Some(1);
                 let local_repo = clone_remote(&opts).await?.unwrap();
@@ -258,7 +252,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from("annotations")]);
                 let local_repo = clone_remote(&opts).await?.unwrap();
 
@@ -310,7 +304,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths =
                     Some(vec![PathBuf::from("annotations").join("test")]);
                 let local_repo = clone_remote(&opts).await?.unwrap();
@@ -340,7 +334,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![
                     PathBuf::from("annotations").join("test"),
                     PathBuf::from("nlp"),
@@ -454,8 +448,8 @@ mod tests {
                 // Create a different repo
                 let repo_new = RepoNew::from_namespace_name_host(
                     constants::DEFAULT_NAMESPACE,
-                    repo_name,
-                    test::test_host(),
+                    &repo_name,
+                    &test::test_host(),
                     None,
                 );
                 api::client::repositories::create_from_local(&cloned_repo, repo_new).await?;
@@ -531,8 +525,8 @@ mod tests {
                 // Create a different repo
                 let repo_new = RepoNew::from_namespace_name_host(
                     constants::DEFAULT_NAMESPACE,
-                    repo_name,
-                    test::test_host(),
+                    &repo_name,
+                    &test::test_host(),
                     None,
                 );
                 api::client::repositories::create_empty(repo_new).await?;
@@ -648,7 +642,7 @@ mod tests {
                 // Add a file to the cloned repo
                 let new_file = "new_file.txt";
                 let new_file_path = cloned_repo.path.join(new_file);
-                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+                let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file")?;
                 repositories::add(&cloned_repo, &new_file_path).await?;
                 repositories::commit(&cloned_repo, "Adding new file path.")?;
 

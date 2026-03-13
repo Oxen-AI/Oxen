@@ -54,11 +54,11 @@ const TARGETS_HASH_COL: &str = "_targets_hash";
 const KEYS_HASH_COL: &str = "_keys_hash";
 const DUPES_PATH: &str = "dupes.json";
 
-fn is_files_tabular(file_1: impl AsRef<Path>, file_2: impl AsRef<Path>) -> bool {
-    util::fs::is_tabular(file_1.as_ref()) && util::fs::is_tabular(file_2.as_ref())
+fn is_files_tabular(file_1: &Path, file_2: &Path) -> bool {
+    util::fs::is_tabular(file_1) && util::fs::is_tabular(file_2)
 }
-fn is_files_utf8(file_1: impl AsRef<Path>, file_2: impl AsRef<Path>) -> bool {
-    util::fs::is_utf8(file_1.as_ref()) && util::fs::is_utf8(file_2.as_ref())
+fn is_files_utf8(file_1: &Path, file_2: &Path) -> bool {
+    util::fs::is_utf8(file_1) && util::fs::is_utf8(file_2)
 }
 
 pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
@@ -93,8 +93,8 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
             };
 
             let result = diff_files(
-                path_1,
-                path_2,
+                &path_1,
+                &path_2,
                 opts.keys.clone(),
                 opts.targets.clone(),
                 vec![],
@@ -146,7 +146,7 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
             // Direct file comparison mode
 
             let result = diff_files(
-                opts.path_1,
+                &opts.path_1,
                 path_2,
                 opts.keys.clone(),
                 opts.targets.clone(),
@@ -404,22 +404,22 @@ pub async fn diff_path(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
-    base_path: impl AsRef<Path>,
-    head_path: impl AsRef<Path>,
+    base_path: &Path,
+    head_path: &Path,
     opts: &DiffOpts,
 ) -> Result<DiffEntriesCounts, OxenError> {
-    match (base_path.as_ref().is_file(), head_path.as_ref().is_file()) {
+    match (base_path.is_file(), head_path.is_file()) {
         (true, true) => {
             let diff_entry = DiffEntry {
-                filename: head_path.as_ref().to_string_lossy().to_string(),
+                filename: head_path.to_string_lossy().to_string(),
                 head_resource: Some(ParsedResource {
                     commit: Some(head_commit.clone()),
-                    path: head_path.as_ref().to_path_buf(),
+                    path: head_path.to_path_buf(),
                     ..ParsedResource::default() //TODO: Fill in other fields as well
                 }),
                 base_resource: Some(ParsedResource {
                     commit: Some(base_commit.clone()),
-                    path: base_path.as_ref().to_path_buf(),
+                    path: base_path.to_path_buf(),
                     ..ParsedResource::default() //TODO: Fill in other fields as well
                 }),
                 ..DiffEntry::default()
@@ -441,8 +441,8 @@ pub async fn diff_path(
                 repo,
                 base_commit,
                 head_commit,
-                base_path.as_ref().to_path_buf(),
-                head_path.as_ref().to_path_buf(),
+                base_path.to_path_buf(),
+                head_path.to_path_buf(),
                 opts.page,
                 opts.page_size,
             )
@@ -458,35 +458,30 @@ pub async fn diff_path(
 }
 
 pub async fn diff_files(
-    path_1: impl AsRef<Path>,
-    path_2: impl AsRef<Path>,
+    path_1: &Path,
+    path_2: &Path,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
-    log::debug!(
-        "Compare command called with: {:?} and {:?}",
-        path_1.as_ref(),
-        path_2.as_ref()
-    );
-    if is_files_tabular(&path_1, &path_2) {
+    log::debug!("Compare command called with: {:?} and {:?}", path_1, path_2);
+    if is_files_tabular(path_1, path_2) {
         let result = tabular(path_1, path_2, keys, targets, display).await?;
         Ok(DiffResult::Tabular(result))
-    } else if is_files_utf8(&path_1, &path_2) {
-        let file_content_1 = util::fs::read_file(Some(&path_1))?;
-        let file_content_2 = util::fs::read_file(Some(&path_2))?;
+    } else if is_files_utf8(path_1, path_2) {
+        let file_content_1 = util::fs::read_file(Some(path_1))?;
+        let file_content_2 = util::fs::read_file(Some(path_2))?;
         let result = utf8_diff::diff(
             Some(file_content_1),
-            Some(path_1.as_ref().to_path_buf()),
+            Some(path_1.to_path_buf()),
             Some(file_content_2),
-            Some(path_2.as_ref().to_path_buf()),
+            Some(path_2.to_path_buf()),
         )?;
         Ok(DiffResult::Text(result))
     } else {
-        Err(OxenError::invalid_file_type(format!(
+        Err(OxenError::invalid_file_type(&format!(
             "Compare not supported for files, found {:?} and {:?}",
-            path_1.as_ref(),
-            path_2.as_ref()
+            path_1, path_2
         )))
     }
 }
@@ -495,7 +490,7 @@ pub async fn diff_files(
 pub async fn diff_file_and_node(
     repo: &LocalRepository,
     file_node: Option<FileNode>,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
@@ -517,7 +512,7 @@ pub async fn diff_file_and_node(
             EntryDataType::Text => {
                 log::debug!(
                     "diff_file_and_node: diffing text files {:?} and {:?}",
-                    file_path.as_ref(),
+                    file_path,
                     file_node.hash().to_string()
                 );
                 let result = diff_text_file_and_node(repo, Some(&file_node), file_path).await?;
@@ -528,16 +523,16 @@ pub async fn diff_file_and_node(
                 );
                 Ok(result)
             }
-            _ => Err(OxenError::invalid_file_type(format!(
+            _ => Err(OxenError::invalid_file_type(&format!(
                 "Compare not supported for files, found {:?} and {:?}",
-                file_path.as_ref(),
+                file_path,
                 file_node.hash().to_string()
             ))),
         },
         None => {
             //we didn't get the file node, so we are comparing to a new file
 
-            let file_type = util::fs::file_data_type(file_path.as_ref());
+            let file_type = util::fs::file_data_type(file_path);
             match file_type {
                 EntryDataType::Tabular => {
                     let result = diff_tabular_file_and_file_node(
@@ -548,17 +543,14 @@ pub async fn diff_file_and_node(
                     Ok(DiffResult::Tabular(result))
                 }
                 EntryDataType::Text => {
-                    log::debug!(
-                        "diff_file_and_node: diffing text files {:?}",
-                        file_path.as_ref()
-                    );
+                    log::debug!("diff_file_and_node: diffing text files {:?}", file_path);
                     let result = diff_text_file_and_node(repo, None, file_path).await?;
                     log::debug!("diff_file_and_node: diffing text files {result:?}");
                     Ok(result)
                 }
-                _ => Err(OxenError::invalid_file_type(format!(
+                _ => Err(OxenError::invalid_file_type(&format!(
                     "Compare not supported for files, found {:?}",
-                    file_path.as_ref(),
+                    file_path,
                 ))),
             }
         }
@@ -604,7 +596,7 @@ pub async fn diff_file_nodes(
                     result.filename2 = Some(file_2.name().to_string());
                     Ok(DiffResult::Text(result))
                 }
-                _ => Err(OxenError::invalid_file_type(format!(
+                _ => Err(OxenError::invalid_file_type(&format!(
                     "Compare not supported for files, found {:?} and {:?}",
                     file_1.data_type(),
                     file_2.data_type()
@@ -624,7 +616,7 @@ pub async fn diff_file_nodes(
                 result.filename1 = Some(file_1.name().to_string());
                 Ok(DiffResult::Text(result))
             }
-            _ => Err(OxenError::invalid_file_type(format!(
+            _ => Err(OxenError::invalid_file_type(&format!(
                 "Compare not supported for files, found {:?}",
                 file_1.data_type()
             ))),
@@ -640,7 +632,7 @@ pub async fn diff_file_nodes(
                 let result = diff_text_file_nodes(repo, None, Some(&file_2)).await?;
                 Ok(DiffResult::Text(result))
             }
-            _ => Err(OxenError::invalid_file_type(format!(
+            _ => Err(OxenError::invalid_file_type(&format!(
                 "Compare not supported for files, found {:?}",
                 file_2.data_type()
             ))),
@@ -654,7 +646,7 @@ pub async fn diff_file_nodes(
 pub async fn diff_tabular_file_and_file_node(
     repo: &LocalRepository,
     file_node: Option<&FileNode>,
-    file_1_path: impl AsRef<Path>,
+    file_1_path: &Path,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
@@ -664,7 +656,7 @@ pub async fn diff_tabular_file_and_file_node(
             let version_store = repo.version_store()?;
             let file_node_path = version_store.get_version_path(&file_node.hash().to_string())?;
             let df_1 = tabular::read_df_with_extension(
-                file_node_path,
+                &file_node_path,
                 file_node.extension(),
                 &DFOpts::empty(),
             )
@@ -701,13 +693,13 @@ pub async fn diff_tabular_file_nodes(
             let version_path_1 = version_store.get_version_path(&file_1.hash().to_string())?;
             let version_path_2 = version_store.get_version_path(&file_2.hash().to_string())?;
             let df_1 = tabular::read_df_with_extension(
-                version_path_1,
+                &version_path_1,
                 file_1.extension(),
                 &DFOpts::empty(),
             )
             .await?;
             let df_2 = tabular::read_df_with_extension(
-                version_path_2,
+                &version_path_2,
                 file_2.extension(),
                 &DFOpts::empty(),
             )
@@ -721,7 +713,7 @@ pub async fn diff_tabular_file_nodes(
             let version_store = repo.version_store()?;
             let version_path_1 = version_store.get_version_path(&file_1.hash().to_string())?;
             let df_1 = tabular::read_df_with_extension(
-                version_path_1,
+                &version_path_1,
                 file_1.extension(),
                 &DFOpts::empty(),
             )
@@ -737,7 +729,7 @@ pub async fn diff_tabular_file_nodes(
             let version_path_2 = version_store.get_version_path(&file_2.hash().to_string())?;
             let df_1 = tabular::new_df();
             let df_2 = tabular::read_df_with_extension(
-                version_path_2,
+                &version_path_2,
                 file_2.extension(),
                 &DFOpts::empty(),
             )
@@ -755,7 +747,7 @@ pub async fn diff_tabular_file_nodes(
 pub async fn diff_text_file_and_node(
     repo: &LocalRepository,
     file_node: Option<&FileNode>,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
 ) -> Result<DiffResult, OxenError> {
     let version_store = repo.version_store()?;
     let (file_node_content, version_path) = if let Some(node) = file_node {
@@ -768,12 +760,12 @@ pub async fn diff_text_file_and_node(
         (None, None)
     };
 
-    let file_path_content = util::fs::read_file(Some(&file_path))?;
+    let file_path_content = util::fs::read_file(Some(file_path))?;
     let result = utf8_diff::diff(
         file_node_content,
         version_path,
         Some(file_path_content),
-        Some(file_path.as_ref().to_path_buf()),
+        Some(file_path.to_path_buf()),
     )?;
     Ok(DiffResult::Text(result))
 }
@@ -820,8 +812,8 @@ pub async fn diff_text_file_nodes(
 }
 
 pub async fn tabular(
-    file_1: impl AsRef<Path>,
-    file_2: impl AsRef<Path>,
+    file_1: &Path,
+    file_2: &Path,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
@@ -839,13 +831,13 @@ pub async fn tabular(
 
 async fn read_version_file_to_string(
     version_store: &Arc<dyn VersionStore>,
-    hash: impl AsRef<str>,
+    hash: &str,
 ) -> Result<String, OxenError> {
     match version_store.get_version(hash.as_ref()).await {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(s) => Ok(s),
             Err(_) => {
-                let err = format!("could not decode version {} as UTF-8", hash.as_ref());
+                let err = format!("could not decode version {} as UTF-8", hash);
                 log::warn!("{err}");
                 Err(OxenError::basic_str(&err))
             }
@@ -859,12 +851,13 @@ fn validate_required_fields(
     keys: Vec<String>,
     targets: Vec<String>,
 ) -> Result<(), OxenError> {
+    let keys_str: Vec<&str> = keys.iter().map(String::as_str).collect();
     // Keys must be in both dfs
-    if !schema_1.has_field_names(&keys) {
+    if !schema_1.has_field_names(&keys_str) {
         return Err(OxenError::incompatible_schemas(schema_1.clone()));
     };
 
-    if !schema_2.has_field_names(&keys) {
+    if !schema_2.has_field_names(&keys_str) {
         return Err(OxenError::incompatible_schemas(schema_2));
     };
 
@@ -895,7 +888,17 @@ pub fn diff_dfs(
 
     let (df_1, df_2) = hash_dfs(df_1.clone(), df_2.clone(), &keys, &targets)?;
 
-    let compare = join_diff::diff(&df_1, &df_2, schema_diff, &keys, &targets, &display)?;
+    let keys_str: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let targets_str: Vec<&str> = targets.iter().map(String::as_str).collect();
+    let display_str: Vec<&str> = display.iter().map(String::as_str).collect();
+    let compare = join_diff::diff(
+        &df_1,
+        &df_2,
+        schema_diff,
+        &keys_str,
+        &targets_str,
+        &display_str,
+    )?;
 
     Ok(compare)
 }
@@ -1269,7 +1272,7 @@ pub async fn compute_new_columns_from_dfs(
 
 pub async fn diff_entries(
     repo: &LocalRepository,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     base_entry: Option<FileNode>,
     base_commit: &Commit,
     head_entry: Option<FileNode>,
@@ -1375,18 +1378,18 @@ pub async fn get_cached_diff(
 
     // TODO this should be cached
     let left_full_df = tabular::read_df(
-        repositories::revisions::get_version_file_from_commit_id(
+        &repositories::revisions::get_version_file_from_commit_id(
             repo,
-            left_entry.commit_id,
+            &left_entry.commit_id,
             &left_entry.path,
         )?,
         DFOpts::empty(),
     )
     .await?;
     let right_full_df = tabular::read_df(
-        repositories::revisions::get_version_file_from_commit_id(
+        &repositories::revisions::get_version_file_from_commit_id(
             repo,
-            right_entry.commit_id,
+            &right_entry.commit_id,
             &right_entry.path,
         )?,
         DFOpts::empty(),
@@ -1398,7 +1401,7 @@ pub async fn get_cached_diff(
         &Schema::from_polars(right_full_df.schema()),
     )?;
 
-    let diff_df = tabular::read_df(get_diff_cache_path(repo, compare_id), DFOpts::empty()).await?;
+    let diff_df = tabular::read_df(&get_diff_cache_path(repo, compare_id), DFOpts::empty()).await?;
 
     let schemas = TabularDiffSchemas {
         left: Schema::from_polars(left_full_df.schema()),
@@ -1642,7 +1645,7 @@ mod tests {
 
             // Remove a row
             let bbox_file = test::modify_txt_file(
-                bbox_file,
+                &bbox_file,
                 r"
 file,label,min_x,min_y,width,height
 train/dog_1.jpg,dog,101.5,32.0,385,330
@@ -1651,7 +1654,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
 ",
             )?;
 
-            repositories::add(&repo, bbox_file).await?;
+            repositories::add(&repo, &bbox_file).await?;
             let head_commit = repositories::commit(&repo, "Removing a row from train bbox data")?;
 
             let entries = repositories::diffs::list_diff_entries(
@@ -1691,7 +1694,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let base_commit = repositories::commits::head_commit(&repo)?;
 
             // Remove the file
-            util::fs::remove_file(bbox_file)?;
+            util::fs::remove_file(&bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
             repositories::rm(&repo, &opts)?;
@@ -1778,7 +1781,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let bbox_file = repo.path.join(&bbox_filename);
 
             // Remove the file
-            util::fs::remove_file(bbox_file)?;
+            util::fs::remove_file(&bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
             repositories::rm(&repo, &opts)?;
@@ -1835,19 +1838,22 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let add_root_dir = PathBuf::from("not_annotations");
             let add_root_dir_added_file = PathBuf::from("not_annotations").join("added_file.txt");
 
-            util::fs::create_dir_all(repo.path.join(add_dir))?;
-            util::fs::create_dir_all(repo.path.join(add_root_dir))?;
+            util::fs::create_dir_all(&repo.path.join(add_dir))?;
+            util::fs::create_dir_all(&repo.path.join(add_root_dir))?;
 
             test::write_txt_file_to_path(&new_root_file, "Hello,world")?;
             test::write_txt_file_to_path(&new_bbox_file, "Hello,world")?;
-            test::write_txt_file_to_path(repo.path.join(add_dir_added_file), "Hello,world!!")?;
-            test::write_txt_file_to_path(repo.path.join(add_root_dir_added_file), "Hello,world!!")?;
+            test::write_txt_file_to_path(&repo.path.join(add_dir_added_file), "Hello,world!!")?;
+            test::write_txt_file_to_path(
+                &repo.path.join(add_root_dir_added_file),
+                "Hello,world!!",
+            )?;
 
             // get og commit
             let base_commit = repositories::commits::head_commit(&repo)?;
 
             // Remove the file
-            util::fs::remove_file(bbox_file)?;
+            util::fs::remove_file(&bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
             repositories::rm(&repo, &opts)?;
@@ -1942,7 +1948,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let base_commit = repositories::commits::head_commit(&repo)?;
 
             // Remove the file
-            util::fs::remove_file(bbox_file)?;
+            util::fs::remove_file(&bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
             repositories::rm(&repo, &opts)?;
@@ -2053,7 +2059,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone()).await?;
+            repositories::add(&repo, &repo.path.clone()).await?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -2114,7 +2120,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone()).await?;
+            repositories::add(&repo, &repo.path.clone()).await?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -2186,7 +2192,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone()).await?;
+            repositories::add(&repo, &repo.path.clone()).await?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -2258,7 +2264,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone()).await?;
+            repositories::add(&repo, &repo.path.clone()).await?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -2329,7 +2335,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone()).await?;
+            repositories::add(&repo, &repo.path.clone()).await?;
 
             let commit = repositories::commit(&repo, "two files")?;
 
@@ -2394,7 +2400,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             tokio::fs::write(repo.path.join(&path_1), csv1).await?;
             tokio::fs::write(repo.path.join(&path_2), csv2).await?;
 
-            repositories::add(&repo, repo.path.clone()).await?;
+            repositories::add(&repo, &repo.path.clone()).await?;
 
             let commit = repositories::commit(&repo, "two files")?;
 

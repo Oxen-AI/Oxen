@@ -64,7 +64,7 @@ mod tests {
 
             test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -96,12 +96,12 @@ mod tests {
 
                 // Verify repo is clean
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -127,7 +127,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -163,13 +163,14 @@ mod tests {
                     )
                     .await?;
 
-                    let status_opts =
-                        StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    let status_opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(
+                        &cloned_repo.path,
+                    ));
                     let status = repositories::remote_mode::status(
                         &cloned_repo,
                         &remote_repo,
                         &workspace_id,
-                        &directory,
+                        Path::new(&directory),
                         &status_opts,
                     )
                     .await?;
@@ -196,7 +197,7 @@ mod tests {
                     assert!(repositories::tree::has_path(
                         &cloned_repo,
                         &new_head_commit,
-                        file_path
+                        &file_path
                     )?);
 
                     previous_head_commit = new_head_commit;
@@ -230,7 +231,7 @@ mod tests {
 
             test::run_empty_dir_test_async(|dir| async move {
                 // Clone an empty repo in remote mode
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -240,7 +241,7 @@ mod tests {
                 let annotations_dir = PathBuf::from("annotations");
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[annotations_dir.clone()],
+                    std::slice::from_ref(&annotations_dir),
                     &head_commit.id,
                 )
                 .await?;
@@ -249,12 +250,12 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -295,7 +296,7 @@ mod tests {
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -324,7 +325,7 @@ mod tests {
 
             test::run_empty_dir_test_async(|dir| async move {
                 // Clone repo in remote mode
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -367,7 +368,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -435,7 +436,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -488,7 +489,7 @@ mod tests {
                     &cloned_repo,
                     &remote_repo,
                     &workspace_id,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -519,7 +520,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());

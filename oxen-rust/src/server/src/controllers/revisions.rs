@@ -30,7 +30,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let resource = parse_resource(&req, &repository)?;
     let response = ParseResourceResponse {
@@ -64,7 +64,7 @@ mod tests {
 
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let path = liboxen::test::add_txt_file_to_dir(&repo.path, resource_str)?;
-        repositories::add(&repo, path).await?;
+        repositories::add(&repo, &path).await?;
         repositories::commit(&repo, "first commit")?;
 
         let uri = format!(

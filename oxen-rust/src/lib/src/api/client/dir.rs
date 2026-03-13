@@ -22,13 +22,12 @@ pub async fn list_root(remote_repo: &RemoteRepository) -> Result<PaginatedDirEnt
 
 pub async fn list(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
     page: usize,
     page_size: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    let revision = revision.as_ref();
-    let path = path.as_ref().to_string_lossy();
+    let path = path.to_string_lossy();
     let uri = format!("/dir/{revision}/{path}?page={page}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -38,7 +37,7 @@ pub async fn list(
     let response: Result<PaginatedDirEntries, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::dir::list_dir error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -46,16 +45,16 @@ pub async fn list(
 
 pub async fn file_counts(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
 ) -> Result<MetadataDir, OxenError> {
-    let path_str = path.as_ref().to_string_lossy();
-    let response = list(remote_repo, revision, &path, 1, 1).await?;
+    let path_str = path.to_string_lossy();
+    let response = list(remote_repo, revision, path, 1, 1).await?;
     match response.dir {
         Some(dir_entry) => match dir_entry {
             EMetadataEntry::MetadataEntry(metadata_entry) => match metadata_entry.metadata {
                 Some(GenericMetadata::MetadataDir(metadata)) => Ok(metadata),
-                _ => Err(OxenError::basic_str(format!(
+                _ => Err(OxenError::basic_str(&format!(
                     "No metadata on directory found at {path_str}"
                 ))),
             },
@@ -63,7 +62,7 @@ pub async fn file_counts(
                 "Workspace metadata entry is not implemented",
             )),
         },
-        None => Err(OxenError::basic_str(format!(
+        None => Err(OxenError::basic_str(&format!(
             "No directory found at {path_str}"
         ))),
     }
@@ -71,11 +70,10 @@ pub async fn file_counts(
 
 pub async fn get_dir(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
 ) -> Result<PaginatedDirEntriesResponse, OxenError> {
-    let path_str = path.as_ref().to_string_lossy();
-    let revision = revision.as_ref();
+    let path_str = path.to_string_lossy();
     let uri = format!("/dir/{revision}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -86,7 +84,7 @@ pub async fn get_dir(
         serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::dir::get_dir error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -136,7 +134,7 @@ mod tests {
             let file_path = local_repo.path.join(file_name);
             let file_content = "Hello, World!";
             util::fs::write_to_path(&file_path, file_content)?;
-            repositories::add(&local_repo, file_path).await?;
+            repositories::add(&local_repo, &file_path).await?;
 
             // Commit it
             let first_commit = repositories::commit(&local_repo, "Add file.txt")?;
@@ -383,7 +381,8 @@ mod tests {
             repositories::push(&local_repo).await?;
 
             let dir_response =
-                api::client::dir::get_dir(&remote_repo, DEFAULT_BRANCH_NAME, "dir=dir").await?;
+                api::client::dir::get_dir(&remote_repo, DEFAULT_BRANCH_NAME, Path::new("dir=dir"))
+                    .await?;
             assert_eq!(dir_response.status.status, "success");
 
             // Assert the directory is present and named "dir=dir"
@@ -431,7 +430,7 @@ mod tests {
                 .to_string();
 
             let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
 
@@ -441,20 +440,20 @@ mod tests {
 
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
-                &workspace_id,
-                directory_name.clone(),
+                workspace_id,
+                Path::new(&directory_name),
                 &full_path,
             )
             .await;
 
             let file_path = test::test_bounding_box_csv();
             let full_path = local_repo.path.join(file_path);
-            util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n")?;
+            util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n".as_bytes())?;
 
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
-                &workspace_id,
-                directory_name,
+                workspace_id,
+                Path::new(&directory_name),
                 &full_path,
             )
             .await;
@@ -464,7 +463,8 @@ mod tests {
                 .unwrap()
                 .to_string();
             let response =
-                api::client::dir::get_dir(&remote_repo, workspace_id, train_path).await?;
+                api::client::dir::get_dir(&remote_repo, workspace_id, Path::new(&train_path))
+                    .await?;
 
             for entry in response.entries.entries.iter() {
                 if let EMetadataEntry::WorkspaceMetadataEntry(ws_entry) = entry {

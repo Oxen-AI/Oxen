@@ -232,8 +232,8 @@ pub fn cache_children(
 }
 
 /// Remove a repository's caches
-pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
-    let path = repository_path.as_ref().to_path_buf();
+pub fn remove_from_cache(repository_path: &std::path::Path) -> Result<(), OxenError> {
+    let path = repository_path.to_path_buf();
 
     // Remove from node caches
     {

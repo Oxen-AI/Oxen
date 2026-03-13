@@ -194,7 +194,7 @@ impl RunCmd for ConfigCmd {
             let mut repo = LocalRepository::from_current_dir()?;
             self.set_version_store(&mut repo, storage_opts)
                 .await
-                .map_err(|e| OxenError::basic_str(format!("{e}")))?;
+                .map_err(|e| OxenError::basic_str(&format!("{e}")))?;
         }
 
         Ok(())

@@ -34,8 +34,8 @@ impl EntryMergeConflictReader {
     pub fn get_conflict_commit(&self) -> Result<Option<Commit>, OxenError> {
         let hidden_dir = util::fs::oxen_hidden_dir(&self.repository.path);
         let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
-        let commit_id = util::fs::read_first_line(merge_head_path)?;
-        repositories::commits::get_by_id(&self.repository, commit_id)
+        let commit_id = util::fs::read_first_line(&merge_head_path)?;
+        repositories::commits::get_by_id(&self.repository, &commit_id)
     }
 
     pub fn has_conflicts(&self) -> Result<bool, OxenError> {

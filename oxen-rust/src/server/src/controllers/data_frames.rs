@@ -45,7 +45,7 @@ pub async fn get(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
 
     let commit = match &resource.workspace {
@@ -143,7 +143,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
 
@@ -164,7 +164,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
         log::debug!("data frame is not indexed");
         // If not, proceed to create a new workspace and index the data frame.
         let workspace_id = Uuid::new_v4().to_string();
-        let workspace = match repositories::workspaces::create(&repo, &commit, workspace_id, false)
+        let workspace = match repositories::workspaces::create(&repo, &commit, &workspace_id, false)
         {
             Ok(workspace) => workspace,
             Err(_e) => repositories::workspaces::get_non_editable_by_commit_id(&repo, &commit.id)?,
@@ -211,7 +211,7 @@ pub async fn from_directory(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
     let branch = resource.clone().branch.ok_or(OxenHttpError::NotFound)?;
@@ -221,7 +221,7 @@ pub async fn from_directory(
         Ok(data) => data,
         Err(err) => {
             log::error!("Unable to parse body. Err: {err}\n{body}");
-            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(&err.to_string())));
         }
     };
 
@@ -241,7 +241,7 @@ pub async fn from_directory(
         &repo,
         &temp_workspace,
         &path,
-        &output_path,
+        std::path::Path::new(&output_path),
         &extra_columns,
         recursive,
         &new_commit,

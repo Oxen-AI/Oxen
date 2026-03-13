@@ -16,7 +16,7 @@ pub async fn status(
     local_repository: &LocalRepository,
     remote_repo: &RemoteRepository,
     workspace_identifier: &str,
-    directory: impl AsRef<Path>,
+    directory: &Path,
     opts: &StagedDataOpts,
 ) -> Result<StagedData, OxenError> {
     let page_size = opts.limit;
@@ -80,6 +80,7 @@ pub async fn status(
 #[cfg(test)]
 mod tests {
 
+    use std::path::Path;
     use std::path::PathBuf;
 
     use crate::error::OxenError;
@@ -125,7 +126,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
 
@@ -137,7 +138,7 @@ mod tests {
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -164,7 +165,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -172,13 +173,14 @@ mod tests {
                 let repo_path = cloned_repo.path.clone();
 
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -197,30 +199,30 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[one_shot_path.clone()],
+                    std::slice::from_ref(&one_shot_path),
                     &head_commit.id,
                 )
                 .await?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[two_shot_path.clone()],
+                    std::slice::from_ref(&two_shot_path),
                     &head_commit.id,
                 )
                 .await?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[bounding_box_path.clone()],
+                    std::slice::from_ref(&bounding_box_path),
                     &head_commit.id,
                 )
                 .await?;
 
                 // Modify one_shot.csv
                 let new_content = "new content coming in hot";
-                test::modify_txt_file(cloned_repo.path.join(&one_shot_path), new_content)?;
+                test::modify_txt_file(&cloned_repo.path.join(&one_shot_path), new_content)?;
 
                 // Modify and add two_shot.csv
                 let new_content = "new content coming in even hotter!";
-                test::modify_txt_file(cloned_repo.path.join(&two_shot_path), new_content)?;
+                test::modify_txt_file(&cloned_repo.path.join(&two_shot_path), new_content)?;
                 api::client::workspaces::files::add(
                     &remote_repo,
                     &workspace_identifier,
@@ -241,12 +243,13 @@ mod tests {
 
                 // Check status for corresponding changes
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -275,12 +278,13 @@ mod tests {
 
                 // Re-check status
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(&directory),
                     &status_opts,
                 )
                 .await?;
@@ -334,8 +338,8 @@ mod tests {
                 util::fs::rename(&og_file, &new_file)?;
 
                 // Status before adding should show 4 unsynced files (README.md,  LICENSE, prompts.jsonl, labels.txt) and an untracked file
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status_opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, Path::new(&directory), &status_opts).await?;
                 status.print();
                 assert_eq!(status.moved_files.len(), 0);
                 assert_eq!(status.unsynced_files.len(), 4);
@@ -343,8 +347,8 @@ mod tests {
 
                 // Remove the previous file
                 api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![og_basename.clone()]).await?;
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status_opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, Path::new(&directory), &status_opts).await?;
                 status.print();
                 assert_eq!(status.moved_files.len(), 0);
                 assert_eq!(status.staged_files.len(), 1);
@@ -353,7 +357,7 @@ mod tests {
                 // Add the new file to complete the pair
                 api::client::workspaces::files::add(&cloned_repo, &remote_repo, &workspace_identifier, &directory, vec![new_basename.clone()]).await?;
                 let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path]);
-                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
+                let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, Path::new(&directory), &status_opts).await?;
                 status.print();
                 assert_eq!(status.moved_files.len(), 1);
                 assert_eq!(status.staged_files.len(), 2);

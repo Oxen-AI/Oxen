@@ -25,36 +25,36 @@ impl RmOpts {
     }
 
     /// Sets path and defaults all other options to false
-    pub fn from_path<P: AsRef<Path>>(path: P) -> RmOpts {
+    pub fn from_path(path: &Path) -> RmOpts {
         RmOpts {
-            path: path.as_ref().to_owned(),
+            path: path.to_owned(),
             staged: false,
             recursive: false,
         }
     }
 
     /// Sets `staged = true` to remove file from the staging index
-    pub fn from_staged_path<P: AsRef<Path>>(path: P) -> RmOpts {
+    pub fn from_staged_path(path: &Path) -> RmOpts {
         RmOpts {
-            path: path.as_ref().to_owned(),
+            path: path.to_owned(),
             staged: true,
             recursive: false,
         }
     }
 
     /// Sets `recursive = true` to remove dir
-    pub fn from_path_recursive<P: AsRef<Path>>(path: P) -> RmOpts {
+    pub fn from_path_recursive(path: &Path) -> RmOpts {
         RmOpts {
-            path: path.as_ref().to_owned(),
+            path: path.to_owned(),
             staged: false,
             recursive: true,
         }
     }
 
     /// Updates the `path` and copies values from `opts`
-    pub fn from_path_opts<P: AsRef<Path>>(path: P, opts: &RmOpts) -> RmOpts {
+    pub fn from_path_opts(path: &Path, opts: &RmOpts) -> RmOpts {
         RmOpts {
-            path: path.as_ref().to_owned(),
+            path: path.to_owned(),
             staged: opts.staged,
             recursive: opts.recursive,
         }

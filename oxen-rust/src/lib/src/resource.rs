@@ -19,42 +19,42 @@ pub fn parse_resource_from_path(
 }
 
 /// Pass in a branch name and maybe get a commit id back
-pub fn maybe_get_commit_id_from_branch_name<S: AsRef<str>>(
+pub fn maybe_get_commit_id_from_branch_name(
     repo: &LocalRepository,
-    commit_id_or_branch_name: S,
+    commit_id_or_branch_name: &str,
 ) -> Result<Option<String>, OxenError> {
     with_ref_manager(repo, |manager| {
-        manager.get_commit_id_for_branch(commit_id_or_branch_name.as_ref())
+        manager.get_commit_id_for_branch(commit_id_or_branch_name)
     })
 }
 
 /// Pass in a commit id or a branch name and resolve it to a
-pub fn maybe_get_commit<S: AsRef<str>>(
+pub fn maybe_get_commit(
     repo: &LocalRepository,
-    commit_id_or_branch_name: S,
+    commit_id_or_branch_name: &str,
 ) -> Result<Option<Commit>, OxenError> {
-    if let Some(commit) = repositories::commits::get_by_id(repo, &commit_id_or_branch_name)? {
+    if let Some(commit) = repositories::commits::get_by_id(repo, commit_id_or_branch_name)? {
         return Ok(Some(commit));
     }
 
-    match maybe_get_commit_id_from_branch_name(repo, &commit_id_or_branch_name) {
+    match maybe_get_commit_id_from_branch_name(repo, commit_id_or_branch_name) {
         Ok(Some(commit_id)) => repositories::commits::get_by_id(repo, &commit_id),
         Ok(None) => Err(OxenError::local_revision_not_found(
-            commit_id_or_branch_name.as_ref(),
+            commit_id_or_branch_name,
         )),
         Err(err) => Err(err),
     }
 }
 
-pub fn get_commit_or_head<S: AsRef<str>>(
+pub fn get_commit_or_head(
     repo: &LocalRepository,
-    commit_id_or_branch_name: Option<S>,
+    commit_id_or_branch_name: Option<&str>,
 ) -> Result<Commit, OxenError> {
     if commit_id_or_branch_name.is_none() {
         return repositories::commits::head_commit(repo);
     }
 
-    match maybe_get_commit(repo, commit_id_or_branch_name.unwrap().as_ref()) {
+    match maybe_get_commit(repo, commit_id_or_branch_name.unwrap()) {
         Ok(Some(commit)) => Ok(commit),
         _ => repositories::commits::head_commit(repo),
     }

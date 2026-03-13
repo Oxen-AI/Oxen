@@ -89,7 +89,11 @@ mod tests {
             assert!(!hello_file.exists());
             // Restore takes the filename not the full path to the test repo
             // ie: "hello.txt" instead of data/test/runs/repo_data/test/runs_fc1544ab-cd55-4344-aa13-5360dc91d0fe/hello.txt
-            repositories::restore::restore(&repo, RestoreOpts::from_path(hello_filename)).await?;
+            repositories::restore::restore(
+                &repo,
+                RestoreOpts::from_path(Path::new(hello_filename)),
+            )
+            .await?;
             assert!(hello_file.exists());
 
             Ok(())
@@ -112,20 +116,20 @@ mod tests {
 
             // Modify the file once
             let first_modification = "Hola Mundo";
-            let hello_file = test::modify_txt_file(hello_file, first_modification)?;
+            let hello_file = test::modify_txt_file(&hello_file, first_modification)?;
             repositories::add(&repo, &hello_file).await?;
             let first_mod_commit = repositories::commit(&repo, "Changing to spanish")?;
 
             // Modify again
             let second_modification = "Bonjour le monde";
-            let hello_file = test::modify_txt_file(hello_file, second_modification)?;
+            let hello_file = test::modify_txt_file(&hello_file, second_modification)?;
             repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Changing to french")?;
 
             // Restore from the first commit
             repositories::restore::restore(
                 &repo,
-                RestoreOpts::from_path_ref(hello_filename, first_mod_commit.id),
+                RestoreOpts::from_path_ref(Path::new(hello_filename), &first_mod_commit.id),
             )
             .await?;
             let content = util::fs::read_from_path(&hello_file)?;
@@ -151,7 +155,7 @@ mod tests {
             let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir).await?;
+            repositories::add(&repo, &train_dir).await?;
             repositories::commit(&repo, "Adding train dir")?;
 
             // Branch
@@ -172,7 +176,7 @@ mod tests {
             assert!(!file_to_remove.exists());
 
             // Switch back to main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
+            repositories::checkout(&repo, &orig_branch.name).await?;
             // Make sure we restore file
             assert!(file_to_remove.exists());
 
@@ -202,12 +206,12 @@ mod tests {
             let readme_path = repo.path.join(readme_file);
             let og_readme_contents = util::fs::read_from_path(&readme_path)?;
 
-            let readme_path = test::append_line_txt_file(readme_path, "Adding s'more")?;
+            let readme_path = test::append_line_txt_file(&readme_path, "Adding s'more")?;
 
             // Restore the directory
             repositories::restore::restore(
                 &repo,
-                RestoreOpts::from_path_ref(annotations_dir, last_commit.id.clone()),
+                RestoreOpts::from_path_ref(annotations_dir, &last_commit.id.clone()),
             )
             .await?;
 
@@ -216,7 +220,7 @@ mod tests {
             assert_eq!(og_bbox_contents, restored_contents);
 
             // Make sure the modified file is restored
-            let restored_contents = util::fs::read_from_path(readme_path)?;
+            let restored_contents = util::fs::read_from_path(&readme_path)?;
             assert_eq!(og_readme_contents, restored_contents);
 
             Ok(())
@@ -242,7 +246,7 @@ mod tests {
 
             repositories::restore::restore(
                 &repo,
-                RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
+                RestoreOpts::from_path_ref(&bbox_file, &last_commit.id),
             )
             .await?;
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
@@ -273,7 +277,7 @@ mod tests {
 
             repositories::restore::restore(
                 &repo,
-                RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
+                RestoreOpts::from_path_ref(&bbox_file, &last_commit.id),
             ).await?;
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
             assert_eq!(og_contents, restored_contents);
@@ -299,11 +303,11 @@ mod tests {
 
             let og_contents = util::fs::read_from_path(&bbox_path)?;
             let new_contents = format!("{og_contents}\nnew 0");
-            util::fs::write_to_path(&bbox_path, new_contents)?;
+            util::fs::write_to_path(&bbox_path, &new_contents)?;
 
             repositories::restore::restore(
                 &repo,
-                RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
+                RestoreOpts::from_path_ref(&bbox_file, &last_commit.id),
             )
             .await?;
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
@@ -327,7 +331,7 @@ mod tests {
             let bbox_path = repo.path.join(&bbox_file);
 
             // Stage file
-            repositories::add(&repo, bbox_path).await?;
+            repositories::add(&repo, &bbox_path).await?;
 
             // Make sure is staged
             let status = repositories::status(&repo)?;
@@ -335,7 +339,8 @@ mod tests {
             status.print();
 
             // Remove from staged
-            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(bbox_file)).await?;
+            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(&bbox_file))
+                .await?;
 
             // Make sure is unstaged
             let status = repositories::status(&repo)?;
@@ -368,8 +373,11 @@ mod tests {
             util::fs::remove_file(&ann_path)?;
 
             // Restore from commit
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id))
-                .await?;
+            repositories::restore::restore(
+                &repo,
+                RestoreOpts::from_path_ref(&ann_file, &commit.id),
+            )
+            .await?;
 
             // Make sure is same size
             let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
@@ -408,8 +416,11 @@ mod tests {
             util::fs::remove_file(&ann_path)?;
 
             // Restore from commit
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id))
-                .await?;
+            repositories::restore::restore(
+                &repo,
+                RestoreOpts::from_path_ref(&ann_file, &commit.id),
+            )
+            .await?;
 
             // Make sure is same size
             let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
@@ -432,7 +443,7 @@ mod tests {
             let annotations_dir = repo.path.join(relative_path);
 
             // Stage file
-            repositories::add(&repo, annotations_dir).await?;
+            repositories::add(&repo, &annotations_dir).await?;
 
             // Make sure is staged
             let status = repositories::status(&repo)?;
@@ -459,7 +470,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
+            repositories::add(&repo, &repo_dir).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -493,7 +504,7 @@ mod tests {
             assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
             // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*").await?;
+            repositories::add(&repo, Path::new("nlp/*")).await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_dirs.len(), 1);
@@ -641,8 +652,8 @@ mod tests {
 
             // Copy bbox and one_shot to new_annotations
             util::fs::create_dir_all(&new_annotations_dir)?;
-            util::fs::copy(bbox_path, new_annotations_dir.join("bounding_box.csv"))?;
-            util::fs::copy(one_shot_path, new_annotations_dir.join("one_shot.csv"))?;
+            util::fs::copy(&bbox_path, &new_annotations_dir.join("bounding_box.csv"))?;
+            util::fs::copy(&one_shot_path, &new_annotations_dir.join("one_shot.csv"))?;
 
             // Get file names for these copied files
             new_annotations_dir

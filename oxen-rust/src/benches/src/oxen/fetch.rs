@@ -199,5 +199,5 @@ pub fn fetch_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<us
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }

@@ -8,18 +8,16 @@ use crate::model::metadata::MetadataTabular;
 use std::path::Path;
 
 /// Detects the tabular metadata for the given file.
-pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataTabular, OxenError> {
-    let path = path.as_ref();
+pub fn get_metadata(path: &Path) -> Result<MetadataTabular, OxenError> {
     let size = tabular::get_size(path)?;
     let schema = tabular::get_schema(path)?;
     Ok(MetadataTabular::new(size.width, size.height, schema))
 }
 
 pub fn get_metadata_with_extension(
-    path: impl AsRef<Path>,
+    path: &Path,
     extension: &str,
 ) -> Result<MetadataTabular, OxenError> {
-    let path = path.as_ref();
     let size = tabular::get_size_with_extension(path, Some(extension))?;
     let schema = tabular::get_schema_with_extension(path, Some(extension))?;
     Ok(MetadataTabular::new(size.width, size.height, schema))
@@ -36,7 +34,7 @@ mod tests {
     #[test]
     fn test_get_metadata_tabular() {
         let file = test::test_text_file_with_name("celeb_a_200k.csv");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
 
         assert!(metadata.size >= 9604701); // not sure why different on windows
         assert_eq!(metadata.data_type, EntryDataType::Tabular);

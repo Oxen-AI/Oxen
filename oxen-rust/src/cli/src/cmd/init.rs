@@ -97,10 +97,10 @@ impl RunCmd for InitCmd {
         // Make sure the remote version is compatible
         let (scheme, host) = get_scheme_and_host_or_default()?;
 
-        check_remote_version(scheme, host).await?;
+        check_remote_version(&scheme, &host).await?;
 
         // Initialize the repository
-        let directory = util::fs::canonicalize(PathBuf::from(&path))?;
+        let directory = util::fs::canonicalize(&PathBuf::from(&path))?;
         repositories::init::init_with_version_and_storage_opts(
             &directory,
             oxen_version,

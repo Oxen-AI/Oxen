@@ -28,7 +28,7 @@ fn read_status(repo_path: &Path) -> Result<Option<ForkStatus>, OxenError> {
     let content = fs::read_to_string(&status_path)?;
     let status_file: ForkStatusFile = toml::from_str(&content).map_err(|e| {
         log::error!("Failed to parse fork status on file: {status_path:?} error: {e}");
-        OxenError::basic_str(format!("Failed to parse fork status on file: {e}"))
+        OxenError::basic_str(&format!("Failed to parse fork status on file: {e}"))
     })?;
 
     let status = &status_file.status;
@@ -51,7 +51,7 @@ pub fn start_fork(
     new_path: PathBuf,
 ) -> Result<ForkStartResponse, OxenError> {
     if new_path.exists() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "A file already exists at the destination path: {}",
             new_path.to_string_lossy()
         )));

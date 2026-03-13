@@ -99,7 +99,7 @@ impl RunCmd for PushCmd {
         if opts.delete {
             let (scheme, host) = get_scheme_and_host_from_repo(&repo)?;
 
-            check_remote_version(scheme, host).await?;
+            check_remote_version(&scheme, &host).await?;
 
             api::client::branches::delete_remote(&repo, &opts.remote, &opts.branch).await?;
             println!("Deleted remote branch: {}/{}", opts.remote, opts.branch);
@@ -111,8 +111,8 @@ impl RunCmd for PushCmd {
             let (scheme, host) = get_scheme_and_host_from_repo(&repo)?;
 
             check_repo_migration_needed(&repo)?;
-            check_remote_version_blocking(scheme.clone(), host.clone()).await?;
-            check_remote_version(scheme, host).await?;
+            check_remote_version_blocking(&scheme, &host).await?;
+            check_remote_version(&scheme, &host).await?;
 
             match repositories::push::push_remote_branch(&repo, &opts).await {
                 Ok(_) => Ok(()),
@@ -120,7 +120,7 @@ impl RunCmd for PushCmd {
                     let msg = format!(
                         "{branch}\nMake sure you are on the correct branch and have committed your changes."
                     );
-                    Err(OxenError::basic_str(msg))
+                    Err(OxenError::basic_str(&msg))
                 }
                 Err(e) => Err(e),
             }

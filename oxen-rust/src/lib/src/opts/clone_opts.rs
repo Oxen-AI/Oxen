@@ -21,25 +21,21 @@ pub struct CloneOpts {
 
 impl CloneOpts {
     /// Sets `branch` to `DEFAULT_BRANCH_NAME` and defaults `all` to `false`
-    pub fn new(url: impl AsRef<str>, dst: impl AsRef<Path>) -> CloneOpts {
+    pub fn new(url: &str, dst: &Path) -> CloneOpts {
         CloneOpts {
-            url: url.as_ref().to_string(),
-            dst: dst.as_ref().to_path_buf(),
+            url: url.to_string(),
+            dst: dst.to_path_buf(),
             fetch_opts: FetchOpts::new(),
-            storage_opts: StorageOpts::from_path(dst.as_ref(), true),
+            storage_opts: StorageOpts::from_path(dst, true),
             is_vfs: false,
             is_remote: false,
         }
     }
 
-    pub fn from_branch(
-        url: impl AsRef<str>,
-        dst: impl AsRef<Path>,
-        branch: impl AsRef<str>,
-    ) -> CloneOpts {
+    pub fn from_branch(url: &str, dst: &Path, branch: &str) -> CloneOpts {
         CloneOpts {
-            fetch_opts: FetchOpts::from_branch(branch.as_ref()),
-            storage_opts: StorageOpts::from_path(dst.as_ref(), true),
+            fetch_opts: FetchOpts::from_branch(branch),
+            storage_opts: StorageOpts::from_path(dst, true),
             is_vfs: false,
             is_remote: false,
             ..CloneOpts::new(url, dst)

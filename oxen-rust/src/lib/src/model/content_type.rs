@@ -36,7 +36,7 @@ impl ContentType {
             "application/json" => Ok(ContentType::Json),
             "text/csv" => Ok(ContentType::Csv),
             "text/plain" => Ok(ContentType::Text),
-            _ => Err(OxenError::basic_str(format!(
+            _ => Err(OxenError::basic_str(&format!(
                 "Unsupported content-type: {s}"
             ))),
         }

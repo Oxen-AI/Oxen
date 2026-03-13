@@ -55,43 +55,38 @@ pub async fn get_by_remote_repo(
 }
 
 /// Attempts to find a repo by name on the remote "origin". For example ox/CatDog
-pub async fn get_by_name_default(
-    name: impl AsRef<str>,
-) -> Result<Option<RemoteRepository>, OxenError> {
+pub async fn get_by_name_default(name: &str) -> Result<Option<RemoteRepository>, OxenError> {
     get_by_name_host_and_remote(name, DEFAULT_HOST, DEFAULT_SCHEME, DEFAULT_REMOTE_NAME).await
 }
 
 pub async fn get_by_name_and_host(
-    name: impl AsRef<str>,
-    host: impl AsRef<str>,
-    scheme: impl AsRef<str>,
+    name: &str,
+    host: &str,
+    scheme: &str,
 ) -> Result<Option<RemoteRepository>, OxenError> {
     get_by_name_host_and_remote(name, host, scheme, DEFAULT_REMOTE_NAME).await
 }
 
 pub async fn get_by_name_host_and_scheme(
-    name: impl AsRef<str>,
-    host: impl AsRef<str>,
-    scheme: impl AsRef<str>,
+    name: &str,
+    host: &str,
+    scheme: &str,
 ) -> Result<Option<RemoteRepository>, OxenError> {
-    let name = name.as_ref();
-    let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme.as_ref());
+    let url = api::endpoint::remote_url_from_name_and_scheme(host, name, scheme);
     log::debug!("get_by_name_host_and_scheme({name}) remote url: {url}");
     get_by_url(&url).await
 }
 
 pub async fn get_by_name_host_and_remote(
-    name: impl AsRef<str>,
-    host: impl AsRef<str>,
-    scheme: impl AsRef<str>,
-    remote: impl AsRef<str>,
+    name: &str,
+    host: &str,
+    scheme: &str,
+    remote: &str,
 ) -> Result<Option<RemoteRepository>, OxenError> {
-    let name = name.as_ref();
-    let scheme = scheme.as_ref();
-    let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme);
+    let url = api::endpoint::remote_url_from_name_and_scheme(host, name, scheme);
     log::debug!("get_by_name_host_and_remote({name}) remote url: {url}");
     let remote = Remote {
-        name: String::from(remote.as_ref()),
+        name: String::from(remote),
         url,
     };
     get_by_remote(&remote).await
@@ -129,7 +124,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
         Ok(j_res) => Ok(Some(RemoteRepository::from_view(&j_res.repository, remote))),
         Err(err) => {
             log::debug!("Err: {err}");
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "get_by_remote Could not deserialize repository [{url}]"
             )))
         }
@@ -159,7 +154,7 @@ pub async fn get_repo_data_by_remote(
                 Ok(j_res) => Ok(Some(j_res.repository)),
                 Err(err) => {
                     log::debug!("Err: {err}");
-                    Err(OxenError::basic_str(format!(
+                    Err(OxenError::basic_str(&format!(
                         "api::repositories::get_repo_data_by_remote() Could not deserialize repository [{url}]"
                     )))
                 }
@@ -167,7 +162,7 @@ pub async fn get_repo_data_by_remote(
         }
         Err(err) => {
             log::error!("Failed to get remote url {url}\n{err:?}");
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "api::repositories::get_repo_data_by_remote() Request failed at url {url}"
             )))
         }
@@ -213,7 +208,7 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
             let err = format!(
                 "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -221,7 +216,7 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
 pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
     let host = repo_new.host();
     let scheme = repo_new.scheme();
-    let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
+    let url = api::endpoint::url_from_host_and_scheme(&host, "", &scheme);
 
     // convert repo_new to json with serde
     log::debug!("Create remote: {url}\n{repo_new:?}");
@@ -252,14 +247,14 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
                     "Could not create or find repository [{}]: {err}\n{body}",
                     repo_new.repo_id()
                 );
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(&err))
             }
         }
     } else {
         let err = format!(
             "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
         );
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }
 
@@ -271,7 +266,7 @@ pub async fn create_repo_with_files(
 ) -> Result<RemoteRepository, OxenError> {
     let host = repo_new.host();
     let scheme = repo_new.scheme();
-    let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
+    let url = api::endpoint::url_from_host_and_scheme(&host, "", &scheme);
 
     let new_repo_json = json!({
         "name": repo_new.name,
@@ -319,7 +314,7 @@ pub async fn create_repo_with_files(
                 "Could not create or find repository [{}]: {err}\n{body}",
                 repo_new.repo_id()
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -360,7 +355,7 @@ pub async fn create_from_local(
                 "Could not create or find repository [{}]: {err}\n{body}",
                 repo_new.repo_id()
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -374,7 +369,7 @@ pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, Oxen
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(val) => Ok(val),
-            Err(_) => Err(OxenError::basic_str(format!(
+            Err(_) => Err(OxenError::basic_str(&format!(
                 "Could not delete repository \n\n{body}"
             ))),
         }
@@ -392,7 +387,7 @@ pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(val) => Ok(val),
-            Err(_) => Err(OxenError::basic_str(format!(
+            Err(_) => Err(OxenError::basic_str(&format!(
                 "Could not delete repository \n\n{body}"
             ))),
         }
@@ -441,7 +436,7 @@ pub async fn transfer_namespace(
             }
             Err(err) => {
                 let err = format!("Could not transfer repository: {err}\n{body}");
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(&err))
             }
         }
     } else {
@@ -571,6 +566,7 @@ async fn action_hook(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::path::PathBuf;
 
     use crate::api;
@@ -664,7 +660,7 @@ mod tests {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
             let repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
+                RepoNew::from_namespace_name_host(namespace, &name, &test::test_host(), None);
             let repository =
                 api::client::repositories::create_from_local(&local_repo, repo_new).await?;
             println!("got repository: {repository:?}");
@@ -739,7 +735,7 @@ mod tests {
             };
 
             let mut repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
+                RepoNew::from_namespace_name_host(namespace, &name, &test::test_host(), None);
             repo_new.scheme = Some("http".to_string());
 
             let repository = api::client::repositories::create_repo_with_files(
@@ -753,17 +749,27 @@ mod tests {
             assert_eq!(repository.name, name);
 
             // List the files in the repo
-            let readme =
-                api::client::entries::get_entry(&repository, "README", DEFAULT_BRANCH_NAME)
-                    .await?
-                    .unwrap();
-            let csv = api::client::entries::get_entry(&repository, "data.csv", DEFAULT_BRANCH_NAME)
-                .await?
-                .unwrap();
-            let png =
-                api::client::entries::get_entry(&repository, "image.png", DEFAULT_BRANCH_NAME)
-                    .await?
-                    .unwrap();
+            let readme = api::client::entries::get_entry(
+                &repository,
+                Path::new("README"),
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?
+            .unwrap();
+            let csv = api::client::entries::get_entry(
+                &repository,
+                Path::new("data.csv"),
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?
+            .unwrap();
+            let png = api::client::entries::get_entry(
+                &repository,
+                Path::new("image.png"),
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?
+            .unwrap();
 
             assert_eq!(readme.filename(), "README");
             assert_eq!(csv.filename(), "data.csv");

@@ -13,10 +13,9 @@ use crate::model::diff::{AddRemoveModifyCounts, DiffResult, TabularDiff};
 use crate::repositories;
 use std::path::Path;
 
-pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult, OxenError> {
+pub fn diff(workspace: &Workspace, path: &Path) -> Result<DiffResult, OxenError> {
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
-    let path = path.as_ref();
     // Get commit for the branch head
     log::debug!(
         "diff_workspace_df {:?} got repo at path {:?}",
@@ -35,7 +34,7 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let (diff_df, schema) = with_df_db_manager(db_path, |manager| {
+    let (diff_df, schema) = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let diff_df = workspace_df_db::df_diff(conn)?;
             let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
@@ -79,7 +78,7 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, OxenError>
     log::debug!("checking dataset is indexed for {path:?}");
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("getting conn at path {db_path:?}");
-    let table_exists = with_df_db_manager(db_path, |manager| {
+    let table_exists = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| df_db::table_exists(conn, TABLE_NAME))
     })?;
     log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");

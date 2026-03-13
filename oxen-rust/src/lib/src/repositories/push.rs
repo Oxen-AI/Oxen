@@ -83,6 +83,7 @@ mod tests {
     use crate::view::entries::EMetadataEntry;
     use futures::future;
     use std::collections::HashSet;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -98,7 +99,7 @@ mod tests {
 
             // Write a README.md file
             let readme_path = repo.path.join("README.md");
-            let readme_path = test::write_txt_file_to_path(readme_path, "Ready to train 🏋️‍♂️")?;
+            let readme_path = test::write_txt_file_to_path(&readme_path, "Ready to train 🏋️‍♂️")?;
             repositories::add(&repo, &readme_path).await?;
 
             // Commit the train dir
@@ -116,17 +117,27 @@ mod tests {
 
             let page_num = 1;
             let page_size = num_files + 10;
-            let entries =
-                api::client::dir::list(&remote_repo, &commit.id, "train", page_num, page_size)
-                    .await?;
+            let entries = api::client::dir::list(
+                &remote_repo,
+                &commit.id,
+                Path::new("train"),
+                page_num,
+                page_size,
+            )
+            .await?;
             assert_eq!(entries.total_entries, num_files);
             assert_eq!(entries.entries.len(), num_files);
 
             // Make sure we can download the file
             let readme_path = repo.path.join("README.md");
             let download_path = repo.path.join("README_2.md");
-            api::client::entries::download_entry(&remote_repo, "README.md", &download_path, "main")
-                .await?;
+            api::client::entries::download_entry(
+                &remote_repo,
+                Path::new("README.md"),
+                &download_path,
+                "main",
+            )
+            .await?;
 
             // Make sure the file is the same
             let readme_1_contents = util::fs::read_from_path(&download_path)?;
@@ -171,12 +182,22 @@ mod tests {
 
             let page_num = 1;
             let page_size = num_train_files + num_test_files + 5;
-            let train_entries =
-                api::client::dir::list(&remote_repo, &commit.id, "/train", page_num, page_size)
-                    .await?;
-            let test_entries =
-                api::client::dir::list(&remote_repo, &commit.id, "/test", page_num, page_size)
-                    .await?;
+            let train_entries = api::client::dir::list(
+                &remote_repo,
+                &commit.id,
+                Path::new("/train"),
+                page_num,
+                page_size,
+            )
+            .await?;
+            let test_entries = api::client::dir::list(
+                &remote_repo,
+                &commit.id,
+                Path::new("/test"),
+                page_num,
+                page_size,
+            )
+            .await?;
             assert_eq!(
                 train_entries.total_entries + test_entries.total_entries,
                 num_train_files + num_test_files
@@ -224,14 +245,20 @@ mod tests {
 
             let page_num = 1;
             let entries =
-                api::client::dir::list(&remote_repo, &commit.id, ".", page_num, 10).await?;
+                api::client::dir::list(&remote_repo, &commit.id, Path::new("."), page_num, 10)
+                    .await?;
             assert_eq!(entries.total_entries, 2);
             assert_eq!(entries.entries.len(), 2);
 
             let page_size = num_test_files + 10;
-            let entries =
-                api::client::dir::list(&remote_repo, &commit.id, "test", page_num, page_size)
-                    .await?;
+            let entries = api::client::dir::list(
+                &remote_repo,
+                &commit.id,
+                Path::new("test"),
+                page_num,
+                page_size,
+            )
+            .await?;
             assert_eq!(entries.total_entries, num_test_files);
             assert_eq!(entries.entries.len(), num_test_files);
 
@@ -269,7 +296,7 @@ mod tests {
 
             // Create README
             let readme_path = repo.path.join("README.md");
-            let readme_path = test::write_txt_file_to_path(readme_path, "README")?;
+            let readme_path = test::write_txt_file_to_path(&readme_path, "README")?;
             repositories::add(&repo, &readme_path).await?;
             let first_commit_id = repositories::commit(&repo, "Adding README")?;
 
@@ -283,14 +310,14 @@ mod tests {
                 let dir_path = data_dir.join(format!("{i}"));
                 util::fs::create_dir_all(&dir_path)?;
                 let file_path = dir_path.join("file.txt");
-                let file_path = test::write_txt_file_to_path(file_path, format!("file -> {i}"))?;
+                let file_path = test::write_txt_file_to_path(&file_path, &format!("file -> {i}"))?;
                 repositories::add(&repo, &file_path).await?;
                 repositories::commit(&repo, &format!("Adding file -> data/{i}/file.txt"))?;
             }
 
             // modify the 3rd file
             let file_path = data_dir.join("2").join("file.txt");
-            let file_path = test::write_txt_file_to_path(file_path, "modified file")?;
+            let file_path = test::write_txt_file_to_path(&file_path, "modified file")?;
             repositories::add(&repo, &file_path).await?;
             let last_commit = repositories::commit(&repo, "Modifying file again")?;
 
@@ -307,7 +334,8 @@ mod tests {
             // Make sure we get the correct latest commit messages
             let page_num = 1;
             let entries =
-                api::client::dir::list(&remote_repo, &last_commit.id, ".", page_num, 10).await?;
+                api::client::dir::list(&remote_repo, &last_commit.id, Path::new("."), page_num, 10)
+                    .await?;
             assert_eq!(entries.total_entries, 2);
             assert_eq!(entries.entries.len(), 2);
 
@@ -333,9 +361,14 @@ mod tests {
 
             // Check the latest commit in a subdir
             let page_num = 1;
-            let entries =
-                api::client::dir::list(&remote_repo, &last_commit.id, "data/3", page_num, 10)
-                    .await?;
+            let entries = api::client::dir::list(
+                &remote_repo,
+                &last_commit.id,
+                Path::new("data/3"),
+                page_num,
+                10,
+            )
+            .await?;
             assert_eq!(entries.total_entries, 1);
             assert_eq!(entries.entries.len(), 1);
 
@@ -385,8 +418,14 @@ mod tests {
 
             let page_num = 1;
             let page_size = num_files + 10;
-            let entries =
-                api::client::dir::list(&remote_repo, &commit.id, ".", page_num, page_size).await?;
+            let entries = api::client::dir::list(
+                &remote_repo,
+                &commit.id,
+                Path::new("."),
+                page_num,
+                page_size,
+            )
+            .await?;
             assert_eq!(entries.total_entries, num_files);
             assert_eq!(entries.entries.len(), num_files);
 
@@ -480,7 +519,7 @@ mod tests {
                     // Add to the first repo, after we have the second repo cloned
                     let new_file = "new_file.txt";
                     let new_file_path = first_cloned_repo.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+                    let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file")?;
                     repositories::add(&first_cloned_repo, &new_file_path).await?;
                     repositories::commit(&first_cloned_repo, "Adding first file path.")?;
                     repositories::push(&first_cloned_repo).await?;
@@ -489,13 +528,13 @@ mod tests {
                     // Adding two commits to have a longer history that also should fail
                     let new_file = "new_file_2.txt";
                     let new_file_path = second_cloned_repo.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 2")?;
+                    let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file 2")?;
                     repositories::add(&second_cloned_repo, &new_file_path).await?;
                     repositories::commit(&second_cloned_repo, "Adding second file path.")?;
 
                     let new_file = "new_file_3.txt";
                     let new_file_path = second_cloned_repo.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 3")?;
+                    let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file 3")?;
                     repositories::add(&second_cloned_repo, &new_file_path).await?;
                     repositories::commit(&second_cloned_repo, "Adding third file path.")?;
 
@@ -528,7 +567,7 @@ mod tests {
                 // Add to the first repo
                 let new_file = "new_file.txt";
                 let new_file_path = repo_1.path.join(new_file);
-                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+                let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file")?;
                 repositories::add(&repo_1, &new_file_path).await?;
                 repositories::commit(&repo_1, "Adding first file path.")?;
                 // Set/create the proper remote
@@ -540,13 +579,13 @@ mod tests {
                 // Adding two commits to have a longer history that also should fail
                 let new_file = "new_file_2.txt";
                 let new_file_path = repo_2.path.join(new_file);
-                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 2")?;
+                let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file 2")?;
                 repositories::add(&repo_2, &new_file_path).await?;
                 repositories::commit(&repo_2, "Adding second file path.")?;
 
                 let new_file = "new_file_3.txt";
                 let new_file_path = repo_2.path.join(new_file);
-                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 3")?;
+                let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file 3")?;
                 repositories::add(&repo_2, &new_file_path).await?;
                 repositories::commit(&repo_2, "Adding third file path.")?;
 
@@ -605,7 +644,7 @@ mod tests {
             // New commit
             let new_file = "new_file.txt";
             let new_file_path = local_repo.path.join(new_file);
-            let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+            let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file")?;
             repositories::add(&local_repo, &new_file_path).await?;
             repositories::commit(&local_repo, "Adding first file path.")?;
 
@@ -671,7 +710,7 @@ mod tests {
                     // Add to the first repo, after we have the second repo cloned
                     let new_file = "new_file.txt";
                     let new_file_path = first_cloned_repo.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+                    let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file")?;
                     repositories::add(&first_cloned_repo, &new_file_path).await?;
                     repositories::commit(&first_cloned_repo, "Adding first file path.")?;
                     repositories::push(&first_cloned_repo).await?;
@@ -680,13 +719,13 @@ mod tests {
                     // Adding two commits to have a longer history that also should fail
                     let new_file = "new_file_2.txt";
                     let new_file_path = second_cloned_repo.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 2")?;
+                    let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file 2")?;
                     repositories::add(&second_cloned_repo, &new_file_path).await?;
                     repositories::commit(&second_cloned_repo, "Adding second file path.")?;
 
                     let new_file = "new_file_3.txt";
                     let new_file_path = second_cloned_repo.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 3")?;
+                    let new_file_path = test::write_txt_file_to_path(&new_file_path, "new file 3")?;
                     repositories::add(&second_cloned_repo, &new_file_path).await?;
                     repositories::commit(&second_cloned_repo, "Adding third file path.")?;
 
@@ -741,7 +780,7 @@ mod tests {
                         let new_file = "new_file.txt";
                         let new_file_path = first_cloned_repo.path.join(new_file);
                         let new_file_path =
-                            test::write_txt_file_to_path(new_file_path, "new file")?;
+                            test::write_txt_file_to_path(&new_file_path, "new file")?;
                         repositories::add(&first_cloned_repo, &new_file_path).await?;
                         repositories::commit(&first_cloned_repo, "Adding first file path.")?;
                         repositories::push(&first_cloned_repo).await?;
@@ -758,14 +797,14 @@ mod tests {
                         let new_file = "new_file_2.txt";
                         let new_file_path = second_cloned_repo.path.join(new_file);
                         let new_file_path =
-                            test::write_txt_file_to_path(new_file_path, "new file 2")?;
+                            test::write_txt_file_to_path(&new_file_path, "new file 2")?;
                         repositories::add(&second_cloned_repo, &new_file_path).await?;
                         repositories::commit(&second_cloned_repo, "Adding second file path.")?;
 
                         let new_file = "new_file_3.txt";
                         let new_file_path = second_cloned_repo.path.join(new_file);
                         let new_file_path =
-                            test::write_txt_file_to_path(new_file_path, "new file 3")?;
+                            test::write_txt_file_to_path(&new_file_path, "new file 3")?;
                         repositories::add(&second_cloned_repo, &new_file_path).await?;
                         repositories::commit(&second_cloned_repo, "Adding third file path.")?;
 
@@ -825,7 +864,7 @@ mod tests {
                     let mod_file = "README.md";
                     let a_mod_file_path = user_a_repo.path.join(mod_file);
                     let a_mod_file_path =
-                        test::write_txt_file_to_path(a_mod_file_path, "I am the README now")?;
+                        test::write_txt_file_to_path(&a_mod_file_path, "I am the README now")?;
                     repositories::add(&user_a_repo, &a_mod_file_path).await?;
                     let commit_a =
                         repositories::commit(&user_a_repo, "User A modifying the README.")?;
@@ -835,7 +874,7 @@ mod tests {
                     // User B tries to modify the same README.md and push
                     let b_mod_file_path = user_b_repo.path.join(mod_file);
                     let b_mod_file_path =
-                        test::write_txt_file_to_path(b_mod_file_path, "I be the README now.")?;
+                        test::write_txt_file_to_path(&b_mod_file_path, "I be the README now.")?;
                     repositories::add(&user_b_repo, &b_mod_file_path).await?;
                     let commit_b =
                         repositories::commit(&user_b_repo, "User B modifying the README.")?;
@@ -859,7 +898,7 @@ mod tests {
                     // User B resolves conflicts
                     let b_mod_file_path = user_b_repo.path.join(mod_file);
                     let b_mod_file_path = test::write_txt_file_to_path(
-                        b_mod_file_path,
+                        &b_mod_file_path,
                         "No for real. I be the README now.",
                     )?;
                     println!("passed write_txt_file_to_path");
@@ -1038,7 +1077,7 @@ mod tests {
                     log::debug!("b head before is {head:?}");
 
                     let maybe_b_entry = pre_b.get_by_path(
-                        PathBuf::from("annotations")
+                        &PathBuf::from("annotations")
                             .join("train")
                             .join("annotations.txt"),
                     )?;
@@ -1052,7 +1091,7 @@ mod tests {
                     let post_b =
                         repositories::tree::get_root_with_children(&user_b_repo, &head)?.unwrap();
                     let maybe_b_entry = post_b.get_by_path(
-                        PathBuf::from("annotations")
+                        &PathBuf::from("annotations")
                             .join("train")
                             .join("annotations.txt"),
                     )?;
@@ -1096,11 +1135,11 @@ mod tests {
             // Move the README to a new file name
             let train_images = local_repo.path.join("train");
             let new_path = local_repo.path.join("images").join("train");
-            util::fs::create_dir_all(local_repo.path.join("images"))?;
+            util::fs::create_dir_all(&local_repo.path.join("images"))?;
             util::fs::rename(&train_images, &new_path)?;
 
-            repositories::add(&local_repo, new_path).await?;
-            let mut rm_opts = RmOpts::from_path("train");
+            repositories::add(&local_repo, &new_path).await?;
+            let mut rm_opts = RmOpts::from_path(Path::new("train"));
             rm_opts.recursive = true;
             repositories::rm(&local_repo, &rm_opts)?;
             let commit =
@@ -1128,8 +1167,8 @@ mod tests {
 
             // Add a single new file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&local_repo, new_file).await?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
+            repositories::add(&local_repo, &new_file).await?;
             let commit = repositories::commit(&local_repo, "Added a new file")?;
             repositories::push(&local_repo).await?;
 
@@ -1156,8 +1195,8 @@ mod tests {
             let new_path = local_repo.path.join("README2.md");
             util::fs::rename(&readme_path, &new_path)?;
 
-            repositories::add(&local_repo, new_path).await?;
-            let rm_opts = RmOpts::from_path("README.md");
+            repositories::add(&local_repo, &new_path).await?;
+            let rm_opts = RmOpts::from_path(Path::new("README.md"));
             repositories::rm(&local_repo, &rm_opts)?;
             let commit = repositories::commit(&local_repo, "Moved the readme")?;
             repositories::push(&local_repo).await?;
@@ -1190,7 +1229,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from(".")]);
                 opts.fetch_opts.depth = Some(1);
                 let local_repo = repositories::clone::clone(&opts).await?;
@@ -1237,7 +1276,7 @@ A: Oxen.ai is a great tool for this! It can handle any size dataset, and is opti
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths =
                     Some(vec![PathBuf::from("annotations").join("test")]);
                 let local_repo = repositories::clone::clone(&opts).await?;
@@ -1311,7 +1350,7 @@ A: Checkout Oxen.ai
                     .join("classification")
                     .join("new_data.tsv");
                 let new_file_path = user_a_repo.path.join(&new_file);
-                let new_file_path = test::write_txt_file_to_path(new_file_path, "image\tlabel")?;
+                let new_file_path = test::write_txt_file_to_path(&new_file_path, "image\tlabel")?;
                 repositories::add(&user_a_repo, &new_file_path).await?;
                 let commit =
                     repositories::commit(&user_a_repo, "Adding nlp/classification/new_data.tsv")?;
@@ -1379,7 +1418,7 @@ A: Checkout Oxen.ai
                     .join("new_partial_data_1.tsv");
                 let new_file_path_1 = user_a_repo.path.join(&new_file_1);
                 let new_file_path_1 =
-                    test::write_txt_file_to_path(new_file_path_1, "image\tlabel1")?;
+                    test::write_txt_file_to_path(&new_file_path_1, "image\tlabel1")?;
                 repositories::add(&user_a_repo, &new_file_path_1).await?;
 
                 let new_file_2 = PathBuf::from("nlp")
@@ -1387,7 +1426,7 @@ A: Checkout Oxen.ai
                     .join("new_partial_data_2.tsv");
                 let new_file_path_2 = user_a_repo.path.join(&new_file_2);
                 let new_file_path_2 =
-                    test::write_txt_file_to_path(new_file_path_2, "image\tlabel2")?;
+                    test::write_txt_file_to_path(&new_file_path_2, "image\tlabel2")?;
                 repositories::add(&user_a_repo, &new_file_path_2).await?;
 
                 // Modify an existing file
@@ -1395,7 +1434,7 @@ A: Checkout Oxen.ai
                     .path
                     .join("nlp/classification/existing_file.tsv");
                 let modified_file_path =
-                    test::write_txt_file_to_path(existing_file_path, "image\tmodified_label")?;
+                    test::write_txt_file_to_path(&existing_file_path, "image\tmodified_label")?;
                 repositories::add(&user_a_repo, &modified_file_path).await?;
 
                 // Commit changes
@@ -1549,7 +1588,7 @@ A: Checkout Oxen.ai
                 // Download the file from the remote repository
                 repositories::download(
                     &remote_repo_clone,
-                    "exact_chunk_size_file.bin",
+                    Path::new("exact_chunk_size_file.bin"),
                     &download_path,
                     &branch.name,
                 )
@@ -1598,7 +1637,7 @@ A: Checkout Oxen.ai
             let dir1_path = original_repo.path.join("dir1");
             util::fs::create_dir_all(&dir1_path)?;
             let file1_path = dir1_path.join("file1.txt");
-            util::fs::write(&file1_path, "Original content")?;
+            util::fs::write(&file1_path, "Original content".as_bytes())?;
             repositories::add(&original_repo, &file1_path).await?;
             repositories::commit(&original_repo, "Add dir1/file1.txt")?;
             repositories::push(&original_repo).await?;
@@ -1611,14 +1650,17 @@ A: Checkout Oxen.ai
 
                 // Modify dir1/file1.txt in the clone
                 let clone_file1_path = clone_repo.path.join("dir1").join("file1.txt");
-                util::fs::write(&clone_file1_path, "Clone modified content")?;
+                util::fs::write(&clone_file1_path, "Clone modified content".as_bytes())?;
                 repositories::add(&clone_repo, &clone_file1_path).await?;
                 repositories::commit(&clone_repo, "Modify file1.txt in clone")?;
                 repositories::push(&clone_repo).await?;
 
                 // Modify dir1/file1.txt in the original repo (different content)
                 let original_file1_path = original_repo.path.join("dir1").join("file1.txt");
-                util::fs::write(&original_file1_path, "Original repo modified content")?;
+                util::fs::write(
+                    &original_file1_path,
+                    "Original repo modified content".as_bytes(),
+                )?;
                 repositories::add(&original_repo, &original_file1_path).await?;
                 repositories::commit(&original_repo, "Modify file1.txt in original")?;
 
@@ -1664,7 +1706,7 @@ A: Checkout Oxen.ai
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             // Add a single new file
             let new_file = local_repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
+            util::fs::write(&new_file, "I am a new file".as_bytes())?;
             repositories::add(&local_repo, &new_file).await?;
             let commit = repositories::commit(&local_repo, "Added a new file")?;
 

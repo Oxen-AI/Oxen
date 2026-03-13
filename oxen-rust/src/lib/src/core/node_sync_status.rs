@@ -38,7 +38,7 @@ pub fn mark_node_as_synced(
             log::debug!("Wrote is synced file: {is_synced_path:?}");
             Ok(())
         }
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "Could not write is_synced file: {err}"
         ))),
     }

@@ -15,13 +15,13 @@ pub async fn get_remote_version(scheme: &str, host: &str) -> Result<String, Oxen
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(val) => Ok(val.oxen_version.unwrap()),
-            Err(_) => Err(OxenError::basic_str(format!(
+            Err(_) => Err(OxenError::basic_str(&format!(
                 "api::version::get_remote_version {url} Err parsing response \n\n{body}"
             ))),
         }
     } else {
         let err = format!("api::version::get_remote_version Err request failed: {url}");
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }
 
@@ -37,12 +37,12 @@ pub async fn get_min_oxen_version(scheme: &str, host: &str) -> Result<String, Ox
         let response: Result<OxenVersionResponse, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(val) => Ok(val.version),
-            Err(_) => Err(OxenError::basic_str(format!(
+            Err(_) => Err(OxenError::basic_str(&format!(
                 "api::version::get_min_oxen_version {url} Err parsing response \n\n{body}"
             ))),
         }
     } else {
         let err = format!("api::version::get_min_oxen_version Err request failed: {url}");
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }

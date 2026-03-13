@@ -89,7 +89,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let commits = repositories::commits::list(&repo).unwrap_or_default();
     Ok(HttpResponse::Ok().json(ListCommitResponse::success(commits)))
@@ -122,7 +122,7 @@ pub async fn history(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource_param = path_param(&req, "resource")?;
 
     let pagination = PaginateOpts {
@@ -208,7 +208,7 @@ pub async fn list_all(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let pagination = PaginateOpts {
         page_num: query.page.unwrap_or(constants::DEFAULT_PAGE_NUM),
@@ -249,7 +249,7 @@ pub async fn list_missing(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     // Parse commit ids from a body and return the missing ids
     let data: Result<MerkleHashes, serde_json::Error> = serde_json::from_str(&body);
@@ -298,7 +298,7 @@ pub async fn list_missing_files(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let base_commit = match &query.base {
         Some(base) => repositories::commits::get_by_id(&repo, base)?,
@@ -351,7 +351,7 @@ pub async fn mark_commits_as_synced(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -397,7 +397,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let commit_id = path_param(&req, "commit_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let commit = repositories::commits::get_by_id(&repo, &commit_id)?
         .ok_or(OxenError::revision_not_found(commit_id.into()))?;
 
@@ -428,7 +428,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let commit_or_branch = path_param(&req, "commit_or_branch")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
         .ok_or(OxenError::revision_not_found(commit_or_branch.into()))?;
     let parents = repositories::commits::list_from(&repository, &commit.id)?;
@@ -459,7 +459,7 @@ pub async fn download_commits_db(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let buffer = compress_commits_db(&repository)?;
     Ok(HttpResponse::Ok().body(buffer))
@@ -512,7 +512,7 @@ pub async fn download_dir_hashes_db(
     let name = path_param(&req, "repo_name")?;
     // base_head is the base and head commit id separated by ..
     let base_head = path_param(&req, "base_head")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Let user pass in base..head to download a range of commits
     // or we just get all the commits from the base commit to the first commit
@@ -560,7 +560,7 @@ pub async fn download_commit_entries_db(
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let commit_or_branch = path_param(&req, "commit_or_branch")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
         .ok_or(OxenError::revision_not_found(commit_or_branch.into()))?;
@@ -684,7 +684,7 @@ pub async fn create(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let new_commit: Commit = match serde_json::from_str(&body) {
         Ok(commit) => commit,
@@ -705,7 +705,7 @@ pub async fn create(
         };
 
     // Create Commit from uri params
-    match repositories::commits::create_empty_commit(&repository, bn.branch_name, &new_commit) {
+    match repositories::commits::create_empty_commit(&repository, &bn.branch_name, &new_commit) {
         Ok(commit) => Ok(HttpResponse::Ok().json(CommitResponse {
             status: StatusMessage::resource_created(),
             commit: commit.to_owned(),
@@ -750,7 +750,7 @@ pub async fn upload_chunk(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, name)?;
+    let repo = get_repo(&app_data.path, &namespace, &name)?;
 
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let id = query.hash.clone();
@@ -1141,7 +1141,7 @@ pub async fn upload_tree(
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let client_head_id = path_param(&req, "commit_id")?;
-    let repo = get_repo(&app_data.path, namespace, name)?;
+    let repo = get_repo(&app_data.path, &namespace, &name)?;
     // Get head commit on sever repo
     let server_head_commit = repositories::commits::head_commit(&repo)?;
 
@@ -1190,7 +1190,7 @@ pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, name)?;
+    let repo = get_repo(&app_data.path, &namespace, &name)?;
 
     let root = repositories::commits::root_commit_maybe(&repo)?;
 
@@ -1266,7 +1266,7 @@ async fn unpack_entry_tarball_async(
         let mut file = entry?;
         let path = file
             .path()
-            .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Invalid path in archive: {e}")))?;
 
         if path.starts_with("versions") && path.to_string_lossy().contains("files") {
             // Handle version files with streaming
@@ -1283,7 +1283,7 @@ async fn unpack_entry_tarball_async(
             // For non-version files, unpack to hidden dir
             file.unpack_in(&hidden_dir)
                 .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
+                .map_err(|e| OxenError::basic_str(&format!("Failed to unpack file: {e}")))?;
         }
     }
 
@@ -1313,7 +1313,7 @@ fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
         }
     }
 
-    Err(OxenError::basic_str(format!(
+    Err(OxenError::basic_str(&format!(
         "Could not get hash for file: {path:?}"
     )))
 }

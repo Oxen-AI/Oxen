@@ -44,7 +44,7 @@ impl RunCmd for DbCmd {
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
                 eprintln!("Unknown schema subcommand {name}");
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Unknown schema subcommand {name}"
                 )));
             };

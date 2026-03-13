@@ -11,7 +11,7 @@ pub async fn checkout(repo: &mut LocalRepository, name: &str) -> Result<(), Oxen
     match repositories::checkout(repo, name).await {
         Ok(Some(branch)) => {
             // Change current workspace name
-            repo.set_workspace(branch.name.clone())?;
+            repo.set_workspace(&branch.name.clone())?;
             repo.save()?;
         }
         // TODO: This should create a workspace on this commit
@@ -96,11 +96,11 @@ pub async fn create_checkout_branch(
 
     // Create the remote branch from the commit
     let head_commit = repositories::commits::head_commit(repo)?;
-    api::client::branches::create_from_commit(&remote_repo, &branch_name, &head_commit).await?;
+    api::client::branches::create_from_commit(&remote_repo, branch_name, &head_commit).await?;
 
     let workspace = api::client::workspaces::create_with_path(
         &remote_repo,
-        &branch_name,
+        branch_name,
         &workspace_id,
         Path::new("/"),
         Some(workspace_name.clone()),
@@ -122,7 +122,7 @@ pub async fn create_checkout_branch(
                 workspace_id.clone()
             );
             println!("{}", err_msg.yellow().bold());
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Error: Remote-mode repo already exists for workspace {workspace_id}"
             )));
         }
@@ -169,7 +169,7 @@ mod tests {
                 let remote_repo_copy = remote_repo.clone();
 
                 test::run_empty_dir_test_async(|dir| async move {
-                    let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                    let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                     opts.is_remote = true;
                     let mut cloned_repo = repositories::clone(&opts).await?;
                     assert!(cloned_repo.is_remote_mode());
@@ -201,7 +201,7 @@ mod tests {
 
             test::run_empty_dir_test_async(|dir| async move {
                 // Clone repo in remote mode
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -248,7 +248,7 @@ mod tests {
 
             test::run_empty_dir_test_async(|dir| async move {
                 // Clone repo in remote mode
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -288,7 +288,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -370,7 +370,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -457,7 +457,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
@@ -530,7 +530,7 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let mut cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());

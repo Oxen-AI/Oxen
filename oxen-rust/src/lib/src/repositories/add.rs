@@ -36,20 +36,20 @@ use std::path::Path;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
+pub async fn add(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
     add_all_with_version(repo, vec![path], repo.min_version()).await
 }
 
-pub async fn add_all<T: AsRef<Path>>(
+pub async fn add_all<'a>(
     repo: &LocalRepository,
-    paths: impl IntoIterator<Item = T>,
+    paths: impl IntoIterator<Item = &'a Path>,
 ) -> Result<(), OxenError> {
     add_all_with_version(repo, paths, repo.min_version()).await
 }
 
-pub async fn add_all_with_version<T: AsRef<Path>>(
+pub async fn add_all_with_version<'a>(
     repo: &LocalRepository,
-    paths: impl IntoIterator<Item = T>,
+    paths: impl IntoIterator<Item = &'a Path>,
     version: MinOxenVersion,
 ) -> Result<(), OxenError> {
     match version {
@@ -76,7 +76,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from("")]);
                 opts.fetch_opts.depth = Some(1);
                 let local_repo = repositories::clone::clone(&opts).await?;
@@ -111,7 +111,7 @@ mod tests {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths =
                     Some(vec![PathBuf::from("annotations").join("test")]);
                 let local_repo = repositories::clone::clone(&opts).await?;
@@ -178,14 +178,14 @@ A: Oxen.ai
             // Modify and add the file deep in a sub dir
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
-            test::modify_txt_file(one_shot_path, file_contents)?;
+            test::modify_txt_file(&one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             println!("status: {status:?}");
             status.print();
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
             let annotation_dir_path = repo.path.join("annotations");
-            repositories::add(&repo, annotation_dir_path).await?;
+            repositories::add(&repo, &annotation_dir_path).await?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
@@ -319,7 +319,7 @@ A: Oxen.ai
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;
@@ -334,7 +334,7 @@ A: Oxen.ai
             // Assume that we fixed the conflict and added the file
             let path = status.merge_conflicts[0].base_entry.path.clone();
             let fullpath = repo.path.join(path);
-            repositories::add(&repo, fullpath).await?;
+            repositories::add(&repo, &fullpath).await?;
 
             // Adding should add to added files
             let status = repositories::status(&repo)?;
@@ -354,7 +354,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
+            repositories::add(&repo, &repo_dir).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -381,12 +381,12 @@ A: Oxen.ai
             // Modify and add the file deep in a sub dir
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
-            test::modify_txt_file(one_shot_path, file_contents)?;
+            test::modify_txt_file(&one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
             let annotation_dir_path = repo.path.join("annotations/*");
-            repositories::add(&repo, annotation_dir_path).await?;
+            repositories::add(&repo, &annotation_dir_path).await?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
@@ -404,7 +404,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
+            repositories::add(&repo, &repo_dir).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -434,7 +434,7 @@ A: Oxen.ai
             assert_eq!(status.staged_files.len(), 0);
 
             // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*").await?;
+            repositories::add(&repo, Path::new("nlp/*")).await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_dirs.len(), 1);
@@ -450,7 +450,7 @@ A: Oxen.ai
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp/*");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
+            repositories::add(&repo, &repo_dir).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -484,7 +484,7 @@ A: Oxen.ai
                 status
                     .untracked_dirs
                     .iter()
-                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+                    .any(|(path, _)| path == Path::new("empty_dir"))
             );
 
             // Add the empty dir
@@ -623,7 +623,7 @@ A: Oxen.ai
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
-            let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
+            let one_shot_path = test::modify_txt_file(&one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);
@@ -657,13 +657,13 @@ A: Oxen.ai
             // train/dog_1.jpg, train/dog_2.jpg, train/dog_3.jpg, train/dog_4.jpg
 
             // Add only the cats
-            repositories::add(&repo, "train/cat_*.jpg").await?;
+            repositories::add(&repo, Path::new("train/cat_*.jpg")).await?;
             let status = repositories::status(&repo)?;
 
             assert_eq!(status.staged_files.len(), 3);
 
             // Add the dogs
-            repositories::add(&repo, "train/dog_*.jpg").await?;
+            repositories::add(&repo, Path::new("train/dog_*.jpg")).await?;
             let status = repositories::status(&repo)?;
 
             // Should stage all 7 files now

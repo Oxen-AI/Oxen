@@ -235,9 +235,9 @@ impl error::ResponseError for OxenHttpError {
                     OxenError::RepoNotFound(repo) => {
                         log::debug!("Repo not found: {repo}");
 
-                        HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(
-                            "Repository '{repo}' not found"
-                        )))
+                        HttpResponse::NotFound().json(StatusMessageDescription::not_found(
+                            &format!("Repository '{repo}' not found"),
+                        ))
                     }
                     OxenError::ResourceNotFound(resource) => {
                         log::debug!("Resource not found: {resource}");
@@ -359,20 +359,20 @@ impl error::ResponseError for OxenHttpError {
                         log::error!("Invalid schema: {schema}");
 
                         HttpResponse::BadRequest().json(StatusMessageDescription::bad_request(
-                            format!("Schema is invalid: '{schema}'"),
+                            &format!("Schema is invalid: '{schema}'"),
                         ))
                     }
                     OxenError::RemoteAheadOfLocal(desc) => {
                         log::error!("Remote ahead of local: {desc}");
 
                         HttpResponse::BadRequest()
-                            .json(StatusMessageDescription::bad_request(format!("{desc}")))
+                            .json(StatusMessageDescription::bad_request(&format!("{desc}")))
                     }
                     OxenError::IncompleteLocalHistory(desc) => {
                         log::error!("Cannot push repo with incomplete local history: {desc}");
 
                         HttpResponse::BadRequest()
-                            .json(StatusMessageDescription::bad_request(format!("{desc}")))
+                            .json(StatusMessageDescription::bad_request(&format!("{desc}")))
                     }
                     OxenError::IncompatibleSchemas(schema) => {
                         log::error!("Incompatible schemas: {schema}");

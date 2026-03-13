@@ -179,8 +179,8 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
 
                         let repo_new = RepoNew::from_namespace_name_host(
                             DEFAULT_NAMESPACE,
-                            iter_dirname,
-                            test_host(),
+                            &iter_dirname,
+                            &test_host(),
                             None,
                         );
 
@@ -212,5 +212,5 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }

@@ -54,7 +54,7 @@ impl CommitMerkleTree {
         Ok(dir_hashes)
     }
 
-    pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &String) -> PathBuf {
+    pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &str) -> PathBuf {
         dir_hash_db_path_from_commit_id(repo, commit_id)
     }
 
@@ -68,7 +68,7 @@ impl CommitMerkleTree {
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
         let root =
             CommitMerkleTree::root_with_children(repo, commit)?.ok_or(OxenError::basic_str(
-                format!("Merkle tree hash not found for commit: '{}'", commit.id),
+                &format!("Merkle tree hash not found for commit: '{}'", commit.id),
             ))?;
 
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
@@ -78,14 +78,14 @@ impl CommitMerkleTree {
     pub fn from_path(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         load_recursive: bool,
     ) -> Result<Self, OxenError> {
         // This debug log is to help make sure we don't load the tree too many times
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
         let node = CommitMerkleTree::read_from_path(repo, commit, path, load_recursive)?.ok_or(
-            OxenError::basic_str(format!(
+            OxenError::basic_str(&format!(
                 "Merkle tree hash not found for commit: '{}'",
                 commit.id
             )),
@@ -398,7 +398,7 @@ impl CommitMerkleTree {
     pub fn read_from_path(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         load_recursive: bool,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let depth = if load_recursive { -1 } else { 1 };
@@ -409,7 +409,7 @@ impl CommitMerkleTree {
     pub fn read_from_path_maybe(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         load_recursive: bool,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         let maybe_tree_node = CommitMerkleTree::read_from_path(repo, commit, path, load_recursive);
@@ -423,10 +423,10 @@ impl CommitMerkleTree {
     pub fn read_depth_from_path(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let mut node_path = path.as_ref().to_path_buf();
+        let mut node_path = path.to_path_buf();
         if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
@@ -435,7 +435,7 @@ impl CommitMerkleTree {
         let root = if let Some(node_hash) = dir_hashes.get(&node_path).cloned() {
             // We are reading a node with children
             let Some(root) = CommitMerkleTree::read_depth(repo, &node_hash, depth)? else {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Merkle tree hash not found for dir: '{}' in commit: {:?}",
                     node_path.to_str().unwrap(),
                     commit.id
@@ -447,7 +447,7 @@ impl CommitMerkleTree {
             // We are skipping to a file in the tree using the dir_hashes db
             log::debug!("Look up file 📄 {node_path:?}");
             CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
-                OxenError::basic_str(format!(
+                OxenError::basic_str(&format!(
                     "Merkle tree hash not found for file: '{}' in commit: '{}'",
                     node_path.to_str().unwrap(),
                     commit.id
@@ -461,13 +461,13 @@ impl CommitMerkleTree {
     pub fn read_depth_from_path_and_collect_hashes(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         base_hashes: Option<&HashSet<MerkleHash>>,
         unique_hashes: Option<&mut HashSet<MerkleHash>>,
         shared_hashes: Option<&mut HashSet<MerkleHash>>,
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let mut node_path = path.as_ref().to_path_buf();
+        let mut node_path = path.to_path_buf();
         if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
@@ -484,7 +484,7 @@ impl CommitMerkleTree {
                 depth,
             )?
             else {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Merkle tree hash not found for dir: '{}' in commit: {:?}",
                     node_path.to_str().unwrap(),
                     commit.id
@@ -496,7 +496,7 @@ impl CommitMerkleTree {
             // We are skipping to a file in the tree using the dir_hashes db
             log::debug!("Look up file 📄 {node_path:?}");
             CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
-                OxenError::basic_str(format!(
+                OxenError::basic_str(&format!(
                     "Merkle tree hash not found for file: '{}' in commit: '{}'",
                     node_path.to_str().unwrap(),
                     commit.id
@@ -510,13 +510,13 @@ impl CommitMerkleTree {
     pub fn read_depth_from_path_and_collect_paths(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         base_hashes: Option<&HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
         shared_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
         unique_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let mut node_path = path.as_ref().to_path_buf();
+        let mut node_path = path.to_path_buf();
         if node_path == Path::new(".") {
             node_path = PathBuf::from("");
         }
@@ -533,7 +533,7 @@ impl CommitMerkleTree {
                 depth,
             )?
             else {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Merkle tree hash not found for dir: '{}' in commit: {:?}",
                     node_path.to_str().unwrap(),
                     commit.id
@@ -545,7 +545,7 @@ impl CommitMerkleTree {
             // We are skipping to a file in the tree using the dir_hashes db
             log::debug!("Look up file 📄 {node_path:?}");
             CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or(
-                OxenError::basic_str(format!(
+                OxenError::basic_str(&format!(
                     "Merkle tree hash not found for file: '{}' in commit: '{}'",
                     node_path.to_str().unwrap(),
                     commit.id
@@ -559,10 +559,10 @@ impl CommitMerkleTree {
     pub fn dir_without_children(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
+        let node_path = path;
         let dir_hashes = if let Some(dir_hashes) = dir_hashes {
             dir_hashes
         } else {
@@ -584,10 +584,10 @@ impl CommitMerkleTree {
     pub fn dir_with_children(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
+        let node_path = path;
         let dir_hashes = if let Some(dir_hashes) = dir_hashes {
             dir_hashes
         } else {
@@ -607,12 +607,12 @@ impl CommitMerkleTree {
     pub fn dir_with_unique_children(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         base_hashes: &HashSet<MerkleHash>,
         unique_hashes: &mut HashSet<MerkleHash>,
         dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
+        let node_path = path;
         let dir_hashes = if let Some(dir_hashes) = dir_hashes {
             dir_hashes
         } else {
@@ -639,10 +639,10 @@ impl CommitMerkleTree {
     pub fn dir_with_children_recursive(
         repo: &LocalRepository,
         commit: &Commit,
-        path: impl AsRef<Path>,
+        path: &Path,
         dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
+        let node_path = path;
         log::debug!("Read path {node_path:?} in commit {commit:?}");
         let dir_hashes = if let Some(dir_hashes) = dir_hashes {
             dir_hashes
@@ -659,30 +659,23 @@ impl CommitMerkleTree {
         }
     }
 
-    pub fn has_dir(&self, path: impl AsRef<Path>) -> bool {
+    pub fn has_dir(&self, path: &Path) -> bool {
         // log::debug!("has_dir path: {:?}", path.as_ref());
         // log::debug!("has_dir dir_hashes: {:?}", self.dir_hashes);
-        let path = path.as_ref();
         self.dir_hashes.contains_key(path)
     }
 
-    pub fn has_path(&self, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-        let path = path.as_ref();
+    pub fn has_path(&self, path: &Path) -> Result<bool, OxenError> {
         let node = self.root.get_by_path(path)?;
         Ok(node.is_some())
     }
 
-    pub fn get_by_path(&self, path: impl AsRef<Path>) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let path = path.as_ref();
+    pub fn get_by_path(&self, path: &Path) -> Result<Option<MerkleTreeNode>, OxenError> {
         let node = self.root.get_by_path(path)?;
         Ok(node)
     }
 
-    pub fn get_vnodes_for_dir(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<Vec<MerkleTreeNode>, OxenError> {
-        let path = path.as_ref();
+    pub fn get_vnodes_for_dir(&self, path: &Path) -> Result<Vec<MerkleTreeNode>, OxenError> {
         let nodes = self.root.get_vnodes_for_dir(path)?;
         Ok(nodes)
     }
@@ -692,15 +685,11 @@ impl CommitMerkleTree {
     }
 
     // call node_files_and_filders
-    pub fn files_and_folders(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<HashSet<MerkleTreeNode>, OxenError> {
-        let path = path.as_ref();
+    pub fn files_and_folders(&self, path: &Path) -> Result<HashSet<MerkleTreeNode>, OxenError> {
         let node = self
             .root
             .get_by_path(path)?
-            .ok_or(OxenError::basic_str(format!(
+            .ok_or(OxenError::basic_str(&format!(
                 "Merkle tree hash not found for parent: {path:?}"
             )))?;
         let mut children = HashSet::new();
@@ -733,7 +722,7 @@ impl CommitMerkleTree {
                 Ok(file_entries)
             }
             EMerkleTreeNode::File(file_node) => Ok(vec![file_node.clone()]),
-            _ => Err(OxenError::basic_str(format!(
+            _ => Err(OxenError::basic_str(&format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
             ))),
@@ -744,14 +733,13 @@ impl CommitMerkleTree {
     pub fn read_file(
         repo: &LocalRepository,
         dir_hashes: &HashMap<PathBuf, MerkleHash>,
-        path: impl AsRef<Path>,
+        path: &Path,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // Get the directory from the path
-        let path = path.as_ref();
         let Some(parent_path) = path.parent() else {
             return Ok(None);
         };
-        let file_name = path.file_name().unwrap().to_str().unwrap();
+        let file_name = Path::new(path.file_name().unwrap().to_str().unwrap());
 
         log::debug!("read_file path {path:?} parent_path {parent_path:?} file_name {file_name:?}");
 
@@ -1250,7 +1238,7 @@ mod tests {
     async fn test_load_dir_nodes() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init_with_version(dir, MinOxenVersion::LATEST)?;
+            let repo = repositories::init::init_with_version(&dir, MinOxenVersion::LATEST)?;
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;

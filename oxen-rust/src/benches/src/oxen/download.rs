@@ -195,5 +195,5 @@ pub fn download_benchmark(c: &mut Criterion, data: Option<String>, iters: Option
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }

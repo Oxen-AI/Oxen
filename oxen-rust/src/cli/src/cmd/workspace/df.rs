@@ -42,7 +42,7 @@ impl RunCmd for WorkspaceDfCmd {
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
                 eprintln!("Unknown df subcommand {name}");
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Unknown df subcommand {name}"
                 )));
             };

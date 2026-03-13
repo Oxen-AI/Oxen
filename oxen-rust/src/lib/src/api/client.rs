@@ -52,16 +52,16 @@ pub fn get_scheme_and_host_from_url<U: IntoUrl>(url: U) -> Result<(String, Strin
 // new one for each request so we can take advantage of keep-alive
 pub fn new_for_url<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    new_for_host(host, true)
+    new_for_host(&host, true)
 }
 
 pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    new_for_host(host, false)
+    new_for_host(&host, false)
 }
 
-fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
-    match builder_for_host(host.as_ref(), should_add_user_agent)?
+fn new_for_host(host: &str, should_add_user_agent: bool) -> Result<Client, OxenError> {
+    match builder_for_host(host, should_add_user_agent)?
         .timeout(time::Duration::from_secs(constants::timeout()))
         .build()
     {
@@ -72,23 +72,20 @@ fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<C
 
 pub fn new_for_remote_repo(remote_repo: &RemoteRepository) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(remote_repo.url())?;
-    new_for_host(host, true)
+    new_for_host(&host, true)
 }
 
 pub fn builder_for_remote_repo(remote_repo: &RemoteRepository) -> Result<ClientBuilder, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(remote_repo.url())?;
-    builder_for_host(host, true)
+    builder_for_host(&host, true)
 }
 
 pub fn builder_for_url<U: IntoUrl>(url: U) -> Result<ClientBuilder, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
-    builder_for_host(host, true)
+    builder_for_host(&host, true)
 }
 
-fn builder_for_host<S: AsRef<str>>(
-    host: S,
-    should_add_user_agent: bool,
-) -> Result<ClientBuilder, OxenError> {
+fn builder_for_host(host: &str, should_add_user_agent: bool) -> Result<ClientBuilder, OxenError> {
     let builder = if should_add_user_agent {
         builder()
     } else {
@@ -102,13 +99,13 @@ fn builder_for_host<S: AsRef<str>>(
             log::debug!(
                 "Error getting config: {}. No auth token found for host {}",
                 e,
-                host.as_ref()
+                host
             );
             return builder;
         }
     };
     if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
-        log::debug!("Setting auth token for host: {}", host.as_ref());
+        log::debug!("Setting auth token for host: {}", host);
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
@@ -124,7 +121,7 @@ fn builder_for_host<S: AsRef<str>>(
         headers.insert(header::AUTHORIZATION, auth_value);
         Ok(builder?.default_headers(headers))
     } else {
-        log::trace!("No auth token found for host: {}", host.as_ref());
+        log::trace!("No auth token found for host: {}", host);
         builder
     }
 }
@@ -200,7 +197,7 @@ async fn parse_json_body_with_err_msg(
         ),
         Err(err) => {
             log::debug!("Err: {err}");
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "Could not deserialize response from [{url}]\n{status}"
             )))
         }
@@ -219,7 +216,7 @@ fn parse_status_and_message(
         http::STATUS_SUCCESS => {
             log::debug!("Status success: {status}");
             if !status.is_success() {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Err status [{}] from url {} [{}]",
                     status,
                     url,
@@ -231,7 +228,7 @@ fn parse_status_and_message(
         }
         http::STATUS_WARNING => {
             log::debug!("Status warning: {status}");
-            Err(OxenError::basic_str(format!(
+            Err(OxenError::basic_str(&format!(
                 "Remote Warning: {}",
                 response.desc_or_msg()
             )))
@@ -246,9 +243,9 @@ fn parse_status_and_message(
                 return Err(OxenError::basic_str(msg));
             }
 
-            Err(OxenError::basic_str(response.full_err_msg()))
+            Err(OxenError::basic_str(&response.full_err_msg()))
         }
-        status => Err(OxenError::basic_str(format!("Unknown status [{status}]"))),
+        status => Err(OxenError::basic_str(&format!("Unknown status [{status}]"))),
     }
 }
 

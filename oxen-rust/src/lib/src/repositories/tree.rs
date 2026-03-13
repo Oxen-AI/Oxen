@@ -103,7 +103,7 @@ pub fn get_root_with_children_and_partial_nodes(
 /// Will error if the node is not a commit node, because only CommitNodes have a root directory
 pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError> {
     if node.node.node_type() != MerkleTreeNodeType::Commit {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Expected a commit node, but got: '{:?}'",
             node.node.node_type()
         )));
@@ -111,7 +111,7 @@ pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError>
 
     // A commit node should have exactly one child, which is the root directory
     if node.children.len() != 1 {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Commit node should have exactly one child (root directory) but got: {} from {}",
             node.children.len(),
             node
@@ -120,7 +120,7 @@ pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError>
 
     let root_dir = &node.children[0];
     if root_dir.node.node_type() != MerkleTreeNodeType::Dir {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "The child of a commit node should be a directory, but got: '{:?}'",
             root_dir.node.node_type()
         )));
@@ -168,21 +168,12 @@ pub fn get_commit_node_version(
     Ok(commit_node.version())
 }
 
-pub fn has_dir(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: impl AsRef<Path>,
-) -> Result<bool, OxenError> {
+pub fn has_dir(repo: &LocalRepository, commit: &Commit, path: &Path) -> Result<bool, OxenError> {
     let dir_hashes = CommitMerkleTreeLatest::dir_hashes(repo, commit)?;
-    Ok(dir_hashes.contains_key(path.as_ref()))
+    Ok(dir_hashes.contains_key(path))
 }
 
-pub fn has_path(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: impl AsRef<Path>,
-) -> Result<bool, OxenError> {
-    let path = path.as_ref();
+pub fn has_path(repo: &LocalRepository, commit: &Commit, path: &Path) -> Result<bool, OxenError> {
     let dir_hashes = CommitMerkleTreeLatest::dir_hashes(repo, commit)?;
     match dir_hashes.get(path) {
         Some(dir_hash) => {
@@ -204,7 +195,7 @@ pub fn has_path(
 pub fn get_node_by_path(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let load_recursive = false;
     match repo.min_version() {
@@ -230,7 +221,7 @@ pub fn get_node_by_path(
 pub fn get_node_by_path_with_children(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let load_recursive = true;
     let node = match repo.min_version() {
@@ -246,9 +237,9 @@ pub fn get_node_by_path_with_children(
 pub fn get_file_by_path(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<FileNode>, OxenError> {
-    let Some(root) = get_node_by_path(repo, commit, &path)? else {
+    let Some(root) = get_node_by_path(repo, commit, path)? else {
         return Ok(None);
     };
     match root.node {
@@ -260,7 +251,7 @@ pub fn get_file_by_path(
 pub fn get_dir_with_children(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let _perf = crate::perf_guard!("tree::get_dir_with_children");
@@ -274,7 +265,7 @@ pub fn get_dir_with_children(
 pub fn get_dir_without_children(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match repo.min_version() {
@@ -288,7 +279,7 @@ pub fn get_dir_without_children(
 pub fn get_dir_with_children_recursive(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match repo.min_version() {
@@ -302,7 +293,7 @@ pub fn get_dir_with_children_recursive(
 pub fn get_dir_with_unique_children(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     base_hashes: &HashSet<MerkleHash>,
     unique_hashes: &mut HashSet<MerkleHash>,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
@@ -342,7 +333,7 @@ pub fn get_subtree(
         }
         (None, Some(depth)) => {
             log::debug!("Getting tree from root with depth {depth} for commit {commit}");
-            get_subtree_by_depth(repo, commit, PathBuf::from("."), *depth)
+            get_subtree_by_depth(repo, commit, &PathBuf::from("."), *depth)
         }
         _ => {
             log::debug!("Getting full tree for commit {commit}");
@@ -354,7 +345,7 @@ pub fn get_subtree(
 pub fn get_subtree_by_depth(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     depth: i32,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     match repo.min_version() {
@@ -368,7 +359,7 @@ pub fn get_subtree_by_depth(
 pub fn get_subtree_by_depth_with_unique_children(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     base_hashes: Option<&HashSet<MerkleHash>>,
     unique_hashes: Option<&mut HashSet<MerkleHash>>,
     shared_hashes: Option<&mut HashSet<MerkleHash>>,
@@ -405,7 +396,7 @@ pub fn list_nodes_from_paths(
 /// List the files and folders given a directory node
 pub fn list_files_and_folders(node: &MerkleTreeNode) -> Result<Vec<MerkleTreeNode>, OxenError> {
     if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "list_files_and_folders Merkle tree node is not a directory: '{:?}'",
             node.node.node_type()
         )));
@@ -426,7 +417,7 @@ pub fn list_files_and_folders_set(
     node: &MerkleTreeNode,
 ) -> Result<HashSet<MerkleTreeNode>, OxenError> {
     if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "list_files_and_folders Merkle tree node is not a directory: '{:?}'",
             node.node.node_type()
         )));
@@ -447,7 +438,7 @@ pub fn list_files_and_folders_map(
     node: &MerkleTreeNode,
 ) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
     if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "list_files_and_folders_map Merkle tree node is not a directory: '{:?}'",
             node.node.node_type()
         )));
@@ -521,12 +512,12 @@ pub async fn list_missing_file_hashes(
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     if repo.min_version() == MinOxenVersion::V0_19_0 {
         let Some(node) = CommitMerkleTreeV0_19_0::read_depth(repo, hash, 1)? else {
-            return Err(OxenError::basic_str(format!("Node {hash} not found")));
+            return Err(OxenError::basic_str(&format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo).await
     } else {
         let Some(node) = CommitMerkleTreeLatest::read_depth(repo, hash, 1)? else {
-            return Err(OxenError::basic_str(format!("Node {hash} not found")));
+            return Err(OxenError::basic_str(&format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo).await
     }
@@ -617,7 +608,7 @@ pub fn dir_entries_with_paths(
         }
         EMerkleTreeNode::File(_) => {}
         _ => {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
             )));
@@ -661,7 +652,7 @@ pub fn unique_dir_entries(
         }
         EMerkleTreeNode::File(_) => {}
         _ => {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
             )));
@@ -703,7 +694,7 @@ async fn list_missing_file_hashes_from_hashes(
 
 pub fn list_all_files(
     node: &MerkleTreeNode,
-    subtree_path: &PathBuf,
+    subtree_path: &Path,
 ) -> Result<HashSet<FileNodeWithDir>, OxenError> {
     let mut file_nodes = HashSet::new();
     r_list_all_files(node, subtree_path, &mut file_nodes)?;
@@ -712,10 +703,9 @@ pub fn list_all_files(
 
 fn r_list_all_files(
     node: &MerkleTreeNode,
-    traversed_path: impl AsRef<Path>,
+    traversed_path: &Path,
     file_nodes: &mut HashSet<FileNodeWithDir>,
 ) -> Result<(), OxenError> {
-    let traversed_path = traversed_path.as_ref();
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::File(file_node) => {
@@ -726,7 +716,7 @@ fn r_list_all_files(
             }
             EMerkleTreeNode::Directory(dir_node) => {
                 let new_path = traversed_path.join(dir_node.name());
-                r_list_all_files(child, new_path, file_nodes)?;
+                r_list_all_files(child, &new_path, file_nodes)?;
             }
             EMerkleTreeNode::VNode(_) => {
                 r_list_all_files(child, traversed_path, file_nodes)?;
@@ -740,16 +730,15 @@ fn r_list_all_files(
 /// Collect MerkleTree into Directories
 pub fn list_all_dirs(node: &MerkleTreeNode) -> Result<HashSet<DirNodeWithPath>, OxenError> {
     let mut dir_nodes = HashSet::new();
-    r_list_all_dirs(node, PathBuf::from(""), &mut dir_nodes)?;
+    r_list_all_dirs(node, &PathBuf::from(""), &mut dir_nodes)?;
     Ok(dir_nodes)
 }
 
 fn r_list_all_dirs(
     node: &MerkleTreeNode,
-    traversed_path: impl AsRef<Path>,
+    traversed_path: &Path,
     dir_nodes: &mut HashSet<DirNodeWithPath>,
 ) -> Result<(), OxenError> {
-    let traversed_path = traversed_path.as_ref();
     for child in &node.children {
         // log::debug!("Found child: {child}");
         match &child.node {
@@ -759,7 +748,7 @@ fn r_list_all_dirs(
                     dir_node: dir_node.to_owned(),
                     path: new_path.to_owned(),
                 });
-                r_list_all_dirs(child, new_path, dir_nodes)?;
+                r_list_all_dirs(child, &new_path, dir_nodes)?;
             }
             EMerkleTreeNode::VNode(_) => {
                 r_list_all_dirs(child, traversed_path, dir_nodes)?;
@@ -776,18 +765,16 @@ pub fn list_files_and_dirs(
 ) -> Result<(HashSet<FileNodeWithDir>, HashSet<DirNodeWithPath>), OxenError> {
     let mut file_nodes = HashSet::new();
     let mut dir_nodes = HashSet::new();
-    r_list_files_and_dirs(root, PathBuf::new(), &mut file_nodes, &mut dir_nodes)?;
+    r_list_files_and_dirs(root, &PathBuf::new(), &mut file_nodes, &mut dir_nodes)?;
     Ok((file_nodes, dir_nodes))
 }
 
 fn r_list_files_and_dirs(
     node: &MerkleTreeNode,
-    traversed_path: impl AsRef<Path>,
+    traversed_path: &Path,
     file_nodes: &mut HashSet<FileNodeWithDir>,
     dir_nodes: &mut HashSet<DirNodeWithPath>,
 ) -> Result<(), OxenError> {
-    let traversed_path = traversed_path.as_ref();
-
     if let EMerkleTreeNode::File(file_node) = &node.node {
         file_nodes.insert(FileNodeWithDir {
             file_node: file_node.to_owned(),
@@ -813,7 +800,7 @@ fn r_list_files_and_dirs(
                         path: new_path.to_owned(),
                     });
                 }
-                r_list_files_and_dirs(child, new_path, file_nodes, dir_nodes)?;
+                r_list_files_and_dirs(child, &new_path, file_nodes, dir_nodes)?;
             }
             EMerkleTreeNode::VNode(_) => {
                 r_list_files_and_dirs(child, traversed_path, file_nodes, dir_nodes)?;
@@ -842,7 +829,7 @@ pub fn list_files_by_type(
         log::warn!("get_root_with_children returned None for commit: {commit:?}");
         return Ok(file_nodes);
     };
-    r_list_files_by_type(&tree, data_type, &mut file_nodes, PathBuf::new())?;
+    r_list_files_by_type(&tree, data_type, &mut file_nodes, &PathBuf::new())?;
     Ok(file_nodes)
 }
 
@@ -850,9 +837,8 @@ fn r_list_files_by_type(
     node: &MerkleTreeNode,
     data_type: &EntryDataType,
     file_nodes: &mut HashSet<FileNode>,
-    traversed_path: impl AsRef<Path>,
+    traversed_path: &Path,
 ) -> Result<(), OxenError> {
-    let traversed_path = traversed_path.as_ref();
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::File(file_node) => {
@@ -865,7 +851,7 @@ fn r_list_files_by_type(
             }
             EMerkleTreeNode::Directory(dir_node) => {
                 let full_path = traversed_path.join(dir_node.name());
-                r_list_files_by_type(child, data_type, file_nodes, full_path)?;
+                r_list_files_by_type(child, data_type, file_nodes, &full_path)?;
             }
             EMerkleTreeNode::VNode(_) => {
                 r_list_files_by_type(child, data_type, file_nodes, traversed_path)?;
@@ -885,7 +871,7 @@ pub fn cp_dir_hashes_to(
         CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &original_commit_id.to_string());
     let new_dir_hashes_path =
         CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &new_commit_id.to_string());
-    util::fs::copy_dir_all(original_dir_hashes_path, new_dir_hashes_path)?;
+    util::fs::copy_dir_all(&original_dir_hashes_path, &new_dir_hashes_path)?;
 
     Ok(())
 }
@@ -1285,7 +1271,7 @@ fn get_node_hashes_for_subtree(
     let Ok(Some(_)) = CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
         repository,
         commit,
-        subtree_path.clone().unwrap_or(PathBuf::from(".")),
+        &subtree_path.clone().unwrap_or(PathBuf::from(".")),
         Some(base_hashes),
         Some(&mut unique_hashes),
         None,
@@ -1311,7 +1297,7 @@ pub fn populate_starting_hashes(
     let Ok(Some(_)) = CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
         repository,
         commit,
-        subtree_path.clone().unwrap_or(PathBuf::from(".")),
+        &subtree_path.clone().unwrap_or(PathBuf::from(".")),
         None,
         Some(unique_hashes),
         None,
@@ -1343,7 +1329,7 @@ pub fn get_ancestor_nodes(
                     let Some(node) =
                         repositories::tree::get_node_by_path_with_children(repo, commit, ancestor)?
                     else {
-                        return Err(OxenError::basic_str(format!(
+                        return Err(OxenError::basic_str(&format!(
                             "Ancestor {ancestor:?} for subtree path {subtree_path:?} not found in merkle tree"
                         )));
                     };
@@ -1385,7 +1371,7 @@ pub fn print_tree_depth_subtree(
     repo: &LocalRepository,
     commit: &Commit,
     depth: i32,
-    subtree: &PathBuf,
+    subtree: &Path,
 ) -> Result<(), OxenError> {
     let tree = get_subtree_by_depth(repo, commit, subtree, depth)?.unwrap();
     match repo.min_version() {
@@ -1402,7 +1388,7 @@ pub fn print_tree_depth_subtree(
 pub fn print_tree_path(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<(), OxenError> {
     let tree = get_node_by_path_with_children(repo, commit, path)?.unwrap();
     match repo.min_version() {
@@ -1458,26 +1444,26 @@ mod tests {
             // Add two tabular files to it
             let filename = "cats.tsv";
             let filepath = dir_path.join(filename);
-            util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
+            util::fs::write(&filepath, "1\t2\t3\nhello\tworld\tsup\n".as_bytes())?;
 
             let filename = "dogs.csv";
             let filepath = dir_path.join(filename);
-            util::fs::write(filepath, "1,2,3\nhello,world,sup\n")?;
+            util::fs::write(&filepath, "1,2,3\nhello,world,sup\n".as_bytes())?;
 
             // And write a file in the same dir that is not tabular
             let filename = "README.md";
             let filepath = dir_path.join(filename);
-            util::fs::write(filepath, "readme....")?;
+            util::fs::write(&filepath, "readme....".as_bytes())?;
 
             // And write a tabular file to the root dir
             let filename = "labels.tsv";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
+            util::fs::write(&filepath, "1\t2\t3\nhello\tworld\tsup\n".as_bytes())?;
 
             // And write a non tabular file to the root dir
             let filename = "labels.txt";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
+            util::fs::write(&filepath, "1\t2\t3\nhello\tworld\tsup\n".as_bytes())?;
 
             // Add and commit all
             repositories::add(&repo, &repo.path).await?;
@@ -1491,7 +1477,7 @@ mod tests {
             // Add another tabular file
             let filename = "dogs.tsv";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "1\t2\t3\nhello\tworld\tsup\n")?;
+            util::fs::write(&filepath, "1\t2\t3\nhello\tworld\tsup\n".as_bytes())?;
 
             // Add and commit all
             repositories::add(&repo, &repo.path).await?;
@@ -1504,7 +1490,7 @@ mod tests {
             // Remove the deeply nested dir
             util::fs::remove_dir_all(&dir_path)?;
 
-            let mut opts = RmOpts::from_path(dir_path);
+            let mut opts = RmOpts::from_path(&dir_path);
             opts.recursive = true;
             repositories::rm(&repo, &opts)?;
             let commit = repositories::commit(&repo, "Removing dir")?;
@@ -1547,12 +1533,12 @@ mod tests {
             assert!(repositories::tree::has_path(
                 &local_repo,
                 &commit,
-                PathBuf::from(p1)
+                &PathBuf::from(p1)
             )?);
             assert!(repositories::tree::has_path(
                 &local_repo,
                 &commit,
-                PathBuf::from(p2)
+                &PathBuf::from(p2)
             )?);
 
             Ok(())
@@ -1572,8 +1558,8 @@ mod tests {
             let new_file2 = repo.path.join("new_dir1").join("new_file2.txt");
             util::fs::create_dir_all(new_file2.parent().unwrap())?;
 
-            util::fs::write(&new_file1, "This is new file 1 content")?;
-            util::fs::write(&new_file2, "This is new file 2 content")?;
+            util::fs::write(&new_file1, "This is new file 1 content".as_bytes())?;
+            util::fs::write(&new_file2, "This is new file 2 content".as_bytes())?;
 
             repositories::add(&repo, &new_file1).await?;
             repositories::add(&repo, &new_file2).await?;
@@ -1582,7 +1568,7 @@ mod tests {
             // Add more files and make second new commit
             let new_file3 = repo.path.join("new_dir2").join("new_file3.csv");
             util::fs::create_dir_all(new_file3.parent().unwrap())?;
-            util::fs::write(&new_file3, "col1,col2,col3\nval1,val2,val3\n")?;
+            util::fs::write(&new_file3, "col1,col2,col3\nval1,val2,val3\n".as_bytes())?;
 
             repositories::add(&repo, &new_file3).await?;
             let commit2 = repositories::commit(&repo, "Add second batch of new files")?;

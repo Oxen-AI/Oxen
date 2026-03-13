@@ -309,7 +309,7 @@ mod tests {
     async fn test_add_child_counts_to_nodes_migration() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate an older repository
-            let repo = repositories::init::init_with_version(dir, MinOxenVersion::V0_19_0)?;
+            let repo = repositories::init::init_with_version(&dir, MinOxenVersion::V0_19_0)?;
 
             // Populate the repo with some files
             test::populate_dir_with_training_data(&repo.path)?;
@@ -406,7 +406,7 @@ mod tests {
     async fn test_add_child_counts_migration_with_many_vnodes() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate an older repository
-            let mut repo = repositories::init::init_with_version(dir, MinOxenVersion::V0_19_0)?;
+            let mut repo = repositories::init::init_with_version(&dir, MinOxenVersion::V0_19_0)?;
             // Set the vnode size to 3
             repo.set_vnode_size(3);
 
@@ -499,7 +499,7 @@ mod tests {
             let file_node = repositories::tree::get_node_by_path(
                 &repo,
                 &latest_commit,
-                PathBuf::from("README.md"),
+                &PathBuf::from("README.md"),
             )?;
             assert!(file_node.is_some());
 

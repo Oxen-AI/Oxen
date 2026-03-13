@@ -94,31 +94,26 @@ pub fn init_test_env() {
     }
 }
 
-fn create_prefixed_dir(
-    base_dir: impl AsRef<Path>,
-    prefix: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    let base_dir = base_dir.as_ref();
-    let prefix = prefix.as_ref();
+fn create_prefixed_dir(base_dir: &Path, prefix: &Path) -> Result<PathBuf, OxenError> {
     let repo_name = format!("{}", uuid::Uuid::new_v4());
     let full_dir = Path::new(base_dir).join(prefix).join(repo_name);
     util::fs::create_dir_all(&full_dir)?;
     Ok(full_dir)
 }
 
-pub fn create_repo_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    create_prefixed_dir(base_dir, "repo")
+pub fn create_repo_dir(base_dir: &Path) -> Result<PathBuf, OxenError> {
+    create_prefixed_dir(base_dir, Path::new("repo"))
 }
 
-fn create_empty_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    create_prefixed_dir(base_dir, "dir")
+fn create_empty_dir(base_dir: &Path) -> Result<PathBuf, OxenError> {
+    create_prefixed_dir(base_dir, Path::new("dir"))
 }
 
 pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteRepository, OxenError> {
     let repo_new = RepoNew::from_namespace_name_host(
         constants::DEFAULT_NAMESPACE,
-        repo.dirname(),
-        test_host(),
+        &repo.dirname(),
+        &test_host(),
         None,
     );
     api::client::repositories::create_from_local(repo, repo_new).await
@@ -130,8 +125,8 @@ pub async fn create_or_clear_remote_repo(
 ) -> Result<RemoteRepository, OxenError> {
     let repo_new = RepoNew::from_namespace_name_host(
         constants::DEFAULT_NAMESPACE,
-        repo.dirname(),
-        test_host(),
+        &repo.dirname(),
+        &test_host(),
         None,
     );
 
@@ -160,7 +155,7 @@ pub async fn add_n_files_m_dirs(
     */
 
     let readme_file = repo.path.join("README.md");
-    util::fs::write_to_path(&readme_file, format!("Repo with {num_files} files"))?;
+    util::fs::write_to_path(&readme_file, &format!("Repo with {num_files} files"))?;
 
     repositories::add(repo, &readme_file).await?;
 
@@ -184,7 +179,7 @@ pub async fn add_n_files_m_dirs(
         util::fs::create_dir_all(&dir_path)?;
 
         let file_file = dir_path.join(format!("file{i}.txt"));
-        util::fs::write_to_path(&file_file, format!("File {i}"))?;
+        util::fs::write_to_path(&file_file, &format!("File {i}"))?;
     }
 
     repositories::add(repo, &files_csv).await?;
@@ -211,7 +206,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_dir_test start");
-    let repo_dir = create_empty_dir(test_run_dir())?;
+    let repo_dir = create_empty_dir(&test_run_dir())?;
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_empty_dir_test running test");
@@ -238,7 +233,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_dir_test_async start");
-    let repo_dir = create_empty_dir(test_run_dir())?;
+    let repo_dir = create_empty_dir(&test_run_dir())?;
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_empty_dir_test_async running test");
@@ -268,7 +263,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_local_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     log::info!(">>>>> run_empty_local_repo_test running test");
@@ -296,7 +291,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_local_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init::init_with_version(&repo_dir, version)?;
 
     log::info!(">>>>> run_empty_local_repo_test running test");
@@ -322,7 +317,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_local_repo_test_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     let version_store = repo.version_store()?;
@@ -351,7 +346,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_one_commit_local_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     let txt = generate_random_string(20);
@@ -382,7 +377,7 @@ where
 {
     init_test_env();
     log::debug!("run_one_commit_local_repo_test_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     let txt = generate_random_string(20);
@@ -414,7 +409,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_one_commit_sync_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
 
     let mut local_repo = repositories::init(&repo_dir)?;
 
@@ -461,7 +456,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_many_local_commits_empty_sync_remote_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
 
     let mut local_repo = repositories::init(&repo_dir)?;
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -508,7 +503,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_sync_test_no_commits start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
@@ -537,16 +532,16 @@ where
 
 pub async fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenError> {
     // Make a few commits before we sync
-    repositories::add(local_repo, local_repo.path.join("train")).await?;
+    repositories::add(local_repo, &local_repo.path.join("train")).await?;
     repositories::commit(local_repo, "Adding train/")?;
 
-    repositories::add(local_repo, local_repo.path.join("test")).await?;
+    repositories::add(local_repo, &local_repo.path.join("test")).await?;
     repositories::commit(local_repo, "Adding test/")?;
 
-    repositories::add(local_repo, local_repo.path.join("annotations")).await?;
+    repositories::add(local_repo, &local_repo.path.join("annotations")).await?;
     repositories::commit(local_repo, "Adding annotations/")?;
 
-    repositories::add(local_repo, local_repo.path.join("nlp")).await?;
+    repositories::add(local_repo, &local_repo.path.join("nlp")).await?;
     repositories::commit(local_repo, "Adding nlp/")?;
 
     // Remove the test dir to make a more complex history
@@ -573,7 +568,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_local_repo_training_data_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
@@ -605,7 +600,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_fully_sync_remote start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let mut local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
@@ -649,14 +644,14 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_select_data_sync_remote start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let mut local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
     populate_select_training_data(&repo_dir, data)?;
 
     // Make a few commits before we sync
-    repositories::add(&local_repo, local_repo.path.join(data)).await?;
+    repositories::add(&local_repo, &local_repo.path.join(data)).await?;
     repositories::commit(&local_repo, &format!("Adding {data}"))?;
 
     // Create remote
@@ -697,7 +692,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_subset_of_data_fully_sync_remote start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let mut local_repo = repositories::init(&repo_dir)?;
 
     // Write all the training data files
@@ -740,7 +735,7 @@ where
     log::info!("<<<<< run_no_commit_remote_repo_test start");
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let namespace = constants::DEFAULT_NAMESPACE;
-    let repo_new = RepoNew::from_namespace_name_host(namespace, name, test_host(), None);
+    let repo_new = RepoNew::from_namespace_name_host(namespace, &name, &test_host(), None);
     let repo = api::client::repositories::create_empty(repo_new).await?;
 
     // Run test to see if it panic'd
@@ -769,7 +764,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_remote_repo_test start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    let empty_dir = create_empty_dir(&test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
     let local_repo = repositories::init(&path)?;
@@ -803,7 +798,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_remote_repo_test start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    let empty_dir = create_empty_dir(&test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
     let mut local_repo = repositories::init(&path)?;
@@ -848,13 +843,13 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_remote_repo_test start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    let empty_dir = create_empty_dir(&test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
     let mut local_repo = repositories::init(&path)?;
 
     // Add a README file
-    util::fs::write_to_path(local_repo.path.join("README.md"), "Hello World")?;
+    util::fs::write_to_path(&local_repo.path.join("README.md"), "Hello World")?;
     repositories::add(&local_repo, &local_repo.path).await?;
     repositories::commit(&local_repo, "Adding README")?;
 
@@ -944,7 +939,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_remote_repo_test_all_data_pushed start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    let empty_dir = create_empty_dir(&test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
     let mut local_repo = repositories::init(&path)?;
@@ -993,7 +988,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_remote_repo_test_bounding_box_csv_pushed start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    let empty_dir = create_empty_dir(&test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
     let mut local_repo = repositories::init(&path)?;
@@ -1044,7 +1039,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_remote_repo_test_embeddings_jsonl_pushed start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    let empty_dir = create_empty_dir(&test_run_dir())?;
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
     let mut local_repo = repositories::init(&path)?;
@@ -1095,7 +1090,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     let version_store = repo.version_store()?;
@@ -1132,7 +1127,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init::init_with_version(&repo_dir, version)?;
 
     // Write all the files
@@ -1166,7 +1161,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_select_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
@@ -1200,7 +1195,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_select_data_repo_test_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
@@ -1238,7 +1233,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_empty_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Run test to see if it panic'd
@@ -1266,7 +1261,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_no_commits start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
@@ -1300,7 +1295,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_select_data_repo_test_no_commits start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write the select files
@@ -1333,7 +1328,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_fully_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
@@ -1372,7 +1367,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_fully_committed_async_min_version start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init::init_with_version(&repo_dir, version)?;
 
     // Write all the files
@@ -1407,7 +1402,7 @@ fn create_bounding_box_csv(repo_path: &Path) -> Result<(), OxenError> {
 
     // Write all the files
     write_txt_file_to_path(
-        dir.join("bounding_box.csv"),
+        &dir.join("bounding_box.csv"),
         r"file,label,min_x,min_y,width,height
 train/dog_1.jpg,dog,101.5,32.0,385,330
 train/dog_1.jpg,dog,102.5,31.0,386,330
@@ -1433,7 +1428,7 @@ fn create_embeddings_jsonl(repo_path: &Path) -> Result<(), OxenError> {
     }
 
     // Write all the files
-    write_txt_file_to_path(dir.join("embeddings.jsonl"), embeddings.join("\n"))?;
+    write_txt_file_to_path(&dir.join("embeddings.jsonl"), &embeddings.join("\n"))?;
 
     Ok(())
 }
@@ -1447,7 +1442,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_bounding_box_csv_repo_test_fully_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Write all the files
@@ -1481,7 +1476,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_bounding_box_csv_repo_test_fully_committed start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Add all the files
@@ -1513,13 +1508,13 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_compare_data_repo_test_fully_committed start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init(&repo_dir)?;
 
     // Has 6 match observations in both keys, 5 diffs,
     // 2 key sets left only, 1 keyset right only.
     write_txt_file_to_path(
-        repo.path.join("compare_left.csv"),
+        &repo.path.join("compare_left.csv"),
         r"height,weight,gender,target,other_target
 57,150,M,1,yes
 57,160,M,0,yes
@@ -1537,7 +1532,7 @@ where
     )?;
 
     write_txt_file_to_path(
-        repo.path.join("compare_right.csv"),
+        &repo.path.join("compare_right.csv"),
         r"height,weight,gender,target,other_target
 57,150,M,1,yes
 57,160,M,0,yes
@@ -1581,7 +1576,7 @@ where
 {
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_fully_committed start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo_dir = create_repo_dir(&test_run_dir())?;
     let repo = repositories::init::init_with_version(&repo_dir, version)?;
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
@@ -1615,13 +1610,13 @@ where
 }
 
 async fn add_all_data_to_repo(repo: &LocalRepository) -> Result<(), OxenError> {
-    repositories::add(repo, repo.path.join("train")).await?;
-    repositories::add(repo, repo.path.join("test")).await?;
-    repositories::add(repo, repo.path.join("annotations")).await?;
-    repositories::add(repo, repo.path.join("large_files")).await?;
-    repositories::add(repo, repo.path.join("nlp")).await?;
-    repositories::add(repo, repo.path.join("labels.txt")).await?;
-    repositories::add(repo, repo.path.join("README.md")).await?;
+    repositories::add(repo, &repo.path.join("train")).await?;
+    repositories::add(repo, &repo.path.join("test")).await?;
+    repositories::add(repo, &repo.path.join("annotations")).await?;
+    repositories::add(repo, &repo.path.join("large_files")).await?;
+    repositories::add(repo, &repo.path.join("nlp")).await?;
+    repositories::add(repo, &repo.path.join("labels.txt")).await?;
+    repositories::add(repo, &repo.path.join("README.md")).await?;
 
     Ok(())
 }
@@ -1843,7 +1838,7 @@ pub fn test_bounding_box_csv() -> PathBuf {
 
 pub fn populate_readme(repo_dir: &Path) -> Result<(), OxenError> {
     write_txt_file_to_path(
-        repo_dir.join("README.md"),
+        &repo_dir.join("README.md"),
         r"
         # Welcome to the party
 
@@ -1860,7 +1855,7 @@ pub fn populate_readme(repo_dir: &Path) -> Result<(), OxenError> {
 
 pub fn populate_license(repo_dir: &Path) -> Result<(), OxenError> {
     write_txt_file_to_path(
-        repo_dir.join("LICENSE"),
+        &repo_dir.join("LICENSE"),
         r"Oxen.ai License. The best version control system for data is Oxen.ai.",
     )?;
 
@@ -1869,7 +1864,7 @@ pub fn populate_license(repo_dir: &Path) -> Result<(), OxenError> {
 
 pub fn populate_labels(repo_dir: &Path) -> Result<(), OxenError> {
     write_txt_file_to_path(
-        repo_dir.join("labels.txt"),
+        &repo_dir.join("labels.txt"),
         r"
         dog
         cat
@@ -1881,7 +1876,7 @@ pub fn populate_labels(repo_dir: &Path) -> Result<(), OxenError> {
 
 pub fn populate_prompts(repo_dir: &Path) -> Result<(), OxenError> {
     write_txt_file_to_path(
-        repo_dir.join("prompts.jsonl"),
+        &repo_dir.join("prompts.jsonl"),
         "{\"prompt\": \"What is the meaning of life?\", \"label\": \"42\"}\n{\"prompt\": \"What is the best data version control system?\", \"label\": \"Oxen.ai\"}\n",
     )?;
 
@@ -1893,7 +1888,7 @@ pub fn populate_large_files(repo_dir: &Path) -> Result<(), OxenError> {
     util::fs::create_dir_all(&large_dir)?;
     let large_file_1 = large_dir.join("test.csv");
     let from_file = test_200k_csv();
-    util::fs::copy(from_file, large_file_1)?;
+    util::fs::copy(&from_file, &large_file_1)?;
 
     Ok(())
 }
@@ -1902,33 +1897,33 @@ pub fn populate_train_dir(repo_dir: &Path) -> Result<(), OxenError> {
     let train_dir = repo_dir.join("train");
     util::fs::create_dir_all(&train_dir)?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("dog_1.jpg"),
-        train_dir.join("dog_1.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("dog_1.jpg"),
+        &train_dir.join("dog_1.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("dog_2.jpg"),
-        train_dir.join("dog_2.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("dog_2.jpg"),
+        &train_dir.join("dog_2.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("dog_3.jpg"),
-        train_dir.join("dog_3.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("dog_3.jpg"),
+        &train_dir.join("dog_3.jpg"),
     )?;
     // Add file with same content and different names to test edge cases
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("dog_3.jpg"),
-        train_dir.join("dog_4.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("dog_3.jpg"),
+        &train_dir.join("dog_4.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("cat_1.jpg"),
-        train_dir.join("cat_1.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("cat_1.jpg"),
+        &train_dir.join("cat_1.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("cat_2.jpg"),
-        train_dir.join("cat_2.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("cat_2.jpg"),
+        &train_dir.join("cat_2.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("cat_2.jpg"),
-        train_dir.join("cat_3.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("cat_2.jpg"),
+        &train_dir.join("cat_3.jpg"),
     )?;
 
     Ok(())
@@ -1938,20 +1933,20 @@ pub fn populate_test_dir(repo_dir: &Path) -> Result<(), OxenError> {
     let test_dir = repo_dir.join("test");
     util::fs::create_dir_all(&test_dir)?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("dog_4.jpg"),
-        test_dir.join("1.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("dog_4.jpg"),
+        &test_dir.join("1.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("cat_3.jpg"),
-        test_dir.join("2.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("cat_3.jpg"),
+        &test_dir.join("2.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("dog_4.jpg"),
-        test_dir.join("3.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("dog_4.jpg"),
+        &test_dir.join("3.jpg"),
     )?;
     util::fs::copy(
-        TEST_DATA_DIR.join("test").join("images").join("cat_3.jpg"),
-        test_dir.join("4.jpg"),
+        &TEST_DATA_DIR.join("test").join("images").join("cat_3.jpg"),
+        &test_dir.join("4.jpg"),
     )?;
 
     Ok(())
@@ -1962,7 +1957,7 @@ pub fn populate_annotations_dir(repo_dir: &Path) -> Result<(), OxenError> {
     util::fs::create_dir_all(&annotations_dir)?;
     let annotations_readme_file = annotations_dir.join("README.md");
     write_txt_file_to_path(
-        annotations_readme_file,
+        &annotations_readme_file,
         r"
         # Annotations
         Some info about our annotations structure....
@@ -1973,7 +1968,7 @@ pub fn populate_annotations_dir(repo_dir: &Path) -> Result<(), OxenError> {
     let train_annotations_dir = annotations_dir.join("train");
     util::fs::create_dir_all(&train_annotations_dir)?;
     write_txt_file_to_path(
-        train_annotations_dir.join("annotations.txt"),
+        &train_annotations_dir.join("annotations.txt"),
         r"
 train/dog_1.jpg 0
 train/dog_2.jpg 0
@@ -1986,14 +1981,14 @@ train/cat_2.jpg 1
     create_bounding_box_csv(repo_dir)?;
 
     write_txt_file_to_path(
-        train_annotations_dir.join("one_shot.csv"),
+        &train_annotations_dir.join("one_shot.csv"),
         r"file,label,min_x,min_y,width,height
 train/dog_1.jpg,dog,101.5,32.0,385,330
 ",
     )?;
 
     write_txt_file_to_path(
-        train_annotations_dir.join("two_shot.csv"),
+        &train_annotations_dir.join("two_shot.csv"),
         r"file,label,min_x,min_y,width,height
 train/dog_3.jpg,dog,19.0,63.5,376,421
 train/cat_1.jpg,cat,57.0,35.5,304,427
@@ -2004,7 +1999,7 @@ train/cat_1.jpg,cat,57.0,35.5,304,427
     let test_annotations_dir = annotations_dir.join("test");
     util::fs::create_dir_all(&test_annotations_dir)?;
     write_txt_file_to_path(
-        test_annotations_dir.join("annotations.csv"),
+        &test_annotations_dir.join("annotations.csv"),
         r"file,label,min_x,min_y,width,height
 test/dog_3.jpg,dog,19.0,63.5,376,421
 test/cat_1.jpg,cat,57.0,35.5,304,427
@@ -2037,7 +2032,7 @@ pub fn populate_nlp_dir(repo_dir: &Path) -> Result<(), OxenError> {
         "One more time\tpositive",
     ]
     .join("\n");
-    write_txt_file_to_path(nlp_annotations_dir.join("train.tsv"), &train_data)?;
+    write_txt_file_to_path(&nlp_annotations_dir.join("train.tsv"), &train_data)?;
 
     let test_data = [
         "text\tlabel",
@@ -2052,7 +2047,7 @@ pub fn populate_nlp_dir(repo_dir: &Path) -> Result<(), OxenError> {
         "I am a great testing example\tpositive",
     ]
     .join("\n");
-    write_txt_file_to_path(nlp_annotations_dir.join("test.tsv"), &test_data)?;
+    write_txt_file_to_path(&nlp_annotations_dir.join("test.tsv"), &test_data)?;
     Ok(())
 }
 
@@ -2184,32 +2179,25 @@ pub fn add_csv_file_to_dir(dir: &Path, contents: &str) -> Result<PathBuf, OxenEr
     add_file_to_dir(dir, contents, "csv")
 }
 
-pub fn write_txt_file_to_path(
-    path: impl AsRef<Path>,
-    contents: impl AsRef<str>,
-) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-    let contents = contents.as_ref();
+pub fn write_txt_file_to_path(path: &Path, contents: &str) -> Result<PathBuf, OxenError> {
     let mut file = File::create(path)?;
     file.write_all(contents.as_bytes())?;
     Ok(path.to_path_buf())
 }
 
-pub fn append_line_txt_file<P: AsRef<Path>>(path: P, line: &str) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-
+pub fn append_line_txt_file(path: &Path, line: &str) -> Result<PathBuf, OxenError> {
     let mut file = OpenOptions::new().append(true).open(path)?;
 
     if let Err(e) = writeln!(file, "{line}") {
-        return Err(OxenError::basic_str(format!("Couldn't write to file: {e}")));
+        return Err(OxenError::basic_str(&format!(
+            "Couldn't write to file: {e}"
+        )));
     }
 
     Ok(path.to_path_buf())
 }
 
-pub fn modify_txt_file<P: AsRef<Path>>(path: P, contents: &str) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-
+pub fn modify_txt_file(path: &Path, contents: &str) -> Result<PathBuf, OxenError> {
     // Overwrite
     if path.exists() {
         util::fs::remove_file(path)?;
@@ -2230,7 +2218,7 @@ pub fn schema_bounding_box() -> Schema {
     Schema::new(fields)
 }
 
-pub fn add_random_bbox_to_file<P: AsRef<Path>>(path: P) -> Result<PathBuf, OxenError> {
+pub fn add_random_bbox_to_file(path: &Path) -> Result<PathBuf, OxenError> {
     let mut rng = rand::thread_rng();
     let file_name = format!("random_img_{}.jpg", rng.gen_range(0..10));
     let x: f64 = rng.gen_range(0.0..1000.0);
@@ -2256,7 +2244,7 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
         Ok(full_new_path)
     } else {
         let err = format!("Unknown extension file: {file_path:?}");
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }
 
@@ -2277,10 +2265,10 @@ mod tests {
             // Add a file that we are going to ignore
             let ignore_filename = "ignoreme.txt";
             let ignore_path = repo.path.join(ignore_filename);
-            write_txt_file_to_path(ignore_path, "I should be ignored")?;
+            write_txt_file_to_path(&ignore_path, "I should be ignored")?;
 
             let oxenignore_file = repo.path.join(".oxenignore");
-            write_txt_file_to_path(oxenignore_file, ignore_filename)?;
+            write_txt_file_to_path(&oxenignore_file, ignore_filename)?;
 
             let status = repositories::status(&repo)?;
             // Only untracked file should be .oxenignore
@@ -2302,11 +2290,11 @@ mod tests {
             let ignore_dir = "ignoreme/";
             let ignore_path = repo.path.join(ignore_dir);
             std::fs::create_dir(&ignore_path)?;
-            write_txt_file_to_path(ignore_path.join("0.txt"), "I should be ignored")?;
-            write_txt_file_to_path(ignore_path.join("1.txt"), "I should also be ignored")?;
+            write_txt_file_to_path(&ignore_path.join("0.txt"), "I should be ignored")?;
+            write_txt_file_to_path(&ignore_path.join("1.txt"), "I should also be ignored")?;
 
             let oxenignore_file = repo.path.join(".oxenignore");
-            write_txt_file_to_path(oxenignore_file, "ignoreme/")?;
+            write_txt_file_to_path(&oxenignore_file, "ignoreme/")?;
 
             let status = repositories::status(&repo)?;
             // Only untracked file should be .oxenignore

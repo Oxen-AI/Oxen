@@ -4,8 +4,7 @@ use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode};
 use std::str;
 
 /// More efficient than get since it does not actual deserialize the value
-pub fn has_key<T: ThreadMode, S: AsRef<str>>(db: &DBWithThreadMode<T>, key: S) -> bool {
-    let key = key.as_ref();
+pub fn has_key<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> bool {
     let bytes = key.as_bytes();
     match db.get_pinned(bytes) {
         Ok(Some(_value)) => true,
@@ -24,11 +23,7 @@ pub fn count<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<usize, OxenError
 }
 
 /// Remove key from database
-pub fn delete<T: ThreadMode, S: AsRef<str>>(
-    db: &DBWithThreadMode<T>,
-    key: S,
-) -> Result<(), OxenError> {
-    let key = key.as_ref();
+pub fn delete<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> Result<(), OxenError> {
     log::debug!("kv_db::delete {:?} from db: {:?}", key, db.path());
 
     db.delete(key)?;

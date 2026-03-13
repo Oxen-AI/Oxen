@@ -16,11 +16,9 @@ use crate::core;
 pub async fn download_dir(
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
+    remote_path: &Path,
+    local_path: &Path,
 ) -> Result<(), OxenError> {
-    let remote_path = remote_path.as_ref();
-    let local_path = local_path.as_ref();
     log::debug!("downloading dir {remote_path:?}");
     // Initialize temp repo to download node into
     // TODO: Where should this repo be?
@@ -32,7 +30,7 @@ pub async fn download_dir(
         &tmp_repo,
         remote_repo,
         commit_id,
-        remote_path.to_string_lossy(),
+        &remote_path.to_string_lossy(),
         true,
     )
     .await?;
@@ -59,11 +57,9 @@ pub async fn download_dir_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
+    remote_path: &Path,
+    local_path: &Path,
 ) -> Result<(), OxenError> {
-    let remote_path = remote_path.as_ref();
-    let local_path = local_path.as_ref();
     log::debug!("downloading dir {remote_path:?}");
 
     // Get tree from local repos

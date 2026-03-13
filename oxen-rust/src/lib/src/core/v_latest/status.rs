@@ -32,12 +32,9 @@ pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
     status_from_dir(repo, &repo.path)
 }
 
-pub fn status_from_dir(
-    repo: &LocalRepository,
-    dir: impl AsRef<Path>,
-) -> Result<StagedData, OxenError> {
+pub fn status_from_dir(repo: &LocalRepository, dir: &Path) -> Result<StagedData, OxenError> {
     let opts = StagedDataOpts {
-        paths: vec![dir.as_ref().to_path_buf()],
+        paths: vec![dir.to_path_buf()],
         ..StagedDataOpts::default()
     };
     status_from_opts(repo, &opts)
@@ -256,7 +253,7 @@ pub fn status_from_dir_entries(
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "status_from_dir found unexpected node type: {:?}",
                         entry.node
                     )));
@@ -364,7 +361,7 @@ pub fn read_staged_entries_with_staged_db_manager(
 /// Duplicate function using staged db manager in workspaces
 pub fn read_staged_entries_below_path_with_staged_db_manager(
     repo: &LocalRepository,
-    start_path: impl AsRef<Path>,
+    start_path: &Path,
     read_progress: &ProgressBar,
 ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
     with_staged_db_manager(repo, |staged_db_manager| {
@@ -375,10 +372,10 @@ pub fn read_staged_entries_below_path_with_staged_db_manager(
 pub fn read_staged_entries_below_path(
     repo: &LocalRepository,
     db: &DBWithThreadMode<SingleThreaded>,
-    start_path: impl AsRef<Path>,
+    start_path: &Path,
     read_progress: &ProgressBar,
 ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
-    let start_path = util::fs::path_relative_to_dir(start_path.as_ref(), &repo.path)?;
+    let start_path = util::fs::path_relative_to_dir(start_path, &repo.path)?;
     let mut total_entries = 0;
     let iter = db.iterator(IteratorMode::Start);
     let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
@@ -446,13 +443,12 @@ pub fn read_staged_entries_below_path(
 fn find_changes(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
-    search_node_path: impl AsRef<Path>,
+    search_node_path: &Path,
     staged_db: &Option<DBWithThreadMode<SingleThreaded>>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     progress: &ProgressBar,
     total_entries: &mut usize,
 ) -> Result<(UntrackedData, HashSet<PathBuf>, HashSet<PathBuf>), OxenError> {
-    let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
     let is_dir = full_path.is_dir();
     log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
@@ -471,7 +467,7 @@ fn find_changes(
     let mut entries: Vec<(PathBuf, bool, Result<std::fs::Metadata, OxenError>)> = Vec::new();
     if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Could not read dir {full_path:?}"
             )));
         };
@@ -483,7 +479,7 @@ fn find_changes(
                     let is_dir = path.is_dir();
                     let md = match entry.metadata() {
                         Ok(md) => Ok(md),
-                        Err(err) => Err(OxenError::basic_str(err.to_string())),
+                        Err(err) => Err(OxenError::basic_str(&err.to_string())),
                     };
                     Some((path, is_dir, md))
                 }
@@ -647,7 +643,7 @@ fn find_changes(
 fn find_local_changes(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
-    search_node_path: impl AsRef<Path>,
+    search_node_path: &Path,
     staged_data: &StagedData,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     progress: &ProgressBar,
@@ -661,7 +657,6 @@ fn find_local_changes(
     ),
     OxenError,
 > {
-    let search_node_path = search_node_path.as_ref();
     let full_path = repo.path.join(search_node_path);
     let is_dir = full_path.is_dir();
 
@@ -688,7 +683,7 @@ fn find_local_changes(
     let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
     if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Could not read dir {full_path:?}"
             )));
         };
@@ -928,9 +923,8 @@ fn get_dir_hashes(
 fn maybe_get_node(
     repo: &LocalRepository,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    let path = path.as_ref();
     if let Some(hash) = dir_hashes.get(path) {
         CommitMerkleTree::read_depth(repo, hash, 1)
     } else {
@@ -1060,14 +1054,14 @@ impl UnsyncedData {
 }
 
 fn maybe_get_child_node(
-    path: impl AsRef<Path>,
+    path: &Path,
     dir_children: &Option<HashMap<PathBuf, MerkleTreeNode>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let Some(children) = dir_children else {
         return Ok(None);
     };
 
-    let child = children.get(path.as_ref());
+    let child = children.get(path);
     Ok(child.cloned())
 }
 

@@ -9,15 +9,14 @@ use crate::errors::OxenHttpError;
 
 pub fn get_repo(
     path: &Path,
-    namespace: impl AsRef<str>,
-    name: impl AsRef<str>,
+    namespace: &str,
+    name: &str,
 ) -> Result<LocalRepository, OxenHttpError> {
-    let repo = repositories::get_by_namespace_and_name(path, &namespace, &name)?;
+    let repo = repositories::get_by_namespace_and_name(path, namespace, name)?;
     let Some(repo) = repo else {
-        return Err(OxenError::repo_not_found(RepoNew::from_namespace_name(
-            &namespace, &name, None,
-        ))
-        .into());
+        return Err(
+            OxenError::repo_not_found(RepoNew::from_namespace_name(namespace, name, None)).into(),
+        );
     };
 
     Ok(repo)

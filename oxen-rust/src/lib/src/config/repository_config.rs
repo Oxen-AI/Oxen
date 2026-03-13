@@ -61,15 +61,15 @@ impl RepositoryConfig {
         Self::from_file(&path)
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, OxenError> {
-        let contents = util::fs::read_from_path(&path)?;
+    pub fn from_file(path: &Path) -> Result<Self, OxenError> {
+        let contents = util::fs::read_from_path(path)?;
         let remote_config: RepositoryConfig = toml::from_str(&contents)?;
         Ok(remote_config)
     }
 
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), OxenError> {
+    pub fn save(&self, path: &Path) -> Result<(), OxenError> {
         let toml = toml::to_string(&self)?;
-        util::fs::write_to_path(&path, toml)?;
+        util::fs::write_to_path(path, &toml)?;
         Ok(())
     }
 

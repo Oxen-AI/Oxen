@@ -34,7 +34,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;
@@ -93,7 +93,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repo = get_repo(&app_data.path, namespace, name)?;
+    let repo = get_repo(&app_data.path, &namespace, &name)?;
 
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;
@@ -126,7 +126,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
         }
         Ok(None) => {
             log::debug!("Merge has conflicts");
-            Err(OxenError::merge_conflict(format!(
+            Err(OxenError::merge_conflict(&format!(
                 "Unable to merge {head} into {base} due to conflicts"
             )))?
         }

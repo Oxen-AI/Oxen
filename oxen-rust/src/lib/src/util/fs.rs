@@ -45,8 +45,8 @@ use image::{ImageFormat, ImageReader};
 use thumbnails::Thumbnailer;
 
 // Deprecated
-pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
-    PathBuf::from(repo_path.as_ref()).join(Path::new(constants::OXEN_HIDDEN_DIR))
+pub fn oxen_hidden_dir(repo_path: &Path) -> PathBuf {
+    PathBuf::from(repo_path).join(Path::new(constants::OXEN_HIDDEN_DIR))
 }
 
 pub fn oxen_tmp_dir() -> Result<PathBuf, OxenError> {
@@ -139,11 +139,11 @@ pub fn resized_path_for_version_store_file(
     Ok(resized_path)
 }
 
-pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
+pub fn chunk_path(repo: &LocalRepository, hash: &str) -> PathBuf {
     oxen_hidden_dir(&repo.path)
         .join(TREE_DIR)
         .join(CHUNKS_DIR)
-        .join(hash.as_ref())
+        .join(hash)
         .join("data")
 }
 
@@ -155,20 +155,18 @@ pub fn extension_from_path(path: &Path) -> String {
     }
 }
 
-pub fn read_bytes_from_path(path: impl AsRef<Path>) -> Result<Vec<u8>, OxenError> {
-    let path = path.as_ref();
+pub fn read_bytes_from_path(path: &Path) -> Result<Vec<u8>, OxenError> {
     Ok(std::fs::read(path)?)
 }
 
-pub fn read_file(path: Option<impl AsRef<Path>>) -> Result<String, OxenError> {
+pub fn read_file(path: Option<&Path>) -> Result<String, OxenError> {
     match path {
         Some(path) => read_from_path(path),
         None => Ok(String::new()),
     }
 }
 
-pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
-    let path = path.as_ref();
+pub fn read_from_path(path: &Path) -> Result<String, OxenError> {
     match std::fs::read_to_string(path) {
         Ok(contents) => Ok(contents),
         Err(_) => {
@@ -182,10 +180,7 @@ pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
     }
 }
 
-pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(), OxenError> {
-    let path = path.as_ref();
-    let value = value.as_ref();
-
+pub fn write_to_path(path: &Path, value: &str) -> Result<(), OxenError> {
     // Make sure the parent directory exists
     if let Some(parent) = path.parent() {
         create_dir_all(parent)?;
@@ -194,11 +189,11 @@ pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(
     match File::create(path) {
         Ok(mut file) => match file.write(value.as_bytes()) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "Could not write file {path:?}\n{err}"
             ))),
         },
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "Could not create file to write {path:?}\n{err}"
         ))),
     }
@@ -208,11 +203,11 @@ pub fn write_data(path: &Path, data: &[u8]) -> Result<(), OxenError> {
     match File::create(path) {
         Ok(mut file) => match file.write(data) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "Could not write file {path:?}\n{err}"
             ))),
         },
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "Could not create file to write {path:?}\n{err}"
         ))),
     }
@@ -222,21 +217,17 @@ pub fn append_to_file(path: &Path, value: &str) -> Result<(), OxenError> {
     match OpenOptions::new().append(true).open(path) {
         Ok(mut file) => match file.write(value.as_bytes()) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
+            Err(err) => Err(OxenError::basic_str(&format!(
                 "Could not append to file {path:?}\n{err}"
             ))),
         },
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "Could not open file to append {path:?}\n{err}"
         ))),
     }
 }
 
-pub fn count_lines(
-    path: impl AsRef<Path>,
-    opts: CountLinesOpts,
-) -> Result<(usize, Option<usize>), OxenError> {
-    let path = path.as_ref();
+pub fn count_lines(path: &Path, opts: CountLinesOpts) -> Result<(usize, Option<usize>), OxenError> {
     let file = File::open(path)?;
 
     let mut reader = BufReader::with_capacity(1024 * 32, file);
@@ -290,16 +281,16 @@ pub fn read_lines_file(file: &File) -> Vec<String> {
     lines
 }
 
-pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, OxenError> {
-    let mut file = File::open(path.as_ref())?;
+pub fn read_first_n_bytes(path: &Path, n: usize) -> Result<Vec<u8>, OxenError> {
+    let mut file = File::open(path)?;
     let mut buffer = vec![0; n];
     let bytes_read = file.read(&mut buffer)?;
     buffer.truncate(bytes_read);
     Ok(buffer)
 }
 
-pub fn read_first_line(path: impl AsRef<Path>) -> Result<String, OxenError> {
-    let file = File::open(path.as_ref())?;
+pub fn read_first_line(path: &Path) -> Result<String, OxenError> {
+    let file = File::open(path)?;
     read_first_line_from_file(&file)
 }
 
@@ -308,13 +299,13 @@ pub fn read_first_line_from_file(file: &File) -> Result<String, OxenError> {
     if let Some(Ok(line)) = reader.lines().next() {
         Ok(line)
     } else {
-        Err(OxenError::basic_str(format!(
+        Err(OxenError::basic_str(&format!(
             "Could not read line from file: {file:?}"
         )))
     }
 }
 
-pub fn read_first_byte_from_file(path: impl AsRef<Path>) -> Result<char, OxenError> {
+pub fn read_first_byte_from_file(path: &Path) -> Result<char, OxenError> {
     let mut file = File::open(path)?;
     let mut buffer = [0; 1]; // Single byte buffer
     file.read_exact(&mut buffer)?;
@@ -477,10 +468,8 @@ pub fn get_repo_root_from_current_dir() -> Option<PathBuf> {
     get_repo_root(&path)
 }
 
-pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn copy_dir_all(from: &Path, to: &Path) -> Result<(), OxenError> {
     // There is not a recursive copy in the standard library, so we implement it here
-    let from = from.as_ref();
-    let to = to.as_ref();
     log::debug!("copy_dir_all Copy directory from: {from:?} -> to: {to:?}");
 
     let mut stack = Vec::new();
@@ -530,9 +519,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
 }
 
 /// Wrapper around the std::fs::copy command to tell us which file failed to copy
-pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenError> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
+pub fn copy(src: &Path, dst: &Path) -> Result<(), OxenError> {
     let max_retries = 3;
     let mut attempt = 0;
 
@@ -543,7 +530,7 @@ pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenErro
                 if err.raw_os_error() == Some(32) {
                     attempt += 1;
                     if attempt == max_retries {
-                        return Err(OxenError::basic_str(format!(
+                        return Err(OxenError::basic_str(&format!(
                             "File is in use by another process after {max_retries} attempts: {src:?}"
                         )));
                     }
@@ -565,10 +552,7 @@ pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenErro
 }
 
 /// Wrapper around the std::fs::rename command to tell us which file failed to copy
-pub fn rename(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenError> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
-
+pub fn rename(src: &Path, dst: &Path) -> Result<(), OxenError> {
     // Platform-specific behavior
     // This function currently corresponds to the rename function on Unix and the MoveFileEx function with the MOVEFILE_REPLACE_EXISTING flag on Windows.
     if cfg!(windows) {
@@ -600,9 +584,7 @@ pub fn rename(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenEr
 }
 
 /// Wrapper around the std::fs::copy which makes the parent directory of the dst if it doesn't exist
-pub fn copy_mkdir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenError> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
+pub fn copy_mkdir(src: &Path, dst: &Path) -> Result<(), OxenError> {
     if let Some(parent) = dst.parent() {
         create_dir_all(parent)?;
     }
@@ -619,10 +601,10 @@ pub fn copy_mkdir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), Ox
 }
 
 /// Recursively check if a file exists within a directory
-pub fn file_exists_in_directory(directory: impl AsRef<Path>, file: impl AsRef<Path>) -> bool {
-    let mut file = file.as_ref();
+pub fn file_exists_in_directory(directory: &Path, file: &Path) -> bool {
+    let mut file = file;
     while file.parent().is_some() {
-        if directory.as_ref() == file.parent().unwrap() {
+        if directory == file.parent().unwrap() {
             return true;
         }
         file = file.parent().unwrap();
@@ -632,12 +614,11 @@ pub fn file_exists_in_directory(directory: impl AsRef<Path>, file: impl AsRef<Pa
 
 /// Wrapper around the util::fs::create_dir_all command to tell us which file it failed on
 /// creates a directory if they don't exist
-pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    if src.as_ref().exists() {
+pub fn create_dir_all(src: &Path) -> Result<(), OxenError> {
+    if src.exists() {
         return Ok(());
     }
 
-    let src = src.as_ref();
     match std::fs::create_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
@@ -649,12 +630,11 @@ pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
 
 /// Wrapper around the util::fs::create_dir command to tell us which file it failed on
 /// creates a directory if they don't exist
-pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    if src.as_ref().exists() {
+pub fn create_dir(src: &Path) -> Result<(), OxenError> {
+    if src.exists() {
         return Ok(());
     }
 
-    let src = src.as_ref();
     match std::fs::create_dir(src) {
         Ok(_) => Ok(()),
         Err(err) => {
@@ -665,8 +645,7 @@ pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
 }
 
 /// Wrapper around the util::fs::remove_dir_all command to tell us which file it failed on
-pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    let src = src.as_ref();
+pub fn remove_dir_all(src: &Path) -> Result<(), OxenError> {
     match std::fs::remove_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
@@ -677,8 +656,7 @@ pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
 }
 
 /// Wrapper around the std::fs::write command to tell us which file it failed on
-pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenError> {
-    let src = src.as_ref();
+pub fn write(src: &Path, data: &[u8]) -> Result<(), OxenError> {
     match std::fs::write(src, data) {
         Ok(_) => Ok(()),
         Err(err) => {
@@ -689,8 +667,7 @@ pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenEr
 }
 
 /// Wrapper around the std::fs::remove_file command to tell us which file it failed on
-pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    let src = src.as_ref();
+pub fn remove_file(src: &Path) -> Result<(), OxenError> {
     log::debug!("Removing file: {}", src.display());
     match std::fs::remove_file(src) {
         Ok(_) => Ok(()),
@@ -702,8 +679,7 @@ pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
 }
 
 /// Wrapper around util::fs::metadata to give us a better error on failure
-pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> {
-    let path = path.as_ref();
+pub fn metadata(path: &Path) -> Result<std::fs::Metadata, OxenError> {
     match std::fs::metadata(path) {
         Ok(file) => Ok(file),
         Err(err) => {
@@ -714,8 +690,7 @@ pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> 
 }
 
 /// Wrapper around std::fs::File::create to give us a better error on failure
-pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
-    let path = path.as_ref();
+pub fn file_create(path: &Path) -> Result<std::fs::File, OxenError> {
     match std::fs::File::create(path) {
         Ok(file) => Ok(file),
         Err(err) => {
@@ -726,9 +701,7 @@ pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
 }
 
 /// Looks at both the extension and the first bytes of the file to determine if it is tabular
-pub fn is_tabular_from_extension(data_path: impl AsRef<Path>, file_path: impl AsRef<Path>) -> bool {
-    let data_path = data_path.as_ref();
-    let file_path = file_path.as_ref();
+pub fn is_tabular_from_extension(data_path: &Path, file_path: &Path) -> bool {
     if has_ext(file_path, "json")
         && let Ok(c) = read_first_byte_from_file(data_path)
         && "[" == c.to_string()
@@ -740,8 +713,7 @@ pub fn is_tabular_from_extension(data_path: impl AsRef<Path>, file_path: impl As
 }
 
 /// Looks at the extension of the file to determine if it is tabular
-pub fn has_tabular_extension(file_path: impl AsRef<Path>) -> bool {
-    let file_path = file_path.as_ref();
+pub fn has_tabular_extension(file_path: &Path) -> bool {
     let exts: HashSet<String> = vec!["csv", "tsv", "parquet", "arrow", "ndjson", "jsonl"]
         .into_iter()
         .map(String::from)
@@ -1102,8 +1074,7 @@ pub fn p_count_files_in_dir_w_progress(dir: &Path, pb: Option<ProgressBar>) -> u
     count
 }
 
-pub fn count_files_in_dir_with_progress(dir: impl AsRef<Path>) -> usize {
-    let dir = dir.as_ref();
+pub fn count_files_in_dir_with_progress(dir: &Path) -> usize {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
@@ -1219,8 +1190,7 @@ pub fn is_in_oxen_hidden_dir(path: &Path) -> bool {
     false
 }
 
-pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, OxenError> {
-    let path = path.as_ref();
+pub fn is_canonical(path: &Path) -> Result<bool, OxenError> {
     let canon_path = canonicalize(path)?;
 
     if path == canon_path {
@@ -1233,39 +1203,29 @@ pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, OxenError> {
 }
 
 // Return canonicalized path if possible, otherwise return original
-pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
+pub fn canonicalize(path: &Path) -> Result<PathBuf, OxenError> {
     //log::debug!("Path to canonicalize: {path:?}");
     match dunce::canonicalize(path) {
         Ok(canon_path) => Ok(canon_path),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "path {path:?} cannot be canonicalized due to err {err:?}"
         ))),
     }
 }
 
 // Get the full path of a non-canonical parent from a canonical child path
-pub fn full_path_from_child_path(
-    parent: impl AsRef<Path>,
-    child: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    let parent_path = parent.as_ref();
-    let child_path = child.as_ref();
-
-    let parent_stem = stem_from_canonical_child_path(parent_path, child_path)?;
-    Ok(parent_stem.join(parent_path))
+pub fn full_path_from_child_path(parent: &Path, child: &Path) -> Result<PathBuf, OxenError> {
+    let parent_stem = stem_from_canonical_child_path(parent, child)?;
+    Ok(parent_stem.join(parent))
 }
 
 // Find the stem that completes the absolute path of the parent from its child
 // This is useful to find the absolute path of a repo when directly canonicalizing its path isn't possible, and we're calling add with an absolute path
 // If the file is under the oxen control of the repo, then this will recover the necessary stem to get the correct canonical path to that repo
 fn stem_from_canonical_child_path(
-    parent_path: impl AsRef<Path>,
-    child_path: impl AsRef<Path>,
+    parent_path: &Path,
+    child_path: &Path,
 ) -> Result<PathBuf, OxenError> {
-    let parent_path = parent_path.as_ref();
-    let child_path = child_path.as_ref();
-
     let child_components: Vec<Component> = child_path.components().collect();
     let parent_components: Vec<Component> = parent_path.components().collect();
 
@@ -1273,7 +1233,7 @@ fn stem_from_canonical_child_path(
     let relative_components: Vec<Component> = relative_path.components().collect();
 
     if child_components.len() < parent_components.len() + relative_components.len() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Invalid path relationship: child path {child_path:?} is not under parent path {parent_path:?}"
         )));
     }
@@ -1284,13 +1244,7 @@ fn stem_from_canonical_child_path(
     Ok(result)
 }
 
-pub fn path_relative_to_dir(
-    path: impl AsRef<Path>,
-    dir: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-    let dir = dir.as_ref();
-
+pub fn path_relative_to_dir(path: &Path, dir: &Path) -> Result<PathBuf, OxenError> {
     // log::debug!("path_relative_to_dir starting path: {path:?}");
     // log::debug!("path_relative_to_dir staring dir: {dir:?}");
 
@@ -1396,10 +1350,7 @@ pub fn path_relative_to_dir(
 }
 
 // Check whether a path can be found relative to a dir
-pub fn is_relative_to_dir(path: impl AsRef<Path>, dir: impl AsRef<Path>) -> bool {
-    let path = path.as_ref();
-    let dir = dir.as_ref();
-
+pub fn is_relative_to_dir(path: &Path, dir: &Path) -> bool {
     let path_components: Vec<Component> = path.components().collect();
     let dir_components: Vec<Component> = dir.components().collect();
 
@@ -1541,13 +1492,12 @@ pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bo
     false
 }
 
-pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
-    match File::open(path.as_ref()) {
+pub fn open_file(path: &Path) -> Result<File, OxenError> {
+    match File::open(path) {
         Ok(file) => Ok(file),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "Failed to open file: {:?}\n{:?}",
-            path.as_ref(),
-            err
+            path, err
         ))),
     }
 }
@@ -1562,7 +1512,7 @@ async fn detect_image_format_from_version(
     while header.len() < 16 {
         if let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| {
-                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
+                OxenError::basic_str(&format!("Failed to read version file {hash}: {e}"))
             })?;
             let to_take = 16 - header.len();
             header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
@@ -1572,13 +1522,13 @@ async fn detect_image_format_from_version(
     }
 
     if header.is_empty() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Version file {hash} is empty"
         )));
     }
 
     let format = image::guess_format(&header)
-        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
+        .map_err(|_| OxenError::basic_str(&format!("Unknown image format for version: {hash}")))?;
 
     Ok(format)
 }
@@ -1701,7 +1651,7 @@ fn generate_video_thumbnail_version_store(
 
     // Generate thumbnail from video file
     let thumb_image = thumbnailer.get(&version_path).map_err(|e| {
-        OxenError::basic_str(format!(
+        OxenError::basic_str(&format!(
             "Failed to generate thumbnail: {e}. Make sure ffmpeg is installed."
         ))
     })?;
@@ -1709,7 +1659,7 @@ fn generate_video_thumbnail_version_store(
     // Save the thumbnail image
     thumb_image
         .save(thumbnail_path)
-        .map_err(|e| OxenError::basic_str(format!("Failed to save thumbnail: {e}")))?;
+        .map_err(|e| OxenError::basic_str(&format!("Failed to save thumbnail: {e}")))?;
 
     log::debug!("saved thumbnail {thumbnail_path:?}");
     Ok(())
@@ -1796,18 +1746,15 @@ pub fn handle_video_thumbnail(
     }
 }
 
-pub fn to_unix_str(path: impl AsRef<Path>) -> String {
-    path.as_ref()
-        .to_str()
-        .unwrap_or_default()
-        .replace('\\', "/")
+pub fn to_unix_str(path: &Path) -> String {
+    path.to_str().unwrap_or_default().replace('\\', "/")
 }
 
-pub fn is_glob_path(path: impl AsRef<Path>) -> bool {
+pub fn is_glob_path(path: &Path) -> bool {
     let glob_chars = ['*', '?', '[', ']'];
     glob_chars
         .iter()
-        .any(|c| path.as_ref().to_str().unwrap_or_default().contains(*c))
+        .any(|c| path.to_str().unwrap_or_default().contains(*c))
 }
 
 pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
@@ -1932,9 +1879,7 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
 /// - Cannot contain parent directory references (..)
 /// - Cannot contain empty segments
 /// - Current directory references (.) are skipped
-pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-
+pub fn validate_and_normalize_path(path: &Path) -> Result<PathBuf, OxenError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -1988,7 +1933,7 @@ mod tests {
             .join("file.txt");
         let dir = Path::new("data").join("test");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(relative, Path::new("other").join("file.txt"));
 
         Ok(())
@@ -2002,7 +1947,7 @@ mod tests {
             .join("file.txt");
         let dir = Path::new("data").join("test").join("other");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(relative, Path::new("file.txt"));
 
         Ok(())
@@ -2017,7 +1962,7 @@ mod tests {
             .join("file.txt");
         let dir = Path::new("data").join("test").join("runs").join("54321");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(relative, Path::new("file.txt"));
 
         Ok(())
@@ -2031,7 +1976,7 @@ mod tests {
             .join("file.txt");
         let dir = Path::new("data").join("test").join("other");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(relative, Path::new("file.txt"));
 
         Ok(())
@@ -2042,7 +1987,7 @@ mod tests {
         let file = Path::new("data").join("test").join("other");
         let dir = Path::new("data").join("test");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(relative, Path::new("other"));
 
         Ok(())
@@ -2053,7 +1998,7 @@ mod tests {
         let file = Path::new("data").join("test").join("other").join("dir");
         let dir = Path::new("data").join("test");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(relative, Path::new("other").join("dir"));
 
         Ok(())
@@ -2064,7 +2009,7 @@ mod tests {
         let file = Path::new("data").join("test").join("other").join("dir");
         let dir = Path::new("some").join("repo");
 
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
+        let relative = util::fs::path_relative_to_dir(&file, &dir)?;
         assert_eq!(
             relative,
             Path::new("data").join("test").join("other").join("dir")
@@ -2087,7 +2032,7 @@ mod tests {
             let version_store = repo.version_store()?;
             let path = version_store.get_version_path(&entry.hash)?;
             let versions_dir = util::fs::oxen_hidden_dir(&repo.path).join(constants::VERSIONS_DIR);
-            let relative_path = util::fs::path_relative_to_dir(path, versions_dir)?;
+            let relative_path = util::fs::path_relative_to_dir(&path, &versions_dir)?;
             assert_eq!(
                 relative_path,
                 Path::new(constants::FILES_DIR)
@@ -2107,7 +2052,7 @@ mod tests {
             let python_with_interpreter_file = "add_2.py";
 
             test::write_txt_file_to_path(
-                repo.path.join(python_file),
+                &repo.path.join(python_file),
                 r"import os
 
 
@@ -2116,7 +2061,7 @@ def add(a, b):
             )?;
 
             test::write_txt_file_to_path(
-                repo.path.join(python_with_interpreter_file),
+                &repo.path.join(python_with_interpreter_file),
                 r"#!/usr/bin/env python3
 import os
 
@@ -2159,7 +2104,7 @@ def add(a, b):
             let test_id_file = repo.path.join("test_id.txt");
             let test_id_file_no_ext = repo.path.join("test_id");
             util::fs::copy(
-                test::REPO_ROOT
+                &test::REPO_ROOT
                     .join("data")
                     .join("test")
                     .join("text")
@@ -2167,7 +2112,7 @@ def add(a, b):
                 &test_id_file,
             )?;
             util::fs::copy(
-                test::REPO_ROOT
+                &test::REPO_ROOT
                     .join("data")
                     .join("test")
                     .join("text")

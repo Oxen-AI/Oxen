@@ -96,10 +96,10 @@ pub async fn get(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
@@ -176,9 +176,11 @@ pub async fn get(
         version: workspace.commit.id.to_string(),
     };
 
-    let og_schema = if let Some(schema) =
-        repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &resource.path)?
-    {
+    let og_schema = if let Some(schema) = repositories::data_frames::schemas::get_by_path(
+        &repo,
+        &workspace.commit,
+        std::path::Path::new(&resource.path),
+    )? {
         schema
     } else {
         Schema::from_polars(df.schema())
@@ -222,10 +224,10 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
@@ -277,10 +279,10 @@ pub async fn download(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) else {
@@ -324,7 +326,7 @@ pub async fn download(
         Err(e) => {
             let error_str = format!("{e:?}");
             log::error!("Error exporting data frame {file_path:?}: {error_str}");
-            let response = StatusMessageDescription::bad_request(error_str);
+            let response = StatusMessageDescription::bad_request(&error_str);
             return Ok(HttpResponse::BadRequest().json(response));
         }
     };
@@ -367,7 +369,7 @@ fn df_opts_from_query(query: &web::Query<DFOptsQuery>, file_path: PathBuf) -> DF
 /// If not, then it should be a genuine 404.
 fn file_exists_in_workspace_or_commit(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
 ) -> Result<bool, OxenHttpError> {
     let file_exists = {
         (
@@ -375,12 +377,12 @@ fn file_exists_in_workspace_or_commit(
             repositories::tree::get_file_by_path(
                 &workspace.base_repo,
                 &workspace.commit,
-                &file_path,
+                file_path,
             )?
             .is_some()
         ) || (
             // if not, does it exist in the workspace
-            repositories::workspaces::files::exists(workspace, &file_path)?
+            repositories::workspaces::files::exists(workspace, file_path)?
         )
     };
     Ok(file_exists)
@@ -406,10 +408,10 @@ pub async fn download_streaming(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) else {
@@ -451,7 +453,7 @@ pub async fn download_streaming(
         Err(e) => {
             log::error!("Error exporting data frame {file_path:?}: {e:?}");
             let error_str = format!("{e:?}");
-            let response = StatusMessageDescription::bad_request(error_str);
+            let response = StatusMessageDescription::bad_request(&error_str);
             return Ok(HttpResponse::BadRequest().json(response));
         }
     };
@@ -477,11 +479,11 @@ pub async fn get_by_branch(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let branch_name: &str = req.match_info().query("branch");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -525,12 +527,12 @@ pub async fn diff(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     let mut opts = DFOpts::empty();
@@ -549,9 +551,11 @@ pub async fn diff(
         version: workspace.commit.id.to_string(),
     };
 
-    let og_schema = if let Some(schema) =
-        repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, resource.path)?
-    {
+    let og_schema = if let Some(schema) = repositories::data_frames::schemas::get_by_path(
+        &repo,
+        &workspace.commit,
+        std::path::Path::new(&resource.path),
+    )? {
         schema
     } else {
         Schema::from_polars(df.schema())
@@ -590,13 +594,13 @@ pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHtt
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     log::debug!("workspace {workspace_id} data frame put {file_path:?}");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
     let data: DataFramePayload = serde_json::from_str(&body)?;
     log::debug!("workspace {workspace_id} data frame put {data:?}");
@@ -619,14 +623,14 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
-    repositories::workspaces::data_frames::restore(&repo, &workspace, file_path)?;
+    repositories::workspaces::data_frames::restore(&repo, &workspace, &file_path)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
@@ -636,7 +640,7 @@ pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
     // Attempt to parse the body
     let body: RenameRequest = serde_json::from_str(&body)?; // Use the Json wrapper to get the inner value
@@ -650,7 +654,7 @@ pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+            .json(StatusMessageDescription::workspace_not_found(&workspace_id)));
     };
 
     if repositories::entries::get_file(&repo, &workspace.commit, &new_path)?.is_some() {

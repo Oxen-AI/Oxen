@@ -14,14 +14,14 @@ pub fn hash_buffer(buffer: &[u8]) -> String {
     format!("{val:x}")
 }
 
-pub fn hash_str<S: AsRef<str>>(buffer: S) -> String {
-    let buffer = buffer.as_ref().as_bytes();
+pub fn hash_str(buffer: &str) -> String {
+    let buffer = buffer.as_bytes();
     hash_buffer(buffer)
 }
 
-pub fn hash_str_sha256<S: AsRef<str>>(str: S) -> String {
+pub fn hash_str_sha256(str: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(str.as_ref().as_bytes());
+    hasher.update(str.as_bytes());
     let result = hasher.finalize();
     format!("{result:x}")
 }
@@ -177,7 +177,7 @@ fn hash_small_file_contents(path: &Path) -> Result<u128, OxenError> {
         Err(err) => {
             let err =
                 format!("util::hasher::hash_file_contents Could not open file {path:?} {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -185,7 +185,7 @@ fn hash_small_file_contents(path: &Path) -> Result<u128, OxenError> {
 fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
     let file = File::open(path).map_err(|err| {
         eprintln!("Could not open file {path:?} due to {err:?}");
-        OxenError::basic_str(format!("Could not open file {path:?} due to {err:?}"))
+        OxenError::basic_str(&format!("Could not open file {path:?} due to {err:?}"))
     })?;
 
     let mut reader = BufReader::new(file);
@@ -208,6 +208,6 @@ fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
     Ok(hasher.digest128())
 }
 
-pub fn hash_path_name(path: impl AsRef<Path>) -> String {
-    hash_str(path.as_ref().to_str().unwrap())
+pub fn hash_path_name(path: &Path) -> String {
+    hash_str(path.to_str().unwrap())
 }

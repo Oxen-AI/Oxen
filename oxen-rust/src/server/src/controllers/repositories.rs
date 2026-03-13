@@ -90,7 +90,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     // If we have a commit on the main branch, we can get the size and data types from the commit
     if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME)
         && let Some(dir_node) =
-            repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
+            repositories::entries::get_directory(&repository, &commit, &PathBuf::from(""))?
     {
         size = dir_node.num_bytes();
         data_types = dir_node
@@ -333,7 +333,7 @@ async fn handle_json_creation(
         }
         Err(OxenError::InvalidRepoName(name)) => {
             log::debug!("Invalid repo name: {name}");
-            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
+            Ok(HttpResponse::BadRequest().json(StatusMessage::error(&format!(
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
             ))))
         }
@@ -478,7 +478,7 @@ async fn handle_multipart_creation(
         }
         Err(OxenError::InvalidRepoName(name)) => {
             log::debug!("Invalid repo name: {name}");
-            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
+            Ok(HttpResponse::BadRequest().json(StatusMessage::error(&format!(
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
             ))))
         }

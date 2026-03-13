@@ -62,15 +62,16 @@ impl RunCmd for NodeCmd {
         // if the --path flag is set, get the node by path in the specified revision
         if let Some(path) = args.get_one::<String>("path") {
             let commit = if let Some(revision) = args.get_one::<String>("revision") {
-                repositories::revisions::get(&repository, revision)?
-                    .ok_or_else(|| OxenError::basic_str(format!("Revision {revision} not found")))?
+                repositories::revisions::get(&repository, revision)?.ok_or_else(|| {
+                    OxenError::basic_str(&format!("Revision {revision} not found"))
+                })?
             } else {
                 repositories::commits::head_commit(&repository)?
             };
             let path = Path::new(path);
             let Some(node) = repositories::tree::get_node_by_path(&repository, &commit, path)?
             else {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Error: path {:?} not found in commit {:?}",
                     path, commit.id
                 )));
@@ -89,7 +90,7 @@ impl RunCmd for NodeCmd {
         } else if let Some(node_hash) = args.get_one::<String>("node") {
             let node_hash = node_hash.parse()?;
             let Some(node) = repositories::tree::get_node_by_id(&repository, &node_hash)? else {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Error: node {node_hash:?} not found in repo"
                 )));
             };

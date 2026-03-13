@@ -48,8 +48,8 @@ pub struct LocalRepositoryWithEntries {
 
 impl LocalRepository {
     /// Create a LocalRepository from a directory
-    pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
-        let path = path.as_ref().to_path_buf();
+    pub fn from_dir(path: &Path) -> Result<Self, OxenError> {
+        let path = path.to_path_buf();
         let config_path = util::fs::config_filepath(&path);
         let config = RepositoryConfig::from_file(&config_path)?;
 
@@ -126,11 +126,11 @@ impl LocalRepository {
     /// Note: Does not create the repository on disk, or read the config file, just instantiates the struct
     /// To load the repository, use `LocalRepository::from_dir` or `LocalRepository::from_current_dir`
     pub fn new(
-        path: impl AsRef<Path>,
+        path: &Path,
         storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             // No remotes are set yet
             remotes: vec![],
             remote_name: None,
@@ -156,15 +156,15 @@ impl LocalRepository {
 
     /// Load an older version of a repository with older oxen core logic
     pub fn new_from_version(
-        path: impl AsRef<Path>,
-        min_version: impl AsRef<str>,
+        path: &Path,
+        min_version: &str,
         storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             remotes: vec![],
             remote_name: None,
-            min_version: Some(min_version.as_ref().to_string()),
+            min_version: Some(min_version.to_string()),
             vnode_size: None,
             subtree_paths: None,
             depth: None,
@@ -232,8 +232,8 @@ impl LocalRepository {
         }
     }
 
-    pub fn set_remote_name(&mut self, name: impl AsRef<str>) {
-        self.remote_name = Some(name.as_ref().to_string());
+    pub fn set_remote_name(&mut self, name: &str) {
+        self.remote_name = Some(name.to_string());
     }
 
     pub fn set_min_version(&mut self, version: MinOxenVersion) {
@@ -315,11 +315,11 @@ impl LocalRepository {
                             OxenError::basic_str("Storage settings missing 'path' key")
                         })?;
                         let storage_path = if util::fs::is_relative_to_dir(
-                            path,
-                            util::fs::oxen_hidden_dir(&self.path),
+                            Path::new(path),
+                            &util::fs::oxen_hidden_dir(&self.path),
                         ) {
                             // If path is within .oxen (default location), use the relative path in case the repo was moved
-                            util::fs::path_relative_to_dir(path, &self.path)
+                            util::fs::path_relative_to_dir(Path::new(path), &self.path)
                                 .unwrap()
                                 .to_string_lossy()
                                 .into_owned()
@@ -358,10 +358,8 @@ impl LocalRepository {
         config.save(&config_path)
     }
 
-    pub fn set_remote(&mut self, name: impl AsRef<str>, url: impl AsRef<str>) -> Remote {
-        self.remote_name = Some(name.as_ref().to_owned());
-        let name = name.as_ref();
-        let url = url.as_ref();
+    pub fn set_remote(&mut self, name: &str, url: &str) -> Remote {
+        self.remote_name = Some(name.to_owned());
         let remote = Remote {
             name: name.to_owned(),
             url: url.to_owned(),
@@ -380,8 +378,7 @@ impl LocalRepository {
         remote
     }
 
-    pub fn delete_remote(&mut self, name: impl AsRef<str>) {
-        let name = name.as_ref();
+    pub fn delete_remote(&mut self, name: &str) {
         let mut new_remotes: Vec<Remote> = vec![];
         for i in 0..self.remotes.len() {
             if self.remotes[i].name != name {
@@ -391,8 +388,7 @@ impl LocalRepository {
         self.remotes = new_remotes;
     }
 
-    pub fn has_remote(&self, name: impl AsRef<str>) -> bool {
-        let name = name.as_ref();
+    pub fn has_remote(&self, name: &str) -> bool {
         for remote in self.remotes.iter() {
             if remote.name == name {
                 return true;
@@ -401,8 +397,7 @@ impl LocalRepository {
         false
     }
 
-    pub fn get_remote(&self, name: impl AsRef<str>) -> Option<Remote> {
-        let name = name.as_ref();
+    pub fn get_remote(&self, name: &str) -> Option<Remote> {
         log::trace!("Checking for remote {name} have {}", self.remotes.len());
         for remote in self.remotes.iter() {
             log::trace!("comparing: {name} -> {}", remote.name);
@@ -421,8 +416,8 @@ impl LocalRepository {
         }
     }
 
-    pub fn add_workspace(&mut self, name: impl AsRef<str>) {
-        let workspace_name = name.as_ref();
+    pub fn add_workspace(&mut self, name: &str) {
+        let workspace_name = name;
         let workspaces = self.workspaces.clone().unwrap_or_default();
 
         let mut new_workspaces = HashSet::new();
@@ -434,11 +429,9 @@ impl LocalRepository {
         self.workspaces = Some(new_workspaces.iter().cloned().collect());
     }
 
-    pub fn delete_workspace(&mut self, name: impl AsRef<str>) -> Result<(), OxenError> {
-        let name = name.as_ref();
-
+    pub fn delete_workspace(&mut self, name: &str) -> Result<(), OxenError> {
         if self.workspaces.is_none() {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Error: Cannot delete workspace {name:?} as it does not exist"
             )));
         }
@@ -462,8 +455,8 @@ impl LocalRepository {
         Ok(())
     }
 
-    pub fn has_workspace(&self, name: impl AsRef<str>) -> bool {
-        let workspace_name = name.as_ref();
+    pub fn has_workspace(&self, name: &str) -> bool {
+        let workspace_name = name;
         self.workspaces.is_some()
             && self
                 .workspaces
@@ -473,8 +466,8 @@ impl LocalRepository {
     }
 
     // TODO: Should we define setting a workspace that's not in the workspaces vec to be an error?
-    pub fn set_workspace(&mut self, name: impl AsRef<str>) -> Result<(), OxenError> {
-        let workspace_name = name.as_ref();
+    pub fn set_workspace(&mut self, name: &str) -> Result<(), OxenError> {
+        let workspace_name = name;
 
         if let Some(ws_name) = self
             .workspaces
@@ -567,7 +560,7 @@ mod tests {
     fn test_add_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path, None)?;
+        let mut repo = LocalRepository::new(&repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -585,7 +578,7 @@ mod tests {
     fn test_cannot_add_repeat_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path, None)?;
+        let mut repo = LocalRepository::new(&repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -598,7 +591,7 @@ mod tests {
     fn test_delete_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path, None)?;
+        let mut repo = LocalRepository::new(&repo_path, None)?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);

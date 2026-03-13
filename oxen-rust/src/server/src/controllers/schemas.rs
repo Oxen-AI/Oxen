@@ -17,7 +17,7 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
 
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     // Try to see if they are asking for a specific file
     if let Ok(resource) = parse_resource(&req, &repo)

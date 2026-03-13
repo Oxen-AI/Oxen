@@ -69,7 +69,7 @@ impl RunCmd for DeleteRemoteCmd {
 
         let url = format!("{scheme}://{host}/{namespace_name}");
         let Some(remote_repo) = api::client::repositories::get_by_url(&url).await? else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Remote repository not found: {namespace_name}"
             )));
         };
@@ -92,7 +92,7 @@ impl RunCmd for DeleteRemoteCmd {
                     return Ok(());
                 }
                 Err(e) => {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "Error confirming deletion: {e}"
                     )));
                 }

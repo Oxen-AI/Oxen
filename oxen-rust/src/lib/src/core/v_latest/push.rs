@@ -155,7 +155,7 @@ async fn push_to_existing_branch(
                     "Branch {} is behind remote commit {}.\nRun `oxen pull` to update your local branch",
                     remote_branch.name, remote_branch.commit_id
                 );
-                return Err(OxenError::basic_str(err_str));
+                return Err(OxenError::basic_str(&err_str));
             }
         }
         Err(err) => {
@@ -409,7 +409,7 @@ async fn push_commits(
         .map(|commit| {
             let commit_hash = commit.hash()?;
             let info = commit_info.get(&commit_hash).cloned().ok_or_else(|| {
-                OxenError::basic_str(format!("Commit info not found for commit {commit_hash}"))
+                OxenError::basic_str(&format!("Commit info not found for commit {commit_hash}"))
             })?;
             Ok((commit, info))
         })
@@ -481,7 +481,7 @@ async fn push_commits(
 
                     if let Err(err) = result {
                         let err_str = format!("Error pushing commit {id:?}: {err}");
-                        errors.lock().await.push(OxenError::basic_str(err_str));
+                        errors.lock().await.push(OxenError::basic_str(&err_str));
                     }
                 }
             },
@@ -491,7 +491,7 @@ async fn push_commits(
     let errors = errors.lock().await;
     if !errors.is_empty() {
         let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Failed to push {} commit(s):\n{}",
             errors.len(),
             error_messages.join("\n")
@@ -549,11 +549,11 @@ pub async fn push_entries(
         }
         (Err(err), Ok(_)) => {
             let err = format!("Error syncing large entries: {err}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
         (Ok(_), Err(err)) => {
             let err = format!("Error syncing small entries: {err}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
         _ => Err(OxenError::basic_str("Unknown error syncing entries")),
     }
@@ -628,7 +628,7 @@ async fn chunk_and_send_large_entries(
                         break;
                     }
                 };
-                let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
+                let relative_path = util::fs::path_relative_to_dir(&version_path, &repo_path)
                     .unwrap_or_else(|e| {
                         log::error!("Failed to get relative path: {e}");
                         entry.path()
@@ -642,8 +642,8 @@ async fn chunk_and_send_large_entries(
 
                 match api::client::versions::parallel_large_file_upload(
                     &remote_repo,
-                    path,
-                    None::<PathBuf>,
+                    &path,
+                    None::<PathBuf>.as_deref(),
                     None,
                     Some(entry.clone()),
                     Some(&bar),
@@ -677,12 +677,12 @@ async fn chunk_and_send_large_entries(
     let join_results = futures::future::join_all(handles).await;
     for res in join_results {
         if let Err(e) = res {
-            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+            return Err(OxenError::basic_str(&format!("worker task panicked: {e}")));
         }
     }
 
     if let Some(err) = first_error.lock().await.clone() {
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     log::debug!("All large file tasks done. :-)");
@@ -815,12 +815,12 @@ async fn bundle_and_send_small_entries(
     let join_results = futures::future::join_all(handles).await;
     for res in join_results {
         if let Err(e) = res {
-            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+            return Err(OxenError::basic_str(&format!("worker task panicked: {e}")));
         }
     }
 
     if let Some(err) = first_error.lock().await.clone() {
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     sleep(Duration::from_millis(100)).await;

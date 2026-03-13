@@ -20,7 +20,7 @@ pub mod schemas;
 pub async fn get_slice(
     repo: &LocalRepository,
     resource: &ParsedResource,
-    path: impl AsRef<Path>,
+    path: &Path,
     opts: &DFOpts,
 ) -> Result<DataFrameSlice, OxenError> {
     let workspace = resource.workspace.as_ref();
@@ -40,7 +40,7 @@ pub async fn get_slice(
     let file_node = match workspace {
         Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
             // Try staged DB first
-            if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
+            if let Some(staged_node) = staged_db_manager.read_from_staged_db(path)? {
                 let file_node = match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
                     _ => Err(OxenError::basic_str(
@@ -52,8 +52,8 @@ pub async fn get_slice(
 
             // Fall back to commit tree using workspace's commit
             let commit = &ws.commit;
-            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, path)?
+                .ok_or(OxenError::path_does_not_exist(path))?;
             Ok(file_node)
         }),
         None => {
@@ -61,8 +61,8 @@ pub async fn get_slice(
                 .commit
                 .as_ref()
                 .ok_or(OxenError::basic_str("Commit not found"))?;
-            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
+            let file_node = repositories::tree::get_file_by_path(base_repo, commit, path)?
+                .ok_or(OxenError::path_does_not_exist(path))?;
             Ok(file_node)
         }
     }?;
@@ -96,7 +96,7 @@ pub async fn get_slice(
     // Read the data frame from the version path
     let version_store = repo.version_store()?;
     let version_path = version_store.get_version_path(&file_node.hash().to_string())?;
-    let df = tabular::read_df_with_extension(version_path, file_node.extension(), opts).await?;
+    let df = tabular::read_df_with_extension(&version_path, file_node.extension(), opts).await?;
     log::debug!("get_slice df {:?}", df.height());
 
     // Check what the view height is
@@ -133,11 +133,10 @@ pub async fn get_slice(
 async fn handle_sql_querying(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     opts: &DFOpts,
     data_frame_size: &DataFrameSize,
 ) -> Result<DataFrameSlice, OxenError> {
-    let path = path.as_ref();
     let mut workspace: Option<Workspace> = None;
 
     if opts.sql.is_some() {
@@ -153,7 +152,7 @@ async fn handle_sql_querying(
 
     if let (Some(sql), Some(workspace)) = (opts.sql.clone(), workspace) {
         let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-        let df = with_df_db_manager(db_path, |manager| {
+        let df = with_df_db_manager(&db_path, |manager| {
             manager.with_conn_mut(|conn| sql::query_df(conn, sql, None))
         })?;
         log::debug!("handle_sql_querying got df {df:?}");

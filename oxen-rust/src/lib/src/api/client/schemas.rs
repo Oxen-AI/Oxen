@@ -14,10 +14,8 @@ use crate::view::schema::SchemaWithPath;
 
 pub async fn list(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
 ) -> Result<Vec<SchemaWithPath>, OxenError> {
-    let revision = revision.as_ref();
-
     let uri = format!("/schemas/{revision}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -33,26 +31,23 @@ pub async fn list(
                     log::debug!("got ListSchemaResponse: {val:?}");
                     Ok(val.schemas)
                 }
-                Err(err) => Err(OxenError::basic_str(format!(
+                Err(err) => Err(OxenError::basic_str(&format!(
                     "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
 
 pub async fn get(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
 ) -> Result<Option<SchemaWithPath>, OxenError> {
-    let revision = revision.as_ref();
-    let path = path.as_ref();
-
     let uri = format!("/schemas/{revision}/{}", path.to_string_lossy());
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -72,14 +67,14 @@ pub async fn get(
                         Ok(None)
                     }
                 }
-                Err(err) => Err(OxenError::basic_str(format!(
+                Err(err) => Err(OxenError::basic_str(&format!(
                     "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -96,6 +91,7 @@ mod tests {
     use crate::test;
     use crate::util;
 
+    use std::path::Path;
     use std::path::PathBuf;
 
     use serde_json::json;
@@ -117,7 +113,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
@@ -160,7 +156,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             // Add the file
             repositories::add(&local_repo, &csv_file).await?;
@@ -189,12 +185,12 @@ mod tests {
             );
             repositories::data_frames::schemas::add_schema_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &schema_metadata,
             )?;
             repositories::data_frames::schemas::add_column_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &column_name,
                 &column_metadata,
             )?;
@@ -210,7 +206,8 @@ mod tests {
 
             // Cannot get schema that does not exist
             let result =
-                api::client::schemas::get(&remote_repo, DEFAULT_BRANCH_NAME, schema_ref).await;
+                api::client::schemas::get(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(schema_ref))
+                    .await;
             assert!(result.is_err());
 
             // Push the repo
@@ -218,7 +215,8 @@ mod tests {
 
             // List the one schema
             let schema =
-                api::client::schemas::get(&remote_repo, DEFAULT_BRANCH_NAME, schema_ref).await?;
+                api::client::schemas::get(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(schema_ref))
+                    .await?;
 
             assert!(schema.is_some());
             let schema = schema.unwrap().schema;
@@ -253,7 +251,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             // Add the file
             repositories::add(&local_repo, &csv_file).await?;
@@ -273,7 +271,8 @@ mod tests {
 
             // Cannot get schema that does not exist
             let result =
-                api::client::schemas::get(&remote_repo, DEFAULT_BRANCH_NAME, schema_ref).await;
+                api::client::schemas::get(&remote_repo, DEFAULT_BRANCH_NAME, Path::new(schema_ref))
+                    .await;
             assert!(result.is_err());
 
             // Push the repo
@@ -300,12 +299,12 @@ mod tests {
             );
             repositories::data_frames::schemas::add_schema_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &schema_metadata,
             )?;
             repositories::data_frames::schemas::add_column_metadata(
                 &local_repo,
-                schema_ref,
+                Path::new(schema_ref),
                 &column_name,
                 &column_metadata,
             )?;
@@ -316,7 +315,8 @@ mod tests {
             repositories::push(&local_repo).await?;
 
             // List the one schema
-            let schema = api::client::schemas::get(&remote_repo, branch_name, schema_ref).await?;
+            let schema =
+                api::client::schemas::get(&remote_repo, branch_name, Path::new(schema_ref)).await?;
 
             assert!(schema.is_some());
             let schema = schema.unwrap().schema;

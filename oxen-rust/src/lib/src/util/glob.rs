@@ -316,7 +316,7 @@ fn search_working_dir(
 // Walk through dirs,
 fn walk_working_dir(
     paths: &mut HashSet<PathBuf>,
-    repo_path: &PathBuf,
+    repo_path: &Path,
     glob_path: &PathBuf,
     oxenignore: Option<Gitignore>,
 ) -> Result<(), OxenError> {
@@ -410,7 +410,7 @@ pub fn collect_removed_paths(
 
 pub fn r_collect_removed_paths(
     repo: &LocalRepository,
-    dir_path: &PathBuf,
+    dir_path: &Path,
     removed_paths: &mut HashSet<PathBuf>,
 ) -> Result<(), OxenError> {
     let repo_path = repo.path.clone();
@@ -442,6 +442,7 @@ mod tests {
     use crate::{repositories, test};
 
     use std::collections::HashSet;
+    use std::path::Path;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -563,9 +564,9 @@ mod tests {
     async fn test_glob_parse_staged_db() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Stage some specific files and a directory
-            repositories::add(&repo, "train/dog_1.jpg").await?;
-            repositories::add(&repo, "annotations/train/*").await?;
-            repositories::add(&repo, "README.md").await?;
+            repositories::add(&repo, Path::new("train/dog_1.jpg")).await?;
+            repositories::add(&repo, Path::new("annotations/train/*")).await?;
+            repositories::add(&repo, Path::new("README.md")).await?;
 
             // Test glob in sub-directory
             let opts = GlobOpts {

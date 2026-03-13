@@ -74,7 +74,7 @@ impl RunCmd for TreeCmd {
             repositories::commits::head_commit(&repo)?
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Commit {commit_id} not found"
                 )));
             };
@@ -124,7 +124,7 @@ impl TreeCmd {
             }
             (_, _) => {
                 if let Some(path) = path {
-                    repositories::tree::print_tree_path(repo, commit, path)?;
+                    repositories::tree::print_tree_path(repo, commit, std::path::Path::new(path))?;
                 } else {
                     repositories::tree::print_tree_depth(repo, commit, depth)?;
                 }

@@ -35,8 +35,8 @@ pub fn write_conflicts_to_disk(
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
     let orig_head_path = hidden_dir.join(ORIG_HEAD_FILE);
-    util::fs::write_to_path(merge_head_path, &merge_commit.id)?;
-    util::fs::write_to_path(orig_head_path, &base_commit.id)?;
+    util::fs::write_to_path(&merge_head_path, &merge_commit.id)?;
+    util::fs::write_to_path(&orig_head_path, &base_commit.id)?;
 
     for conflict in conflicts.iter() {
         let (_, base_path) = &conflict.base_entry;
@@ -53,7 +53,7 @@ pub fn write_conflicts_to_disk(
 
 pub fn mark_conflict_as_resolved_in_db(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<(), OxenError> {
     let db_path = merge::db_path(repo);
     let opts = db::key_val::opts::default();
@@ -61,11 +61,11 @@ pub fn mark_conflict_as_resolved_in_db(
 
     log::debug!(
         "mark_conflict_as_resolved_in_db path: {:?} db: {:?}",
-        path.as_ref(),
+        path,
         db_path
     );
 
-    let key = path.as_ref().to_str().unwrap();
+    let key = path.to_str().unwrap();
     let key_bytes = key.as_bytes();
     db.delete(key_bytes)?;
 

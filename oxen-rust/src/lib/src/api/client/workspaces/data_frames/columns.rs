@@ -17,7 +17,7 @@ pub async fn create(
     data: String,
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -44,13 +44,13 @@ pub async fn create(
                     let err = format!(
                         "api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(err))
+                    Err(OxenError::basic_str(&err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::modify_df Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -62,7 +62,7 @@ pub async fn delete(
     column_name: &str,
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -86,13 +86,13 @@ pub async fn delete(
                     let err = format!(
                         "api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(err))
+                    Err(OxenError::basic_str(&err))
                 }
             }
         }
         Err(err) => {
             let err = format!("rm_df_mod Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -105,7 +105,7 @@ pub async fn update(
     data: String,
 ) -> Result<JsonDataFrameColumnResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -134,13 +134,13 @@ pub async fn update(
                     let err = format!(
                         "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(err))
+                    Err(OxenError::basic_str(&err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::update_row Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -153,7 +153,7 @@ pub async fn add_column_metadata(
     metadata: serde_json::Value,
 ) -> Result<(), OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -178,7 +178,7 @@ pub async fn add_column_metadata(
         Ok(_) => Ok(()),
         Err(err) => {
             let err = format!("add_column_metadata Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -217,7 +217,7 @@ mod tests {
             assert_eq!(branch.name, branch_name);
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // train/dog_1.jpg,dog,101.5,32.0,385,330
@@ -287,7 +287,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
 
-            api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
 
             let df = api::client::workspaces::data_frames::get(
@@ -326,14 +326,12 @@ mod tests {
                 .iter()
                 .enumerate()
                 .find(|(_index, field)| field.name == column.name)
-            {
-                if <std::option::Option<Changes> as Clone>::clone(&field.changes)
+                && <std::option::Option<Changes> as Clone>::clone(&field.changes)
                     .unwrap()
                     .status
                     != "deleted"
-                {
-                    panic!("Column {} still exists in the data frame", column.name);
-                }
+            {
+                panic!("Column {} still exists in the data frame", column.name);
             }
 
             Ok(remote_repo)
@@ -360,7 +358,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // Path to the CSV file
@@ -437,7 +435,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -531,7 +529,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -612,7 +610,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -706,7 +704,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -756,7 +754,7 @@ mod tests {
                 .await?;
 
             let _new_workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
 
             api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
 

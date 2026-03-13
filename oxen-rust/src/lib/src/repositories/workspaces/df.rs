@@ -20,12 +20,12 @@ use crate::view::StatusMessage;
 pub async fn df(
     repo: &LocalRepository,
     workspace_id: &str,
-    input: impl AsRef<Path>,
+    input: &Path,
     opts: DFOpts,
 ) -> Result<DataFrame, OxenError> {
     // Special case where we are writing data
     if let Some(row) = &opts.add_row {
-        add_row(repo, workspace_id, input.as_ref(), row).await
+        add_row(repo, workspace_id, input, row).await
     } else if let Some(uuid) = &opts.delete_row {
         delete_row(repo, workspace_id, input, uuid).await
     } else {
@@ -33,7 +33,7 @@ pub async fn df(
         let output = opts.output.clone();
         let workspace_id = UserConfig::identifier()?;
         let val =
-            api::client::workspaces::data_frames::get(&remote_repo, workspace_id, input, &opts)
+            api::client::workspaces::data_frames::get(&remote_repo, &workspace_id, input, &opts)
                 .await;
 
         match val {
@@ -42,7 +42,7 @@ pub async fn df(
                     let mut df = data_frame.view.to_df().await;
                     if let Some(output) = output {
                         println!("Writing {output:?}");
-                        tabular::write_df(&mut df, output)?;
+                        tabular::write_df(&mut df, &output)?;
                     }
 
                     println!(
@@ -69,22 +69,22 @@ fn handle_unindexed_error() -> Result<DataFrame, OxenError> {
 
 // TODO: Only difference between this and `df` is for `get` operations - everything above
 // the "else" can be factored into a shared method
-pub async fn staged_df<P: AsRef<Path>>(
+pub async fn staged_df(
     repo: &LocalRepository,
     workspace_id: &str,
-    input: P,
+    input: &Path,
     opts: DFOpts,
 ) -> Result<DataFrame, OxenError> {
     // Special case where we are writing data
     if let Some(row) = &opts.add_row {
-        add_row(repo, workspace_id, input.as_ref(), row).await
+        add_row(repo, workspace_id, input, row).await
     } else if let Some(uuid) = &opts.delete_row {
         delete_row(repo, workspace_id, input, uuid).await
     } else {
         let remote_repo = api::client::repositories::get_default_remote(repo).await?;
         let output = opts.output.clone();
         let val =
-            api::client::workspaces::data_frames::get(&remote_repo, &workspace_id, input, &opts)
+            api::client::workspaces::data_frames::get(&remote_repo, workspace_id, input, &opts)
                 .await;
 
         if let Ok(val) = val
@@ -93,7 +93,7 @@ pub async fn staged_df<P: AsRef<Path>>(
             let mut df = data_frame.view.to_df().await;
             if let Some(output) = output {
                 println!("Writing {output:?}");
-                tabular::write_df(&mut df, output)?;
+                tabular::write_df(&mut df, &output)?;
             }
 
             println!(
@@ -136,14 +136,14 @@ pub async fn add_row(
 pub async fn delete_row(
     repository: &LocalRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
     row_id: &str,
 ) -> Result<DataFrame, OxenError> {
     let remote_repo = api::client::repositories::get_default_remote(repository).await?;
     let df = api::client::workspaces::data_frames::rows::delete(
         &remote_repo,
         workspace_id,
-        path.as_ref(),
+        path,
         row_id,
     )
     .await?;
@@ -153,17 +153,13 @@ pub async fn delete_row(
 pub async fn get_row(
     repository: &LocalRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
     row_id: &str,
 ) -> Result<DataFrame, OxenError> {
     let remote_repo = api::client::repositories::get_default_remote(repository).await?;
-    let df_json = api::client::workspaces::data_frames::rows::get(
-        &remote_repo,
-        workspace_id,
-        path.as_ref(),
-        row_id,
-    )
-    .await?;
+    let df_json =
+        api::client::workspaces::data_frames::rows::get(&remote_repo, workspace_id, path, row_id)
+            .await?;
     let df = df_json.data_frame.view.to_df().await;
     println!("{df:?}");
     Ok(df)
@@ -172,8 +168,8 @@ pub async fn get_row(
 pub async fn index(
     repository: &LocalRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<StatusMessage, OxenError> {
     let remote_repo = api::client::repositories::get_default_remote(repository).await?;
-    api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path.as_ref()).await
+    api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path).await
 }

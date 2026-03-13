@@ -21,7 +21,7 @@ use super::index::CommitMerkleTree;
 pub fn get_directory(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<DirNode>, OxenError> {
     let node = repositories::tree::get_node_by_path(repo, commit, path)?;
     let Some(node) = node else {
@@ -33,7 +33,7 @@ pub fn get_directory(
 pub fn get_file(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<FileNode>, OxenError> {
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?;
     Ok(file_node)
@@ -41,7 +41,7 @@ pub fn get_file(
 
 pub fn list_directory(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
+    directory: &Path,
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
@@ -50,14 +50,13 @@ pub fn list_directory(
 
 pub fn list_directory_with_depth(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
+    directory: &Path,
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("core::entries::list_directory");
 
-    let directory = directory.as_ref();
     let revision = parsed_resource.version.to_str().unwrap_or("").to_string();
     let page = paginate_opts.page_num;
     let page_size = paginate_opts.page_size;
@@ -195,7 +194,7 @@ pub fn get_meta_entry(
 pub fn dir_entries(
     repo: &LocalRepository,
     dir: &MerkleTreeNode,
-    search_directory: impl AsRef<Path>,
+    search_directory: &Path,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
@@ -203,17 +202,17 @@ pub fn dir_entries(
 
     log::debug!(
         "dir_entries search_directory {:?} dir {}",
-        search_directory.as_ref(),
+        search_directory,
         dir
     );
     let mut entries: Vec<MetadataEntry> = Vec::new();
-    let current_directory = search_directory.as_ref();
+    let current_directory = search_directory;
 
     let _perf_recurse = crate::perf_guard!("core::entries::p_dir_entries_recurse");
     p_dir_entries(
         repo,
         dir,
-        &search_directory,
+        search_directory,
         current_directory,
         parsed_resource,
         found_commits,
@@ -239,7 +238,7 @@ pub fn dir_entries(
 pub fn dir_entries_with_depth(
     repo: &LocalRepository,
     dir: &MerkleTreeNode,
-    search_directory: impl AsRef<Path>,
+    search_directory: &Path,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     depth: usize,
@@ -248,18 +247,18 @@ pub fn dir_entries_with_depth(
 
     log::debug!(
         "dir_entries search_directory {:?} dir {} depth {}",
-        search_directory.as_ref(),
+        search_directory,
         dir,
         depth
     );
     let mut entries: Vec<MetadataEntry> = Vec::new();
-    let current_directory = search_directory.as_ref();
+    let current_directory = search_directory;
 
     let _perf_recurse = crate::perf_guard!("core::entries::p_dir_entries_recurse");
     p_dir_entries(
         repo,
         dir,
-        &search_directory,
+        search_directory,
         current_directory,
         parsed_resource,
         found_commits,
@@ -302,7 +301,7 @@ fn dir_node_to_metadata_entry(
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
         let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string()),
+            OxenError::commit_id_does_not_exist(&dir_node.last_commit_id().to_string()),
         )?;
         e.insert(commit);
     }
@@ -345,7 +344,7 @@ fn file_node_to_metadata_entry(
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
         let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string()),
+            OxenError::commit_id_does_not_exist(&file_node.last_commit_id().to_string()),
         )?;
         e.insert(commit);
     }
@@ -395,16 +394,13 @@ fn file_node_to_metadata_entry(
 fn p_dir_entries(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
-    search_directory: impl AsRef<Path>,
-    current_directory: impl AsRef<Path>,
+    search_directory: &Path,
+    current_directory: &Path,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     entries: &mut Vec<MetadataEntry>,
     depth: usize,
 ) -> Result<(), OxenError> {
-    let search_directory = search_directory.as_ref();
-    let current_directory = current_directory.as_ref();
-
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
@@ -480,7 +476,7 @@ fn p_dir_entries(
                     repo,
                     child,
                     search_directory,
-                    current_directory,
+                    &current_directory,
                     parsed_resource,
                     found_commits,
                     entries,
@@ -535,9 +531,9 @@ pub fn list_for_commit(
         .collect())
 }
 
-pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
-    let commit = repositories::revisions::get(repo, revision.as_ref())?
-        .ok_or_else(|| OxenError::revision_not_found(revision.as_ref().to_string().into()))?;
+pub fn update_metadata(repo: &LocalRepository, revision: &str) -> Result<(), OxenError> {
+    let commit = repositories::revisions::get(repo, revision)?
+        .ok_or_else(|| OxenError::revision_not_found(revision.to_string().into()))?;
     let tree: CommitMerkleTree = CommitMerkleTree::from_commit(repo, &commit)?;
     let mut node = tree.root;
 
@@ -615,7 +611,7 @@ fn traverse_and_update_sizes_and_counts(
                 .or_insert(0) += file_node.num_bytes();
         }
         _ => {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "compute_dir_node found unexpected node type: {:?}",
                 node.node
             )));

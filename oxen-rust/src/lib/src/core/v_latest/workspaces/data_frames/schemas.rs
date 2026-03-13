@@ -14,7 +14,7 @@ use crate::repositories;
 /// and updating the metadata from the original schema.
 pub fn update_schema(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     og_schema: &Schema,
     before_column: &str,
     after_column: &str,
@@ -22,7 +22,7 @@ pub fn update_schema(
     let staged_schema =
         crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
             &workspace.workspace_repo,
-            &path,
+            path,
         )?;
     let ref_schema = if let Some(schema) = staged_schema {
         schema
@@ -44,7 +44,7 @@ pub fn update_schema(
     }
 
     with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-        let data = staged_db_manager.read_from_staged_db(&path)?;
+        let data = staged_db_manager.read_from_staged_db(path)?;
 
         let mut file_node: FileNode;
 
@@ -54,7 +54,7 @@ pub fn update_schema(
             file_node = repositories::tree::get_file_by_path(
                 &workspace.base_repo,
                 &workspace.commit,
-                path.as_ref(),
+                path,
             )?
             .ok_or(OxenError::basic_str("File not found"))?;
         }

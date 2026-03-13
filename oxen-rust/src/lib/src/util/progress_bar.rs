@@ -9,9 +9,9 @@ pub enum ProgressBarType {
     None,
 }
 
-pub fn spinner_with_msg(msg: impl AsRef<str>) -> ProgressBar {
+pub fn spinner_with_msg(msg: &str) -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
-    spinner.set_message(msg.as_ref().to_owned());
+    spinner.set_message(msg.to_owned());
     spinner.set_style(ProgressStyle::default_spinner());
     spinner.enable_steady_tick(Duration::from_millis(100));
     spinner
@@ -42,9 +42,9 @@ pub fn oxen_progress_bar_indeterminate(
     bar
 }
 
-pub fn oxen_progress_bar_with_msg(size: u64, msg: impl AsRef<str>) -> Arc<ProgressBar> {
+pub fn oxen_progress_bar_with_msg(size: u64, msg: &str) -> Arc<ProgressBar> {
     let bar = Arc::new(ProgressBar::new(size));
-    bar.set_message(msg.as_ref().to_owned());
+    bar.set_message(msg.to_owned());
     bar.set_style(
         ProgressStyle::default_bar()
             .template(progress_type_to_template(ProgressBarType::Counter).as_str())

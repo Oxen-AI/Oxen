@@ -105,8 +105,8 @@ impl RunCmd for RemoteModeStatusCmd {
 
         let (scheme, host) = get_scheme_and_host_from_repo(&repository)?;
 
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
-        check_remote_version(scheme, host).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
+        check_remote_version(&scheme, &host).await?;
 
         // TODO: Implement path-based workspace status
         let directory = PathBuf::from(".");

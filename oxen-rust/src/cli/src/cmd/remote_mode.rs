@@ -50,7 +50,7 @@ impl RunCmd for RemoteModeCmd {
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
                 eprintln!("Unknown remote mode subcommand {name}");
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Unknown remote mode subcommand {name}"
                 )));
             };
@@ -86,7 +86,7 @@ impl RemoteModeCmd {
     ) -> Result<(), OxenError> {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Command `oxen {name}` not available for remote mode"
             )));
         };

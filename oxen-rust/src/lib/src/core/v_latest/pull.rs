@@ -70,7 +70,7 @@ pub async fn pull_remote_branch(
                 {
                     Ok(Some(commit)) => {
                         // Merge successful, update branch head
-                        repositories::branches::update(repo, branch, commit.id)?;
+                        repositories::branches::update(repo, branch, &commit.id)?;
                     }
                     Ok(None) => {
                         // Merge conflict, keep the previous commit
@@ -84,7 +84,7 @@ pub async fn pull_remote_branch(
         }
 
         None => {
-            repositories::branches::update(repo, branch, new_head_commit.id)?;
+            repositories::branches::update(repo, branch, &new_head_commit.id)?;
             repositories::checkout::checkout(repo, branch).await?;
         }
     }

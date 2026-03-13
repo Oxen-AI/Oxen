@@ -234,7 +234,7 @@ pub fn create_version_store(
                     .join(constants::FILES_DIR)
             };
 
-            let store = LocalVersionStore::new(versions_dir);
+            let store = LocalVersionStore::new(&versions_dir);
 
             Ok(Arc::new(store))
         }
@@ -249,7 +249,7 @@ pub fn create_version_store(
 
             Ok(Arc::new(store))
         }
-        _ => Err(OxenError::basic_str(format!(
+        _ => Err(OxenError::basic_str(&format!(
             "Unsupported async storage type: {}",
             storage_opts.type_
         ))),

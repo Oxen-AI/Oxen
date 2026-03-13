@@ -10,13 +10,12 @@ use crate::model::RemoteRepository;
 
 pub async fn download_dir_as_zip(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
+    revision: &str,
+    directory: &Path,
+    local_path: &Path,
 ) -> Result<u64, OxenError> {
-    let revision = revision.as_ref().to_string();
-    let directory = directory.as_ref().to_string_lossy().to_string();
-    let local_path = local_path.as_ref();
+    let revision = revision.to_string();
+    let directory = directory.to_string_lossy().to_string();
     let uri = format!("/export/download/{revision}/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -28,10 +27,10 @@ pub async fn download_dir_as_zip(
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 let e = "Err: unauthorized request to download data".to_string();
                 log::error!("{e}");
-                return Err(OxenError::authentication(e));
+                return Err(OxenError::authentication(&e));
             }
 
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "download_dir_as_zip failed with status {status} for {url}"
             )));
         }
@@ -46,7 +45,7 @@ pub async fn download_dir_as_zip(
             Ok(s) => s,
             Err(e) => {
                 let _ = tokio::fs::remove_file(local_path).await;
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Failed to download ZIP to {local_path:?}: {e}"
                 )));
             }
@@ -57,7 +56,7 @@ pub async fn download_dir_as_zip(
         Ok(size)
     } else {
         let err = format!("try_download_dir_as_zip failed to send request {url}");
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }
 
@@ -72,6 +71,7 @@ mod tests {
 
     use std::io::Read;
 
+    use std::path::Path;
     use std::path::PathBuf;
     use zip::ZipArchive;
 
@@ -88,7 +88,7 @@ mod tests {
             let _size = api::client::export::download_dir_as_zip(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                remote_dir,
+                Path::new(remote_dir),
                 &zip_local_path,
             )
             .await?;

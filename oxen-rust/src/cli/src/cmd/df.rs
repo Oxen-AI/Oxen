@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command, arg};
@@ -249,13 +249,13 @@ impl RunCmd for DFCmd {
 
         if let Some(revision) = args.get_one::<String>("revision") {
             let repo = LocalRepository::from_current_dir()?;
-            command::df::df_revision(&repo, path, revision, opts).await?;
+            command::df::df_revision(&repo, Path::new(path), revision, opts).await?;
         } else if args.get_flag("schema") || args.get_flag("schema-flat") {
             let flatten = args.get_flag("schema-flat");
-            let result = command::df::schema(path, flatten, opts)?;
+            let result = command::df::schema(Path::new(path), flatten, opts)?;
             println!("{result}");
         } else {
-            command::df(path, opts).await?;
+            command::df(Path::new(path), opts).await?;
         }
 
         Ok(())

@@ -17,16 +17,13 @@ use crate::{repositories, util};
 use std::path::Path;
 use std::path::PathBuf;
 
-fn embedding_config_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
+fn embedding_config_path(workspace: &Workspace, path: &Path) -> PathBuf {
     let path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let parent = path.parent().unwrap();
     parent.join(EMBEDDING_CONFIG_FILENAME)
 }
 
-fn embedding_config(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-) -> Result<EmbeddingConfig, OxenError> {
+fn embedding_config(workspace: &Workspace, path: &Path) -> Result<EmbeddingConfig, OxenError> {
     let embedding_config = embedding_config_path(workspace, path);
     let config_data = util::fs::read_from_path(&embedding_config)?;
     Ok(toml::from_str(&config_data)?)
@@ -34,8 +31,8 @@ fn embedding_config(
 
 fn write_embedding_size_to_config(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column_name: impl AsRef<str>,
+    path: &Path,
+    column_name: &str,
     vector_length: usize,
 ) -> Result<(), OxenError> {
     let embedding_config = embedding_config_path(workspace, path);
@@ -49,14 +46,12 @@ fn write_embedding_size_to_config(
     };
 
     let column = EmbeddingColumn {
-        name: column_name.as_ref().to_string(),
+        name: column_name.to_string(),
         vector_length,
         status: EmbeddingStatus::InProgress,
     };
 
-    config
-        .columns
-        .insert(column_name.as_ref().to_string(), column);
+    config.columns.insert(column_name.to_string(), column);
 
     let config_str = toml::to_string(&config)?;
     std::fs::write(embedding_config, config_str)?;
@@ -65,14 +60,14 @@ fn write_embedding_size_to_config(
 
 fn update_embedding_status(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column_name: impl AsRef<str>,
+    path: &Path,
+    column_name: &str,
     status: EmbeddingStatus,
 ) -> Result<(), OxenError> {
     let embedding_config = embedding_config_path(workspace, path);
     let config_data = util::fs::read_from_path(&embedding_config)?;
     let mut config: EmbeddingConfig = toml::from_str(&config_data)?;
-    config.columns.get_mut(column_name.as_ref()).unwrap().status = status;
+    config.columns.get_mut(column_name).unwrap().status = status;
     let config_str = toml::to_string(&config)?;
     std::fs::write(embedding_config, config_str)?;
     Ok(())
@@ -80,7 +75,7 @@ fn update_embedding_status(
 
 pub fn list_indexed_columns(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Vec<EmbeddingColumn>, OxenError> {
     let Ok(config) = embedding_config(workspace, path) else {
         return Ok(vec![]);
@@ -90,11 +85,11 @@ pub fn list_indexed_columns(
 
 fn perform_indexing(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     column_name: String,
     vector_length: usize,
 ) -> Result<(), OxenError> {
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             // Execute VSS commands separately
@@ -114,21 +109,20 @@ fn perform_indexing(
     log::debug!(
         "Completed indexing embeddings for column `{}` on {}",
         column_name,
-        path.as_ref().display()
+        path.display()
     );
-    update_embedding_status(workspace, path, column_name, EmbeddingStatus::Complete)?;
+    update_embedding_status(workspace, path, &column_name, EmbeddingStatus::Complete)?;
 
     Ok(())
 }
 
 pub fn index(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
     use_background_thread: bool,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref().to_path_buf();
-    let column = column.as_ref();
+    let path = path.to_path_buf();
 
     let column_name = column.to_string();
     log::debug!(
@@ -145,12 +139,12 @@ pub fn index(
 
         // Spawn background thread for VSS setup
         std::thread::spawn(move || {
-            if let Err(e) = perform_indexing(&workspace, path, column_name, vector_length) {
+            if let Err(e) = perform_indexing(&workspace, &path, column_name, vector_length) {
                 log::error!("Error in background indexing thread: {e}");
             }
         });
     } else {
-        perform_indexing(workspace, path, column_name, vector_length)?;
+        perform_indexing(workspace, &path, column_name, vector_length)?;
     }
 
     Ok(())
@@ -158,11 +152,9 @@ pub fn index(
 
 fn get_embedding_length(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
 ) -> Result<usize, OxenError> {
-    let path = path.as_ref();
-    let column = column.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("Embedding index DB Path: {db_path:?}");
     let result_set = with_df_db_manager(&db_path, |manager| {
@@ -234,10 +226,9 @@ fn get_embedding_length(
 pub fn embedding_from_query(
     conn: &duckdb::Connection,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     query: &EmbeddingQueryOpts,
 ) -> Result<(Vec<f32>, usize), OxenError> {
-    let path = path.as_ref();
     let column = query.column.clone();
     let query = query.query.clone();
     let sql = format!("SELECT {column} FROM df WHERE {query};");
@@ -302,7 +293,7 @@ pub fn similarity_query(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
     log::debug!("Embedding query DB Path: {db_path:?}");
     let (avg_embedding, vector_length) = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| embedding_from_query(conn, workspace, path.clone(), opts))
+        manager.with_conn(|conn| embedding_from_query(conn, workspace, &path.clone(), opts))
     })?;
 
     let schema = with_df_db_manager(&db_path, |manager| {
@@ -330,7 +321,8 @@ pub fn similarity_query_with_conn(
     let path = opts.path.clone();
     let similarity_column = opts.name.clone();
 
-    let (avg_embedding, vector_length) = embedding_from_query(conn, workspace, path.clone(), opts)?;
+    let (avg_embedding, vector_length) =
+        embedding_from_query(conn, workspace, &path.clone(), opts)?;
     let schema = df_db::get_schema(conn, TABLE_NAME)?;
 
     build_similarity_query_sql(
@@ -345,17 +337,16 @@ pub fn similarity_query_with_conn(
 
 pub fn nearest_neighbors(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
     embedding: Vec<f32>,
     pagination: &PaginateOpts,
     exclude_cols: bool,
 ) -> Result<DataFrame, OxenError> {
     // Time the query
     let start = std::time::Instant::now();
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let column = column.as_ref();
     let vector_length = embedding.len();
     let similarity_column = "similarity";
     let (result_set, mut schema) = with_df_db_manager(&db_path, |manager| {

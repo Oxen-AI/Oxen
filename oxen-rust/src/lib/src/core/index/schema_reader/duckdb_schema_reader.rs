@@ -31,9 +31,9 @@ impl DuckDBSchemaReader {
         DuckDBSchemaReader::new(repository, &commit.id, workspace)
     }
 
-    pub fn get_schema_for_file<P: AsRef<Path>>(
+    pub fn get_schema_for_file(
         &self,
-        path: P,
+        path: &Path,
     ) -> Result<Option<Schema>, OxenError> {
         let staged_db_path = duckdb_path(&self.workspace, &path);
         let df_schema = with_df_db_manager(staged_db_path, |manager| {

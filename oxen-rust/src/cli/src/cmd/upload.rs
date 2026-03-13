@@ -110,7 +110,7 @@ impl RunCmd for UploadCmd {
             ));
         }
 
-        check_remote_version_blocking(&opts.scheme, opts.clone().host).await?;
+        check_remote_version_blocking(&opts.scheme, &opts.host).await?;
 
         // Check if the first path is a valid remote repo
         let name = paths[0].to_string_lossy();

@@ -8,8 +8,8 @@ use crate::util;
 
 use indicatif::ProgressBar;
 
-pub fn status(workspace: &Workspace, directory: impl AsRef<Path>) -> Result<StagedData, OxenError> {
-    let dir = directory.as_ref();
+pub fn status(workspace: &Workspace, directory: &Path) -> Result<StagedData, OxenError> {
+    let dir = directory;
     let workspace_repo = &workspace.workspace_repo;
     // let opts = db::key_val::opts::default();
     let db_path = util::fs::oxen_hidden_dir(&workspace_repo.path).join(STAGED_DIR);

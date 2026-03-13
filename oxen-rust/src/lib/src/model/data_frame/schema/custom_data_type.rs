@@ -16,8 +16,8 @@ impl fmt::Display for CustomDataType {
 }
 
 impl CustomDataType {
-    pub fn from_string(s: impl AsRef<str>) -> CustomDataType {
-        match s.as_ref() {
+    pub fn from_string(s: &str) -> CustomDataType {
+        match s {
             "path" => CustomDataType::Path,
             _ => CustomDataType::Unknown,
         }

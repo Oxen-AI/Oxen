@@ -117,9 +117,9 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
 
     {
         let mut file = std::fs::File::create(&temp_path)
-            .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Failed to create temp file: {e}")))?;
         file.write_all(template.as_bytes())
-            .map_err(|e| OxenError::basic_str(format!("Failed to write to temp file: {e}")))?;
+            .map_err(|e| OxenError::basic_str(&format!("Failed to write to temp file: {e}")))?;
     }
 
     // Spawn the editor
@@ -134,17 +134,17 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
         .args(&parts[1..])
         .arg(&temp_path)
         .status()
-        .map_err(|e| OxenError::basic_str(format!("Failed to open editor '{editor}': {e}")))?;
+        .map_err(|e| OxenError::basic_str(&format!("Failed to open editor '{editor}': {e}")))?;
 
     if !status.success() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Editor '{editor}' exited with non-zero status."
         )));
     }
 
     // Read the file and strip comments
     let contents = std::fs::read_to_string(&temp_path)
-        .map_err(|e| OxenError::basic_str(format!("Failed to read temp file: {e}")))?;
+        .map_err(|e| OxenError::basic_str(&format!("Failed to read temp file: {e}")))?;
     let _ = std::fs::remove_file(&temp_path);
 
     let message: String = contents

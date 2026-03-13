@@ -13,66 +13,58 @@ use crate::core::db::key_val::str_json_db;
 
 /// # Checks if the file exists in this directory
 /// More efficient than get_entry since it does not actual deserialize the entry
-pub fn has_entry<T: ThreadMode, P: AsRef<Path>>(db: &DBWithThreadMode<T>, path: P) -> bool {
-    let path = path.as_ref();
-
+pub fn has_entry<T: ThreadMode>(db: &DBWithThreadMode<T>, path: &Path) -> bool {
     // strip trailing / if exists for looking up directories
     let path_str = path.to_str().map(|s| s.trim_end_matches('/'));
     if let Some(key) = path_str {
         // Check if the path_str has windows \\ in it, all databases use / so we are consistent across OS's
         let key = key.replace('\\', "/");
-        return str_json_db::has_key(db, key);
+        return str_json_db::has_key(db, &key);
     }
 
     false
 }
 
 /// # Get the staged entry object from the file path
-pub fn get_entry<T: ThreadMode, P: AsRef<Path>, D>(
+pub fn get_entry<T: ThreadMode, D>(
     db: &DBWithThreadMode<T>,
-    path: P,
+    path: &Path,
 ) -> Result<Option<D>, OxenError>
 where
     D: de::DeserializeOwned,
 {
-    let path = path.as_ref();
     if let Some(key) = path.to_str() {
         // de-windows-ify the path
         let key = key.replace('\\', "/");
-        return str_json_db::get(db, key);
+        return str_json_db::get(db, &key);
     }
     Err(OxenError::could_not_convert_path_to_str(path))
 }
 
 /// # Serializes the entry to json and writes to db
-pub fn put<T: ThreadMode, P: AsRef<Path>, S>(
+pub fn put<T: ThreadMode, S>(
     db: &DBWithThreadMode<T>,
-    path: P,
+    path: &Path,
     entry: &S,
 ) -> Result<(), OxenError>
 where
     S: Serialize,
 {
-    let path = path.as_ref();
     if let Some(key) = path.to_str() {
         // de-windows-ify the path
         let key = key.replace('\\', "/");
-        str_json_db::put(db, key, entry)
+        str_json_db::put(db, &key, entry)
     } else {
         Err(OxenError::could_not_convert_path_to_str(path))
     }
 }
 
 /// # Removes path entry from database
-pub fn delete<T: ThreadMode, P: AsRef<Path>>(
-    db: &DBWithThreadMode<T>,
-    path: P,
-) -> Result<(), OxenError> {
-    let path = path.as_ref();
+pub fn delete<T: ThreadMode>(db: &DBWithThreadMode<T>, path: &Path) -> Result<(), OxenError> {
     if let Some(key) = path.to_str() {
         // de-windows-ify the path
         let key = key.replace('\\', "/");
-        str_json_db::delete(db, key)
+        str_json_db::delete(db, &key)
     } else {
         Err(OxenError::could_not_convert_path_to_str(path))
     }

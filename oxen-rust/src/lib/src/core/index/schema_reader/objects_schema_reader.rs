@@ -105,7 +105,7 @@ impl ObjectsSchemaReader {
         let commit =
             commit_reader
                 .get_commit_by_id(&self.commit_id)?
-                .ok_or(OxenError::basic_str(format!(
+                .ok_or(OxenError::basic_str(&format!(
                     "Could not find commit {}",
                     self.commit_id
                 )))?;
@@ -163,7 +163,7 @@ impl ObjectsSchemaReader {
 
     pub fn list_schemas_for_ref(
         &self,
-        schema_ref: impl AsRef<str>,
+        schema_ref: &str,
     ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
         let all_schemas = self.list_schemas()?;
         log::debug!("list_schemas_for_ref all schemas {}", all_schemas.len());

@@ -34,9 +34,9 @@ impl LocalVersionStore {
     ///
     /// # Arguments
     /// * `root_path` - Base directory for version storage
-    pub fn new(root_path: impl AsRef<Path>) -> Self {
+    pub fn new(root_path: &Path) -> Self {
         Self {
-            root_path: root_path.as_ref().to_path_buf(),
+            root_path: root_path.to_path_buf(),
         }
     }
 

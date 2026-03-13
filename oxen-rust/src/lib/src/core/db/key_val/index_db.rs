@@ -5,13 +5,11 @@ use std::collections::HashMap;
 use std::mem;
 use std::str;
 
-pub fn insert_indices<S: AsRef<str>>(
+pub fn insert_indices(
     db: &DBWithThreadMode<MultiThreaded>,
-    key: S,
+    key: &str,
     indices: Vec<u32>,
 ) -> Result<(), OxenError> {
-    let key = key.as_ref();
-
     // Could not use the bytevec library here when inserting a larger set of indices
     let byte_indices = u32_to_u8(indices);
 
@@ -19,11 +17,10 @@ pub fn insert_indices<S: AsRef<str>>(
     Ok(())
 }
 
-pub fn get_indices<S: AsRef<str>>(
+pub fn get_indices(
     db: &DBWithThreadMode<MultiThreaded>,
-    key: S,
+    key: &str,
 ) -> Result<Option<Vec<u32>>, OxenError> {
-    let key = key.as_ref();
     let bytes = key.as_bytes();
     match db.get(bytes) {
         Ok(Some(raw_indices)) => {
@@ -39,7 +36,7 @@ pub fn get_indices<S: AsRef<str>>(
         Err(err) => {
             // error from the DB
             let err = format!("Err could not fetch value {key:?} from db: {err:?}",);
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }

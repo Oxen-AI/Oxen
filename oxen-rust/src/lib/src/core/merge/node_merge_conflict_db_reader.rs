@@ -33,7 +33,7 @@ impl NodeMergeConflictDBReader {
             Err(err) => {
                 let err =
                     format!("NodeMergeConflictDBReader::get_conflict Error reading db\nErr: {err}");
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(&err))
             }
         }
     }
@@ -55,7 +55,7 @@ impl NodeMergeConflictDBReader {
                     let err = format!(
                         "NodeMergeConflictDBReader::list_conflicts Error reading db\nErr: {err}"
                     );
-                    return Err(OxenError::basic_str(err));
+                    return Err(OxenError::basic_str(&err));
                 }
             }
         }

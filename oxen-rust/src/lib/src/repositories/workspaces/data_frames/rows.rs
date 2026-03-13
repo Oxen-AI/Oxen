@@ -26,20 +26,18 @@ use std::path::Path;
 pub fn add(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     data: &serde_json::Value,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::data_frames::rows::add(workspace, file_path.as_ref(), data)
-        }
+        _ => core::v_latest::workspaces::data_frames::rows::add(workspace, file_path, data),
     }
 }
 
 pub fn get_row_diff(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
 ) -> Result<Vec<DataFrameRowChange>, OxenError> {
     let row_changes_path =
         repositories::workspaces::data_frames::row_changes_path(workspace, file_path);
@@ -51,73 +49,53 @@ pub fn get_row_diff(
 pub fn update(
     repo: &LocalRepository,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     row_id: &str,
     data: &serde_json::Value,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::rows::update(
-            workspace,
-            path.as_ref(),
-            row_id,
-            data,
-        ),
+        _ => core::v_latest::workspaces::data_frames::rows::update(workspace, path, row_id, data),
     }
 }
 
 pub fn batch_update(
     repo: &LocalRepository,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     data: &serde_json::Value,
 ) -> Result<Vec<UpdateResult>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::rows::batch_update(
-            workspace,
-            path.as_ref(),
-            data,
-        ),
+        _ => core::v_latest::workspaces::data_frames::rows::batch_update(workspace, path, data),
     }
 }
 
 pub fn delete(
     repo: &LocalRepository,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     row_id: &str,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::data_frames::rows::delete(workspace, path.as_ref(), row_id)
-        }
+        _ => core::v_latest::workspaces::data_frames::rows::delete(workspace, path, row_id),
     }
 }
 
 pub async fn restore(
     repo: &LocalRepository,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: impl AsRef<str>,
+    path: &Path,
+    row_id: &str,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::data_frames::rows::restore(workspace, path.as_ref(), row_id)
-                .await
-        }
+        _ => core::v_latest::workspaces::data_frames::rows::restore(workspace, path, row_id).await,
     }
 }
 
-pub fn get_by_id(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: impl AsRef<str>,
-) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref();
-    let row_id = row_id.as_ref();
+pub fn get_by_id(workspace: &Workspace, path: &Path, row_id: &str) -> Result<DataFrame, OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("get_row_by_id() got db_path: {db_path:?}");
     let data = with_df_db_manager(&db_path, |manager| {

@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 pub fn get_directory(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<DirNode>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is no longer supported"),
@@ -36,7 +36,7 @@ pub fn get_directory(
 pub fn get_file(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<FileNode>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 is no longer supported"),
@@ -48,17 +48,23 @@ pub fn get_file(
 /// List all the entries within a commit
 pub fn list_commit_entries(
     repo: &LocalRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts, repo.min_version())
+    list_directory_w_version(
+        repo,
+        Path::new(ROOT_PATH),
+        revision,
+        paginate_opts,
+        repo.min_version(),
+    )
 }
 
 /// List all the entries within a directory given a specific commit
 pub fn list_directory(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
     list_directory_w_version(repo, directory, revision, paginate_opts, repo.min_version())
@@ -67,24 +73,24 @@ pub fn list_directory(
 /// Force a version when listing a repo
 pub fn list_directory_w_version(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
-            let revision_str = revision.as_ref().to_string();
+            let revision_str = revision.to_string();
             let branch = repositories::branches::get_by_name(repo, &revision_str)?;
             let commit = repositories::revisions::get(repo, &revision_str)?;
             let parsed_resource = ParsedResource {
-                path: directory.as_ref().to_path_buf(),
+                path: directory.to_path_buf(),
                 commit,
                 workspace: None,
                 branch,
                 version: PathBuf::from(&revision_str),
-                resource: PathBuf::from(&revision_str).join(directory.as_ref()),
+                resource: PathBuf::from(&revision_str).join(directory),
             };
             core::v_latest::entries::list_directory(
                 repo,
@@ -98,8 +104,8 @@ pub fn list_directory_w_version(
 
 pub fn list_directory_w_workspace(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
@@ -117,8 +123,8 @@ pub fn list_directory_w_workspace(
 
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     version: MinOxenVersion,
@@ -130,7 +136,7 @@ pub fn list_directory_w_workspace_depth(
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
             let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
-            let revision_str = revision.as_ref().to_string();
+            let revision_str = revision.to_string();
             let version_str = if let Some(workspace) = workspace.clone() {
                 workspace.id.clone()
             } else {
@@ -140,12 +146,12 @@ pub fn list_directory_w_workspace_depth(
             let branch = repositories::branches::get_by_name(repo, &revision_str)?;
             let commit = repositories::revisions::get(repo, &revision_str)?;
             let parsed_resource = ParsedResource {
-                path: directory.as_ref().to_path_buf(),
+                path: directory.to_path_buf(),
                 commit,
                 workspace,
                 branch,
                 version: PathBuf::from(&version_str),
-                resource: PathBuf::from(&version_str).join(directory.as_ref()),
+                resource: PathBuf::from(&version_str).join(directory),
             };
             drop(_perf_setup);
 
@@ -160,7 +166,7 @@ pub fn list_directory_w_workspace_depth(
     }
 }
 
-pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
+pub fn update_metadata(repo: &LocalRepository, revision: &str) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("update_metadata not implemented for oxen v0.10.0")
@@ -175,9 +181,8 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
 pub fn get_meta_entry(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<MetadataEntry, OxenError> {
-    let path = path.as_ref();
     let parsed_resource = ParsedResource {
         path: path.to_path_buf(),
         commit: Some(commit.clone()),
@@ -409,7 +414,7 @@ mod tests {
             let file_to_add = repo.path.join("labels.txt");
 
             // Commit the file
-            repositories::add(&repo, file_to_add).await?;
+            repositories::add(&repo, &file_to_add).await?;
             let commit = repositories::commit(&repo, "Adding labels file")?;
 
             let entries = repositories::entries::list_for_commit(&repo, &commit)?;
@@ -427,7 +432,7 @@ mod tests {
             let file_to_add = repo.path.join("labels.txt");
 
             // Commit the file
-            repositories::add(&repo, file_to_add).await?;
+            repositories::add(&repo, &file_to_add).await?;
             let commit = repositories::commit(&repo, "Adding labels file")?;
 
             let count = repositories::entries::count_for_commit(&repo, &commit)?;
@@ -644,16 +649,16 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
             // Create 2 files
             let filename = "labels.txt";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "hello world")?;
+            util::fs::write(&filepath, "hello world".as_bytes())?;
 
             let filename = "README.md";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "readme....")?;
+            util::fs::write(&filepath, "readme....".as_bytes())?;
 
             // Add and commit all the dirs and files
             repositories::add(&repo, &repo.path).await?;
@@ -690,7 +695,7 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
 
             // Add and commit all the dirs and files
@@ -736,7 +741,7 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
 
             // Add and commit all the dirs and files
@@ -782,16 +787,16 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
             // Create 2 files
             let filename = "labels.txt";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "hello world")?;
+            util::fs::write(&filepath, "hello world".as_bytes())?;
 
             let filename = "README.md";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "readme....")?;
+            util::fs::write(&filepath, "readme....".as_bytes())?;
 
             // Add and commit all the dirs and files
             repositories::add(&repo, &repo.path).await?;
@@ -828,16 +833,16 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
             // Create 2 files
             let filename = "labels.txt";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "hello world")?;
+            util::fs::write(&filepath, "hello world".as_bytes())?;
 
             let filename = "README.md";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "readme....")?;
+            util::fs::write(&filepath, "readme....".as_bytes())?;
 
             // Add and commit all the dirs and files
             repositories::add(&repo, &repo.path).await?;
@@ -874,16 +879,16 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
             // Create 2 files
             let filename = "labels.txt";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "hello world")?;
+            util::fs::write(&filepath, "hello world".as_bytes())?;
 
             let filename = "README.md";
             let filepath = repo.path.join(filename);
-            util::fs::write(filepath, "readme....")?;
+            util::fs::write(&filepath, "readme....".as_bytes())?;
 
             // Add and commit all the dirs and files
             repositories::add(&repo, &repo.path).await?;
@@ -921,7 +926,7 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
 
             // Create many files
@@ -929,7 +934,7 @@ mod tests {
             for n in 0..num_files {
                 let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {n}"))?;
+                util::fs::write(&filepath, format!("helloooo {n}").as_bytes())?;
             }
 
             // Add and commit all the dirs and files
@@ -965,14 +970,14 @@ mod tests {
             util::fs::create_dir_all(&dir_path)?;
             let filename = "data.txt";
             let filepath = dir_path.join(filename);
-            util::fs::write(filepath, "All the lonely directories")?;
+            util::fs::write(&filepath, "All the lonely directories".as_bytes())?;
 
             // Create many files
             let num_files = 45;
             for n in 0..num_files {
                 let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {n}"))?;
+                util::fs::write(&filepath, format!("helloooo {n}").as_bytes())?;
             }
 
             // Add and commit all the dirs and files
@@ -1012,7 +1017,7 @@ mod tests {
                 util::fs::create_dir_all(&dir_path)?;
                 let filename = "data.txt";
                 let filepath = dir_path.join(filename);
-                util::fs::write(&filepath, format!("Hi {n}"))?;
+                util::fs::write(&filepath, format!("Hi {n}").as_bytes())?;
             }
 
             // Create many files
@@ -1020,7 +1025,7 @@ mod tests {
             for n in 0..num_files {
                 let filename = format!("file_{n}.txt");
                 let filepath = repo.path.join(filename);
-                util::fs::write(filepath, format!("helloooo {n}"))?;
+                util::fs::write(&filepath, format!("helloooo {n}").as_bytes())?;
             }
 
             // Add and commit all the dirs and files
@@ -1069,11 +1074,11 @@ mod tests {
             // Add two tabular files to it
             let filename_1 = "cats.tsv";
             let filepath_1 = dir_path.join(filename_1);
-            util::fs::write(filepath_1, "1\t2\t3\nhello\tworld\tsup\n")?;
+            util::fs::write(&filepath_1, "1\t2\t3\nhello\tworld\tsup\n".as_bytes())?;
 
             let filename_2 = "dogs.csv";
             let filepath_2 = dir_path.join(filename_2);
-            util::fs::write(filepath_2, "1,2,3\nhello,world,sup\n")?;
+            util::fs::write(&filepath_2, "1,2,3\nhello,world,sup\n".as_bytes())?;
 
             let path_1 = PathBuf::from("data")
                 .join("train")
@@ -1090,7 +1095,7 @@ mod tests {
             // And write a file in the same dir that is not tabular
             let filename = "README.md";
             let filepath = dir_path.join(filename);
-            util::fs::write(filepath, "readme....")?;
+            util::fs::write(&filepath, "readme....".as_bytes())?;
 
             // Add and commit all
             repositories::add(&repo, &repo.path).await?;
@@ -1108,7 +1113,7 @@ mod tests {
 
             // Now index df2
             let workspace_id = Uuid::new_v4().to_string();
-            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, false)?;
+            let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
             repositories::workspaces::data_frames::index(&repo, &workspace, &entry2.path)?;
 
             // Now get the metadata entries for the two dataframes
@@ -1144,10 +1149,10 @@ mod tests {
             util::fs::create_dir_all(&dir_a_subdir)?;
             util::fs::create_dir_all(&dir_b)?;
 
-            util::fs::write(repo.path.join("root_file.txt"), "root content")?;
-            util::fs::write(dir_a.join("file_a1.txt"), "a1 content")?;
-            util::fs::write(dir_a_subdir.join("file_sub.txt"), "sub content")?;
-            util::fs::write(dir_b.join("file_b1.txt"), "b1 content")?;
+            util::fs::write(&repo.path.join("root_file.txt"), "root content".as_bytes())?;
+            util::fs::write(&dir_a.join("file_a1.txt"), "a1 content".as_bytes())?;
+            util::fs::write(&dir_a_subdir.join("file_sub.txt"), "sub content".as_bytes())?;
+            util::fs::write(&dir_b.join("file_b1.txt"), "b1 content".as_bytes())?;
 
             repositories::add(&repo, &repo.path).await?;
             let commit = repositories::commit(&repo, "Adding nested structure")?;
