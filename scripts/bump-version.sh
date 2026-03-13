@@ -11,7 +11,7 @@ set -euo pipefail
 
 # Get current version from the main Cargo.toml
 get_current_version() {
-    (cd oxen-rust/src/lib && cargo pkgid | cut -f2 -d@)
+    (cd oxen-rust/crates/lib && cargo pkgid | cut -f2 -d@)
 }
 
 # Parse and validate semver format
