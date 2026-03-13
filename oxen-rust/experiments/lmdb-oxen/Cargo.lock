@@ -3871,6 +3871,7 @@ dependencies = [
  "clap",
  "heed",
  "liboxen",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
