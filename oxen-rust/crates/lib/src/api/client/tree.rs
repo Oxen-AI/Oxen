@@ -6,6 +6,7 @@ use futures_util::TryStreamExt;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time;
 use tempfile::TempDir;
 
 use crate::api::client;
@@ -90,7 +91,9 @@ pub async fn create_nodes(
     // Upload the node
     let uri = "/tree/nodes".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    let client = client::new_for_url_transfer(&url)?;
+    let client = client::builder_for_url(&url)?
+        .timeout(time::Duration::from_secs(120))
+        .build()?;
 
     let size = buffer.len() as u64;
     log::debug!(
@@ -354,7 +357,9 @@ async fn node_download_request(
 ) -> Result<(), OxenError> {
     let url = url.as_ref();
 
-    let client = client::new_for_url_transfer(url)?;
+    let client = client::builder_for_url(url)?
+        .timeout(time::Duration::from_secs(12000))
+        .build()?;
     log::debug!("node_download_request about to send request {url}");
     let res = client.get(url).send().await?;
     let res = client::handle_non_json_response(url, res).await?;

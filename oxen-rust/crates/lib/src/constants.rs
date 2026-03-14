@@ -194,10 +194,6 @@ pub const NUM_HTTP_RETRIES: u64 = 5;
 pub const DEFAULT_NUM_WORKERS: usize = 8;
 /// Default timeout for HTTP requests
 pub const DEFAULT_TIMEOUT_SECS: u64 = 120;
-/// Default connect timeout for HTTP requests
-pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
-/// Default TCP keep-alive interval
-pub const DEFAULT_TCP_KEEPALIVE_SECS: u64 = 30;
 /// Default vnode size
 pub const DEFAULT_VNODE_SIZE: u64 = 10_000;
 
@@ -274,26 +270,3 @@ pub fn chunk_size() -> u64 {
         AVG_CHUNK_SIZE
     }
 }
-
-// Parse the connect timeout from environment variable
-pub fn connect_timeout() -> u64 {
-    if let Ok(val) = std::env::var("OXEN_CONNECT_TIMEOUT_SECS")
-        && let Ok(val) = val.parse::<u64>()
-    {
-        return val;
-    }
-    DEFAULT_CONNECT_TIMEOUT_SECS
-}
-
-// Parse the TCP keep-alive interval from environment variable
-pub fn tcp_keepalive() -> u64 {
-    if let Ok(val) = std::env::var("OXEN_TCP_KEEPALIVE_SECS")
-        && let Ok(val) = val.parse::<u64>()
-    {
-        return val;
-    }
-    DEFAULT_TCP_KEEPALIVE_SECS
-}
-
-// Oxen request Id
-pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
