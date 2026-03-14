@@ -3681,7 +3681,7 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
 name = "liboxen"
-version = "0.46.1"
+version = "0.46.2"
 dependencies = [
  "approx",
  "arrow",
@@ -4397,7 +4397,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "oxen"
-version = "0.46.1"
+version = "0.46.2"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
