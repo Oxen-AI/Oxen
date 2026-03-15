@@ -1,6 +1,7 @@
 use crate::api;
 use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
+use crate::api::client::retry;
 use crate::constants::{AVG_CHUNK_SIZE, max_retries};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
@@ -21,7 +22,6 @@ use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use http::Method;
 use http::header::CONTENT_LENGTH;
-use rand::{Rng, thread_rng};
 use tokio_tar::Archive;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -197,29 +197,15 @@ pub async fn download_data_from_version_paths(
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
-    let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
-    let mut num_retries = 0;
-
-    while num_retries < total_retries {
+    let config = retry::RetryConfig::default();
+    retry::with_retry(&config, |_attempt| async {
         match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
-            Ok(val) => return Ok(val),
-            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
-            Err(err) => {
-                num_retries += 1;
-                // Exponentially back off
-                let sleep_time = num_retries * num_retries;
-                log::warn!("Could not download content {err:?} sleeping {sleep_time}");
-                tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
-            }
+            Ok(val) => Ok(val),
+            Err(OxenError::Authentication(val)) => Err(OxenError::Authentication(val)),
+            Err(err) => Err(err),
         }
-    }
-
-    let err = format!(
-        "Err: Failed to download {} files after {} retries",
-        hashes.len(),
-        total_retries
-    );
-    Err(OxenError::basic_str(err))
+    })
+    .await
 }
 
 pub async fn try_download_data_from_version_paths(
@@ -312,7 +298,7 @@ async fn upload_chunks(
     max_retries: usize,
     progress: Option<&Arc<PushProgress>>,
 ) -> Result<Vec<HashMap<String, String>>, OxenError> {
-    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let client = Arc::new(api::client::new_for_host_transfer(remote_repo.url())?);
 
     // Figure out how many parts we need to upload
     let file_size = upload.size;
@@ -353,8 +339,8 @@ async fn upload_chunks(
                                 ))
                             })?;
 
-                            let wait_time = exponential_backoff(BASE_WAIT_TIME, i, MAX_WAIT_TIME);
-                            sleep(Duration::from_millis(wait_time as u64)).await;
+                            let wait_time = retry::exponential_backoff(BASE_WAIT_TIME as u64, i, MAX_WAIT_TIME as u64);
+                            sleep(Duration::from_millis(wait_time)).await;
 
                             chunk = upload_chunk(&client, &remote_repo, &upload, start, chunk_size).await;
                             i += 1;
@@ -485,30 +471,28 @@ pub async fn multipart_batch_upload_with_retry(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
-    let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
-    let mut first_try = true;
-    let mut retry_count: usize = 0;
     let max_retries = max_retries();
+    let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
 
-    while (first_try || !files_to_retry.is_empty()) && retry_count < max_retries {
-        first_try = false;
-        retry_count += 1;
-
+    for attempt in 0..max_retries {
         files_to_retry =
             multipart_batch_upload(local_repo, remote_repo, chunk, client, files_to_retry).await?;
 
-        if !files_to_retry.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-            sleep(Duration::from_millis(wait_time as u64)).await;
+        if files_to_retry.is_empty() {
+            return Ok(());
+        }
+
+        // Don't sleep after the last attempt
+        if attempt + 1 < max_retries {
+            let wait_time =
+                retry::exponential_backoff(BASE_WAIT_TIME as u64, attempt, MAX_WAIT_TIME as u64);
+            sleep(Duration::from_millis(wait_time)).await;
         }
     }
-    if files_to_retry.is_empty() {
-        Ok(())
-    } else {
-        Err(OxenError::basic_str(format!(
-            "Failed to upload files: {files_to_retry:#?}"
-        )))
-    }
+
+    Err(OxenError::basic_str(format!(
+        "Failed to upload files: {files_to_retry:#?}"
+    )))
 }
 
 pub async fn multipart_batch_upload(
@@ -780,8 +764,12 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
         };
 
         if !files_to_retry.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-            sleep(Duration::from_millis(wait_time as u64)).await;
+            let wait_time = retry::exponential_backoff(
+                BASE_WAIT_TIME as u64,
+                retry_count,
+                MAX_WAIT_TIME as u64,
+            );
+            sleep(Duration::from_millis(wait_time)).await;
         }
     }
 
@@ -792,17 +780,6 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     }
 
     Ok(upload_result.err_files)
-}
-
-pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
-    log::debug!(
-        "Exponential backoff got called with base_wait_time {base_wait_time}. n {n}, and max {max}"
-    );
-    (base_wait_time + n.pow(2) + jitter()).min(max)
-}
-
-fn jitter() -> usize {
-    thread_rng().gen_range(0..=500)
 }
 
 #[cfg(test)]
