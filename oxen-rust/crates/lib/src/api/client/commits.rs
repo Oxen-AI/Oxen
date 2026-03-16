@@ -719,7 +719,7 @@ pub async fn post_commit_dir_hashes_to_server(
 
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
-    let client = client::new_for_host_transfer(remote_repo.url())?;
+    let client = client::new_for_url_transfer(remote_repo.url())?;
     post_data_to_server_with_client(
         &client,
         remote_repo,
@@ -765,7 +765,7 @@ pub async fn post_commits_dir_hashes_to_server(
 
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
-    let client = client::new_for_host_transfer(remote_repo.url())?;
+    let client = client::new_for_url_transfer(remote_repo.url())?;
     post_data_to_server_with_client(
         &client,
         remote_repo,

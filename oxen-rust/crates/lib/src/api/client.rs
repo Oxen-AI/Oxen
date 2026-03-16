@@ -93,18 +93,6 @@ pub fn new_for_url_transfer<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     .map_err(OxenError::HTTP)
 }
 
-fn new_for_host_transfer(host: &str) -> Result<Client, OxenError> {
-    builder_for_host(
-        host,
-        true,
-        time::Duration::from_secs(constants::connect_timeout()),
-        time::Duration::from_secs(constants::tcp_keepalive()),
-        time::Duration::from_secs(20),
-    )?
-    .build()
-    .map_err(OxenError::HTTP)
-}
-
 fn builder_for_host(
     host: &str,
     should_add_user_agent: bool,

@@ -65,7 +65,7 @@ async fn put_multipart_file(
 ) -> Result<CommitResponse, OxenError> {
     log::debug!("put_multipart_file {uri:?}, file_path {file_path:?}");
     let url = api::endpoint::url_from_repo(remote_repo, uri)?;
-    let client = client::new_for_host_transfer(&url)?;
+    let client = client::new_for_url_transfer(&url)?;
 
     let file_data = bytes::Bytes::from(tokio::fs::read(file_path).await?);
 
