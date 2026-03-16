@@ -36,7 +36,7 @@ Pushing the `v*` tag automatically triggers the **Release** workflow ([`release.
 - **Windows x86_64** ([`release_windows.yml`](.github/workflows/release_windows.yml)) — EC2 runner
 - **Docker arm64 and x86_64** ([`release_docker.yml`](.github/workflows/release_docker.yml)) — EC2 runners
 
-Python wheels for versions 3.10, 3.11, 3.12, and 3.13 are built as part of each platform job.
+Python wheels for versions 3.10, 3.11, 3.12, 3.13, and 3.14 are built as part of each platform job.
 
 When all builds finish, the workflow creates a **draft** GitHub Release named `Release {VERSION}` with all artifacts attached.
 
