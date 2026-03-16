@@ -100,11 +100,17 @@ fn builder_for_host<S: AsRef<str>>(
     let retry_policy = retry::for_host(host.as_ref().to_string())
         .max_retries_per_request(3)
         .classify_fn(|req_rep| {
-            // Have reqwest retry all application-level errors, not just network-level errors that
-            // reqwest considers retryable by default. This assumes that oxen-server endpoints are
+            // Have reqwest retry all application-level server errors*, not just network-level errors
+            // that reqwest considers retryable by default. This assumes that oxen-server endpoints are
             // safe to retry if the server returned any error mid-operation. We can tighten this up
             // to only retry specific server errors in the future if that is not true.
-            req_rep.retryable()
+            //
+            // * info (100's), success (200's), redirection (300's), and client errors (400's)
+            //   don't make sense to retry. We'll only retry server errors (500's).
+            match req_rep.status() {
+                Some(status_code) if status_code.is_server_error() => req_rep.retryable(), // retry
+                _ => req_rep.success(), // this means don't retry, and is the only other valid return value from the closure
+            }
         });
     let builder = Ok(builder?.retry(retry_policy));
 
