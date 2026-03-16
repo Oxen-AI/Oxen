@@ -193,7 +193,7 @@ pub const NUM_HTTP_RETRIES: u64 = 5;
 /// Number of workers
 pub const DEFAULT_NUM_WORKERS: usize = 8;
 /// Default timeout for HTTP requests
-pub const DEFAULT_TIMEOUT_SECS: u64 = 120;
+pub const DEFAULT_TIMEOUT_SECS: u64 = 600;
 /// Default vnode size
 pub const DEFAULT_VNODE_SIZE: u64 = 10_000;
 
