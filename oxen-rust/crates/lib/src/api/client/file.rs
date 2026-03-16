@@ -1,10 +1,10 @@
+use crate::api;
 use crate::api::client;
 use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::model::commit::NewCommitBody;
 use crate::view::CommitResponse;
-use crate::{api, util::internal_types::HasLen};
 
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
@@ -89,8 +89,8 @@ async fn put_multipart_file(
 
 /// Create a Part in a multipart Form from the specified data.
 /// Intended to be used for uploading a single file.
-async fn make_file_part<T: Into<reqwest::Body> + HasLen>(
-    file_data: T,
+async fn make_file_part(
+    file_data: bytes::Bytes,
     file_name: Option<&str>,
 ) -> Result<Part, OxenError> {
     let file_data_len = file_data.len() as u64;
