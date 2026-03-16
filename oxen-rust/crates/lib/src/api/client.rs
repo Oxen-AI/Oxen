@@ -5,6 +5,8 @@ use crate::config::AuthConfig;
 use crate::config::RuntimeConfig;
 use crate::config::runtime_config::runtime::Runtime;
 use crate::constants;
+use crate::constants::DEFAULT_CONNECT_TIMEOUT_SECS;
+use crate::constants::DEFAULT_TCP_KEEPALIVE_SECS;
 use crate::error::OxenError;
 use crate::view::OxenResponse;
 use crate::view::http;
@@ -68,8 +70,8 @@ fn new_for_host(host: &str, should_add_user_agent: bool) -> Result<Client, OxenE
     builder_for_host(
         host,
         should_add_user_agent,
-        time::Duration::from_secs(constants::connect_timeout()),
-        time::Duration::from_secs(constants::tcp_keepalive()),
+        time::Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
+        time::Duration::from_secs(DEFAULT_TCP_KEEPALIVE_SECS),
         time::Duration::from_secs(20),
     )?
     .timeout(time::Duration::from_secs(constants::timeout()))
@@ -85,8 +87,8 @@ pub fn new_for_url_transfer<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     builder_for_host(
         &host,
         true,
-        time::Duration::from_secs(constants::connect_timeout()),
-        time::Duration::from_secs(constants::tcp_keepalive()),
+        time::Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
+        time::Duration::from_secs(DEFAULT_TCP_KEEPALIVE_SECS),
         time::Duration::from_secs(20),
     )?
     .build()

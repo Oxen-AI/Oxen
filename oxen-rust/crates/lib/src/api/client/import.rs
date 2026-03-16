@@ -19,7 +19,6 @@ pub async fn upload_zip(
     let branch_name = branch_name.as_ref();
     let directory = directory.as_ref();
     let zip_path = zip_path.as_ref();
-
     let name = name.as_ref();
     let email = email.as_ref();
 
@@ -36,6 +35,7 @@ pub async fn upload_zip(
         .to_string_lossy()
         .to_string();
 
+    // Create the URL for workspace ZIP upload endpoint
     let uri = format!("/import/upload/{branch_name}/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let commit_msg = commit_message.map(|m| m.as_ref().to_string());

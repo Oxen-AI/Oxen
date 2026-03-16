@@ -275,25 +275,5 @@ pub fn chunk_size() -> u64 {
     }
 }
 
-// Parse the connect timeout from environment variable
-pub fn connect_timeout() -> u64 {
-    if let Ok(val) = std::env::var("OXEN_CONNECT_TIMEOUT_SECS")
-        && let Ok(val) = val.parse::<u64>()
-    {
-        return val;
-    }
-    DEFAULT_CONNECT_TIMEOUT_SECS
-}
-
-// Parse the TCP keep-alive interval from environment variable
-pub fn tcp_keepalive() -> u64 {
-    if let Ok(val) = std::env::var("OXEN_TCP_KEEPALIVE_SECS")
-        && let Ok(val) = val.parse::<u64>()
-    {
-        return val;
-    }
-    DEFAULT_TCP_KEEPALIVE_SECS
-}
-
 // Oxen request Id
 pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
