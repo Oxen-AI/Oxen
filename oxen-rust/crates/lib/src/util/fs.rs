@@ -93,50 +93,47 @@ pub async fn handle_image_resize(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
     file_path: &Path,
-    version_path: &Path,
     img_resize: ImgResize,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
     log::debug!("img_resize {img_resize:?}");
-    let resized_path = resized_path_for_version_store_file(
-        Arc::clone(&version_store),
-        &file_hash,
-        file_path,
-        img_resize.width,
-        img_resize.height,
-    )?;
+    let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
 
-    let stream = resize_cache_image_version_store(
-        version_store,
-        &file_hash,
-        version_path,
-        &resized_path,
-        img_resize,
-    )
-    .await?;
-    log::debug!("Got the resize image! {resized_path:?}");
+    let stream =
+        resize_cache_image_version_store(version_store, &file_hash, &derived_filename, img_resize)
+            .await?;
+    log::debug!("Got the resized image! {derived_filename}");
 
     Ok(stream)
 }
 
-// TODO: Change the resized path from version store to a server location
-pub fn resized_path_for_version_store_file(
-    version_store: Arc<dyn VersionStore>,
-    img_hash: &str,
-    img_path: &Path,
-    width: Option<u32>,
-    height: Option<u32>,
-) -> Result<PathBuf, OxenError> {
-    let img_version_path = version_store.get_version_path(img_hash)?;
+pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> String {
     let extension = img_path.extension().unwrap().to_str().unwrap();
     let width = width.map(|w| w.to_string());
     let height = height.map(|w| w.to_string());
-    let resized_path = img_version_path.parent().unwrap().join(format!(
+    format!(
         "{}x{}.{}",
         width.unwrap_or("".to_string()),
         height.unwrap_or("".to_string()),
         extension
-    ));
-    Ok(resized_path)
+    )
+}
+
+pub fn video_thumbnail_filename(
+    width: Option<u32>,
+    height: Option<u32>,
+    timestamp: Option<f64>,
+) -> String {
+    let extension = "jpg";
+    let (width_str, height_str) = match (width, height) {
+        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
+        (Some(w), None) => (w.to_string(), "auto".to_string()),
+        (None, Some(h)) => ("auto".to_string(), h.to_string()),
+        (None, None) => ("320".to_string(), "240".to_string()),
+    };
+    let timestamp_str = timestamp
+        .map(|t| format!("t{t:.1}"))
+        .unwrap_or_else(|| "t1.0".to_string());
+    format!("thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}")
 }
 
 pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
@@ -1581,23 +1578,24 @@ async fn detect_image_format_from_version(
     Ok(format)
 }
 
-// Caller must provide out path because it differs between remote staged vs. committed files
 pub async fn resize_cache_image_version_store(
     version_store: Arc<dyn VersionStore>,
     img_hash: &str,
-    image_path: &Path,
-    resize_path: &Path,
+    derived_filename: &str,
     resize: ImgResize,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
-    if resize_path.exists() {
-        log::debug!("In the resize cache! {resize_path:?}");
+    if version_store
+        .derived_version_exists(img_hash, derived_filename)
+        .await?
+    {
+        log::debug!("In the resize cache! {derived_filename}");
         let stream = version_store
-            .get_version_derived_stream(resize_path)
+            .get_version_derived_stream(img_hash, derived_filename)
             .await?;
         return Ok(stream.boxed());
     }
 
-    log::debug!("resize to path {resize_path:?} from {image_path:?}");
+    log::debug!("create resized image {derived_filename} from hash {img_hash}");
     let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash).await;
     let image_data = version_store.get_version(img_hash).await?;
 
@@ -1637,15 +1635,12 @@ pub async fn resize_cache_image_version_store(
     } else {
         img
     };
-    log::debug!("about to save {resize_path:?}");
 
-    log::debug!("saved {resize_path:?}");
-
-    let image_format = ImageFormat::from_path(resize_path)?;
+    let image_format = ImageFormat::from_path(derived_filename)?;
     let mut buf = Vec::new();
     resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
     version_store
-        .store_version_derived(resized_img, buf.clone(), resize_path)
+        .store_version_derived(img_hash, derived_filename, &buf)
         .await?;
 
     let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
@@ -1656,28 +1651,24 @@ pub async fn resize_cache_image_version_store(
 
 /// Generate a video thumbnail using thumbnails crate.
 /// This function extracts a frame from the video and saves it as an image thumbnail.
-/// Note: The thumbnails crate extracts from the beginning of the video.
-/// If a specific timestamp is required, it may need to be handled differently.
 #[cfg(feature = "ffmpeg")]
-fn generate_video_thumbnail_version_store(
+async fn generate_video_thumbnail_version_store(
     version_store: Arc<dyn VersionStore>,
     video_hash: &str,
-    _video_path: &Path,
-    thumbnail_path: &Path,
+    derived_filename: &str,
     thumbnail: VideoThumbnail,
 ) -> Result<(), OxenError> {
-    log::debug!("generate thumbnail to path {thumbnail_path:?} from video hash {video_hash}");
-    if thumbnail_path.exists() {
+    log::debug!(
+        "generate thumbnail derived_filename {derived_filename} from video hash {video_hash}"
+    );
+    if version_store
+        .derived_version_exists(video_hash, derived_filename)
+        .await?
+    {
         return Ok(());
     }
 
-    // Create parent directory if it doesn't exist
-    let thumbnail_parent = thumbnail_path.parent().unwrap_or(Path::new(""));
-    if !thumbnail_parent.exists() {
-        util::fs::create_dir_all(thumbnail_parent)?;
-    }
-
-    // Get the video file from version store
+    // Get the video file path from version store
     let version_path = version_store.get_version_path(video_hash)?;
 
     // Determine output dimensions
@@ -1694,75 +1685,44 @@ fn generate_video_thumbnail_version_store(
     // If timestamp support is needed, we may need to use ffmpeg directly or another approach.
     let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
 
-    // Create thumbnailer with specified dimensions
-    let thumbnailer = Thumbnailer::new(output_width, output_height);
+    // Run blocking ffmpeg thumbnail generation on a separate thread
+    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+        // Create thumbnailer with specified dimensions
+        let thumbnailer = Thumbnailer::new(output_width, output_height);
 
-    // Generate thumbnail from video file
-    let thumb_image = thumbnailer.get(&version_path).map_err(|e| {
-        OxenError::basic_str(format!(
-            "Failed to generate thumbnail: {e}. Make sure ffmpeg is installed."
-        ))
-    })?;
+        // Generate thumbnail from video file
+        let thumb_image = thumbnailer
+            .get(&version_path)
+            .map_err(|e| OxenError::basic_str(format!("Failed to generate thumbnail: {e}.")))?;
+
+        let mut buf = Vec::new();
+        thumb_image
+            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            .map_err(|e| OxenError::basic_str(format!("Failed to encode thumbnail: {e}")))?;
+        Ok(buf)
+    })
+    .await??;
 
     // Save the thumbnail image
-    thumb_image
-        .save(thumbnail_path)
-        .map_err(|e| OxenError::basic_str(format!("Failed to save thumbnail: {e}")))?;
+    version_store
+        .store_version_derived(video_hash, derived_filename, &buf)
+        .await?;
 
-    log::debug!("saved thumbnail {thumbnail_path:?}");
+    log::debug!("saved thumbnail {derived_filename}");
     Ok(())
 }
 
-/// Generate the cache path for a video thumbnail based on the video hash and thumbnail parameters.
-pub fn thumbnail_path_for_version_store_file(
-    version_store: Arc<dyn VersionStore>,
-    video_hash: &str,
-    _video_path: &Path,
-    width: Option<u32>,
-    height: Option<u32>,
-    timestamp: Option<f64>,
-) -> Result<PathBuf, OxenError> {
-    let video_version_path = version_store.get_version_path(video_hash)?;
-    let extension = "jpg"; // Always use jpg for thumbnails
-
-    // Build dimension strings for cache path - use "auto" when maintaining aspect ratio
-    let (width_str, height_str) = match (width, height) {
-        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
-        (Some(w), None) => (w.to_string(), "auto".to_string()),
-        (None, Some(h)) => ("auto".to_string(), h.to_string()),
-        (None, None) => ("320".to_string(), "240".to_string()),
-    };
-
-    let timestamp_str = timestamp
-        .map(|t| format!("t{t:.1}"))
-        .unwrap_or_else(|| "t1.0".to_string());
-
-    let thumbnail_path = video_version_path.parent().unwrap().join(format!(
-        "thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"
-    ));
-    Ok(thumbnail_path)
-}
-
-/// Handle video thumbnail generation: determine cache path and generate thumbnail if needed.
-/// Returns the path to the cached thumbnail.
+/// Handle video thumbnail generation: generate thumbnail if needed and return a stream.
 /// Only enabled if the 'ffmpeg' feature is enabled.
 #[allow(unused_variables)]
-pub fn handle_video_thumbnail(
+pub async fn handle_video_thumbnail(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
-    file_path: &Path,
-    version_path: &Path,
     video_thumbnail: VideoThumbnail,
-) -> Result<PathBuf, OxenError> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
     #[cfg(not(feature = "ffmpeg"))]
     {
-        let _ = (
-            version_store,
-            file_hash,
-            file_path,
-            version_path,
-            video_thumbnail,
-        );
+        let _ = (version_store, file_hash, video_thumbnail);
         Err(OxenError::thumbnailing_not_enabled(
             "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
              Build with --features liboxen/ffmpeg to enable this functionality.",
@@ -1772,25 +1732,25 @@ pub fn handle_video_thumbnail(
     #[cfg(feature = "ffmpeg")]
     {
         log::debug!("video_thumbnail {video_thumbnail:?}");
-        let thumbnail_path = thumbnail_path_for_version_store_file(
-            Arc::clone(&version_store),
-            &file_hash,
-            file_path,
+        let derived_filename = video_thumbnail_filename(
             video_thumbnail.width,
             video_thumbnail.height,
             video_thumbnail.timestamp,
-        )?;
+        );
 
         generate_video_thumbnail_version_store(
-            version_store,
+            version_store.clone(),
             &file_hash,
-            version_path,
-            &thumbnail_path,
+            &derived_filename,
             video_thumbnail,
-        )?;
+        )
+        .await?;
 
-        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
-        Ok(thumbnail_path)
+        log::debug!("In the thumbnail cache! {derived_filename}");
+        let stream = version_store
+            .get_version_derived_stream(&file_hash, &derived_filename)
+            .await?;
+        Ok(stream.boxed())
     }
 }
 

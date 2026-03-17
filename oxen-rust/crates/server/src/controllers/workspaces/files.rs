@@ -27,9 +27,6 @@ use serde::Deserialize;
 use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::BufReader;
-use tokio_util::io::ReaderStream;
 use utoipa;
 
 #[derive(utoipa::ToSchema)]
@@ -127,9 +124,6 @@ pub async fn get(
     let hash_str = file_hash.to_string();
     let mime_type = file_node.mime_type();
     let last_commit_id = file_node.last_commit_id().to_string();
-    let version_path = version_store.get_version_path(&hash_str)?;
-    log::debug!("got workspace file version path {:?}", &version_path);
-
     let query_params = query.into_inner();
 
     // Handle image resize
@@ -146,7 +140,6 @@ pub async fn get(
             Arc::clone(&version_store),
             hash_str.clone(),
             &PathBuf::from(&path),
-            &version_path,
             img_resize,
         )
         .await?;
@@ -167,19 +160,9 @@ pub async fn get(
         };
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
-        let thumbnail_path = util::fs::handle_video_thumbnail(
-            Arc::clone(&version_store),
-            hash_str,
-            &PathBuf::from(&path),
-            &version_path,
-            video_thumbnail,
-        )?;
-        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
-
-        // Generate stream for the thumbnail (always JPEG)
-        let file = File::open(&thumbnail_path).await?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
+        let stream =
+            util::fs::handle_video_thumbnail(Arc::clone(&version_store), hash_str, video_thumbnail)
+                .await?;
 
         return Ok(HttpResponse::Ok()
             .content_type("image/jpeg")
