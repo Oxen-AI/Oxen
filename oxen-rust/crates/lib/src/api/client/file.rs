@@ -3,6 +3,7 @@ use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::model::commit::NewCommitBody;
+use crate::util::internal_types::Hostname;
 use crate::view::CommitResponse;
 use crate::{api, util::internal_types::HasLen};
 
@@ -10,7 +11,6 @@ use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use std::path::Path;
-use url::Url;
 
 pub async fn put_file(
     remote_repo: &RemoteRepository,
@@ -67,12 +67,8 @@ async fn put_multipart_file(
     log::debug!("put_multipart_file {uri:?}, file_path {file_path:?}");
 
     let client = {
-        let raw_url = remote_repo.url();
-        let url: Url = raw_url.parse()?;
-        let Some(host) = url.host() else {
-            return Err(OxenError::NoHost(raw_url.into()));
-        };
-        client::new_for_host_transfer(&host)?
+        let hn = Hostname::from_url(&remote_repo.url().parse()?)?;
+        client::new_for_host_transfer(&hn.hostname())?
     };
 
     let url = api::endpoint::url_from_repo(remote_repo, uri)?;

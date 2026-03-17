@@ -6,14 +6,13 @@ use crate::config::RuntimeConfig;
 use crate::config::runtime_config::runtime::Runtime;
 use crate::constants;
 use crate::error::OxenError;
-use crate::error::StringError;
+use crate::util::internal_types::Hostname;
 use crate::view::OxenResponse;
 use crate::view::http;
 pub use reqwest::Url;
 use reqwest::retry;
 use reqwest::{Client, ClientBuilder, header};
 use std::time;
-use url::Host;
 
 pub mod branches;
 pub mod commits;
@@ -42,29 +41,31 @@ pub mod workspaces;
 const VERSION: &str = crate::constants::OXEN_VERSION;
 const USER_AGENT: &str = "Oxen";
 
+/// Parse a URL string into a `Hostname` (scheme + host + optional port).
+pub fn hostname_from_url_str(url_str: &str) -> Result<Hostname, OxenError> {
+    let url: url::Url = url_str.parse()?;
+    Hostname::from_url(&url)
+}
+
 // Note: reqwest::Client already maintains an internal HTTP connection pool with keep-alive.
 // The 3 upload paths that matter most (push, version chunks, workspace files) already share
 // clients via Arc<Client>. A global per-host cache (OnceCell + RwLock<HashMap>) would add
 // complexity for little gain since per-request client overhead for metadata/query paths is minimal.
 pub fn new_for_url<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let url = url.into_url()?;
-    let Some(host) = url.host() else {
-        return Err(OxenError::NoHost(StringError::new(url.to_string())));
-    };
-    new_for_host(&host, true)
+    let hn = Hostname::from_url(&url)?;
+    new_for_host(&hn.hostname(), true)
 }
 
 pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let url = url.into_url()?;
-    let Some(host) = url.host() else {
-        return Err(OxenError::NoHost(StringError::new(url.to_string())));
-    };
-    new_for_host(&host, false)
+    let hn = Hostname::from_url(&url)?;
+    new_for_host(&hn.hostname(), false)
 }
 
 /// Has connection timeout and TCP keep-alives, but also imposes a per-request timeout.
 /// NOT SUITABLE FOR LONG-LIVED TRANSFERS! Use `new_for_url_transfer` instead.
-fn new_for_host(host: &Host<&str>, should_add_user_agent: bool) -> Result<Client, OxenError> {
+fn new_for_host(host: &str, should_add_user_agent: bool) -> Result<Client, OxenError> {
     builder_for_host(
         host,
         should_add_user_agent,
@@ -82,22 +83,11 @@ fn new_for_host(host: &Host<&str>, should_add_user_agent: bool) -> Result<Client
 /// to detect hung connections without capping total transfer time.
 pub fn new_for_url_transfer<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
     let url = url.into_url()?;
-    let Some(host) = url.host() else {
-        return Err(OxenError::NoHost(url.to_string().into()));
-    };
-
-    builder_for_host(
-        &host,
-        true,
-        time::Duration::from_secs(constants::connect_timeout()),
-        time::Duration::from_secs(constants::tcp_keepalive()),
-        time::Duration::from_secs(20),
-    )?
-    .build()
-    .map_err(OxenError::HTTP)
+    let hn = Hostname::from_url(&url)?;
+    new_for_host_transfer(&hn.hostname())
 }
 
-fn new_for_host_transfer(host: &Host<&str>) -> Result<Client, OxenError> {
+pub(crate) fn new_for_host_transfer(host: &str) -> Result<Client, OxenError> {
     builder_for_host(
         host,
         true,
@@ -110,7 +100,7 @@ fn new_for_host_transfer(host: &Host<&str>) -> Result<Client, OxenError> {
 }
 
 fn builder_for_host(
-    host: &Host<&str>,
+    host: &str,
     should_add_user_agent: bool,
     connect_timeout: time::Duration,
     keep_alive_interval: time::Duration,

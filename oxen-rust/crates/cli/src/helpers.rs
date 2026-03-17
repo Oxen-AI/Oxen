@@ -7,7 +7,6 @@ use liboxen::model::LocalRepository;
 use liboxen::util::oxen_version::OxenVersion;
 
 use colored::Colorize;
-use url::Url;
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -33,11 +32,9 @@ pub fn get_scheme_and_host_from_repo(
 ) -> Result<(String, String), OxenError> {
     match repo.remote() {
         Some(remote) => {
-            let url: Url = remote.url.parse()?;
-            let Some(host) = url.host() else {
-                return Err(OxenError::NoHost(remote.url.into()));
-            };
-            Ok((url.scheme().to_string(), host.to_string()))
+            let hn = api::client::hostname_from_url_str(&remote.url)?;
+            let hostname = hn.hostname();
+            Ok((hn.scheme, hostname))
         }
         None => get_scheme_and_host_or_default(),
     }
