@@ -77,7 +77,7 @@ if [ "$PLATFORM" = "macos" ]; then
         ok "Homebrew already installed"
     fi
 
-    brew install cmake
+    brew install cmake pkg-config ffmpeg@7 imagemagick
 
 elif [ "$PLATFORM" = "linux" ]; then
     if ! command_exists apt-get || ! command_exists dpkg; then
