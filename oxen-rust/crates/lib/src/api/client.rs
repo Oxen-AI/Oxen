@@ -10,6 +10,7 @@ use crate::model::RemoteRepository;
 use crate::view::OxenResponse;
 use crate::view::http;
 pub use reqwest::Url;
+use reqwest::retry;
 use reqwest::{Client, ClientBuilder, IntoUrl, header};
 use std::time;
 
@@ -94,6 +95,28 @@ fn builder_for_host<S: AsRef<str>>(
     } else {
         Ok(builder_no_user_agent())
     };
+
+    // Bump max retries for this oxen-server host from 2 to 3. Exponential backoff is used by default.
+    let retry_policy = retry::for_host(host.as_ref().to_string())
+        .max_retries_per_request(3)
+        .classify_fn(|req_rep| {
+            // Still retry on low-level network errors
+            if req_rep.error().is_some() {
+                return req_rep.retryable();
+            }
+            // Have reqwest retry all application-level server errors*, not just network-level errors
+            // that reqwest considers retryable by default. This assumes that oxen-server endpoints are
+            // safe to retry if the server returned any error mid-operation. We can tighten this up
+            // to only retry specific server errors in the future if that is not true.
+            //
+            // * info (100's), success (200's), redirection (300's), and client errors (400's)
+            //   don't make sense to retry. We'll only retry server errors (500's).
+            match req_rep.status() {
+                Some(status_code) if status_code.is_server_error() => req_rep.retryable(), // retry
+                _ => req_rep.success(), // this means don't retry, and is the only other valid return value from the closure
+            }
+        });
+    let builder = Ok(builder?.retry(retry_policy));
 
     // If auth_config.toml isn't found, return without authorizing
     let config = match AuthConfig::get() {
