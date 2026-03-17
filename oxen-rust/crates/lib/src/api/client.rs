@@ -11,7 +11,7 @@ use crate::view::OxenResponse;
 use crate::view::http;
 pub use reqwest::Url;
 use reqwest::retry;
-use reqwest::{Client, ClientBuilder, IntoUrl, header};
+use reqwest::{Client, ClientBuilder, header};
 use std::time;
 
 pub mod branches;
@@ -40,8 +40,8 @@ pub mod workspaces;
 const VERSION: &str = crate::constants::OXEN_VERSION;
 const USER_AGENT: &str = "Oxen";
 
-pub fn get_scheme_and_host_from_url<U: IntoUrl>(url: U) -> Result<(String, String), OxenError> {
-    let parsed_url = url.into_url()?;
+pub fn get_scheme_and_host_from_url(url: &str) -> Result<(String, String), OxenError> {
+    let parsed_url = Url::parse(url)?;
     let mut host_str = parsed_url.host_str().unwrap_or_default().to_string();
     if let Some(port) = parsed_url.port() {
         host_str = format!("{host_str}:{port}");
@@ -51,18 +51,18 @@ pub fn get_scheme_and_host_from_url<U: IntoUrl>(url: U) -> Result<(String, Strin
 
 // TODO: we probably want to create a pool of clients instead of constructing a
 // new one for each request so we can take advantage of keep-alive
-pub fn new_for_url<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
+pub fn new_for_url(url: &str) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
     new_for_host(host, true)
 }
 
-pub fn new_for_url_no_user_agent<U: IntoUrl>(url: U) -> Result<Client, OxenError> {
+pub fn new_for_url_no_user_agent(url: &str) -> Result<Client, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
     new_for_host(host, false)
 }
 
-fn new_for_host<S: AsRef<str>>(host: S, should_add_user_agent: bool) -> Result<Client, OxenError> {
-    match builder_for_host(host.as_ref(), should_add_user_agent)?
+fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
+    match builder_for_host(host, should_add_user_agent)?
         .timeout(time::Duration::from_secs(constants::timeout()))
         .build()
     {
@@ -81,23 +81,20 @@ pub fn builder_for_remote_repo(remote_repo: &RemoteRepository) -> Result<ClientB
     builder_for_host(host, true)
 }
 
-pub fn builder_for_url<U: IntoUrl>(url: U) -> Result<ClientBuilder, OxenError> {
+pub fn builder_for_url(url: &str) -> Result<ClientBuilder, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
     builder_for_host(host, true)
 }
 
-fn builder_for_host<S: AsRef<str>>(
-    host: S,
-    should_add_user_agent: bool,
-) -> Result<ClientBuilder, OxenError> {
-    let builder = if should_add_user_agent {
-        builder()
-    } else {
-        Ok(builder_no_user_agent())
-    };
+fn builder_for_host(host: String, should_add_user_agent: bool) -> Result<ClientBuilder, OxenError> {
+    let mut builder = Client::builder();
+    if should_add_user_agent {
+        let config = RuntimeConfig::get()?;
+        builder = builder.user_agent(build_user_agent(&config));
+    }
 
     // Bump max retries for this oxen-server host from 2 to 3. Exponential backoff is used by default.
-    let retry_policy = retry::for_host(host.as_ref().to_string())
+    let retry_policy = retry::for_host(host.clone())
         .max_retries_per_request(3)
         .classify_fn(|req_rep| {
             // Still retry on low-level network errors
@@ -116,7 +113,7 @@ fn builder_for_host<S: AsRef<str>>(
                 _ => req_rep.success(), // this means don't retry, and is the only other valid return value from the closure
             }
         });
-    let builder = Ok(builder?.retry(retry_policy));
+    builder = builder.retry(retry_policy);
 
     // If auth_config.toml isn't found, return without authorizing
     let config = match AuthConfig::get() {
@@ -125,13 +122,13 @@ fn builder_for_host<S: AsRef<str>>(
             log::debug!(
                 "Error getting config: {}. No auth token found for host {}",
                 e,
-                host.as_ref()
+                host
             );
-            return builder;
+            return Ok(builder);
         }
     };
-    if let Some(auth_token) = config.auth_token_for_host(host.as_ref()) {
-        log::debug!("Setting auth token for host: {}", host.as_ref());
+    if let Some(auth_token) = config.auth_token_for_host(host.as_str()) {
+        log::debug!("Setting auth token for host: {}", host);
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
@@ -145,26 +142,15 @@ fn builder_for_host<S: AsRef<str>>(
         auth_value.set_sensitive(true);
         let mut headers = header::HeaderMap::new();
         headers.insert(header::AUTHORIZATION, auth_value);
-        Ok(builder?.default_headers(headers))
+        builder = builder.default_headers(headers);
     } else {
-        log::trace!("No auth token found for host: {}", host.as_ref());
-        builder
+        log::trace!("No auth token found for host: {}", host);
     }
+    Ok(builder)
 }
 
-fn builder() -> Result<ClientBuilder, OxenError> {
-    let user_agent = build_user_agent()?;
-    Ok(Client::builder().user_agent(user_agent))
-}
-
-fn builder_no_user_agent() -> ClientBuilder {
-    Client::builder()
-}
-
-fn build_user_agent() -> Result<String, OxenError> {
-    let config = RuntimeConfig::get()?;
+fn build_user_agent(config: &RuntimeConfig) -> String {
     let host_platform = config.host_platform.display_name();
-
     let runtime_name = match config.runtime_name {
         Runtime::CLI => config.runtime_name.display_name().to_string(),
         _ => format!(
@@ -173,10 +159,7 @@ fn build_user_agent() -> Result<String, OxenError> {
             config.runtime_version
         ),
     };
-
-    Ok(format!(
-        "{USER_AGENT}/{VERSION} ({host_platform}; {runtime_name})"
-    ))
+    format!("{USER_AGENT}/{VERSION} ({host_platform}; {runtime_name})")
 }
 
 /// Performs an extra parse to validate that the response is success

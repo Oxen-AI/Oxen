@@ -31,7 +31,7 @@ pub fn get_scheme_and_host_from_repo(
     repo: &LocalRepository,
 ) -> Result<(String, String), OxenError> {
     if let Some(remote) = repo.remote() {
-        let host_and_scheme = api::client::get_scheme_and_host_from_url(remote.url)?;
+        let host_and_scheme = api::client::get_scheme_and_host_from_url(&remote.url)?;
         return Ok(host_and_scheme);
     }
 
