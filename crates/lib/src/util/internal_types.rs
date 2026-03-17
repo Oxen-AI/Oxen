@@ -1,4 +1,35 @@
+use crate::error::OxenError;
 use std::collections::{HashMap, HashSet};
+use url::Url;
+
+/// Parsed URL components with port-aware hostname.
+pub struct Hostname {
+    pub host: String,
+    pub port: Option<u16>,
+    pub scheme: String,
+}
+
+impl Hostname {
+    /// Returns `host:port` when a port is present, otherwise just `host`.
+    pub fn hostname(&self) -> String {
+        match self.port {
+            Some(port) => format!("{}:{}", self.host, port),
+            None => self.host.clone(),
+        }
+    }
+
+    /// Extract scheme, host, and port from a `Url`.
+    pub fn from_url(url: &Url) -> Result<Self, OxenError> {
+        let Some(host) = url.host_str() else {
+            return Err(OxenError::NoHost(url.to_string().into()));
+        };
+        Ok(Self {
+            host: host.to_string(),
+            port: url.port(),
+            scheme: url.scheme().to_string(),
+        })
+    }
+}
 
 /// Indicates that the type has a length.
 pub(crate) trait HasLen {

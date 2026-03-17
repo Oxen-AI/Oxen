@@ -1,4 +1,3 @@
-use http::Uri;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -7,6 +6,7 @@ use crate::error::OxenError;
 use crate::model::commit::Commit;
 use crate::model::file::FileNew;
 use crate::opts::StorageOpts;
+use crate::util::internal_types::Hostname;
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct RepoNew {
@@ -167,12 +167,14 @@ impl RepoNew {
     }
 
     pub fn from_url(url: &str) -> Result<RepoNew, OxenError> {
-        let uri = url.parse::<Uri>()?;
-        let mut split_path: Vec<&str> = uri.path().split('/').collect();
+        let parsed: url::Url = url.parse()?;
+        let mut split_path: Vec<&str> = parsed.path().split('/').collect();
 
         if split_path.len() < 3 {
             return Err(OxenError::basic_str("Invalid repo url"));
         }
+
+        let hn = Hostname::from_url(&parsed)?;
 
         // Pop in reverse to get repo_name then namespace
         let repo_name = split_path.pop().unwrap();
@@ -181,8 +183,8 @@ impl RepoNew {
             namespace: namespace.to_string(),
             name: repo_name.to_string(),
             is_public: None,
-            host: Some(uri.host().unwrap().to_string()),
-            scheme: Some(uri.scheme().unwrap().to_string()),
+            host: Some(hn.hostname()),
+            scheme: Some(hn.scheme),
             root_commit: None,
             description: None,
             files: None,

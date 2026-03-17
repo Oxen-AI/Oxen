@@ -5,6 +5,7 @@ use crate::error::OxenError;
 use crate::model::file::{FileContents, FileNew};
 use crate::model::{Branch, LocalRepository, Remote, RemoteRepository, RepoNew};
 use crate::repositories;
+use crate::util::internal_types::Hostname;
 use crate::view::repository::{
     RepositoryCreationResponse, RepositoryDataTypesResponse, RepositoryDataTypesView,
 };
@@ -13,7 +14,6 @@ use reqwest::multipart;
 use serde_json::json;
 use serde_json::value;
 use std::fmt;
-use url::Url;
 
 const CLONE: &str = "clone";
 const PUSH: &str = "push";
@@ -416,17 +416,13 @@ pub async fn transfer_namespace(
 
         match response {
             Ok(response) => {
-                let parsed_url: Url = url.parse()?;
-
-                let Some(host) = parsed_url.host() else {
-                    return Err(OxenError::NoHost(url.into()));
-                };
+                let hn = Hostname::from_url(&url.parse()?)?;
 
                 let new_remote_url = api::endpoint::remote_url_from_namespace_name_scheme(
-                    host.to_string().as_str(),
+                    &hn.hostname(),
                     &response.repository.namespace,
                     &repository.name,
-                    parsed_url.scheme(),
+                    &hn.scheme,
                 );
                 let new_remote = Remote {
                     url: new_remote_url,
