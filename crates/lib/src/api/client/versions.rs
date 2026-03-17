@@ -1,7 +1,7 @@
 use crate::api;
-use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
 use crate::api::client::retry;
+use crate::api::client::{self, Hostname};
 use crate::constants::{AVG_CHUNK_SIZE, max_retries};
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::Entry;
@@ -302,7 +302,7 @@ async fn upload_chunks(
     progress: Option<&Arc<PushProgress>>,
 ) -> Result<Vec<HashMap<String, String>>, OxenError> {
     let client = {
-        let hn = crate::util::internal_types::Hostname::from_url(&remote_repo.url().parse()?)?;
+        let hn = Hostname::from_url(&remote_repo.url().parse()?)?;
         Arc::new(client::new_for_host_transfer(&hn.hostname())?)
     };
 

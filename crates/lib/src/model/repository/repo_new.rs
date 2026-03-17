@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::api::client::Hostname;
 use crate::constants::DEFAULT_HOST;
 use crate::error::OxenError;
 use crate::model::commit::Commit;
 use crate::model::file::FileNew;
 use crate::opts::StorageOpts;
-use crate::util::internal_types::Hostname;
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct RepoNew {

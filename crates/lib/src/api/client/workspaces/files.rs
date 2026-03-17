@@ -1,5 +1,5 @@
-use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
+use crate::api::client::{self, Hostname};
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
@@ -473,7 +473,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
     }
 
     let client = {
-        let hn = crate::util::internal_types::Hostname::from_url(&remote_repo.url().parse()?)?;
+        let hn = Hostname::from_url(&remote_repo.url().parse()?)?;
         Arc::new(client::new_for_host_transfer(&hn.hostname())?)
     };
 

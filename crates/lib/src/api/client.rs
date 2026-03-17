@@ -6,11 +6,10 @@ use crate::config::RuntimeConfig;
 use crate::config::runtime_config::runtime::Runtime;
 use crate::constants;
 use crate::error::OxenError;
-use crate::util::internal_types::Hostname;
 use crate::view::OxenResponse;
 use crate::view::http;
+use reqwest::IntoUrl;
 pub use reqwest::Url;
-use reqwest::retry;
 use reqwest::{Client, ClientBuilder, header};
 use std::time;
 
@@ -40,6 +39,35 @@ pub mod workspaces;
 
 const VERSION: &str = crate::constants::OXEN_VERSION;
 const USER_AGENT: &str = "Oxen";
+
+/// Parsed URL components with port-aware hostname.
+pub struct Hostname {
+    pub host: String,
+    pub port: Option<u16>,
+    pub scheme: String,
+}
+
+impl Hostname {
+    /// Returns `host:port` when a port is present, otherwise just `host`.
+    pub fn hostname(&self) -> String {
+        match self.port {
+            Some(port) => format!("{}:{}", self.host, port),
+            None => self.host.clone(),
+        }
+    }
+
+    /// Extract scheme, host, and port from a `Url`.
+    pub fn from_url(url: &Url) -> Result<Self, OxenError> {
+        let Some(host) = url.host_str() else {
+            return Err(OxenError::NoHost(url.to_string().into()));
+        };
+        Ok(Self {
+            host: host.to_string(),
+            port: url.port(),
+            scheme: url.scheme().to_string(),
+        })
+    }
+}
 
 /// Parse a URL string into a `Hostname` (scheme + host + optional port).
 pub fn hostname_from_url_str(url_str: &str) -> Result<Hostname, OxenError> {
@@ -163,7 +191,9 @@ fn build_user_agent(config: &RuntimeConfig) -> Result<String, OxenError> {
             config.runtime_version
         ),
     };
-    Ok(format!("{USER_AGENT}/{VERSION} ({host_platform}; {runtime_name})"))
+    Ok(format!(
+        "{USER_AGENT}/{VERSION} ({host_platform}; {runtime_name})"
+    ))
 }
 
 /// Performs an extra parse to validate that the response is success

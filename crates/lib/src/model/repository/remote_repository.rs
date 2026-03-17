@@ -1,6 +1,6 @@
 use crate::api;
+use crate::api::client::Hostname;
 use crate::core::versions::MinOxenVersion;
-use crate::util::internal_types::Hostname;
 use crate::view::RepositoryView;
 use crate::view::repository::{RepositoryCreationView, RepositoryDataTypesView};
 use crate::{error::OxenError, model::Remote};

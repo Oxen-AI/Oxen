@@ -1,9 +1,9 @@
 use crate::api::client;
+use crate::api::client::Hostname;
 use crate::api::client::retry;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::model::commit::NewCommitBody;
-use crate::util::internal_types::Hostname;
 use crate::view::CommitResponse;
 use crate::{api, util::internal_types::HasLen};
 

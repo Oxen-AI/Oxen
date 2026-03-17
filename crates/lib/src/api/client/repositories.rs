@@ -1,11 +1,11 @@
 use crate::api;
 use crate::api::client;
+use crate::api::client::Hostname;
 use crate::constants::{DEFAULT_HOST, DEFAULT_REMOTE_NAME, DEFAULT_SCHEME};
 use crate::error::OxenError;
 use crate::model::file::{FileContents, FileNew};
 use crate::model::{Branch, LocalRepository, Remote, RemoteRepository, RepoNew};
 use crate::repositories;
-use crate::util::internal_types::Hostname;
 use crate::view::repository::{
     RepositoryCreationResponse, RepositoryDataTypesResponse, RepositoryDataTypesView,
 };
