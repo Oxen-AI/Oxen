@@ -421,7 +421,7 @@ pub async fn transfer_namespace(
         match response {
             Ok(response) => {
                 // Update remote to reflect new namespace
-                let (scheme, host) = api::client::get_scheme_and_host_from_url(url)?;
+                let (scheme, host) = api::client::get_scheme_and_host_from_url(&url)?;
 
                 let new_remote_url = api::endpoint::remote_url_from_namespace_name_scheme(
                     &host,
