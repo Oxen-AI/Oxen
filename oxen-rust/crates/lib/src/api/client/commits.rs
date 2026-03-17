@@ -1,4 +1,4 @@
-use crate::api::client;
+use crate::api::client::{self, Hostname};
 use crate::constants::{DEFAULT_PAGE_NUM, DIR_HASHES_DIR, DIRS_DIR, HISTORY_DIR};
 
 use crate::error::OxenError;
@@ -719,7 +719,7 @@ pub async fn post_commit_dir_hashes_to_server(
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
     let client = {
-        let hn = crate::util::internal_types::Hostname::from_url(&remote_repo.url().parse()?)?;
+        let hn = Hostname::from_url(&remote_repo.url().parse()?)?;
         client::new_for_host_transfer(&hn.hostname())?
     };
     post_data_to_server_with_client(
@@ -768,7 +768,7 @@ pub async fn post_commits_dir_hashes_to_server(
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
     let client = {
-        let hn = crate::util::internal_types::Hostname::from_url(&remote_repo.url().parse()?)?;
+        let hn = Hostname::from_url(&remote_repo.url().parse()?)?;
         client::new_for_host_transfer(&hn.hostname())?
     };
     post_data_to_server_with_client(
