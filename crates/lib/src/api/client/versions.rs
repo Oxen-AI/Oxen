@@ -24,6 +24,7 @@ use http::Method;
 use http::header::CONTENT_LENGTH;
 use tokio_tar::Archive;
 use tokio_util::codec::{BytesCodec, FramedRead};
+use url::Url;
 
 use std::collections::{HashMap, HashSet};
 use std::io::{SeekFrom, Write};
@@ -302,7 +303,14 @@ async fn upload_chunks(
     max_retries: usize,
     progress: Option<&Arc<PushProgress>>,
 ) -> Result<Vec<HashMap<String, String>>, OxenError> {
-    let client = Arc::new(api::client::new_for_host_transfer(remote_repo.url())?);
+    let client = {
+        let raw_url = remote_repo.url();
+        let url: Url = raw_url.parse()?;
+        let Some(host) = url.host() else {
+            return Err(OxenError::NoHost(raw_url.into()));
+        };
+        Arc::new(client::new_for_host_transfer(&host)?)
+    };
 
     // Figure out how many parts we need to upload
     let file_size = upload.size;

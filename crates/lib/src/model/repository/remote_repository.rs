@@ -68,10 +68,12 @@ impl RemoteRepository {
     }
 
     /// Host of the remote repository
-    pub fn host(&self) -> String {
-        // parse it from the url
-        let uri = self.remote.url.parse::<Uri>().unwrap();
-        uri.host().unwrap().to_string()
+    pub fn host(&self) -> Result<String, OxenError> {
+        let uri = self.remote.url.parse::<Uri>()?;
+        let Some(host) = uri.host() else {
+            return Err(OxenError::NoHost(self.remote.url.to_string().into()));
+        };
+        Ok(host.to_string())
     }
 
     /// Host of the remote repository

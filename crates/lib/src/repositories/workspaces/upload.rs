@@ -70,7 +70,7 @@ mod tests {
             let opts = UploadOpts {
                 paths: vec![file.to_path_buf()],
                 dst: Path::new("").to_path_buf(),
-                host: remote_repo.host(),
+                host: remote_repo.host()?,
                 scheme: remote_repo.scheme(),
                 remote: remote_repo.name.clone(),
                 branch: None,
@@ -125,7 +125,7 @@ mod tests {
             let opts = UploadOpts {
                 paths: vec![file.to_path_buf()],
                 dst: Path::new("test").join("ing").join("data").to_path_buf(),
-                host: remote_repo.host(),
+                host: remote_repo.host()?,
                 scheme: remote_repo.scheme(),
                 remote: remote_repo.name.clone(),
                 branch: None,
@@ -192,7 +192,7 @@ mod tests {
             let opts = UploadOpts {
                 paths: vec![file.to_path_buf()],
                 dst: Path::new("").to_path_buf(),
-                host: remote_repo.host(),
+                host: remote_repo.host()?,
                 scheme: remote_repo.scheme(),
                 remote: remote_repo.name.clone(),
                 branch: Some(branch_name.clone()),

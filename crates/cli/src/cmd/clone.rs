@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use std::path::{Component, Path, PathBuf};
+use url::Url;
 
-use liboxen::api;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::opts::CloneOpts;
@@ -168,10 +168,16 @@ impl RunCmd for CloneCmd {
             is_remote,
         };
 
-        let (scheme, host) = api::client::get_scheme_and_host_from_url(&opts.url)?;
+        let (scheme, host) = {
+            let url: Url = opts.url.parse()?;
+            let Some(host) = url.host() else {
+                return Err(OxenError::NoHost(opts.url.into()));
+            };
+            (url.scheme().to_string(), host.to_string())
+        };
 
         // TODO: Do I need to worry about this for remote repo?
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
         check_remote_version(scheme, host).await?;
 
         repositories::clone(&opts).await?;

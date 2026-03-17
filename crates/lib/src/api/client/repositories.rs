@@ -13,6 +13,7 @@ use reqwest::multipart;
 use serde_json::json;
 use serde_json::value;
 use std::fmt;
+use url::Url;
 
 const CLONE: &str = "clone";
 const PUSH: &str = "push";
@@ -415,14 +416,17 @@ pub async fn transfer_namespace(
 
         match response {
             Ok(response) => {
-                // Update remote to reflect new namespace
-                let (scheme, host) = api::client::get_scheme_and_host_from_url(&url)?;
+                let parsed_url: Url = url.parse()?;
+
+                let Some(host) = parsed_url.host() else {
+                    return Err(OxenError::NoHost(url.into()));
+                };
 
                 let new_remote_url = api::endpoint::remote_url_from_namespace_name_scheme(
-                    &host,
+                    host.to_string().as_str(),
                     &response.repository.namespace,
                     &repository.name,
-                    &scheme,
+                    parsed_url.scheme(),
                 );
                 let new_remote = Remote {
                     url: new_remote_url,

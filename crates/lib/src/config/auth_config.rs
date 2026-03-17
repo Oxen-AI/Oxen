@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use url::Host;
 
 pub const AUTH_CONFIG_FILENAME: &str = "auth_config.toml";
 
@@ -16,9 +17,9 @@ pub struct HostConfig {
 }
 
 impl HostConfig {
-    pub fn from_host(host: &str) -> HostConfig {
+    pub fn from_host(host: &Host<&str>) -> HostConfig {
         HostConfig {
-            host: String::from(host),
+            host: host.to_string(),
             auth_token: None,
         }
     }
@@ -126,8 +127,7 @@ impl AuthConfig {
         });
     }
 
-    pub fn auth_token_for_host<S: AsRef<str>>(&self, host: S) -> Option<String> {
-        let host = host.as_ref();
+    pub fn auth_token_for_host(&self, host: &Host<&str>) -> Option<String> {
         if let Some(token) = self.host_configs.get(&HostConfig::from_host(host)) {
             if token.auth_token.is_none() {
                 log::trace!("no auth_token found for host \"{}\"", token.host);
@@ -142,6 +142,8 @@ impl AuthConfig {
 
 #[cfg(test)]
 mod tests {
+    use url::Host;
+
     use crate::config::AuthConfig;
     use crate::error::OxenError;
     use crate::test;
@@ -159,7 +161,7 @@ mod tests {
 
         assert_eq!(auth_config.host_configs.len(), og_num_configs + 1);
         assert_eq!(
-            auth_config.auth_token_for_host(host),
+            auth_config.auth_token_for_host(&Host::Domain(host)),
             Some(token_2.to_string())
         );
 
