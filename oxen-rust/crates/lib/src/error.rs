@@ -77,6 +77,7 @@ pub enum OxenError {
     ResourceNotFound(StringError),
     PathDoesNotExist(Box<PathBufError>),
     ParsedResourceNotFound(Box<PathBufError>),
+    NoHost(StringError),
 
     // Versioning
     MigrationRequired(StringError),
@@ -149,6 +150,7 @@ impl fmt::Display for OxenError {
             OxenError::OxenUpdateRequired(err)
             | OxenError::Basic(err)
             | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
+            Self::NoHost(url) => write!(f, "No host in url: {url}"),
             OxenError::InvalidRepoName(name) => write!(
                 f,
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"

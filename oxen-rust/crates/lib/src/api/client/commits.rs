@@ -31,6 +31,7 @@ use flate2::write::GzEncoder;
 use futures_util::TryStreamExt;
 use http::header::CONTENT_LENGTH;
 use indicatif::{ProgressBar, ProgressStyle};
+use url::Url;
 
 pub struct ChunkParams {
     pub chunk_num: usize,
@@ -719,7 +720,14 @@ pub async fn post_commit_dir_hashes_to_server(
 
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
-    let client = client::new_for_host_transfer(remote_repo.url())?;
+    let client = {
+        let raw_url = remote_repo.url();
+        let url: Url = raw_url.parse()?;
+        let Some(host) = url.host() else {
+            return Err(OxenError::NoHost(raw_url.into()));
+        };
+        client::new_for_host_transfer(&host)?
+    };
     post_data_to_server_with_client(
         &client,
         remote_repo,
@@ -765,7 +773,14 @@ pub async fn post_commits_dir_hashes_to_server(
 
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
-    let client = client::new_for_host_transfer(remote_repo.url())?;
+    let client = {
+        let raw_url = remote_repo.url();
+        let url: Url = raw_url.parse()?;
+        let Some(host) = url.host() else {
+            return Err(OxenError::NoHost(raw_url.into()));
+        };
+        client::new_for_host_transfer(&host)?
+    };
     post_data_to_server_with_client(
         &client,
         remote_repo,

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
+use url::Url;
 
 use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
@@ -447,8 +448,14 @@ pub(crate) async fn parallel_batched_small_file_upload(
         }
     }
 
-    // Create a client for uploading batches
-    let client = Arc::new(api::client::new_for_host_transfer(remote_repo.url())?);
+    let client = {
+        let raw_url = remote_repo.url();
+        let url: Url = raw_url.parse()?;
+        let Some(host) = url.host() else {
+            return Err(OxenError::NoHost(raw_url.into()));
+        };
+        Arc::new(client::new_for_host_transfer(&host)?)
+    };
 
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));
