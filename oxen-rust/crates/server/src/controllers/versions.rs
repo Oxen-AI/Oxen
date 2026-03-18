@@ -131,8 +131,6 @@ pub async fn download(
     let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();
     let last_commit_id = entry.last_commit_id().to_string();
-    let version_path = version_store.get_version_path(&hash_str)?;
-
     // TODO: refactor out of here and check for type,
     // but seeing if it works to resize the image and cache it to disk if we have a resize query
     let img_resize = query.into_inner();
@@ -141,14 +139,9 @@ pub async fn download(
     {
         log::debug!("img_resize {img_resize:?}");
 
-        let file_stream = util::fs::handle_image_resize(
-            Arc::clone(&version_store),
-            hash_str,
-            &path,
-            &version_path,
-            img_resize,
-        )
-        .await?;
+        let file_stream =
+            util::fs::handle_image_resize(Arc::clone(&version_store), hash_str, &path, img_resize)
+                .await?;
 
         return Ok(HttpResponse::Ok()
             .content_type(mime_type)

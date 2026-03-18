@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use image::DynamicImage;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::Stream;
@@ -72,17 +71,17 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         data: &[u8],
     ) -> Result<(), OxenError>;
 
-    /// Store a derived version file (resized, video thumbnail etc.)
+    /// Store a derived file (resized image, video thumbnail, etc.) corresponding to a file version
     ///
     /// # Arguments
-    /// * `derived_image` - The derived image to store, used for local processing
-    /// * `image_buf` - The raw bytes to store, used for S3
-    /// * `derived_path` - Path/key to the derived version file
+    /// * `orig_hash` - The content hash of the parent version
+    /// * `derived_filename` - Filename for the derived artifact (e.g. "200x300.jpg")
+    /// * `derived_data` - The raw bytes of the derived artifact to store
     async fn store_version_derived(
         &self,
-        derived_image: DynamicImage,
-        image_buf: Vec<u8>,
-        derived_path: &Path,
+        orig_hash: &str,
+        derived_filename: &str,
+        derived_data: &[u8],
     ) -> Result<(), OxenError>;
 
     /// Get a writer for a chunk of a version file
@@ -158,14 +157,27 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         hash: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
 
-    /// Get stream of a derived version file (resized, video thumbnail etc.)
+    /// Get a stream of a derived file (resized, video thumbnail, etc.)
     ///
     /// # Arguments
-    /// * `derived_path` - Path/key to the derived version file
+    /// * `orig_hash` - The content hash of the parent version
+    /// * `derived_filename` - Filename for the derived artifact
     async fn get_version_derived_stream(
         &self,
-        derived_path: &Path,
+        orig_hash: &str,
+        derived_filename: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+
+    /// Check if a derived file exists
+    ///
+    /// # Arguments
+    /// * `orig_hash` - The content hash of the parent version
+    /// * `derived_filename` - Filename for the derived artifact
+    async fn derived_version_exists(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<bool, OxenError>;
 
     /// Get the path to a version file (sync operation)
     ///

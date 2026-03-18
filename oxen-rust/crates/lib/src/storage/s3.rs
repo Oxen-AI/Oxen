@@ -5,10 +5,10 @@ use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
-use image::DynamicImage;
+use log;
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
@@ -198,31 +198,24 @@ impl VersionStore for S3VersionStore {
 
     async fn store_version_derived(
         &self,
-        _derived_image: DynamicImage,
-        image_buf: Vec<u8>,
-        derived_path: &Path,
+        orig_hash: &str,
+        derived_filename: &str,
+        derived_data: &[u8],
     ) -> Result<(), OxenError> {
         let client = self.init_client().await?;
-        let key = derived_path
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(c) => Some(c.to_string_lossy()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("/");
+        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
-            .body(ByteStream::from(image_buf))
+            .body(ByteStream::from(derived_data.to_vec()))
             .send()
             .await
             .map_err(|e| {
                 OxenError::basic_str(format!("failed to store derived version file in S3: {e}"))
             })?;
-        log::debug!("Saved derived version file {derived_path:?}");
+        log::debug!("Saved derived version file {key}");
 
         Ok(())
     }
@@ -292,18 +285,12 @@ impl VersionStore for S3VersionStore {
 
     async fn get_version_derived_stream(
         &self,
-        derived_path: &Path,
+        orig_hash: &str,
+        derived_filename: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
         let client = self.init_client().await?;
-        let key = derived_path
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(c) => Some(c.to_string_lossy()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("/");
+        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         let resp = client
             .get_object()
@@ -315,6 +302,36 @@ impl VersionStore for S3VersionStore {
 
         let adapter = ByteStreamAdapter { inner: resp.body };
         Ok(Box::new(adapter) as Box<_>)
+    }
+
+    async fn derived_version_exists(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<bool, OxenError> {
+        let client = self.init_client().await?;
+        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
+
+        match client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+
+            Err(SdkError::ServiceError(err)) => match err.err() {
+                HeadObjectError::NotFound(_) => Ok(false),
+                err => Err(OxenError::basic_str(format!(
+                    "derived_exists failed with S3 head_object error: {err:?}"
+                ))),
+            },
+
+            Err(err) => Err(OxenError::basic_str(format!(
+                "derived_exists failed with S3 head_object error: {err:?}"
+            ))),
+        }
     }
 
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {

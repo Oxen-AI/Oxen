@@ -1,6 +1,6 @@
 use std;
 use std::collections::HashMap;
-use std::io::{self};
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
@@ -11,11 +11,11 @@ use crate::view::versions::CleanCorruptedVersionsResult;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use image::{self, DynamicImage};
+use log;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use tokio::fs::{self, File};
+use tokio::fs::{self, File, metadata};
 use tokio::io::AsyncReadExt;
 use tokio::io::{BufReader, BufWriter};
 use tokio::sync::Semaphore;
@@ -123,25 +123,17 @@ impl VersionStore for LocalVersionStore {
 
     async fn store_version_derived(
         &self,
-        derived_image: DynamicImage,
-        _image_buf: Vec<u8>,
-        derived_path: &Path,
+        orig_hash: &str,
+        derived_filename: &str,
+        derived_data: &[u8],
     ) -> Result<(), OxenError> {
-        let path = PathBuf::from(derived_path);
-        // Todo: optimize for high concurrency writes
-        tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
-            let derived_parent = path.parent().unwrap_or(Path::new(""));
-
-            if !derived_parent.exists() {
-                util::fs::create_dir_all(derived_parent)?;
-            }
-
-            derived_image.save(&path)?;
-
-            log::debug!("Saved derived version file {path:?}");
-            Ok(())
-        })
-        .await?
+        let dir = self.version_dir(orig_hash);
+        // TODO: Convert create_dir_all to async
+        util::fs::create_dir_all(&dir)?;
+        let path = dir.join(derived_filename);
+        fs::write(&path, derived_data).await?;
+        log::debug!("Saved derived version file {path:?}");
+        Ok(())
     }
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
@@ -171,14 +163,31 @@ impl VersionStore for LocalVersionStore {
 
     async fn get_version_derived_stream(
         &self,
-        derived_path: &Path,
+        orig_hash: &str,
+        derived_filename: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
-        let file = File::open(derived_path).await?;
+        let path = self.version_dir(orig_hash).join(derived_filename);
+        let file = File::open(&path).await?;
         let reader = BufReader::new(file);
         let stream = ReaderStream::new(reader);
 
         Ok(Box::new(stream))
+    }
+
+    async fn derived_version_exists(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<bool, OxenError> {
+        let derived_path = self.version_dir(orig_hash).join(derived_filename);
+        match metadata(derived_path).await {
+            Ok(meta) => Ok(meta.is_file()),
+            Err(err) => match err.kind() {
+                ErrorKind::NotFound => Ok(false),
+                _ => Err(err)?,
+            },
+        }
     }
 
     fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
@@ -774,5 +783,61 @@ mod tests {
                 panic!("Unexpected error when getting non-existent chunk: {e:?}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_store_and_get_version_derived() {
+        let (_temp_dir, store) = setup().await;
+        let orig_hash = "aaaaaaaaaaaaaaaa";
+        let derived_filename = "100x200.jpg";
+        let derived_data = b"fake resized image bytes for hash aaaaaaaaaaaaaaaa";
+
+        // Store derived
+        store
+            .store_version_derived(orig_hash, derived_filename, derived_data)
+            .await
+            .unwrap();
+
+        // Retrieve via stream and verify content
+        use futures::StreamExt;
+        let mut stream = store
+            .get_version_derived_stream(orig_hash, derived_filename)
+            .await
+            .unwrap();
+        let mut collected = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            collected.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(collected, derived_data);
+    }
+
+    #[tokio::test]
+    async fn test_derived_version_exists() {
+        let (_temp_dir, store) = setup().await;
+        let orig_hash = "bbbbbbbbbbbbbbbb";
+        let derived_filename = "300x400.jpg";
+        let derived_data = b"fake resized image bytes for hash bbbbbbbbbbbbbbbb";
+
+        // Should not exist before store
+        assert_eq!(
+            store
+                .derived_version_exists(orig_hash, derived_filename)
+                .await
+                .unwrap(),
+            false
+        );
+
+        // Store and check again
+        store
+            .store_version_derived(orig_hash, derived_filename, derived_data)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .derived_version_exists(orig_hash, derived_filename)
+                .await
+                .unwrap(),
+            true
+        );
     }
 }

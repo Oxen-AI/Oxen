@@ -23,9 +23,6 @@ use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::BufReader;
-use tokio_util::io::ReaderStream;
 use utoipa::ToSchema;
 
 #[derive(MultipartForm, ToSchema)]
@@ -183,8 +180,6 @@ pub async fn get(
     let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();
     let last_commit_id = entry.last_commit_id().to_string();
-    let version_path = version_store.get_version_path(&hash_str)?;
-
     let query_params = query.into_inner();
 
     // Handle image resize
@@ -198,10 +193,9 @@ pub async fn get(
         log::debug!("img_resize {img_resize:?}");
 
         let file_stream = util::fs::handle_image_resize(
-            Arc::clone(&version_store),
+            version_store.clone(),
             hash_str.clone(),
             &path,
-            &version_path,
             img_resize,
         )
         .await?;
@@ -222,19 +216,9 @@ pub async fn get(
         };
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
-        let thumbnail_path = util::fs::handle_video_thumbnail(
-            Arc::clone(&version_store),
-            hash_str,
-            &path,
-            &version_path,
-            video_thumbnail,
-        )?;
-        log::debug!("In the thumbnail cache! {thumbnail_path:?}");
-
-        // Generate stream for the thumbnail (always JPEG)
-        let file = File::open(&thumbnail_path).await?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
+        let stream =
+            util::fs::handle_video_thumbnail(Arc::clone(&version_store), hash_str, video_thumbnail)
+                .await?;
 
         return Ok(HttpResponse::Ok()
             .content_type("image/jpeg")
