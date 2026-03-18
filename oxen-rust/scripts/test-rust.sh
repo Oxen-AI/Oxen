@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 #
-# Build, configure, and run the Oxen test suite. Any arguments passed to this script will be passed
-# to `cargo nextest run`
+# Build, configure, and run the Oxen test suite.
+#
+# Usage: test-rust.sh [--ffmpeg] [nextest args...]
+#
+#   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
+#   All other arguments are forwarded to `cargo nextest run`.
+
+# Check for --ffmpeg as the first argument
+FEATURE_ARGS=""
+if [ "${1:-}" = "--ffmpeg" ]; then
+    FEATURE_ARGS="-F ffmpeg"
+    shift
+fi
 
 set -euo pipefail
 
@@ -20,15 +31,16 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-# ---------- 1. Build ----------
-echo "==> Building oxen (cargo build)..."
-cargo build
-
-# ---------- 2. Ensure all prerequisites are installed ----------
+# Ensure all prerequisites are installed
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 "$REPO_ROOT/scripts/install-pre-reqs.sh"
 
-# ---------- 3. Verify ulimit ----------
+# Build
+echo "==> Building oxen (cargo build $FEATURE_ARGS)..."
+# shellcheck disable=SC2086
+cargo build $FEATURE_ARGS
+
+# Verify ulimit
 CURRENT_ULIMIT=$(ulimit -n)
 DESIRED_ULIMIT=10240
 if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
@@ -39,7 +51,7 @@ if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
     }
 fi
 
-# ---------- 4. Configure test user ----------
+# Configure test user
 if [ ! -d ./data/test/runs ] || [ ! -d ./data/test/config ]; then
     echo "==> Configuring test user..."
     mkdir -p ./data/test/runs
@@ -53,7 +65,7 @@ else
     echo "==> Test user already configured, skipping."
 fi
 
-# ---------- 5. Select port and start oxen-server ----------
+# Select port and start oxen-server
 port_is_free() {
   ! lsof -i :"$1" -sTCP:LISTEN >/dev/null 2>&1
 }
@@ -85,25 +97,21 @@ echo "==> Starting oxen-server on port ${OXEN_PORT}..."
 ./target/debug/oxen-server start -p "${OXEN_PORT}" &
 SERVER_PID=$!
 
-# Give the server a moment to start
 wait_for_server() {
-  for _ in $(seq 1 30); do
-    if curl -s -o /dev/null --fail "http://localhost:${OXEN_PORT}/api/health" 2>/dev/null; then
-      return 0
-    fi
-    sleep 0.5
-  done
-  return 1
+    while true ; do
+        if curl -s -o /dev/null --fail "http://localhost:${OXEN_PORT}/api/health" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1
+    done
 }
 
-if ! wait_for_server || ! kill -0 "$SERVER_PID" 2>/dev/null; then
-  echo "ERROR: oxen-server failed to start on port ${OXEN_PORT}."
-  exit 1
-fi
-echo "==> oxen-server running on port ${OXEN_PORT} (pid $SERVER_PID)."
+echo "==> Waiting for oxen-server health check to pass..."
+wait_for_server
 
-# ---------- 6. Run tests ----------
-echo "==> Running tests with 'cargo nextest run $*' ..."
-cargo nextest run "$@"
+# Run tests
+echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
+# shellcheck disable=SC2086
+cargo nextest run $FEATURE_ARGS "$@"
 
 # cleanup handled via the trapped cleanup function
