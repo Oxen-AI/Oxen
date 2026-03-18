@@ -24,7 +24,6 @@ pub(crate) mod test;
 extern crate log;
 extern crate lru;
 
-use actix_web::http::KeepAlive;
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
@@ -74,7 +73,6 @@ use clap::{Parser, Subcommand};
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
 
@@ -89,10 +87,6 @@ const SUPPORT: &str = "
 ";
 
 const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`";
-
-const DEFAULT_OXEN_KEEP_ALIVE_SECS: u64 = 600;
-
-const DEFAULT_OXEN_CLIENT_REQUEST_TIMEOUT_SECS: u64 = 600;
 
 // Exports for the utoipa docs
 // To add new endpoints to the docs, register their respective controller modules and schemas below
@@ -362,13 +356,6 @@ enum ServerError {
     Oxen(#[from] OxenError),
 }
 
-fn get_from_env_or_default<T: FromStr>(env_var_name: &str, default: T) -> T {
-    env::var(env_var_name)
-        .ok()
-        .and_then(|v| v.parse::<T>().ok())
-        .unwrap_or(default)
-}
-
 #[actix_web::main]
 async fn main() -> Result<(), ServerError> {
     dotenv().ok();
@@ -386,14 +373,6 @@ async fn main() -> Result<(), ServerError> {
         Err(_) => PathBuf::from("data"),
     };
 
-    let keep_alive_secs =
-        get_from_env_or_default("OXEN_KEEP_ALIVE_SECS", DEFAULT_OXEN_KEEP_ALIVE_SECS);
-
-    let client_request_timeout_secs = get_from_env_or_default(
-        "OXEN_CLIENT_REQUEST_TIMEOUT_SECS",
-        DEFAULT_OXEN_CLIENT_REQUEST_TIMEOUT_SECS,
-    );
-
     match ServerCli::parse().command {
         ServerCommand::Start { ip, port, auth } => {
             println!("🐂 v{VERSION}");
@@ -406,10 +385,6 @@ async fn main() -> Result<(), ServerError> {
                     // TODO: why is this not checking the value of the env var?
                     disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
                     enable_auth: auth,
-                    keep_alive: std::time::Duration::from_secs(keep_alive_secs),
-                    client_request_timeout: std::time::Duration::from_secs(
-                        client_request_timeout_secs,
-                    ),
                 },
                 &sync_dir,
             )
@@ -436,8 +411,6 @@ async fn main() -> Result<(), ServerError> {
 struct ServerConfig {
     disable_merkle_cache: bool,
     enable_auth: bool,
-    keep_alive: std::time::Duration,
-    client_request_timeout: std::time::Duration,
 }
 
 async fn start(
@@ -449,8 +422,6 @@ async fn start(
     let ServerConfig {
         disable_merkle_cache,
         enable_auth,
-        keep_alive,
-        client_request_timeout,
     } = *config;
 
     // Configure merkle tree node caching
@@ -509,8 +480,6 @@ async fn start(
             .wrap(Logger::default())
             .wrap(Logger::new("user agent is %a %{User-Agent}i"))
     })
-    .keep_alive(KeepAlive::Timeout(keep_alive))
-    .client_request_timeout(client_request_timeout)
     .bind((host.to_owned(), port))?
     .run()
     .await
