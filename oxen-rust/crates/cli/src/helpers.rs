@@ -30,12 +30,14 @@ pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
 pub fn get_scheme_and_host_from_repo(
     repo: &LocalRepository,
 ) -> Result<(String, String), OxenError> {
-    if let Some(remote) = repo.remote() {
-        let host_and_scheme = api::client::get_scheme_and_host_from_url(&remote.url)?;
-        return Ok(host_and_scheme);
+    match repo.remote() {
+        Some(remote) => {
+            let hn = api::client::hostname_from_url_str(&remote.url)?;
+            let hostname = hn.hostname();
+            Ok((hn.scheme, hostname))
+        }
+        None => get_scheme_and_host_or_default(),
     }
-
-    get_scheme_and_host_or_default()
 }
 
 pub async fn check_remote_version(

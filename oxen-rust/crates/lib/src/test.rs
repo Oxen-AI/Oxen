@@ -330,19 +330,13 @@ where
     version_store.init().await?;
 
     log::info!(">>>>> run_empty_local_repo_test_async running test");
-    let result = match test(repo).await {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!("Error running test. Err: {err}");
-            false
-        }
-    };
+    let result = test(repo).await;
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result);
+    assert!(result.is_ok(), "Error running test: {result:?}");
     Ok(())
 }
 

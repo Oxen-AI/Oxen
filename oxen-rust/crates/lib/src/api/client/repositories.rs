@@ -1,5 +1,6 @@
 use crate::api;
 use crate::api::client;
+use crate::api::client::Hostname;
 use crate::constants::{DEFAULT_HOST, DEFAULT_REMOTE_NAME, DEFAULT_SCHEME};
 use crate::error::OxenError;
 use crate::model::file::{FileContents, FileNew};
@@ -420,14 +421,13 @@ pub async fn transfer_namespace(
 
         match response {
             Ok(response) => {
-                // Update remote to reflect new namespace
-                let (scheme, host) = api::client::get_scheme_and_host_from_url(&url)?;
+                let hn = Hostname::from_url(&url.parse()?)?;
 
                 let new_remote_url = api::endpoint::remote_url_from_namespace_name_scheme(
-                    &host,
+                    &hn.hostname(),
                     &response.repository.namespace,
                     &repository.name,
-                    &scheme,
+                    &hn.scheme,
                 );
                 let new_remote = Remote {
                     url: new_remote_url,

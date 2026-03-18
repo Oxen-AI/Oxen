@@ -1,5 +1,5 @@
-use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
+use crate::api::client::{self, Hostname};
 use crate::constants::{chunk_size, max_retries};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
@@ -13,6 +13,7 @@ use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
 
+use futures::stream;
 use parking_lot::Mutex;
 use rand::{Rng, thread_rng};
 use std::collections::HashSet;
@@ -21,8 +22,6 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
-
-use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::util::hasher;
@@ -447,8 +446,10 @@ pub(crate) async fn parallel_batched_small_file_upload(
         }
     }
 
-    // Create a client for uploading batches
-    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let client = {
+        let hn = Hostname::from_url(&remote_repo.url().parse()?)?;
+        Arc::new(client::new_for_host_transfer(&hn.hostname())?)
+    };
 
     // For individual files
     let err_files: Arc<Mutex<Vec<ErrorFileInfo>>> = Arc::new(Mutex::new(vec![]));

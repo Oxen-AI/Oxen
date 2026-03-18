@@ -1,9 +1,9 @@
 use crate::api;
+use crate::api::client::Hostname;
 use crate::core::versions::MinOxenVersion;
 use crate::view::RepositoryView;
 use crate::view::repository::{RepositoryCreationView, RepositoryDataTypesView};
 use crate::{error::OxenError, model::Remote};
-use http::Uri;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -67,25 +67,22 @@ impl RemoteRepository {
         &self.remote.url
     }
 
-    /// Host of the remote repository
-    pub fn host(&self) -> String {
-        // parse it from the url
-        let uri = self.remote.url.parse::<Uri>().unwrap();
-        uri.host().unwrap().to_string()
+    /// Host of the remote repository (includes port if non-default)
+    pub fn host(&self) -> Result<String, OxenError> {
+        let hn = Hostname::from_url(&self.remote.url.parse()?)?;
+        Ok(hn.hostname())
     }
 
-    /// Host of the remote repository
-    pub fn port(&self) -> String {
-        // parse it from the url
-        let uri = self.remote.url.parse::<Uri>().unwrap();
-        uri.port().unwrap().to_string()
+    /// Port of the remote repository
+    pub fn port(&self) -> Result<Option<u16>, OxenError> {
+        let hn = Hostname::from_url(&self.remote.url.parse()?)?;
+        Ok(hn.port)
     }
 
     /// Scheme of the remote repository
-    pub fn scheme(&self) -> String {
-        // parse it from the url
-        let uri = self.remote.url.parse::<Uri>().unwrap();
-        uri.scheme().unwrap().to_string()
+    pub fn scheme(&self) -> Result<String, OxenError> {
+        let hn = Hostname::from_url(&self.remote.url.parse()?)?;
+        Ok(hn.scheme)
     }
 
     /// Underlying api url for the remote repository

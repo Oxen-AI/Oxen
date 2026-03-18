@@ -18,7 +18,7 @@ pub struct HostConfig {
 impl HostConfig {
     pub fn from_host(host: &str) -> HostConfig {
         HostConfig {
-            host: String::from(host),
+            host: host.to_string(),
             auth_token: None,
         }
     }
@@ -126,8 +126,7 @@ impl AuthConfig {
         });
     }
 
-    pub fn auth_token_for_host<S: AsRef<str>>(&self, host: S) -> Option<String> {
-        let host = host.as_ref();
+    pub fn auth_token_for_host(&self, host: &str) -> Option<String> {
         if let Some(token) = self.host_configs.get(&HostConfig::from_host(host)) {
             if token.auth_token.is_none() {
                 log::trace!("no auth_token found for host \"{}\"", token.host);
