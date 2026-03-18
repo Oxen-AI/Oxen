@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "faker",
 #     "pillow",
@@ -24,7 +24,6 @@ from typing import Literal
 from faker import Faker
 from PIL import Image
 from tqdm import tqdm
-
 
 FileType = Literal["text", "image", "binary"]
 

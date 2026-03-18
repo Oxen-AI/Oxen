@@ -80,7 +80,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.10" # Test against the earliest supported Python version
+          python-version: "3.11" # Test against the earliest supported Python version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
