@@ -186,22 +186,16 @@ pub fn scan_df_arrow(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFr
         .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
 }
 
-pub async fn add_col_lazy(
+fn add_col_sync(
     df: LazyFrame,
     name: &str,
     val: &str,
     dtype: &str,
     at: Option<usize>,
 ) -> Result<LazyFrame, OxenError> {
-    let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-        df.collect()
-            .map_err(|e| OxenError::basic_str(format!("{e:?}")))
-    })
-    .await?
-    {
-        Ok(df) => df,
-        Err(e) => return Err(OxenError::basic_str(format!("{e:?}"))),
-    };
+    let mut df = df
+        .collect()
+        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
 
     let dtype = DataType::from_string(dtype).to_polars();
 
@@ -216,8 +210,22 @@ pub async fn add_col_lazy(
         df.with_column(column)
             .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     }
-    let df = df.lazy();
-    Ok(df)
+    Ok(df.lazy())
+}
+
+pub async fn add_col_lazy(
+    df: LazyFrame,
+    name: &str,
+    val: &str,
+    dtype: &str,
+    at: Option<usize>,
+) -> Result<LazyFrame, OxenError> {
+    let name = name.to_string();
+    let val = val.to_string();
+    let dtype = dtype.to_string();
+    task::spawn_blocking(move || add_col_sync(df, &name, &val, &dtype, at))
+        .await
+        .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
 }
 
 pub fn add_col(
@@ -237,16 +245,10 @@ pub fn add_col(
     Ok(df)
 }
 
-pub async fn add_row(df: LazyFrame, data: String) -> Result<LazyFrame, OxenError> {
-    let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-        df.collect()
-            .map_err(|e| OxenError::basic_str(format!("{e:?}")))
-    })
-    .await?
-    {
-        Ok(df) => df,
-        Err(e) => return Err(OxenError::basic_str(format!("{e:?}"))),
-    };
+fn add_row_sync(df: LazyFrame, data: String) -> Result<LazyFrame, OxenError> {
+    let df = df
+        .collect()
+        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
 
     let new_row = row_from_str_and_schema(data, df.schema())?;
     log::debug!("add_row og df: {df:?}");
@@ -256,6 +258,12 @@ pub async fn add_row(df: LazyFrame, data: String) -> Result<LazyFrame, OxenError
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?
         .lazy();
     Ok(df)
+}
+
+pub async fn add_row(df: LazyFrame, data: String) -> Result<LazyFrame, OxenError> {
+    task::spawn_blocking(move || add_row_sync(df, data))
+        .await
+        .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
 }
 
 pub fn n_duped_rows(df: &DataFrame, cols: &[&str]) -> Result<u64, OxenError> {
@@ -430,17 +438,26 @@ fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, Oxe
 }
 
 pub async fn transform(df: DataFrame, opts: DFOpts) -> Result<DataFrame, OxenError> {
-    let df = transform_lazy(df.lazy(), opts.clone()).await?;
-    Ok(transform_slice_lazy(df, &opts)?.collect()?)
+    let opts_clone = opts.clone();
+    task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+        let df = transform_lazy(df.lazy(), opts_clone)?;
+        Ok(transform_slice_lazy(df, &opts)?.collect()?)
+    })
+    .await
+    .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
 }
 
 pub async fn transform_new(df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
-    //    let height = df.height();
-    let df = transform_lazy(df, opts.clone()).await?;
-    transform_slice_lazy(df, opts)
+    let opts = opts.clone();
+    task::spawn_blocking(move || -> Result<LazyFrame, OxenError> {
+        let df = transform_lazy(df, opts.clone())?;
+        transform_slice_lazy(df, &opts)
+    })
+    .await
+    .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
 }
 
-pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame, OxenError> {
+pub fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame, OxenError> {
     log::debug!("transform_lazy Got transform ops {opts:?}");
     if let Some(vstack) = opts.clone().vstack {
         log::debug!("transform_lazy Got files to stack {vstack:?}");
@@ -450,9 +467,8 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
                 OxenError::basic_str(format!("Cannot vstack file without extension: {path:?}"))
             })?;
 
-            // Use the new non-transforming reader to break recursion
-            let new_df = _read_lazy_df_with_extension(path.clone(), extension, &empty_opts)
-                .await?
+            // Use the non-transforming reader to break recursion
+            let new_df = _read_lazy_df_with_extension_sync(path, extension, &empty_opts)?
                 .collect()
                 .map_err(OxenError::from)?;
 
@@ -466,18 +482,17 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
     }
 
     if let Some(col_vals) = opts.add_col_vals() {
-        df = add_col_lazy(
+        df = add_col_sync(
             df,
             &col_vals.name,
             &col_vals.value,
             &col_vals.dtype,
             opts.at,
-        )
-        .await?;
+        )?;
     }
 
     if let Some(data) = &opts.add_row {
-        df = add_row(df, data.to_owned()).await?;
+        df = add_row_sync(df, data.to_owned())?;
     }
 
     match opts.get_filter() {
@@ -1176,6 +1191,48 @@ pub async fn read_df_with_extension(
     p_read_df_with_extension(path, extension_str, opts.clone()).await
 }
 
+fn _read_lazy_df_with_extension_sync(
+    path: impl AsRef<Path>,
+    extension: impl AsRef<str>,
+    opts: &DFOpts,
+) -> Result<LazyFrame, OxenError> {
+    let path = path.as_ref();
+    let extension = extension.as_ref();
+
+    if !path.exists() {
+        return Err(OxenError::entry_does_not_exist(path));
+    }
+
+    log::debug!("Reading df with extension {:?} {:?}", &extension, &path);
+
+    match extension {
+        "ndjson" | "jsonl" => read_df_jsonl(path),
+        "json" => read_df_json(path),
+        "csv" | "data" => {
+            let dialect = sniff_csv_dialect(path, opts)?;
+            read_df_csv(path, dialect.delimiter, dialect.quote_char)
+        }
+        "tsv" => {
+            let dialect = sniff_csv_dialect(path, opts)?;
+            read_df_csv(path, b'\t', dialect.quote_char)
+        }
+        "parquet" => read_df_parquet(path),
+        "arrow" => {
+            if opts.sql.is_some() {
+                return Err(OxenError::basic_str(
+                    "Error: SQL queries are not supported for .arrow files",
+                ));
+            }
+            read_df_arrow(path)
+        }
+        _ => {
+            let err =
+                format!("Could not load data frame with path: {path:?} and extension: {extension}");
+            Err(OxenError::basic_str(err))
+        }
+    }
+}
+
 async fn _read_lazy_df_with_extension(
     path: impl AsRef<Path> + Send + 'static,
     extension: impl AsRef<str>,
@@ -1185,43 +1242,9 @@ async fn _read_lazy_df_with_extension(
     let extension = extension.as_ref().to_string();
     let opts_clone = opts.clone();
 
-    task::spawn_blocking(move || {
-        if !path.exists() {
-            return Err(OxenError::entry_does_not_exist(&path));
-        }
-
-        log::debug!("Reading df with extension {:?} {:?}", &extension, &path);
-
-        match extension.as_str() {
-            "ndjson" | "jsonl" => read_df_jsonl(&path),
-            "json" => read_df_json(&path),
-            "csv" | "data" => {
-                let dialect = sniff_csv_dialect(&path, &opts_clone)?;
-                read_df_csv(&path, dialect.delimiter, dialect.quote_char)
-            }
-            "tsv" => {
-                let dialect = sniff_csv_dialect(&path, &opts_clone)?;
-                read_df_csv(&path, b'\t', dialect.quote_char)
-            }
-            "parquet" => read_df_parquet(&path),
-            "arrow" => {
-                if opts_clone.sql.is_some() {
-                    return Err(OxenError::basic_str(
-                        "Error: SQL queries are not supported for .arrow files",
-                    ));
-                }
-                read_df_arrow(&path)
-            }
-            _ => {
-                let err = format!(
-                    "Could not load data frame with path: {path:?} and extension: {extension}"
-                );
-                Err(OxenError::basic_str(err))
-            }
-        }
-    })
-    .await
-    .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
+    task::spawn_blocking(move || _read_lazy_df_with_extension_sync(&path, &extension, &opts_clone))
+        .await
+        .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
 }
 
 pub async fn p_read_df_with_extension(
@@ -1975,18 +1998,14 @@ mod tests {
         let mut opts = DFOpts::empty();
         opts.slice = Some("329..333".to_string());
         let df = tabular::scan_df_parquet(test::test_1k_parquet(), 333)?;
-        let df = tabular::transform_lazy(df, opts.clone()).await?;
 
-        let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-            tabular::transform_slice_lazy(df.lazy(), &opts)?
+        let mut df = task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+            let df = tabular::transform_lazy(df, opts.clone())?;
+            tabular::transform_slice_lazy(df, &opts)?
                 .collect()
                 .map_err(OxenError::from)
         })
-        .await?
-        {
-            Ok(df) => df,
-            Err(e) => return Err(e),
-        };
+        .await??;
         println!("{df:?}");
 
         assert_eq!(df.width(), 3);
@@ -2232,6 +2251,52 @@ mod tests {
             panic!("Expected a JSON object");
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_randomize() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.should_randomize = true;
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        // All rows should still be present, just in a different order
+        let height = df.height();
+        assert!(height > 0);
+        assert_eq!(df.width(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_rename_col() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.rename_col = Some("title:new_title".to_string());
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert!(df.height() > 0);
+        assert!(df.column("new_title").is_ok());
+        assert!(df.column("title").is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_add_col() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.add_col = Some("new_col:test_val:str".to_string());
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert!(df.height() > 0);
+        assert_eq!(df.width(), 4);
+        assert!(df.column("new_col").is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_add_row() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        let base_df = tabular::read_df(test::test_1k_parquet(), DFOpts::empty()).await?;
+        let expected_height = base_df.height() + 1;
+        opts.add_row =
+            Some(r#"{"id":"999","url":"https://example.com","title":"new_title"}"#.to_string());
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert_eq!(df.height(), expected_height);
         Ok(())
     }
 }
