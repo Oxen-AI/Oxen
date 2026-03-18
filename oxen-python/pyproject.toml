@@ -3,7 +3,7 @@ version = "0.46.1"
 name = "oxenai"
 description = "Data version control for machine learning"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 keywords = ["oxen", "version control"]
 classifiers = [
