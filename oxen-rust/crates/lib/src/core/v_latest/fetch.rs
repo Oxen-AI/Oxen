@@ -352,7 +352,6 @@ fn collect_missing_entries_for_subtree(
             let file_hash = *node.node.hash();
             if file_hashes_seen.insert(file_hash) {
                 let mut commit_entry = CommitEntry::from_node(&node.node);
-                // from_node only sets the filename; prepend the directory path
                 commit_entry.path = current_path.join(&commit_entry.path);
                 let entry = Entry::CommitEntry(commit_entry);
                 *total_bytes += entry.num_bytes();
