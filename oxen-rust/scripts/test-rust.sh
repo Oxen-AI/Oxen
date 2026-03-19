@@ -5,7 +5,8 @@
 # Usage: test-rust.sh [--ffmpeg] [--keep] [nextest args...]
 #
 #   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
-#   --keep      Do not remove data/test/ox on cleanup (useful for debugging failed tests)
+#   --keep      Do not remove test data (in data/ox and data/test/runs)on cleanup--useful for
+#               debugging failed tests
 #   All subsequent arguments are forwarded to `cargo nextest run`.
 
 # Check for --ffmpeg and --keep flags
@@ -34,9 +35,10 @@ cleanup() {
     fi
     if [ "$KEEP_DATA" = false ]; then
         echo "==> Removing test data..."
-        rm -rf ./data/test/ox
+        rm -rf ./data/ox
+        rm -rf ./data/test/runs
     else
-        echo "==> Keeping test data in data/test/ox"
+        echo "==> Keeping test data in data/ox and data/test/runs"
     fi
 }
 
