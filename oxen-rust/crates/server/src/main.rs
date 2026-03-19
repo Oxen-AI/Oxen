@@ -444,7 +444,6 @@ async fn start(
     HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
-            .wrap(RequestIdMiddleware)
             .route(
                 "/api/version",
                 web::get().to(controllers::oxen_version::index),
@@ -477,8 +476,8 @@ async fn start(
             .service(web::scope("/api/repos").configure(routes::config))
             .default_service(web::route().to(controllers::not_found::index))
             .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
-            .wrap(Logger::default())
-            .wrap(Logger::new("user agent is %a %{User-Agent}i"))
+            .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T %{x-oxen-request-id}o"))
+            .wrap(RequestIdMiddleware)
     })
     .bind((host.to_owned(), port))?
     .run()
