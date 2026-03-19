@@ -1,12 +1,11 @@
+import argparse
+import os
+import shutil
+import time
+
 from git import Repo as GitRepo
 from oxen import LocalRepo as OxenRepo
 
-import pandas as pd
-import time
-import os
-import shutil
-
-import argparse
 
 def main(input_dir):
     git_repo = GitRepo(input_dir)
@@ -29,10 +28,12 @@ def main(input_dir):
 
         commits.reverse()
         total_commits = len(commits)
-        for (i, commit) in enumerate(commits):
+        for i, commit in enumerate(commits):
             commit_time = time.gmtime(commit.committed_date)
             message = commit.message[0:50].replace("\n", " ")
-            print(f"\tProcessing commit {i}/{total_commits} {type(commit)} {commit.hexsha} {commit_time.tm_year}-{commit_time.tm_mon}-{commit_time.tm_mday}")
+            print(
+                f"\tProcessing commit {i}/{total_commits} {type(commit)} {commit.hexsha} {commit_time.tm_year}-{commit_time.tm_mon}-{commit_time.tm_mday}"
+            )
             print(f"\t'{message}'")
             try:
                 git.checkout(commit.hexsha)
@@ -60,10 +61,12 @@ def main(input_dir):
     git.checkout("main")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Parse the arguments with argparse
-    parser = argparse.ArgumentParser(description='Convert a git repository to oxen')
-    parser.add_argument('-i', '--input', dest="input_dir", required=True, help="Path to input directory")
+    parser = argparse.ArgumentParser(description="Convert a git repository to oxen")
+    parser.add_argument(
+        "-i", "--input", dest="input_dir", required=True, help="Path to input directory"
+    )
     args = parser.parse_args()
 
     main(args.input_dir)

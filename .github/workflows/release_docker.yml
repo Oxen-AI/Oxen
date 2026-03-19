@@ -101,14 +101,14 @@ jobs:
         id: metadata
         run: |
           # https://github.com/opencontainers/image-spec
-          VERSION=$(grep -m1 '^version = ' ${{ github.workspace }}/oxen-rust/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          VERSION=$(grep -m1 '^version = ' ${{ github.workspace }}/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
       - name: Build Docker Image
         run: |
-          cd ${{ github.workspace }}/oxen-rust
+          cd ${{ github.workspace }}
           docker build \
             --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
             --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
