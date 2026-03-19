@@ -46,4 +46,8 @@ jobs:
       - name: Run Pre-Commit Hooks
         run: |
           cd ${{ github.workspace }}
-          pre-commit run --verbose --all-files
+          if ! pre-commit run --color=always --verbose --all-files ; then
+            echo "Pre-commit failed. Showing git status:"
+            git -c color.status=always status
+            exit 1
+          fi
