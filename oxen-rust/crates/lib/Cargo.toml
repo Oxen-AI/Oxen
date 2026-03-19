@@ -119,5 +119,26 @@ xxhash-rust = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 mockito = { workspace = true }
 serial_test = { workspace = true }
+
+[[bench]]
+name = "add"
+harness = false
+
+[[bench]]
+name = "download"
+harness = false
+
+[[bench]]
+name = "fetch"
+harness = false
+
+[[bench]]
+name = "push"
+harness = false
+
+[[bench]]
+name = "workspace_add"
+harness = false

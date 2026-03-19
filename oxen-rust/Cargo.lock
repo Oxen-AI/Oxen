@@ -4417,6 +4417,7 @@ dependencies = [
  "bytesize",
  "bytevec",
  "chrono",
+ "codspeed-criterion-compat",
  "colored 2.2.0",
  "comfy-table",
  "deadqueue",
@@ -5147,17 +5148,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
-name = "oxen-bench"
-version = "0.46.3"
-dependencies = [
- "codspeed-criterion-compat",
- "liboxen",
- "rand 0.8.5",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "oxen-cli"
 version = "0.46.3"
 dependencies = [
@@ -5804,6 +5794,8 @@ dependencies = [
  "polars-json",
  "polars-schema",
  "polars-utils",
+ "rand 0.8.5",
+ "rand_distr",
  "rayon",
  "regex",
  "regex-syntax",
