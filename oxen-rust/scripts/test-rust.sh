@@ -91,7 +91,7 @@ if [ -n "${OXEN_PORT:-}" ]; then
 else
     OXEN_PORT=""
     for _ in $(seq 1 10); do
-        CANDIDATE=$(( RANDOM % 3001 + 3000 ))
+        CANDIDATE=$(( RANDOM % 3001 + 3100 ))
         if port_is_free "$CANDIDATE"; then
             OXEN_PORT="$CANDIDATE"
             break
