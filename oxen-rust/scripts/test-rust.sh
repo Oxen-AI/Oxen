@@ -2,17 +2,23 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust.sh [--ffmpeg] [nextest args...]
+# Usage: test-rust.sh [--ffmpeg] [--keep] [nextest args...]
 #
 #   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
-#   All other arguments are forwarded to `cargo nextest run`.
+#   --keep      Do not remove test data (in data/ox and data/test/runs)on cleanup--useful for
+#               debugging failed tests
+#   All subsequent arguments are forwarded to `cargo nextest run`.
 
-# Check for --ffmpeg as the first argument
+# Check for --ffmpeg and --keep flags
 FEATURE_ARGS=""
-if [ "${1:-}" = "--ffmpeg" ]; then
-    FEATURE_ARGS="-F ffmpeg"
-    shift
-fi
+KEEP_DATA=false
+while true; do
+    case "${1:-}" in
+        --ffmpeg) FEATURE_ARGS="-F ffmpeg"; shift ;;
+        --keep)   KEEP_DATA=true; shift ;;
+        *) break ;;
+    esac
+done
 
 set -euo pipefail
 
@@ -26,6 +32,13 @@ cleanup() {
         echo "Stopping oxen-server (pid $SERVER_PID)..."
         kill "$SERVER_PID"
         wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    if [ "$KEEP_DATA" = false ]; then
+        echo "==> Removing test data..."
+        rm -rf ./data/ox
+        rm -rf ./data/test/runs
+    else
+        echo "==> Keeping test data in data/ox and data/test/runs"
     fi
 }
 
@@ -59,7 +72,7 @@ if [ ! -d ./data/test/runs ] || [ ! -d ./data/test/config ]; then
 
     ./target/debug/oxen-server add-user \
         --email ox@oxen.ai \
-        --name Ox \
+        --name ox \
         --output data/test/config/user_config.toml
 else
     echo "==> Test user already configured, skipping."
@@ -78,7 +91,7 @@ if [ -n "${OXEN_PORT:-}" ]; then
 else
     OXEN_PORT=""
     for _ in $(seq 1 10); do
-        CANDIDATE=$(( RANDOM % 3001 + 3000 ))
+        CANDIDATE=$(( RANDOM % 3001 + 3100 ))
         if port_is_free "$CANDIDATE"; then
             OXEN_PORT="$CANDIDATE"
             break
