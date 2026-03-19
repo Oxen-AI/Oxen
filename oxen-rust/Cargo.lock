@@ -5804,6 +5804,8 @@ dependencies = [
  "polars-json",
  "polars-schema",
  "polars-utils",
+ "rand 0.8.5",
+ "rand_distr",
  "rayon",
  "regex",
  "regex-syntax",

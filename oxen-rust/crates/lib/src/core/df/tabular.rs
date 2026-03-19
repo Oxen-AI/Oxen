@@ -444,25 +444,18 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
     log::debug!("transform_lazy Got transform ops {opts:?}");
     if let Some(vstack) = opts.clone().vstack {
         log::debug!("transform_lazy Got files to stack {vstack:?}");
+        let mut frames = vec![df];
         for path in vstack.iter() {
             let empty_opts = DFOpts::empty();
             let extension = path.extension().and_then(OsStr::to_str).ok_or_else(|| {
                 OxenError::basic_str(format!("Cannot vstack file without extension: {path:?}"))
             })?;
 
-            // Use the new non-transforming reader to break recursion
-            let new_df = _read_lazy_df_with_extension(path.clone(), extension, &empty_opts)
-                .await?
-                .collect()
-                .map_err(OxenError::from)?;
-
-            df = df
-                .collect()
-                .map_err(|e| OxenError::basic_str(format!("{e:?}")))?
-                .vstack(&new_df)
-                .map_err(|e| OxenError::basic_str(format!("{e:?}")))?
-                .lazy();
+            let new_df = _read_lazy_df_with_extension(path.clone(), extension, &empty_opts).await?;
+            frames.push(new_df);
         }
+        df = concat(frames, Default::default())
+            .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     }
 
     if let Some(col_vals) = opts.add_col_vals() {
@@ -501,20 +494,12 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
 
     if opts.should_randomize {
         log::debug!("transform_lazy randomizing df");
-        let full_df = df
-            .collect()
-            .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-        let n = Series::new("".into(), &[full_df.height() as i64]);
-
-        df = full_df
-            .sample_n(
-                &n,    // no specific rows to sample, use n parameter instead
-                false, // without replacement
-                true,  // shuffle
-                None,  // seed
-            )
-            .map_err(|e| OxenError::basic_str(format!("Failed to randomize dataframe: {e:?}")))?
-            .lazy();
+        let shuffle_col = "__oxen_shuffle";
+        df = df
+            .with_row_index(shuffle_col, None)
+            .with_column(col(shuffle_col).shuffle(Some(rand::random())))
+            .sort([shuffle_col], Default::default())
+            .drop([shuffle_col]);
     }
 
     if let Some(columns) = opts.unique_columns() {
@@ -554,17 +539,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
                 )));
             }
 
-            let mut mut_df = df
-                .collect()
-                .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-            if mut_df.schema().index_of(old_name).is_none() {
-                log::error!("Column to rename '{old_name}' not found in DataFrame");
-                return Err(OxenError::basic_str(format!(
-                    "Column '{old_name}' not found"
-                )));
-            }
-            rename_col(&mut mut_df, old_name, new_name)?;
-            df = mut_df.lazy();
+            df = df.rename([old_name], [new_name], true);
         } else {
             log::error!("Invalid rename_col format: {names}");
             return Err(OxenError::basic_str(format!(
@@ -677,19 +652,6 @@ fn slice(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
     } else {
         df
     }
-}
-
-fn rename_col(
-    df: &mut DataFrame,
-    old_name: impl AsRef<str>,
-    new_name: impl AsRef<str>,
-) -> Result<(), OxenError> {
-    let old_name = old_name.as_ref();
-    let new_name = new_name.as_ref();
-    log::debug!("Renaming column {old_name:?} to {new_name:?}");
-    df.rename(old_name, PlSmallStr::from_str(new_name))
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    Ok(())
 }
 
 pub fn df_add_row_num(df: DataFrame) -> Result<DataFrame, OxenError> {
@@ -2232,6 +2194,65 @@ mod tests {
             panic!("Expected a JSON object");
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_randomize() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.should_randomize = true;
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        // All rows should still be present, just in a different order
+        let height = df.height();
+        assert!(height > 0);
+        assert_eq!(df.width(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_rename_col() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.rename_col = Some("title:new_title".to_string());
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert!(df.height() > 0);
+        assert!(df.column("new_title").is_ok());
+        assert!(df.column("title").is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_add_col() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.add_col = Some("new_col:test_val:str".to_string());
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert!(df.height() > 0);
+        assert_eq!(df.width(), 4);
+        assert!(df.column("new_col").is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_add_row() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        let base_df = tabular::read_df(test::test_1k_parquet(), DFOpts::empty()).await?;
+        let expected_height = base_df.height() + 1;
+        opts.add_row =
+            Some(r#"{"id":"999","url":"https://example.com","title":"new_title"}"#.to_string());
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert_eq!(df.height(), expected_height);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transform_vstack() -> Result<(), OxenError> {
+        let base_df = tabular::read_df(test::test_1k_parquet(), DFOpts::empty()).await?;
+        let base_height = base_df.height();
+
+        let mut opts = DFOpts::empty();
+        opts.vstack = Some(vec![test::test_1k_parquet()]);
+        let df = tabular::read_df(test::test_1k_parquet(), opts).await?;
+        assert_eq!(df.height(), base_height * 2);
+        assert_eq!(df.width(), base_df.width());
         Ok(())
     }
 }
