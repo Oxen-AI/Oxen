@@ -12,10 +12,6 @@ jobs:
     name: Cargo check, format, clippy + Ruff
     runs-on: ubuntu-latest
 
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,6 +43,9 @@ jobs:
           ./scripts/install-pre-reqs.sh
 
       - name: Run Pre-Commit Hooks
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: |
           cd ${{ github.workspace }}
           if ! pre-commit run --color=always --verbose --all-files ; then
