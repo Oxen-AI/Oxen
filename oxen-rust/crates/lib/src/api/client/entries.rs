@@ -413,21 +413,19 @@ pub async fn pull_large_entry(
         })
         .collect();
 
-    let bodies = futures::stream::iter(futures_vec).buffer_unordered(num_workers);
-
-    // Wait for all requests to finish
-    bodies
-        .for_each(|b| async {
-            match b {
-                Ok(s) => {
-                    log::debug!("Downloaded chunk {s:?}");
-                }
-                Err(err) => {
-                    log::error!("Error downloading chunk: {err:?}")
-                }
-            }
-        })
+    let results: Vec<_> = futures::stream::iter(futures_vec)
+        .buffer_unordered(num_workers)
+        .collect()
         .await;
+
+    // Propagate the first error before combining chunks
+    for result in &results {
+        if let Err(err) = result {
+            return Err(OxenError::basic_str(format!(
+                "Failed to download chunk for {remote_path:?}: {err}"
+            )));
+        }
+    }
 
     // Once all downloaded, recombine file and delete temp dir
     version_store.combine_version_chunks(&hash, true).await?;
@@ -518,6 +516,13 @@ async fn pull_entry_chunk(
     let response = client.get(&url).send().await?;
 
     let status = response.status();
+    log::debug!(
+        "pull_entry_chunk response status={} for path={:?} chunk_start={} chunk_size={}",
+        status,
+        remote_path,
+        chunk_start,
+        chunk_size
+    );
 
     match status {
         reqwest::StatusCode::OK => {
@@ -527,7 +532,15 @@ async fn pull_entry_chunk(
                 .await?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => Ok(status),
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => {
+            log::warn!(
+                "pull_entry_chunk got {} for path={:?} chunk_start={}",
+                status,
+                remote_path,
+                chunk_start
+            );
+            Ok(status)
+        }
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))
@@ -612,40 +625,34 @@ pub async fn download_large_entry(
 
     use futures::prelude::*;
     let num_workers = constants::DEFAULT_NUM_WORKERS;
-    let bodies = stream::iter(tasks)
+    let results: Vec<_> = stream::iter(tasks)
         .map(|item| async move {
-            // log::debug!("Downloading chunk {:?} -> {:?}", remote_path, tmp_file);
             let (remote_repo, remote_path, tmp_file, revision, chunk_start, chunk_size) = item;
 
-            match try_download_entry_chunk(
+            try_download_entry_chunk(
                 &remote_repo,
                 &remote_path,
-                &tmp_file, // local_path
+                &tmp_file,
                 &revision,
                 chunk_start,
                 chunk_size,
             )
             .await
-            {
-                Ok(_) => Ok(chunk_size),
-                Err(err) => Err(err),
-            }
         })
-        .buffer_unordered(num_workers);
-
-    // Wait for all requests to finish
-    bodies
-        .for_each(|b| async {
-            match b {
-                Ok(s) => {
-                    log::debug!("Downloaded chunk {s:?}");
-                }
-                Err(err) => {
-                    log::error!("Error downloading chunk: {err:?}")
-                }
-            }
-        })
+        .buffer_unordered(num_workers)
+        .collect()
         .await;
+
+    // Propagate the first error before recombining chunks
+    for result in &results {
+        if let Err(err) = result {
+            // Clean up temp dir on failure
+            util::fs::remove_dir_all(&tmp_dir)?;
+            return Err(OxenError::basic_str(format!(
+                "Failed to download chunk for {remote_path:?}: {err}"
+            )));
+        }
+    }
 
     // Once all downloaded, recombine file and delete temp dir
     log::debug!("Unpack to {local_path:?}");
@@ -788,17 +795,31 @@ async fn download_entry_chunk(
     }
 
     let status = response.status();
+    log::debug!(
+        "download_entry_chunk response status={} for path={:?} chunk_start={} chunk_size={}",
+        status,
+        remote_path,
+        chunk_start,
+        chunk_size
+    );
 
     match status {
         reqwest::StatusCode::OK => {
-            // TODO: replace these with util::fs:: file functions for better error messages
-            // Copy to file
             let mut dest = { fs::File::create(local_path)? };
-            let mut content = Cursor::new(response.bytes().await?);
+            let bytes = response.bytes().await?;
+            let mut content = Cursor::new(bytes);
             std::io::copy(&mut content, &mut dest)?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => Ok(status),
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => {
+            log::warn!(
+                "download_entry_chunk got {} for path={:?} chunk_start={}",
+                status,
+                remote_path,
+                chunk_start
+            );
+            Ok(status)
+        }
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))

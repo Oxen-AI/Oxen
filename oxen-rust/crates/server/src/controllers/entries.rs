@@ -10,6 +10,7 @@ use liboxen::view::StatusMessage;
 use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::{constants, current_function, repositories};
 
+use actix_web::error::ResponseError;
 use actix_web::{HttpRequest, HttpResponse, web};
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -118,11 +119,24 @@ pub async fn download_chunk(
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
     let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
 
-    let file_node = repositories::entries::get_file(&repo, &commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
-    let chunk = version_store
+    let file_node = match repositories::entries::get_file(&repo, &commit, &path)? {
+        Some(node) => node,
+        None => {
+            let err: OxenHttpError = OxenError::path_does_not_exist(path).into();
+            return Ok(err.error_response());
+        }
+    };
+
+    let chunk = match version_store
         .get_version_chunk(&file_node.hash().to_string(), chunk_start, chunk_size)
-        .await?;
+        .await
+    {
+        Ok(chunk) => chunk,
+        Err(err) => {
+            let err: OxenHttpError = err.into();
+            return Ok(err.error_response());
+        }
+    };
 
     Ok(HttpResponse::Ok().body(chunk))
 }
