@@ -1814,4 +1814,81 @@ A: Checkout Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_push_large_file_in_subdir_and_clone_verify() -> Result<(), OxenError> {
+        // Test pushing a >10MB file inside a subdirectory, then cloning.
+        // This exercises the chunk download path where entry.path must include
+        // the directory prefix for the server to find the file.
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            // Create a subdirectory and write a >10MB file into it
+            let sub_dir = local_repo.path.join("data").join("models");
+            util::fs::create_dir_all(&sub_dir)?;
+
+            let file_size = 11 * 1024 * 1024; // 11MB, above AVG_CHUNK_SIZE
+            let file_path = sub_dir.join("weights.bin");
+            let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
+            util::fs::write_data(&file_path, &file_data)?;
+
+            // Add and commit
+            repositories::add(&local_repo, &local_repo.path).await?;
+            let commit = repositories::commit(&local_repo, "Add large file in subdir")?;
+
+            // Set up remote and push
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let mut local_repo_mut = local_repo.clone();
+            command::config::set_remote(
+                &mut local_repo_mut,
+                constants::DEFAULT_REMOTE_NAME,
+                &remote_repo.remote.url,
+            )?;
+            repositories::push(&local_repo_mut).await?;
+
+            // Verify push succeeded
+            let remote_commit = api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
+            assert!(remote_commit.is_some(), "Remote commit should exist");
+
+            let remote_repo_clone = remote_repo.clone();
+            let file_data_clone = file_data.clone();
+
+            // Clone to a different directory and verify the file
+            test::run_empty_dir_test_async(|clone_dir| async move {
+                let clone_repo_path = clone_dir.join("cloned_repo");
+                let clone_repo =
+                    repositories::clone_url(&remote_repo_clone.remote.url, &clone_repo_path)
+                        .await?;
+
+                let cloned_file = clone_repo
+                    .path
+                    .join("data")
+                    .join("models")
+                    .join("weights.bin");
+                assert!(
+                    cloned_file.exists(),
+                    "Cloned file should exist at {cloned_file:?}"
+                );
+
+                let cloned_metadata = util::fs::metadata(&cloned_file)?;
+                assert_eq!(
+                    cloned_metadata.len(),
+                    file_size as u64,
+                    "Cloned file size should match original"
+                );
+
+                let cloned_data = util::fs::read_bytes_from_path(&cloned_file)?;
+                assert_eq!(
+                    cloned_data, file_data_clone,
+                    "Cloned file contents should match the original data"
+                );
+
+                Ok(())
+            })
+            .await?;
+
+            api::client::repositories::delete(&remote_repo).await?;
+
+            Ok(())
+        })
+        .await
+    }
 }

@@ -302,6 +302,7 @@ fn collect_missing_entries(
 
                 collect_missing_entries_for_subtree(
                     &tree,
+                    subtree_path,
                     &mut missing_entries,
                     &mut file_hashes_seen,
                     total_bytes,
@@ -327,6 +328,7 @@ fn collect_missing_entries(
 
             collect_missing_entries_for_subtree(
                 &tree,
+                Path::new(""),
                 &mut missing_entries,
                 &mut file_hashes_seen,
                 total_bytes,
@@ -337,25 +339,59 @@ fn collect_missing_entries(
 }
 
 fn collect_missing_entries_for_subtree(
-    tree: &MerkleTreeNode,
+    node: &MerkleTreeNode,
+    current_path: &Path,
     missing_entries: &mut HashSet<Entry>,
     file_hashes_seen: &mut HashSet<MerkleHash>,
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
     use crate::model::MerkleTreeNodeType;
 
-    tree.walk_tree(|node: &MerkleTreeNode| {
-        let t = node.node.node_type();
-        if t == MerkleTreeNodeType::File || t == MerkleTreeNodeType::FileChunk {
+    match node.node.node_type() {
+        MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk => {
             let file_hash = *node.node.hash();
-            // Only add files we haven't seen before
             if file_hashes_seen.insert(file_hash) {
-                let entry = Entry::CommitEntry(CommitEntry::from_node(&node.node));
+                let mut commit_entry = CommitEntry::from_node(&node.node);
+                commit_entry.path = current_path.join(&commit_entry.path);
+                let entry = Entry::CommitEntry(commit_entry);
                 *total_bytes += entry.num_bytes();
                 missing_entries.insert(entry);
             }
         }
-    });
+        MerkleTreeNodeType::Dir => {
+            let dir_path = if let EMerkleTreeNode::Directory(dir_node) = &node.node {
+                let name = dir_node.name();
+                if name.is_empty() {
+                    current_path.to_path_buf()
+                } else {
+                    current_path.join(name)
+                }
+            } else {
+                current_path.to_path_buf()
+            };
+            for child in &node.children {
+                collect_missing_entries_for_subtree(
+                    child,
+                    &dir_path,
+                    missing_entries,
+                    file_hashes_seen,
+                    total_bytes,
+                )?;
+            }
+        }
+        // Commits and VNodes don't change the path
+        MerkleTreeNodeType::Commit | MerkleTreeNodeType::VNode => {
+            for child in &node.children {
+                collect_missing_entries_for_subtree(
+                    child,
+                    current_path,
+                    missing_entries,
+                    file_hashes_seen,
+                    total_bytes,
+                )?;
+            }
+        }
+    }
     Ok(())
 }
 
