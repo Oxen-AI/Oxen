@@ -46,4 +46,4 @@ jobs:
       - name: Run Pre-Commit Hooks
         run: |
           cd ${{ github.workspace }}
-          pre-commit run --verbose --all-files
+          pre-commit run --color=always --verbose --all-files || git -c color.status=always status
