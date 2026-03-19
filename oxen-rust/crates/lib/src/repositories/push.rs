@@ -1845,8 +1845,7 @@ A: Checkout Oxen.ai
             repositories::push(&local_repo_mut).await?;
 
             // Verify push succeeded
-            let remote_commit =
-                api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
+            let remote_commit = api::client::commits::get_by_id(&remote_repo, &commit.id).await?;
             assert!(remote_commit.is_some(), "Remote commit should exist");
 
             let remote_repo_clone = remote_repo.clone();
@@ -1859,7 +1858,11 @@ A: Checkout Oxen.ai
                     repositories::clone_url(&remote_repo_clone.remote.url, &clone_repo_path)
                         .await?;
 
-                let cloned_file = clone_repo.path.join("data").join("models").join("weights.bin");
+                let cloned_file = clone_repo
+                    .path
+                    .join("data")
+                    .join("models")
+                    .join("weights.bin");
                 assert!(
                     cloned_file.exists(),
                     "Cloned file should exist at {cloned_file:?}"

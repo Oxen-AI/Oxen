@@ -370,13 +370,25 @@ fn collect_missing_entries_for_subtree(
                 current_path.to_path_buf()
             };
             for child in &node.children {
-                collect_missing_entries_for_subtree(child, &dir_path, missing_entries, file_hashes_seen, total_bytes)?;
+                collect_missing_entries_for_subtree(
+                    child,
+                    &dir_path,
+                    missing_entries,
+                    file_hashes_seen,
+                    total_bytes,
+                )?;
             }
         }
         // Commits and VNodes don't change the path
         MerkleTreeNodeType::Commit | MerkleTreeNodeType::VNode => {
             for child in &node.children {
-                collect_missing_entries_for_subtree(child, current_path, missing_entries, file_hashes_seen, total_bytes)?;
+                collect_missing_entries_for_subtree(
+                    child,
+                    current_path,
+                    missing_entries,
+                    file_hashes_seen,
+                    total_bytes,
+                )?;
             }
         }
     }
