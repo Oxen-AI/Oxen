@@ -476,7 +476,9 @@ async fn start(
             .service(web::scope("/api/repos").configure(routes::config))
             .default_service(web::route().to(controllers::not_found::index))
             .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
-            .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T %{x-oxen-request-id}o"))
+            .wrap(Logger::new(
+                "%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T %{x-oxen-request-id}o",
+            ))
             .wrap(RequestIdMiddleware)
     })
     .bind((host.to_owned(), port))?
