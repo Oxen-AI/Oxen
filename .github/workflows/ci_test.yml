@@ -66,6 +66,8 @@ jobs:
 
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -144,6 +146,9 @@ jobs:
       - name: Build oxen rust project
         run: |
           cargo build --workspace
+        env:
+          TEMP: ${{ matrix.platform == 'windows' && 'D:\a\_temp' || runner.temp }}
+          TMP: ${{ matrix.platform == 'windows' && 'D:\a\_temp' || runner.temp }}
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
