@@ -87,6 +87,8 @@ pub async fn download_data_from_version_paths(
                 .unwrap();
         } else {
             log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
+            let err: OxenHttpError = OxenError::path_does_not_exist(path_to_read).into();
+            return Ok(err.error_response());
         }
     }
 
