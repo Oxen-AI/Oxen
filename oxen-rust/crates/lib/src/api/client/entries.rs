@@ -647,7 +647,7 @@ pub async fn download_large_entry(
     for result in &results {
         if let Err(err) = result {
             // Clean up temp dir on failure
-            util::fs::remove_dir_all(&tmp_dir)?;
+            let _ = util::fs::remove_dir_all(&tmp_dir);
             return Err(OxenError::basic_str(format!(
                 "Failed to download chunk for {remote_path:?}: {err}"
             )));
