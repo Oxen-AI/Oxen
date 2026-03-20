@@ -49,7 +49,7 @@ pub async fn download_data_from_version_paths(
 
     let mut gz = GzDecoder::new(&bytes[..]);
     let mut line_delimited_files = String::new();
-    gz.read_to_string(&mut line_delimited_files).unwrap();
+    gz.read_to_string(&mut line_delimited_files)?;
 
     let content_files: Vec<&str> = line_delimited_files.split('\n').collect();
 
@@ -83,8 +83,7 @@ pub async fn download_data_from_version_paths(
         );
 
         if path_to_read.exists() {
-            tar.append_path_with_name(path_to_read, content_file)
-                .unwrap();
+            tar.append_path_with_name(path_to_read, content_file)?;
         } else {
             log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
             let err: OxenHttpError = OxenError::path_does_not_exist(path_to_read).into();
@@ -92,8 +91,8 @@ pub async fn download_data_from_version_paths(
         }
     }
 
-    tar.finish().unwrap();
-    let buffer: Vec<u8> = tar.into_inner().unwrap().finish().unwrap();
+    tar.finish()?;
+    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
     Ok(HttpResponse::Ok().body(buffer))
 }
 
