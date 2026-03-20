@@ -1,4 +1,5 @@
 use criterion::{BenchmarkId, Criterion, black_box};
+use criterion::{criterion_group, criterion_main};
 use liboxen::api;
 use liboxen::command;
 use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
@@ -151,7 +152,12 @@ async fn setup_repo_for_workspace_add_benchmark(
     Ok((repo, remote_repo, files))
 }
 
-pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
+pub fn workspace_add_benchmark(c: &mut Criterion) {
+    let data_path = std::env::var("BENCHMARK_DATA").ok();
+    let iters = std::env::var("BENCHMARK_ITERS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
     let base_dir = PathBuf::from("data/test/benches/workspace_add");
     if base_dir.exists() {
         util::fs::remove_dir_all(&base_dir).unwrap();
@@ -160,14 +166,14 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("workspace_add");
-    group.sample_size(iters.unwrap_or(10));
+    group.sample_size(iters);
     let params = [
         (1000, 20),
-        (10000, 20),
-        (100000, 20),
-        (100000, 100),
-        (100000, 1000),
-        (1000000, 1000),
+        // (10000, 20),
+        // (100000, 20),
+        // (100000, 100),
+        // (100000, 1000),
+        // (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
         let num_files_to_add = repo_size / 1000;
@@ -177,7 +183,7 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
                 repo_size,
                 num_files_to_add,
                 dir_size,
-                data.clone(),
+                data_path.clone(),
             ))
             .unwrap();
 
@@ -223,3 +229,6 @@ pub fn workspace_add_benchmark(c: &mut Criterion, data: Option<String>, iters: O
 
     util::fs::remove_dir_all(base_dir).unwrap();
 }
+
+criterion_group!(benches, workspace_add_benchmark);
+criterion_main!(benches);

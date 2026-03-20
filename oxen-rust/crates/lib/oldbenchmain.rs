@@ -1,7 +1,8 @@
 use criterion::Criterion;
 use std::env;
 
-use oxen_bench::oxen::{add, download, fetch, push, workspace_add};
+mod benchlib;
+use benchlib::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

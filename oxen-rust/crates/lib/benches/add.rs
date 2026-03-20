@@ -1,12 +1,13 @@
 use criterion::{BenchmarkId, Criterion, black_box};
+use criterion::{criterion_group, criterion_main};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::util;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
@@ -117,7 +118,12 @@ async fn setup_repo_for_add_benchmark(
     Ok((repo, files_dir))
 }
 
-pub fn add_benchmark(c: &mut Criterion, data_path: Option<String>, iters: Option<usize>) {
+pub fn add_benchmark(c: &mut Criterion) {
+    let data_path = env::var("BENCHMARK_DATA").ok();
+    let iters = env::var("BENCHMARK_ITERS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
     let base_dir = PathBuf::from("data/test/benches/add");
     if base_dir.exists() {
         util::fs::remove_dir_all(&base_dir).unwrap();
@@ -126,14 +132,14 @@ pub fn add_benchmark(c: &mut Criterion, data_path: Option<String>, iters: Option
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("add");
-    group.sample_size(iters.unwrap_or(10));
+    group.sample_size(iters);
     let params = [
         (1000, 20),
-        (10000, 20),
-        (100000, 20),
-        (100000, 100),
-        (100000, 1000),
-        (1000000, 1000),
+        // (10000, 20),
+        // (100000, 20),
+        // (100000, 100),
+        // (100000, 1000),
+        // (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
         let num_files_to_add = repo_size / 1000;
@@ -168,3 +174,6 @@ pub fn add_benchmark(c: &mut Criterion, data_path: Option<String>, iters: Option
 
     util::fs::remove_dir_all(base_dir).unwrap();
 }
+
+criterion_group!(benches, add_benchmark);
+criterion_main!(benches);

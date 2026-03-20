@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, black_box};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RepoNew};
@@ -130,7 +130,12 @@ async fn setup_repo_for_push_benchmark(
     Ok(repo)
 }
 
-pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usize>) {
+pub fn push_benchmark(c: &mut Criterion) {
+    let data_path = std::env::var("BENCHMARK_DATA").ok();
+    let iters = std::env::var("BENCHMARK_ITERS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
     let base_dir = PathBuf::from("data/test/benches/push");
     if base_dir.exists() {
         util::fs::remove_dir_all(&base_dir).unwrap();
@@ -139,18 +144,18 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("push");
-    group.sample_size(iters.unwrap_or(10));
+    group.sample_size(iters);
     let params = [
         // large file upload
         // (5, 1),
         // (10, 1),
         // (10, 10),
         (1000, 20),
-        (10000, 20),
-        (100000, 20),
-        (100000, 100),
-        (100000, 1000),
-        (1000000, 1000),
+        // (10000, 20),
+        // (100000, 20),
+        // (100000, 100),
+        // (100000, 1000),
+        // (1000000, 1000),
     ];
     for &(repo_size, dir_size) in params.iter() {
         let num_files_to_push = repo_size / 1000;
@@ -160,7 +165,7 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                 repo_size,
                 num_files_to_push,
                 dir_size,
-                data.clone(),
+                data_path.clone(),
             ))
             .unwrap();
 
@@ -184,11 +189,23 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
                             None,
                         );
 
-                        let remote_repo = rt
-                            .block_on(api::client::repositories::create_from_local(
-                                &repo, repo_new,
-                            ))
-                            .unwrap();
+                        // Spawn a new thread to escape the tokio runtime
+                        // context — the setup closure runs on a runtime
+                        // thread, so block_on would panic with a nested
+                        // runtime error.
+                        let repo_ref = &repo;
+                        let remote_repo = std::thread::scope(|s| {
+                            s.spawn(|| {
+                                let setup_rt = tokio::runtime::Runtime::new().unwrap();
+                                setup_rt
+                                    .block_on(api::client::repositories::create_from_local(
+                                        repo_ref, repo_new,
+                                    ))
+                                    .unwrap()
+                            })
+                            .join()
+                            .unwrap()
+                        });
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         let _ = command::config::set_remote(
                             &mut repo,
@@ -214,3 +231,6 @@ pub fn push_benchmark(c: &mut Criterion, data: Option<String>, iters: Option<usi
 
     util::fs::remove_dir_all(base_dir).unwrap();
 }
+
+criterion_group!(benches, push_benchmark);
+criterion_main!(benches);
