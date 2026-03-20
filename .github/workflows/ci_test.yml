@@ -90,6 +90,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-targets: false # We'll use sccache for the compiled artifacts
           cache-on-failure: true # Even if compilation fails, saving the cargo registry is useful
+          cache-all-crates: true # Cache anything installed with "cargo install"
           workspaces: "."
 
       - name: Install dependencies (macOS)
