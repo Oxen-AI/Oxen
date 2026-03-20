@@ -36,6 +36,9 @@ jobs:
           workspaces: "."
 
       - name: Install dependencies and development tools
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: |
           cd ${{ github.workspace }}
           ./scripts/install-pre-reqs.sh
