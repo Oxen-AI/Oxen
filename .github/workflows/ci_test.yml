@@ -81,9 +81,11 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Set up sccache on Windows
-        if: runner.os == 'Windows'
-        run: Add-Content -Path $env:GITHUB_ENV -Value "SCCACHE_GHA_ENABLED=true"
+      # On Windows, use embedded debug info (/Z7) instead of shared PDB (/Zi)
+      # to avoid PDB file locking races with sccache
+      - name: Avoid PDB locking issues with sccache (Windows)
+        if: matrix.platform == 'windows'
+        run: Add-Content -Path $env:GITHUB_ENV -Value "CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=off"
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
