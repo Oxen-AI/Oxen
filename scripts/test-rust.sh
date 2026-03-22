@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+#
+# Build, configure, and run the Oxen test suite.
+#
+# Usage: test-rust.sh [--ffmpeg] [--keep] [nextest args...]
+#
+#   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
+#   --keep      Do not remove test data (in data/ox and data/test/runs)on cleanup--useful for
+#               debugging failed tests
+#   All subsequent arguments are forwarded to `cargo nextest run`.
+
+# Check for --ffmpeg and --keep flags
+FEATURE_ARGS=""
+KEEP_DATA=false
+while true; do
+    case "${1:-}" in
+        --ffmpeg) FEATURE_ARGS="-F ffmpeg"; shift ;;
+        --keep)   KEEP_DATA=true; shift ;;
+        *) break ;;
+    esac
+done
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+SERVER_PID=""
+
+cleanup() {
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "Stopping oxen-server (pid $SERVER_PID)..."
+        kill "$SERVER_PID"
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    if [ "$KEEP_DATA" = false ]; then
+        echo "==> Removing test data..."
+        rm -rf ./data/ox
+        rm -rf ./data/test/runs
+    else
+        echo "==> Keeping test data in data/ox and data/test/runs"
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+# Ensure all prerequisites are installed
+"$SCRIPT_DIR/install-pre-reqs.sh"
+
+# Build
+echo "==> Building oxen (cargo build $FEATURE_ARGS)..."
+# shellcheck disable=SC2086
+cargo build $FEATURE_ARGS
+
+# Verify ulimit
+CURRENT_ULIMIT=$(ulimit -n)
+DESIRED_ULIMIT=10240
+if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
+    echo "==> ulimit -n is $CURRENT_ULIMIT (< $DESIRED_ULIMIT). Attempting to raise..."
+    ulimit -n "$DESIRED_ULIMIT" 2>/dev/null || {
+        echo "Warning: Could not raise ulimit -n to $DESIRED_ULIMIT. You may need to limit"
+        echo "the number of threads used by nextest to avoid running out of file descriptors."
+    }
+fi
+
+# Configure test user
+if [ ! -d ./data/test/runs ] || [ ! -d ./data/test/config ]; then
+    echo "==> Configuring test user..."
+    mkdir -p ./data/test/runs
+    mkdir -p ./data/test/config
+
+    ./target/debug/oxen-server add-user \
+        --email ox@oxen.ai \
+        --name ox \
+        --output data/test/config/user_config.toml
+else
+    echo "==> Test user already configured, skipping."
+fi
+
+# Select port and start oxen-server
+port_is_free() {
+  ! lsof -i :"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+if [ -n "${OXEN_PORT:-}" ]; then
+    if ! port_is_free "$OXEN_PORT"; then
+        echo "ERROR: Something is already listening on port $OXEN_PORT. Stop it before running tests."
+        exit 1
+    fi
+else
+    OXEN_PORT=""
+    for _ in $(seq 1 10); do
+        CANDIDATE=$(( RANDOM % 3001 + 3100 ))
+        if port_is_free "$CANDIDATE"; then
+            OXEN_PORT="$CANDIDATE"
+            break
+        fi
+    done
+    if [ -z "$OXEN_PORT" ]; then
+        echo "ERROR: Could not find an open port in range 3000-6000 after 10 attempts."
+        echo "Please supply OXEN_PORT directly, e.g.: OXEN_PORT=4567 $0 $*"
+        exit 1
+    fi
+fi
+
+export OXEN_TEST_HOST="localhost:${OXEN_PORT}"
+
+echo "==> Starting oxen-server on port ${OXEN_PORT}..."
+./target/debug/oxen-server start -p "${OXEN_PORT}" &
+SERVER_PID=$!
+
+wait_for_server() {
+    while true ; do
+        if curl -s -o /dev/null --fail "http://localhost:${OXEN_PORT}/api/health" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1
+    done
+}
+
+echo "==> Waiting for oxen-server health check to pass..."
+wait_for_server
+
+# Run tests
+echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
+# shellcheck disable=SC2086
+cargo nextest run $FEATURE_ARGS "$@"
+
+# cleanup handled via the trapped cleanup function

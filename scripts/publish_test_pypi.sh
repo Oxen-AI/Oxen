@@ -19,8 +19,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PYPROJECT="$REPO_ROOT/oxen-python/pyproject.toml"
-CARGO_TOML="$REPO_ROOT/oxen-python/Cargo.toml"
-CARGO_LOCK="$REPO_ROOT/oxen-python/Cargo.lock"
+CARGO_TOML="$REPO_ROOT/crates/oxen-py/Cargo.toml"
 
 # ---------------------------------------------------------------------------
 # Argument validation
@@ -63,14 +62,12 @@ echo ""
 # ---------------------------------------------------------------------------
 cp "$PYPROJECT"  "$PYPROJECT.bak"
 cp "$CARGO_TOML" "$CARGO_TOML.bak"
-cp "$CARGO_LOCK" "$CARGO_LOCK.bak"
 
 cleanup() {
     echo ""
     echo "Restoring original files..."
     mv -f "$PYPROJECT.bak"  "$PYPROJECT"
     mv -f "$CARGO_TOML.bak" "$CARGO_TOML"
-    mv -f "$CARGO_LOCK.bak" "$CARGO_LOCK"
     echo "Done."
 }
 trap cleanup EXIT
@@ -81,7 +78,7 @@ trap cleanup EXIT
 "$REPO_ROOT/scripts/patch_dev_version.sh" "$PEP440_VERSION"
 
 echo "Updating Cargo.lock..."
-(cd "$REPO_ROOT/oxen-python" && cargo update -p oxen --quiet)
+(cd "$REPO_ROOT" && cargo update -p oxen-py --quiet)
 
 # ---------------------------------------------------------------------------
 # Build wheel
@@ -93,7 +90,7 @@ echo "Building wheel with maturin..."
 # ---------------------------------------------------------------------------
 # Locate the built wheel(s)
 # ---------------------------------------------------------------------------
-WHEEL_DIR="$REPO_ROOT/oxen-python/target/wheels"
+WHEEL_DIR="$REPO_ROOT/target/wheels"
 shopt -s nullglob
 WHEELS=("$WHEEL_DIR"/*"${PEP440_VERSION}"*.whl)
 shopt -u nullglob

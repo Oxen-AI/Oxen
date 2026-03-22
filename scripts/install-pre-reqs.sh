@@ -134,9 +134,9 @@ if [ -f "$CARGO_ENV" ]; then
 fi
 
 # Ensure the project's required toolchain is installed.
-# rust-toolchain.toml in oxen-rust/ will be picked up automatically by cargo,
+# rust-toolchain.toml will be picked up automatically by cargo,
 # but we can pre-install it so the first build doesn't stall.
-RUST_TOOLCHAIN_FILE="$REPO_ROOT/oxen-rust/rust-toolchain.toml"
+RUST_TOOLCHAIN_FILE="$REPO_ROOT/rust-toolchain.toml"
 
 if [ -f "$RUST_TOOLCHAIN_FILE" ]; then
     REQUIRED_CHANNEL=$(grep '^channel' "$RUST_TOOLCHAIN_FILE" | sed 's/.*= *"\(.*\)"/\1/')
@@ -315,7 +315,7 @@ fi
 echo ""
 info "All prerequisites installed successfully!"
 info "You can now build the project:"
-info "  cd oxen-rust && cargo build --workspace"
+info "  cargo build --workspace"
 info "  cd oxen-python && uv sync --verbose"
 
 # Print shell configuration hints for any tools we freshly installed.

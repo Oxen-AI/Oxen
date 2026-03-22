@@ -1,5 +1,5 @@
 [project]
-version = "0.46.3"
+version = "0.46.4"
 name = "oxenai"
 description = "Data version control for machine learning"
 readme = "README.md"
@@ -39,5 +39,6 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
+manifest-path = "../crates/oxen-py/Cargo.toml"
 python-source = "python"
 features = ["pyo3/extension-module"]
