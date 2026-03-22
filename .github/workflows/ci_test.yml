@@ -28,6 +28,8 @@ jobs:
     env:
       AWS_REGION: us-west-1
       AWS_ROLE: arn:aws:iam::213020545630:role/ci-test-integration-role
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
 
     permissions:
       id-token: write
@@ -67,6 +69,7 @@ jobs:
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false # This action doesn't plumb all the options we need through to Swatinem/rust-cache, so we disable it and use it directly.
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
 
       - name: Install uv
@@ -74,12 +77,25 @@ jobs:
         with:
           python-version: "3.11" # Test against the earliest supported Python version
 
-      - name: Cache Rust dependencies
+      # Cache compiled Rust artifacts using sccache
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      # On Windows, use embedded debug info (/Z7) instead of shared PDB (/Zi)
+      # to avoid PDB file locking races with sccache
+      - name: Avoid PDB locking issues with sccache (Windows)
+        if: matrix.platform == 'windows'
+        run: Add-Content -Path $env:GITHUB_ENV -Value "CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=off"
+
+      - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
         with:
           # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
           # Other branches will still use the cache but won't save it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: false # We'll use sccache for the compiled artifacts
+          cache-on-failure: true # Even if compilation fails, saving the cargo registry is useful
+          cache-all-crates: true # Cache anything installed with "cargo install"
           workspaces: "."
 
       - name: Install dependencies (macOS)
