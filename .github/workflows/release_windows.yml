@@ -91,7 +91,6 @@ jobs:
       - name: Build oxen binaries
         run: |
           refreshenv
-          cd ${{ github.workspace }}\oxen-rust
           cargo build --workspace --release
 
       - name: Build Python wheels
@@ -108,12 +107,12 @@ jobs:
 
       - name: Create zip with oxen binaries
         run: |
-          Compress-Archive -Path "${{ github.workspace }}\oxen-rust\target\release\oxen.exe" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
-          Compress-Archive -Path "${{ github.workspace }}\oxen-rust\target\release\oxen-server.exe" -DestinationPath "${{ github.workspace }}\release\oxen-server-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
+          Compress-Archive -Path "${{ github.workspace }}\target\release\oxen.exe" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
+          Compress-Archive -Path "${{ github.workspace }}\target\release\oxen-server.exe" -DestinationPath "${{ github.workspace }}\release\oxen-server-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
 
       - name: Create zip with Python wheels
         run: |
-          Compress-Archive -Path ${{ github.workspace }}\oxen-python\target\wheels\* -DestinationPath ${{ github.workspace }}\release\oxen-wheels-windows-${{ inputs.ARCHITECTURE }}.zip
+          Compress-Archive -Path ${{ github.workspace }}\target\wheels\* -DestinationPath ${{ github.workspace }}\release\oxen-wheels-windows-${{ inputs.ARCHITECTURE }}.zip
 
       - name: Create zip with all artifacts
         run: |

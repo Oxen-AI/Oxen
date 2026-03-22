@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-exclude = ["experiments/*"]
+exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]
 version = "0.46.4"
@@ -134,6 +134,14 @@ uuid = { version = "1.4.1", features = ["serde", "v4"] }
 walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
 zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
+
+[profile.dev]
+debug = "limited"
+
+[profile.dev.package."*"]
+debug = false
+strip = "symbols"
+debug-assertions = false
 
 [profile.release]
 codegen-units = 1

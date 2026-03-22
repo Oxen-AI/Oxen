@@ -24,7 +24,7 @@ The documentation for the Oxen.ai tool chain can be found [here](https://docs.ox
 
 ## Install Prerequisites
 
-See the [prerequisites](../README.md#prerequisites) section of the main readme to install the needed prerequisites.
+See the [prerequisites](../../README.md#prerequisites) section of the main readme to install the needed prerequisites.
 
 ## Build
 
@@ -96,16 +96,16 @@ rustflags = [ "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld", ]
 
 ## CLI
 
-To run Oxen from the command line, add the `oxen-rust/target/debug` directory to the 'PATH' environment variable
+To run Oxen from the command line, add the `target/debug` directory to the 'PATH' environment variable
 
 ```bash
-export PATH="$PATH:/path/to/Oxen/oxen-rust/target/debug"
+export PATH="$PATH:/path/to/Oxen/target/debug"
 ```
 
 On Windows, you can use
 
 ```powershell
-$env:PATH += ";/path/to/Oxen/oxen-rust/target/debug"
+$env:PATH += ";/path/to/Oxen/target/debug"
 ```
 
 Initialize a new repository or clone an existing one

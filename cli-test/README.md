@@ -16,7 +16,7 @@ uv sync
 
 3. Ensure oxen CLI is in your PATH:
 ```bash
-export PATH="$PATH:/path/to/oxen-rust/target/debug"
+export PATH="$PATH:/path/to/Oxen/target/debug"
 ```
 
 4. Start a local Oxen server (required for remote operations):

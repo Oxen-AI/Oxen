@@ -24,7 +24,7 @@ CARGO_VERSION="${PEP440_VERSION/.dev/-dev.}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYPROJECT="$SCRIPT_DIR/../oxen-python/pyproject.toml"
-CARGO_TOML="$SCRIPT_DIR/../oxen-python/Cargo.toml"
+CARGO_TOML="$SCRIPT_DIR/../crates/oxen-py/Cargo.toml"
 
 # --- Patch pyproject.toml ---
 echo "Patching pyproject.toml → $PEP440_VERSION"
