@@ -6,32 +6,18 @@ repos:
 
   - repo: local
     hooks:
-      - id: cargo-fmt-oxen-rust
-        name: cargo fmt (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo fmt --all'
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: bash -c 'cargo fmt --all'
         language: system
-        files: ^oxen-rust/.*\.rs$
+        files: \.rs$
         pass_filenames: false
 
-      - id: cargo-fmt-oxen-python
-        name: cargo fmt (oxen-python)
-        entry: bash -c 'cd oxen-python && cargo fmt'
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cargo clippy --workspace --no-deps -- -D warnings'
         language: system
-        files: ^oxen-python/.*\.rs$
-        pass_filenames: false
-
-      - id: cargo-clippy-oxen-rust
-        name: cargo clippy (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo clippy --workspace --no-deps -- -D warnings'
-        language: system
-        files: ^oxen-rust/.*\.rs$
-        pass_filenames: false
-
-      - id: cargo-clippy-oxen-python
-        name: cargo clippy (oxen-python)
-        entry: bash -c 'cd oxen-python && cargo clippy --no-deps -- -D warnings'
-        language: system
-        files: ^oxen-python/.*\.rs$
+        files: \.rs$
         pass_filenames: false
 
       - id: cargo-sort

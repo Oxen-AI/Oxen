@@ -11,7 +11,7 @@ set -euo pipefail
 
 # Get current version from the main Cargo.toml
 get_current_version() {
-    (cd oxen-rust/crates/lib && cargo pkgid | cut -f2 -d@)
+    cargo pkgid -p liboxen | cut -f2 -d@
 }
 
 # Parse and validate semver format
@@ -77,7 +77,7 @@ case "$ARG" in
     major|minor|patch)
         CURRENT_VERSION=$(get_current_version)
         if [[ -z "$CURRENT_VERSION" ]]; then
-            echo "Error: Could not read current version from oxen-rust/Cargo.toml" >&2
+            echo "Error: Could not read current version from Cargo.toml" >&2
             exit 1
         fi
         echo "Current version: $CURRENT_VERSION" >&2
@@ -97,20 +97,20 @@ echo "" >&2
 echo "Updating workspace Cargo.toml file..." >&2
 # Only update the [workspace.package] version line, not dependency versions
 if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-rust/Cargo.toml
+  sed -i '' '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' Cargo.toml
 else
-  sed -i '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-rust/Cargo.toml
+  sed -i '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' Cargo.toml
 fi
-echo "  ✓ oxen-rust/Cargo.toml" >&2
+echo "  ✓ Cargo.toml" >&2
 
 # Update the readme
 echo "Updating the rust readme..." >&2
 if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' 's/server:[^[:space:]]*/server:'"$VERSION"'/g' oxen-rust/README.md
+  sed -i '' 's/server:[^[:space:]]*/server:'"$VERSION"'/g' crates/lib/README.md
 else
-  sed -i 's/server:[^[:space:]]*/server:'"$VERSION"'/g' oxen-rust/README.md
+  sed -i 's/server:[^[:space:]]*/server:'"$VERSION"'/g' crates/lib/README.md
 fi
-echo "  ✓ oxen-rust/README.md" >&2
+echo "  ✓ crates/lib/README.md" >&2
 
 # Update pyproject.toml
 echo "Updating pyproject.toml..." >&2
@@ -121,24 +121,23 @@ else
 fi
 echo "  ✓ oxen-python/pyproject.toml" >&2
 
-# Update oxen-python/Cargo.toml
-echo "Updating oxen-python/Cargo.toml..." >&2
+# Update crates/oxen-py/Cargo.toml
+echo "Updating crates/oxen-py/Cargo.toml..." >&2
 if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/Cargo.toml
+  sed -i '' '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' crates/oxen-py/Cargo.toml
 else
-  sed -i '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' oxen-python/Cargo.toml
+  sed -i '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' crates/oxen-py/Cargo.toml
 fi
-echo "  ✓ oxen-python/Cargo.toml" >&2
+echo "  ✓ crates/oxen-py/Cargo.toml" >&2
 
 # Update lock files (only workspace packages, not all dependencies)
 echo "Updating lock files..." >&2
-echo "  Updating oxen-rust/Cargo.lock..." >&2
-(cd oxen-rust && cargo update --workspace --quiet) #cargo update -p liboxen -p oxen-cli -p oxen-server -p oxen-bench --quiet)
-echo "  ✓ oxen-rust/Cargo.lock" >&2
+echo "  Updating Cargo.lock..." >&2
+cargo update --workspace --quiet
+echo "  ✓ Cargo.lock" >&2
 
-echo "  Updating oxen-python/Cargo.lock and uv.lock..." >&2
-(cd oxen-python && cargo update -p oxen --quiet && uv lock --quiet)
-echo "  ✓ oxen-python/Cargo.lock" >&2
+echo "  Updating oxen-python/uv.lock..." >&2
+(cd oxen-python && uv lock --quiet)
 echo "  ✓ oxen-python/uv.lock" >&2
 
 echo "" >&2
@@ -152,11 +151,10 @@ echo "" >&2
 echo "Committing changes..." >&2
 # Add only the files modified by this script
 git add oxen-python/pyproject.toml
-git add oxen-python/Cargo.toml
-git add oxen-rust/Cargo.toml
-git add oxen-rust/Cargo.lock
-git add oxen-rust/README.md
-git add oxen-python/Cargo.lock
+git add crates/oxen-py/Cargo.toml
+git add Cargo.toml
+git add Cargo.lock
+git add crates/lib/README.md
 git add oxen-python/uv.lock
 git commit -m "Bump v$VERSION" >&2
 echo "  ✓ Committed changes" >&2
