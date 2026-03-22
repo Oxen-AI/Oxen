@@ -117,7 +117,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "release-python"
-          workspaces: "oxen-python -> target"
+          workspaces: "."
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -136,7 +136,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ inputs.ARCHITECTURE }}
-          path: ${{ github.workspace }}/oxen-python/target/wheels/*.whl
+          path: ${{ github.workspace }}/target/wheels/*.whl
           retention-days: 1
 
   stop-self-hosted-runner:

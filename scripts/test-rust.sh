@@ -45,8 +45,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Ensure all prerequisites are installed
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-"$REPO_ROOT/scripts/install-pre-reqs.sh"
+"$SCRIPT_DIR/install-pre-reqs.sh"
 
 # Build
 echo "==> Building oxen (cargo build $FEATURE_ARGS)..."

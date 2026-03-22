@@ -112,7 +112,6 @@ jobs:
 
       - name: Build oxen binaries
         run: |
-          cd ${{ github.workspace }}/oxen-rust
           cargo build --workspace --release
 
       - name: Build Python wheels
@@ -127,12 +126,12 @@ jobs:
 
       - name: Create tarballs with oxen binaries
         run: |
-          tar -czvf ${{ github.workspace }}/release/oxen-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/oxen-rust/target/release/ oxen
-          tar -czvf ${{ github.workspace }}/release/oxen-server-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/oxen-rust/target/release/ oxen-server
+          tar -czvf ${{ github.workspace }}/release/oxen-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/target/release/ oxen
+          tar -czvf ${{ github.workspace }}/release/oxen-server-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/target/release/ oxen-server
 
       - name: Create tarballs with Python wheels
         run: |
-          tar -czvf ${{ github.workspace }}/release/oxen-wheels-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/oxen-python/target/wheels/ .
+          tar -czvf ${{ github.workspace }}/release/oxen-wheels-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/target/wheels/ .
 
       - name: Create deb packages
         run: |
@@ -141,7 +140,7 @@ jobs:
           fpm \
             -s dir -t deb \
             -p ${{ github.workspace }}/release/oxen-linux-${{ inputs.ARCHITECTURE }}.deb \
-            -C ${{ github.workspace }}/oxen-rust/target/release \
+            -C ${{ github.workspace }}/target/release \
             --name oxen \
             --version ${{ inputs.RELEASE_VERSION }} \
             --architecture all \
@@ -153,7 +152,7 @@ jobs:
           fpm \
             -s dir -t deb \
             -p ${{ github.workspace }}/release/oxen-server-linux-${{ inputs.ARCHITECTURE }}.deb \
-            -C ${{ github.workspace }}/oxen-rust/target/release \
+            -C ${{ github.workspace }}/target/release \
             --name oxen-server \
             --version ${{ inputs.RELEASE_VERSION }} \
             --architecture all \
